@@ -1,0 +1,6 @@
+[package]
+name = "cauldron"
+version = "0.1.0"
+authors = ["Andrew R Martin <0andrewmartin0@gmail.com>"]
+
+[dependencies]
