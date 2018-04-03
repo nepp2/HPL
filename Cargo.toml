@@ -3,4 +3,7 @@ name = "cauldron"
 version = "0.1.0"
 authors = ["Andrew R Martin <0andrewmartin0@gmail.com>"]
 
-[dependencies]
+[dependencies.sdl2]
+version = "0.31"
+default-features = false
+features = ["bundled"]
