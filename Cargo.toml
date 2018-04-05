@@ -5,6 +5,7 @@ authors = ["Andrew R Martin <0andrewmartin0@gmail.com>"]
 
 [dependencies]
 rusttype = "0.5.2"
+byteorder = "1.2.2"
 
 [dependencies.sdl2]
 version = "0.31"

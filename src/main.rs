@@ -8,6 +8,9 @@ use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 use std::cmp;
 use std::time::Duration;
+use sdl2::pixels::PixelFormatEnum::RGBA8888;
+use sdl2::render::{TextureAccess::Streaming, TextureCreator, Texture, BlendMode};
+use sdl2::video::WindowContext;
 
 type Canvas = sdl2::render::Canvas<sdl2::video::Window>;
 
@@ -17,7 +20,7 @@ static BOX_H : i32 = 300;
 use rusttype::{point, FontCollection, PositionedGlyph, Scale};
 use std::io::Write;
 
-fn draw_font() -> (Vec<u8>, i32, i32) {
+fn draw_font() -> (Vec<u8>, u32, u32) {
   let font_data = include_bytes!("../fonts/consola.ttf");
   let collection = FontCollection::from_bytes(font_data as &[u8]).unwrap_or_else(|e| {
     panic!("error constructing a FontCollection from bytes: {}", e);
@@ -28,12 +31,12 @@ fn draw_font() -> (Vec<u8>, i32, i32) {
     });
 
   // Desired font pixel height
-  let height: f32 = 12.4; // to get 80 chars across (fits most terminals); adjust as desired
+  let height: f32 = 20.0; // to get 80 chars across (fits most terminals); adjust as desired
   let pixel_height = height.ceil() as usize;
 
   // 2x scale in x direction to counter the aspect ratio of monospace characters.
   let scale = Scale {
-    x: height * 2.0,
+    x: height,
     y: height,
   };
 
@@ -46,7 +49,7 @@ fn draw_font() -> (Vec<u8>, i32, i32) {
   let offset = point(0.0, v_metrics.ascent);
 
   // Glyphs to draw for "RustType". Feel free to try other strings.
-  let glyphs: Vec<PositionedGlyph> = font.layout("RustType", scale, offset).collect();
+  let glyphs: Vec<PositionedGlyph> = font.layout("Hello World", scale, offset).collect();
 
   // Find the most visually pleasing width to display
   let width = glyphs
@@ -58,29 +61,26 @@ fn draw_font() -> (Vec<u8>, i32, i32) {
     .ceil() as usize;
 
   // Rasterise directly into ASCII art.
-  let mut pixel_data = vec![b'@'; width * pixel_height];
-  let mapping = b"@%#x+=:-. "; // The approximation of greyscale
-  let mapping_scale = (mapping.len() - 1) as f32;
+  let mut pixel_data = vec![0 as u8; width * 4 * pixel_height];
   for g in glyphs {
     if let Some(bb) = g.pixel_bounding_box() {
       g.draw(|x, y, v| {
+        println!("x: {}, y: {}, v: {}", x, y, v);
         // v should be in the range 0.0 to 1.0
-        let i = (v * mapping_scale + 0.5) as usize;
-        // so something's wrong if you get $ in the output.
-        let c = mapping.get(i).cloned().unwrap_or(b'$');
-        let x = x as i32 + bb.min.x;
-        let y = y as i32 + bb.min.y;
+        let a = (v * 255f32) as u8;
+        let x = (x as i32) + bb.min.x;
+        let y = (y as i32) + bb.min.y;
         // There's still a possibility that the glyph clips the boundaries of the bitmap
         if x >= 0 && x < width as i32 && y >= 0 && y < pixel_height as i32 {
-          let x = x as usize;
-          let y = y as usize;
-          pixel_data[(x + y * width)] = c;
+          let i = ((y as usize) * width + (x as usize)) * 4;
+          println!("x: {}, y: {}, i: {}, a: {}", x, y, i, a);
+          pixel_data[i] = a;
         }
       })
     }
   }
 
-  return (pixel_data, width as i32, pixel_height as i32);
+  return (pixel_data, width as u32, pixel_height as u32);
 
   /* Print it out
   let stdout = ::std::io::stdout();
@@ -94,19 +94,24 @@ fn draw_font() -> (Vec<u8>, i32, i32) {
   */
 }
 
-fn draw_text(){
+fn create_text(tc : &TextureCreator<WindowContext>) -> Texture {
   let (pixels, width, height) = draw_font();
-  //let surface = Surface::new(512, 512, PixelFormatEnum::RGB24).unwrap();
+  let mut texture = tc.create_texture(RGBA8888, Streaming, width, height).unwrap();
+  texture.update(Rect::new(0, 0, width, height), &pixels[..], (width*4) as usize).unwrap();
+  texture.set_blend_mode(BlendMode::Blend);
   println!("width: {}, height: {}", width, height);
+  return texture;
 }
 
-
-
-fn draw_stuff(w : i32, h : i32, text : &mut String, canvas : &mut Canvas){
+fn draw_stuff(w : i32, h : i32, text : &Texture, canvas : &mut Canvas){
 	let (rw, rh) = (BOX_W, BOX_H);
 	let x = (w/2) - (rw/2);
 	let y = (h/2) - (rh/2);
-	canvas.fill_rect(Rect::new(x, y, rw as u32, rh as u32)).unwrap();
+  let rect = Rect::new(x, y, rw as u32, rh as u32);
+	canvas.fill_rect(rect).unwrap();
+  let q = text.query();
+  let _rq = Rect::new(x, y, q.width, q.height);
+  canvas.copy(text, None, Some(_rq)).unwrap();
 }
 
 pub fn main() {
@@ -121,12 +126,15 @@ pub fn main() {
       .build()
       .unwrap();
 
-    let mut canvas = window.into_canvas().software().build().unwrap();
+    let mut canvas = window.into_canvas().accelerated().build().unwrap();
+
+    canvas.set_blend_mode(BlendMode::Blend);
+
+    let texture_creator = canvas.texture_creator();
+    let text = create_text(&texture_creator);
 
     canvas.clear();
     canvas.present();
-
-    draw_text();
 
     let mut events = sdl_context.event_pump().unwrap();
 
@@ -134,8 +142,6 @@ pub fn main() {
     let mut yd = 0;
 
     let mut rects = vec!();
-
-    let mut text = "Hello World".to_string();
 
     'mainloop: loop {
       for event in events.poll_iter() {
@@ -175,7 +181,7 @@ pub fn main() {
       for r in rects.iter() {
         canvas.fill_rect(*r).unwrap();
     	}
-      draw_stuff(width as i32, height as i32, &mut text, &mut canvas);
+      draw_stuff(width as i32, height as i32, &text, &mut canvas);
       canvas.present();
 	}
 }
