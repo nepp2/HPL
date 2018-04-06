@@ -27,6 +27,9 @@ static TEXT: &str = "A japanese poem:\r
 Feel free to type out some text, and delete it with Backspace. \
 You can also try resizing this window.";
 
+/*
+  TODO: this function puts line-breaks in the middle of words.
+*/
 fn layout_paragraph<'a>(
     font: &'a Font,
     scale: Scale,
@@ -69,6 +72,7 @@ fn layout_paragraph<'a>(
     result
 }
 
+// TODO: this takes way too many paramters, so there should probably be some structs or something
 fn draw_text<'l>(
   canvas : &mut Canvas, font : &'l Font, text : &str, x : i32, y : i32, scale : Scale,
   cache : &mut Cache<'l>, cache_width : u32, cache_height : u32, cache_tex : &mut Texture)
@@ -86,6 +90,7 @@ fn draw_text<'l>(
             rect.width() as u32,
             rect.height() as u32);
         
+        // TODO: this may be very inefficient. Not sure.
         cache_tex.with_lock(Some(r), |target, pitch|{
           let (w, h) = (r.width() as usize, r.height() as usize);
           for y in 0..(h-1) {
