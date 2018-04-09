@@ -1,6 +1,7 @@
 extern crate sdl2;
 extern crate rusttype;
 extern crate unicode_normalization;
+extern crate ropey;
 
 use sdl2::event::Event;
 use sdl2::event::WindowEvent;
@@ -14,6 +15,7 @@ use sdl2::render::{TextureAccess::Streaming, Texture, BlendMode};
 use sdl2::video::{Window};
 use rusttype::{point, Font, FontCollection, PositionedGlyph, Scale};
 use rusttype::gpu_cache::{CacheBuilder, Cache};
+use ropey::{Rope, RopeSlice};
 
 type Canvas = sdl2::render::Canvas<sdl2::video::Window>;
 
@@ -35,6 +37,7 @@ fn layout_paragraph<'a>(
     scale: Scale,
     width: u32,
     text: &str,
+    text_buffer : &Rope,
 ) -> Vec<PositionedGlyph<'a>> {
     use unicode_normalization::UnicodeNormalization;
     let mut result = Vec::new();
@@ -74,10 +77,11 @@ fn layout_paragraph<'a>(
 
 // TODO: this takes way too many paramters, so there should probably be some structs or something
 fn draw_text<'l>(
-  canvas : &mut Canvas, font : &'l Font, text : &str, x : i32, y : i32, scale : Scale,
+  canvas : &mut Canvas, font : &'l Font, text : &str, text_buffer : &Rope,
+  x : i32, y : i32, scale : Scale,
   cache : &mut Cache<'l>, cache_width : u32, cache_height : u32, cache_tex : &mut Texture)
 {
-  let glyphs = layout_paragraph(&font, scale, BOX_W as u32, text);
+  let glyphs = layout_paragraph(&font, scale, BOX_W as u32, text, text_buffer);
   for glyph in &glyphs {
       cache.queue_glyph(0, glyph.clone());
   }
@@ -130,6 +134,16 @@ fn dpi_ratio(w : &Window) -> f32 {
   (w as f32) / (dw as f32)
 }
 
+/*
+
+- Receive some keyboard events
+- Move a caret around
+  - How is the caret's position represented?
+    - Absolute index in text?
+    - Line number and offset?
+
+*/
+
 pub fn main() {
 
 	let (mut width, mut height) = (800, 600);
@@ -160,6 +174,9 @@ pub fn main() {
   let mut rects = vec!();
 
   let text : String = TEXT.into();
+
+  let mut text_buffer = Rope::new();
+  text_buffer.insert(0, TEXT);
 
   // #### Font stuff ####
   //let font_data = include_bytes!("../fonts/consola.ttf");
@@ -230,7 +247,8 @@ pub fn main() {
 
     let scale = Scale::uniform(24.0 * dpi_ratio);
     draw_text(
-      &mut canvas, &font, &text, tx, ty, scale,
+      &mut canvas, &font, &text, &text_buffer,
+      tx, ty, scale,
       &mut cache, cache_width, cache_height, &mut cache_tex);
 
     canvas.present();

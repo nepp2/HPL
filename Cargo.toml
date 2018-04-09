@@ -6,6 +6,7 @@ authors = ["Andrew R Martin <0andrewmartin0@gmail.com>"]
 [dependencies]
 byteorder = "1.2.2"
 unicode-normalization = "0.1.5"
+ropey = "0.6.3"
 
 [dependencies.rusttype]
 version = "0.5.2"
