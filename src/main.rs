@@ -13,7 +13,7 @@ use std::time::Duration;
 use sdl2::pixels::PixelFormatEnum::{RGBA4444};
 use sdl2::render::{TextureAccess::Streaming, Texture, BlendMode};
 use sdl2::video::{Window};
-use rusttype::{point, Point, Font, FontCollection, PositionedGlyph, Scale};
+use rusttype::{point, Point, Font, FontCollection, PositionedGlyph, Scale, VMetrics};
 use rusttype::gpu_cache::{CacheBuilder, Cache};
 use ropey::Rope;
 
@@ -22,91 +22,55 @@ type Canvas = sdl2::render::Canvas<sdl2::video::Window>;
 static BOX_W : i32 = 400;
 static BOX_H : i32 = 300;
 
-static TEXT: &str = "A japanese poem:\r
-\r
-色は匂へど散りぬるを我が世誰ぞ常ならむ有為の奥山今日越えて浅き夢見じ酔ひもせず\r
-\r
-Feel free to type out some text, and delete it with Backspace. \
-You can also try resizing this window.";
+static TEXT: &str = "Here is some text.\r
 
-/*
-  TODO: this function puts line-breaks in the middle of words.
-*/
+Feel free to type stuff, and delete it with Backspace.";
+
+struct LayoutAttribs {
+  advance_width : f32,
+  advance_height : f32,
+  v_metrics : VMetrics,
+  buffer_width : f32,
+  scale : Scale,
+}
+
+fn layout_attribs(font : &Font, scale : Scale, buffer_width : f32) -> LayoutAttribs {
+  let v_metrics = font.v_metrics(scale);
+  LayoutAttribs {
+    advance_height: v_metrics.ascent - v_metrics.descent + v_metrics.line_gap,
+    advance_width: {
+      let g = font.glyph('a').scaled(scale);
+      let g_width = g.h_metrics().advance_width;
+      let kern = font.pair_kerning(scale, g.id(), g.id());
+      g_width + kern
+    },
+    v_metrics,
+    buffer_width,
+    scale
+  }
+}
+
 fn layout_paragraph<'a>(
   font: &'a Font,
-  scale: Scale,
-  width: u32,
+  attribs : &LayoutAttribs,
   text_buffer : &Rope)
     -> Vec<PositionedGlyph<'a>>
 {
     use unicode_normalization::UnicodeNormalization;
     let mut result = Vec::new();
-    let v_metrics = font.v_metrics(scale);
-
-    struct LayoutAttribs {
-      advance_width : f32,
-      advance_height : f32,
-      buffer_width : f32,
-      scale : Scale,
-    }
-
-    let attribs =
-      LayoutAttribs {
-        advance_height: v_metrics.ascent - v_metrics.descent + v_metrics.line_gap,
-        advance_width: {
-          let g = font.glyph('a').scaled(scale);
-          let g_width = g.h_metrics().advance_width;
-          let kern = font.pair_kerning(scale, g.id(), g.id());
-          g_width + kern
-        },
-        buffer_width: width as f32,
-        scale
-      };
-
-    let mut caret = point(0.0, v_metrics.ascent);
-    let mut word : Vec<char> = vec!();
-
-    fn draw_word<'a>(
-      word : &mut Vec<char>, font : &'a Font,
-      caret : &mut Point<f32>, result : &mut Vec<PositionedGlyph<'a>>,
-      attribs : &LayoutAttribs)
-    {
-      if word.is_empty() {
-        return;
-      }
-      let width_remaining = attribs.buffer_width - caret.x;
-      let width_required = word.len() as f32 * attribs.advance_width;
-      if width_required > width_remaining {
-        *caret = point(0.0, caret.y + attribs.advance_height);
-      }
-      for &c in word.iter() {
-        let base_glyph = font.glyph(c);
-        let mut glyph = base_glyph.scaled(attribs.scale).positioned(*caret);
-        caret.x += attribs.advance_width;
-        result.push(glyph);
-      }
-      word.clear();
-    };
+    let mut caret = point(0.0, attribs.v_metrics.ascent);
 
     for l in text_buffer.lines() {
+      // TODO: is nfc() necessary here?
       for c in l.chars().nfc() {
         if c.is_control() {
           continue;
         }
-        if c == ' ' {
-          draw_word(&mut word, font, &mut caret, &mut result, &attribs);
-          caret.x += attribs.advance_width;
-        }
-        else{
-          let next_width = (word.len() + 1) as f32 * attribs.advance_width;
-          if next_width > attribs.buffer_width {
-            caret = point(0.0, caret.y + attribs.advance_height);
-            draw_word(&mut word, font, &mut caret, &mut result, &attribs);
-          }
-          word.push(c);
-        }
+        let base_glyph = font.glyph(c);
+        let mut glyph = base_glyph.scaled(attribs.scale).positioned(caret);
+        caret.x += attribs.advance_width;
+        result.push(glyph);
       }
-      draw_word(&mut word, font, &mut caret, &mut result, &attribs);
       caret = point(0.0, caret.y + attribs.advance_height);
     }
     result
@@ -115,10 +79,10 @@ fn layout_paragraph<'a>(
 // TODO: this takes way too many paramters, so there should probably be some structs or something
 fn draw_text<'l>(
   canvas : &mut Canvas, font : &'l Font, text_buffer : &Rope,
-  x : i32, y : i32, scale : Scale,
+  x : i32, y : i32, attribs : &LayoutAttribs,
   cache : &mut Cache<'l>, cache_width : u32, cache_height : u32, cache_tex : &mut Texture)
 {
-  let glyphs = layout_paragraph(&font, scale, BOX_W as u32, text_buffer);
+  let glyphs = layout_paragraph(&font, attribs, text_buffer);
   for glyph in &glyphs {
       cache.queue_glyph(0, glyph.clone());
   }
@@ -181,6 +145,66 @@ fn dpi_ratio(w : &Window) -> f32 {
 
 */
 
+struct Caret {
+  line : usize,
+  pos : usize,
+  pos_remembered : usize,
+}
+
+fn step_right(c : &mut Caret, text : &Rope){
+  while {
+    let l = text.line(c.line);
+    c.pos < l.len_chars() && l.char(c.pos).is_control()
+  } {
+    c.pos += 1;
+  }
+  if c.pos < text.line(c.line).len_chars() {
+    c.pos += 1;
+  }
+  else if c.line < text.len_lines() - 1 {
+    c.line += 1;
+    c.pos = 0;
+  }
+  c.pos_remembered = c.pos;
+}
+
+fn reverse_control_chars(c : &mut Caret, text : &Rope){
+    while {
+      let l = text.line(c.line);
+      c.pos > 0 && l.char(c.pos-1).is_control()
+    } {
+      c.pos -= 1;
+    }
+}
+
+fn step_left(c : &mut Caret, text : &Rope){
+  if c.pos > 0 {
+    c.pos -= 1;
+  }
+  else if c.line > 0 {
+    c.line -= 1;
+    c.pos = text.line(c.line).len_chars();
+    reverse_control_chars(c, text);
+  }
+  c.pos_remembered = c.pos;
+}
+
+fn step_up(c : &mut Caret, text : &Rope){
+  if c.line > 0 {
+    c.line -= 1;
+    c.pos = cmp::min(c.pos_remembered, text.line(c.line).len_chars());
+    reverse_control_chars(c, text);
+  }
+}
+
+fn step_down(c : &mut Caret, text : &Rope){
+  if c.line < text.len_lines() - 1 {
+    c.line += 1;
+    c.pos = cmp::min(c.pos_remembered, text.line(c.line).len_chars());
+    reverse_control_chars(c, text);
+  }
+}
+
 pub fn main() {
 
 	let (mut width, mut height) = (800, 600);
@@ -213,6 +237,8 @@ pub fn main() {
   let mut text_buffer = Rope::new();
   text_buffer.insert(0, TEXT);
 
+  println!("{:?}", TEXT);
+
   // #### Font stuff ####
   let font_data = include_bytes!("../fonts/consola.ttf");
   // TODO: this consolas file does not support all unicode characters.
@@ -237,12 +263,36 @@ pub fn main() {
   let mut cache_tex = texture_creator.create_texture(RGBA4444, Streaming, cache_width, cache_height).unwrap();
   cache_tex.set_blend_mode(BlendMode::Blend);
 
+  let mut caret = Caret {line : 0, pos : 0, pos_remembered : 0};
+
   'mainloop: loop {
     for event in events.poll_iter() {
       match event {
         Event::Quit{..} |
         Event::KeyDown {keycode: Some(Keycode::Escape), ..} =>
-            break 'mainloop,
+          break 'mainloop,
+        Event::KeyDown {keycode: Some(k), ..} => {
+          match k {
+            Keycode::Left => {
+              step_left(&mut caret, &text_buffer);
+            }
+            Keycode::Right => {
+              step_right(&mut caret, &text_buffer);
+            }
+            Keycode::Up => {
+              step_up(&mut caret, &text_buffer);
+            }
+            Keycode::Down => {
+              step_down(&mut caret, &text_buffer);
+            }
+            _ => {
+            }
+          }
+        },
+        Event::TextInput { text, .. } => {
+          println!("{}", text);
+          //text_buffer.line(caret.line).start_char + caret.pos;
+        },
         Event::MouseButtonUp {x, y, ..} => {
           let xp = cmp::min(x, xd);
           let yp = cmp::min(y, yd);
@@ -279,13 +329,27 @@ pub fn main() {
     let (rw, rh) = (BOX_W, BOX_H);
     let tx = (width/2) as i32 - (rw/2);
     let ty = (height/2) as i32 - (rh/2);
-    canvas.fill_rect(Rect::new(tx, ty, rw as u32, rh as u32)).unwrap();
+    let text_rectangle = Rect::new(tx, ty, rw as u32, rh as u32);
+    canvas.fill_rect(text_rectangle).unwrap();
 
     let scale = Scale::uniform(24.0 * dpi_ratio);
+    let attribs = layout_attribs(&font, scale, BOX_W as f32);
+
+    canvas.set_clip_rect(text_rectangle);
+    canvas.set_draw_color(Color::RGBA(0, 255, 0, 255));
+    let cursor_rect =
+      Rect::new(
+        tx + (caret.pos as f32 * attribs.advance_width) as i32,
+        ty + (caret.line as f32 * attribs.advance_height) as i32,
+        2,
+        (attribs.v_metrics.ascent - attribs.v_metrics.descent) as u32);
+    canvas.fill_rect(cursor_rect).unwrap();
+    
     draw_text(
       &mut canvas, &font, &text_buffer,
-      tx, ty, scale,
+      tx, ty, &attribs,
       &mut cache, cache_width, cache_height, &mut cache_tex);
+    canvas.set_clip_rect(None);
 
     canvas.present();
 	}
