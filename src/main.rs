@@ -13,9 +13,9 @@ use std::time::Duration;
 use sdl2::pixels::PixelFormatEnum::{RGBA4444};
 use sdl2::render::{TextureAccess::Streaming, Texture, BlendMode};
 use sdl2::video::{Window};
-use rusttype::{point, Font, FontCollection, PositionedGlyph, Scale};
+use rusttype::{point, Point, Font, FontCollection, PositionedGlyph, Scale};
 use rusttype::gpu_cache::{CacheBuilder, Cache};
-use ropey::{Rope, RopeSlice};
+use ropey::Rope;
 
 type Canvas = sdl2::render::Canvas<sdl2::video::Window>;
 
@@ -33,55 +33,92 @@ You can also try resizing this window.";
   TODO: this function puts line-breaks in the middle of words.
 */
 fn layout_paragraph<'a>(
-    font: &'a Font,
-    scale: Scale,
-    width: u32,
-    text: &str,
-    text_buffer : &Rope,
-) -> Vec<PositionedGlyph<'a>> {
+  font: &'a Font,
+  scale: Scale,
+  width: u32,
+  text_buffer : &Rope)
+    -> Vec<PositionedGlyph<'a>>
+{
     use unicode_normalization::UnicodeNormalization;
     let mut result = Vec::new();
     let v_metrics = font.v_metrics(scale);
-    let advance_height = v_metrics.ascent - v_metrics.descent + v_metrics.line_gap;
+
+    struct LayoutAttribs {
+      advance_width : f32,
+      advance_height : f32,
+      buffer_width : f32,
+      scale : Scale,
+    }
+
+    let attribs =
+      LayoutAttribs {
+        advance_height: v_metrics.ascent - v_metrics.descent + v_metrics.line_gap,
+        advance_width: {
+          let g = font.glyph('a').scaled(scale);
+          let g_width = g.h_metrics().advance_width;
+          let kern = font.pair_kerning(scale, g.id(), g.id());
+          g_width + kern
+        },
+        buffer_width: width as f32,
+        scale
+      };
+
     let mut caret = point(0.0, v_metrics.ascent);
-    let mut last_glyph_id = None;
-    for c in text.nfc() {
-        if c.is_control() {
-            match c {
-                '\r' => {
-                    caret = point(0.0, caret.y + advance_height);
-                }
-                '\n' => {}
-                _ => {}
-            }
-            continue;
-        }
+    let mut word : Vec<char> = vec!();
+
+    fn draw_word<'a>(
+      word : &mut Vec<char>, font : &'a Font,
+      caret : &mut Point<f32>, result : &mut Vec<PositionedGlyph<'a>>,
+      attribs : &LayoutAttribs)
+    {
+      if word.is_empty() {
+        return;
+      }
+      let width_remaining = attribs.buffer_width - caret.x;
+      let width_required = word.len() as f32 * attribs.advance_width;
+      if width_required > width_remaining {
+        *caret = point(0.0, caret.y + attribs.advance_height);
+      }
+      for &c in word.iter() {
         let base_glyph = font.glyph(c);
-        if let Some(id) = last_glyph_id.take() {
-            caret.x += font.pair_kerning(scale, id, base_glyph.id());
-        }
-        last_glyph_id = Some(base_glyph.id());
-        let mut glyph = base_glyph.scaled(scale).positioned(caret);
-        if let Some(bb) = glyph.pixel_bounding_box() {
-            if bb.max.x > width as i32 {
-                caret = point(0.0, caret.y + advance_height);
-                glyph = glyph.into_unpositioned().positioned(caret);
-                last_glyph_id = None;
-            }
-        }
-        caret.x += glyph.unpositioned().h_metrics().advance_width;
+        let mut glyph = base_glyph.scaled(attribs.scale).positioned(*caret);
+        caret.x += attribs.advance_width;
         result.push(glyph);
+      }
+      word.clear();
+    };
+
+    for l in text_buffer.lines() {
+      for c in l.chars().nfc() {
+        if c.is_control() {
+          continue;
+        }
+        if c == ' ' {
+          draw_word(&mut word, font, &mut caret, &mut result, &attribs);
+          caret.x += attribs.advance_width;
+        }
+        else{
+          let next_width = (word.len() + 1) as f32 * attribs.advance_width;
+          if next_width > attribs.buffer_width {
+            caret = point(0.0, caret.y + attribs.advance_height);
+            draw_word(&mut word, font, &mut caret, &mut result, &attribs);
+          }
+          word.push(c);
+        }
+      }
+      draw_word(&mut word, font, &mut caret, &mut result, &attribs);
+      caret = point(0.0, caret.y + attribs.advance_height);
     }
     result
 }
 
 // TODO: this takes way too many paramters, so there should probably be some structs or something
 fn draw_text<'l>(
-  canvas : &mut Canvas, font : &'l Font, text : &str, text_buffer : &Rope,
+  canvas : &mut Canvas, font : &'l Font, text_buffer : &Rope,
   x : i32, y : i32, scale : Scale,
   cache : &mut Cache<'l>, cache_width : u32, cache_height : u32, cache_tex : &mut Texture)
 {
-  let glyphs = layout_paragraph(&font, scale, BOX_W as u32, text, text_buffer);
+  let glyphs = layout_paragraph(&font, scale, BOX_W as u32, text_buffer);
   for glyph in &glyphs {
       cache.queue_glyph(0, glyph.clone());
   }
@@ -173,15 +210,14 @@ pub fn main() {
 
   let mut rects = vec!();
 
-  let text : String = TEXT.into();
-
   let mut text_buffer = Rope::new();
   text_buffer.insert(0, TEXT);
 
   // #### Font stuff ####
-  //let font_data = include_bytes!("../fonts/consola.ttf");
+  let font_data = include_bytes!("../fonts/consola.ttf");
+  // TODO: this consolas file does not support all unicode characters.
+  // The "msgothic.ttc" font file does, but it's not monospaced.
 
-  let font_data = include_bytes!("../fonts/msgothic.ttc");
   let collection = FontCollection::from_bytes(font_data as &[u8]).unwrap_or_else(|e| {
     panic!("error constructing a FontCollection from bytes: {}", e);
   });
@@ -247,7 +283,7 @@ pub fn main() {
 
     let scale = Scale::uniform(24.0 * dpi_ratio);
     draw_text(
-      &mut canvas, &font, &text, &text_buffer,
+      &mut canvas, &font, &text_buffer,
       tx, ty, scale,
       &mut cache, cache_width, cache_height, &mut cache_tex);
 
