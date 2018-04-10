@@ -24,7 +24,10 @@ static BOX_H : i32 = 300;
 
 static TEXT: &str = "Here is some text.\r
 
-Feel free to type stuff, and delete it with Backspace.";
+cit\u{0065}\u{0301}  <<< this tests grapheme correctness
+
+Feel free to type stuff.\r
+And delete it with Backspace.";
 
 struct LayoutAttribs {
   advance_width : f32,
@@ -146,63 +149,55 @@ fn dpi_ratio(w : &Window) -> f32 {
 */
 
 struct Caret {
-  line : usize,
   pos : usize,
   pos_remembered : usize,
 }
 
 fn step_right(c : &mut Caret, text : &Rope){
-  while {
-    let l = text.line(c.line);
-    c.pos < l.len_chars() && l.char(c.pos).is_control()
-  } {
-    c.pos += 1;
-  }
-  if c.pos < text.line(c.line).len_chars() {
-    c.pos += 1;
-  }
-  else if c.line < text.len_lines() - 1 {
-    c.line += 1;
-    c.pos = 0;
+  if c.pos < text.len_chars() {
+    c.pos = text.next_grapheme_boundary(c.pos);
   }
   c.pos_remembered = c.pos;
-}
-
-fn reverse_control_chars(c : &mut Caret, text : &Rope){
-    while {
-      let l = text.line(c.line);
-      c.pos > 0 && l.char(c.pos-1).is_control()
-    } {
-      c.pos -= 1;
-    }
 }
 
 fn step_left(c : &mut Caret, text : &Rope){
   if c.pos > 0 {
-    c.pos -= 1;
-  }
-  else if c.line > 0 {
-    c.line -= 1;
-    c.pos = text.line(c.line).len_chars();
-    reverse_control_chars(c, text);
+    c.pos = text.prev_grapheme_boundary(c.pos);
   }
   c.pos_remembered = c.pos;
 }
 
-fn step_up(c : &mut Caret, text : &Rope){
-  if c.line > 0 {
-    c.line -= 1;
-    c.pos = cmp::min(c.pos_remembered, text.line(c.line).len_chars());
-    reverse_control_chars(c, text);
+fn line_change(c : &mut Caret, text : &Rope, dir : i32){
+  let new_line = text.char_to_line(c.pos) as i32 + dir;
+  if new_line < 0 || new_line >= (text.len_lines() as i32) {
+    return;
   }
+
+  let mut line_offset_graphemes = {
+    let line_start_pos = text.line_to_char(text.char_to_line(c.pos_remembered));
+    text.slice(line_start_pos..c.pos_remembered).graphemes().count()
+  };
+
+  let line = text.line(new_line as usize);
+  let new_line_graphemes = line.graphemes().count() - 1;
+  if line_offset_graphemes > new_line_graphemes {
+    line_offset_graphemes = cmp::max(0, new_line_graphemes);
+  }
+
+  let mut pos = 0;
+  while line_offset_graphemes > 0 && pos < line.len_chars() {
+    pos = line.next_grapheme_boundary(pos);
+    line_offset_graphemes -= 1;
+  }
+  c.pos = text.line_to_char(new_line as usize) + pos;
+}
+
+fn step_up(c : &mut Caret, text : &Rope){
+  line_change(c, text, -1);
 }
 
 fn step_down(c : &mut Caret, text : &Rope){
-  if c.line < text.len_lines() - 1 {
-    c.line += 1;
-    c.pos = cmp::min(c.pos_remembered, text.line(c.line).len_chars());
-    reverse_control_chars(c, text);
-  }
+  line_change(c, text, 1);
 }
 
 pub fn main() {
@@ -263,7 +258,7 @@ pub fn main() {
   let mut cache_tex = texture_creator.create_texture(RGBA4444, Streaming, cache_width, cache_height).unwrap();
   cache_tex.set_blend_mode(BlendMode::Blend);
 
-  let mut caret = Caret {line : 0, pos : 0, pos_remembered : 0};
+  let mut caret = Caret {pos : 0, pos_remembered : 0};
 
   'mainloop: loop {
     for event in events.poll_iter() {
@@ -332,15 +327,24 @@ pub fn main() {
     let text_rectangle = Rect::new(tx, ty, rw as u32, rh as u32);
     canvas.fill_rect(text_rectangle).unwrap();
 
-    let scale = Scale::uniform(24.0 * dpi_ratio);
+    let scale = Scale::uniform(12.0 * dpi_ratio);
     let attribs = layout_attribs(&font, scale, BOX_W as f32);
 
     canvas.set_clip_rect(text_rectangle);
     canvas.set_draw_color(Color::RGBA(0, 255, 0, 255));
+    let caret_line = {
+      let l = text_buffer.char_to_line(caret.pos);
+      if l == text_buffer.len_lines() { l - 1 }
+      else { l }
+    };
+    let caret_offset = {
+      let line_start_pos = text_buffer.line_to_char(text_buffer.char_to_line(caret.pos));
+      text_buffer.slice(line_start_pos..caret.pos).graphemes().count()
+    };
     let cursor_rect =
       Rect::new(
-        tx + (caret.pos as f32 * attribs.advance_width) as i32,
-        ty + (caret.line as f32 * attribs.advance_height) as i32,
+        tx + (caret_offset as f32 * attribs.advance_width) as i32,
+        ty + (caret_line as f32 * attribs.advance_height) as i32,
         2,
         (attribs.v_metrics.ascent - attribs.v_metrics.descent) as u32);
     canvas.fill_rect(cursor_rect).unwrap();
