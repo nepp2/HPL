@@ -2,7 +2,6 @@ extern crate sdl2;
 extern crate rusttype;
 extern crate unicode_normalization;
 extern crate ropey;
-extern crate unicode_segmentation;
 
 use sdl2::event::Event;
 use sdl2::event::WindowEvent;
@@ -14,10 +13,9 @@ use std::time::Duration;
 use sdl2::pixels::PixelFormatEnum::{RGBA4444};
 use sdl2::render::{TextureAccess::Streaming, Texture, BlendMode};
 use sdl2::video::{Window};
-use rusttype::{point, Point, Font, FontCollection, PositionedGlyph, Scale, VMetrics};
+use rusttype::{point, Font, FontCollection, PositionedGlyph, Scale, VMetrics};
 use rusttype::gpu_cache::{CacheBuilder, Cache};
 use ropey::Rope;
-use unicode_segmentation::UnicodeSegmentation;
 
 type Canvas = sdl2::render::Canvas<sdl2::video::Window>;
 
