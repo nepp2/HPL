@@ -2,6 +2,7 @@ extern crate sdl2;
 extern crate rusttype;
 extern crate unicode_normalization;
 extern crate ropey;
+extern crate unicode_segmentation;
 
 use sdl2::event::Event;
 use sdl2::event::WindowEvent;
@@ -16,6 +17,7 @@ use sdl2::video::{Window};
 use rusttype::{point, Point, Font, FontCollection, PositionedGlyph, Scale, VMetrics};
 use rusttype::gpu_cache::{CacheBuilder, Cache};
 use ropey::Rope;
+use unicode_segmentation::UnicodeSegmentation;
 
 type Canvas = sdl2::render::Canvas<sdl2::video::Window>;
 
@@ -148,6 +150,8 @@ fn dpi_ratio(w : &Window) -> f32 {
 
 */
 
+// TODO: Pos might sometimes be changed in terms of graphemes instead
+// codepoints. Not sure.
 struct Caret {
   pos : usize,
   pos_remembered : usize,
@@ -167,14 +171,20 @@ fn step_left(c : &mut Caret, text : &Rope){
   c.pos_remembered = c.pos;
 }
 
+fn char_to_line(text : &Rope, pos : usize) -> usize {
+  let l = text.char_to_line(pos);
+  if l == text.len_lines() { l - 1 }
+  else { l }
+}
+
 fn line_change(c : &mut Caret, text : &Rope, dir : i32){
-  let new_line = text.char_to_line(c.pos) as i32 + dir;
+  let new_line = char_to_line(text, c.pos) as i32 + dir;
   if new_line < 0 || new_line >= (text.len_lines() as i32) {
     return;
   }
 
   let mut line_offset_graphemes = {
-    let line_start_pos = text.line_to_char(text.char_to_line(c.pos_remembered));
+    let line_start_pos = text.line_to_char(char_to_line(text, c.pos_remembered));
     text.slice(line_start_pos..c.pos_remembered).graphemes().count()
   };
 
@@ -198,6 +208,18 @@ fn step_up(c : &mut Caret, text : &Rope){
 
 fn step_down(c : &mut Caret, text : &Rope){
   line_change(c, text, 1);
+}
+
+fn insert_text(caret : &mut Caret, text_buffer : &mut Rope, text : &str){
+  text_buffer.insert(caret.pos, text);
+  caret.pos += text.len();
+}
+
+fn backspace_text(caret : &mut Caret, text_buffer : &mut Rope){
+  if caret.pos == 0 { return; }
+  let start = text_buffer.prev_grapheme_boundary(caret.pos);
+  text_buffer.remove(start..caret.pos);
+  caret.pos = start;
 }
 
 pub fn main() {
@@ -226,6 +248,8 @@ pub fn main() {
 
   let mut xd = 0;
   let mut yd = 0;
+
+  let mut font_scale = 12.0;
 
   let mut rects = vec!();
 
@@ -280,13 +304,19 @@ pub fn main() {
             Keycode::Down => {
               step_down(&mut caret, &text_buffer);
             }
+            Keycode::Backspace => {
+              font_scale += 0.1;
+              backspace_text(&mut caret, &mut text_buffer);
+            }
             _ => {
             }
           }
         },
         Event::TextInput { text, .. } => {
-          println!("{}", text);
-          //text_buffer.line(caret.line).start_char + caret.pos;
+          insert_text(&mut caret, &mut text_buffer, &text);
+        },
+        Event::TextEditing { text, .. } => {
+          insert_text(&mut caret, &mut text_buffer, &text);
         },
         Event::MouseButtonUp {x, y, ..} => {
           let xp = cmp::min(x, xd);
@@ -327,18 +357,14 @@ pub fn main() {
     let text_rectangle = Rect::new(tx, ty, rw as u32, rh as u32);
     canvas.fill_rect(text_rectangle).unwrap();
 
-    let scale = Scale::uniform(12.0 * dpi_ratio);
+    let scale = Scale::uniform(font_scale * dpi_ratio);
     let attribs = layout_attribs(&font, scale, BOX_W as f32);
 
     canvas.set_clip_rect(text_rectangle);
     canvas.set_draw_color(Color::RGBA(0, 255, 0, 255));
-    let caret_line = {
-      let l = text_buffer.char_to_line(caret.pos);
-      if l == text_buffer.len_lines() { l - 1 }
-      else { l }
-    };
+    let caret_line = char_to_line(&text_buffer, caret.pos);
     let caret_offset = {
-      let line_start_pos = text_buffer.line_to_char(text_buffer.char_to_line(caret.pos));
+      let line_start_pos = text_buffer.line_to_char(caret_line);
       text_buffer.slice(line_start_pos..caret.pos).graphemes().count()
     };
     let cursor_rect =
