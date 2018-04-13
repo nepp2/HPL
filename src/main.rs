@@ -153,6 +153,12 @@ fn dpi_ratio(w : &Window) -> f32 {
 struct Caret {
   pos : usize,
   pos_remembered : usize,
+  mode : CaretMode,
+}
+
+enum CaretMode {
+  Insert,
+  Highlight {marker : usize},
 }
 
 fn step_right(c : &mut Caret, text : &Rope){
@@ -169,6 +175,13 @@ fn step_left(c : &mut Caret, text : &Rope){
   c.pos_remembered = c.pos;
 }
 
+/*
+  This is basically a replacement for the "char_to_line" function
+  which behaves in a more convenient way for me. The default function
+  will imagine a newline at the end of the rope, even when there is no
+  newline character. This function very crudely corrects that, but
+  should also be treated as suspicious and possibly broken.
+*/
 fn char_to_line(text : &Rope, pos : usize) -> usize {
   let l = text.char_to_line(pos);
   if l == text.len_lines() { l - 1 }
@@ -280,7 +293,9 @@ pub fn main() {
   let mut cache_tex = texture_creator.create_texture(RGBA4444, Streaming, cache_width, cache_height).unwrap();
   cache_tex.set_blend_mode(BlendMode::Blend);
 
-  let mut caret = Caret {pos : 0, pos_remembered : 0};
+  let mut caret = Caret {pos : 0, pos_remembered : 0, mode : CaretMode::Insert};
+
+  let mut highlighting = false;
 
   'mainloop: loop {
     for event in events.poll_iter() {
@@ -305,6 +320,9 @@ pub fn main() {
             Keycode::Backspace => {
               font_scale += 0.1;
               backspace_text(&mut caret, &mut text_buffer);
+            }
+            Keycode::LShift | Keycode::RShift => {
+              caret.mode = CaretMode::Highlight{ marker: caret.pos };
             }
             _ => {
             }
