@@ -5,7 +5,7 @@ extern crate ropey;
 
 use sdl2::event::Event;
 use sdl2::event::WindowEvent;
-use sdl2::keyboard::Keycode;
+use sdl2::keyboard::{Keycode, Scancode};
 use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 use std::cmp;
@@ -153,12 +153,7 @@ fn dpi_ratio(w : &Window) -> f32 {
 struct Caret {
   pos : usize,
   pos_remembered : usize,
-  mode : CaretMode,
-}
-
-enum CaretMode {
-  Insert,
-  Highlight {marker : usize},
+  marker : Option<usize>,
 }
 
 fn step_right(c : &mut Caret, text : &Rope){
@@ -293,11 +288,24 @@ pub fn main() {
   let mut cache_tex = texture_creator.create_texture(RGBA4444, Streaming, cache_width, cache_height).unwrap();
   cache_tex.set_blend_mode(BlendMode::Blend);
 
-  let mut caret = Caret {pos : 0, pos_remembered : 0, mode : CaretMode::Insert};
+  let mut caret = Caret {pos : 0, pos_remembered : 0, marker : None };
 
-  let mut highlighting = false;
+  // TODO this boolean flag is too simplistic to handle the various ways of highlighting properly
 
   'mainloop: loop {
+
+    let shift_down = {
+      let keyboard = events.keyboard_state();
+      keyboard.is_scancode_pressed(Scancode::from_keycode(Keycode::LShift).unwrap())
+      || keyboard.is_scancode_pressed(Scancode::from_keycode(Keycode::RShift).unwrap())
+    };
+
+    if shift_down && caret.marker.is_none() {
+      caret.marker = Some(caret.pos);
+    }
+
+    // TODO events.mouse_state();
+
     for event in events.poll_iter() {
       match event {
         Event::Quit{..} |
@@ -322,12 +330,15 @@ pub fn main() {
               backspace_text(&mut caret, &mut text_buffer);
             }
             Keycode::LShift | Keycode::RShift => {
-              caret.mode = CaretMode::Highlight{ marker: caret.pos };
+              if caret.marker.is_none() {
+                caret.marker = Some(caret.pos);
+              }
             }
             _ => {
             }
           }
         },
+
         Event::TextInput { text, .. } => {
           insert_text(&mut caret, &mut text_buffer, &text);
         },
@@ -371,25 +382,35 @@ pub fn main() {
     let tx = (width/2) as i32 - (rw/2);
     let ty = (height/2) as i32 - (rh/2);
     let text_rectangle = Rect::new(tx, ty, rw as u32, rh as u32);
-    canvas.fill_rect(text_rectangle).unwrap();
+
+    canvas.set_viewport(text_rectangle);
+
+    
+    canvas.fill_rect(Rect::new(0, 0, rw as u32, rh as u32)).unwrap();
+    canvas.set_viewport(None);
 
     let scale = Scale::uniform(font_scale * dpi_ratio);
     let attribs = layout_attribs(&font, scale, BOX_W as f32);
 
     canvas.set_clip_rect(text_rectangle);
     canvas.set_draw_color(Color::RGBA(0, 255, 0, 255));
-    let caret_line = char_to_line(&text_buffer, caret.pos);
-    let caret_offset = {
-      let line_start_pos = text_buffer.line_to_char(caret_line);
-      text_buffer.slice(line_start_pos..caret.pos).graphemes().count()
-    };
-    let cursor_rect =
-      Rect::new(
-        tx + (caret_offset as f32 * attribs.advance_width) as i32,
-        ty + (caret_line as f32 * attribs.advance_height) as i32,
-        2,
-        (attribs.v_metrics.ascent - attribs.v_metrics.descent) as u32);
-    canvas.fill_rect(cursor_rect).unwrap();
+
+    /*
+    fn draw_caret(canvas : &mut Canvas, caret : &Caret, text_buffer : &Rope, attribs : &LayoutAttribs){
+      let caret_line = char_to_line(&text_buffer, caret.pos);
+      let caret_offset = {
+        let line_start_pos = text_buffer.line_to_char(caret_line);
+        text_buffer.slice(line_start_pos..caret.pos).graphemes().count()
+      };
+      let cursor_rect =
+        Rect::new(
+          tx + (caret_offset as f32 * attribs.advance_width) as i32,
+          ty + (caret_line as f32 * attribs.advance_height) as i32,
+          2,
+          (attribs.v_metrics.ascent - attribs.v_metrics.descent) as u32);
+      canvas.fill_rect(cursor_rect).unwrap();
+    }
+    */
     
     draw_text(
       &mut canvas, &font, &text_buffer,
