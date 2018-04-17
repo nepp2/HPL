@@ -64,7 +64,7 @@ fn layout_paragraph<'a>(
     let mut caret = point(0.0, attribs.v_metrics.ascent);
 
     for l in text_buffer.lines() {
-      // TODO: is nfc() necessary here?
+      // TODO: I'm not convinced that this handles multi-codepoint glyphs properly. Maybe the nfc function does.
       for c in l.chars().nfc() {
         if c.is_control() {
           continue;
@@ -81,8 +81,7 @@ fn layout_paragraph<'a>(
 
 // TODO: this takes way too many paramters, so there should probably be some structs or something
 fn draw_text<'l>(
-  canvas : &mut Canvas, font : &'l Font, text_buffer : &Rope,
-  x : i32, y : i32, attribs : &LayoutAttribs,
+  canvas : &mut Canvas, font : &'l Font, text_buffer : &Rope, attribs : &LayoutAttribs,
   cache : &mut Cache<'l>, cache_width : u32, cache_height : u32, cache_tex : &mut Texture)
 {
   let glyphs = layout_paragraph(&font, attribs, text_buffer);
@@ -101,9 +100,9 @@ fn draw_text<'l>(
         // TODO: this may be very inefficient. Not sure.
         cache_tex.with_lock(Some(r), |target, pitch|{
           let (w, h) = (r.width() as usize, r.height() as usize);
-          for y in 0..(h-1) {
+          for y in 0..h {
             let off = y * pitch;
-            for x in 0..(w-1) {
+            for x in 0..w {
               let off = off + (x * 2);
               let v = data[w * y + x] >> 4;
               target[off] = 0x00 | v; // Blue, Alpha
@@ -118,8 +117,8 @@ fn draw_text<'l>(
   for g in glyphs.iter() {
     if let Ok(Some((uv_rect, offset_rect))) = cache.rect_for(0, g) {
         let screen_rect = Rect::new(
-          x + offset_rect.min.x,
-          y + offset_rect.min.y,
+          offset_rect.min.x,
+          offset_rect.min.y,
           offset_rect.width() as u32,
           offset_rect.height() as u32);
         let source_rect = Rect::new(
@@ -228,6 +227,55 @@ fn backspace_text(caret : &mut Caret, text_buffer : &mut Rope){
   caret.pos = start;
 }
 
+struct GraphemePos { line : usize, offset : usize }
+
+fn grapheme_pos(text_buffer : &Rope, char_pos : usize) -> GraphemePos {
+  let line = char_to_line(text_buffer, char_pos);
+  let line_start_pos = text_buffer.line_to_char(line);
+  let offset = text_buffer.slice(line_start_pos..char_pos).graphemes().count();
+  GraphemePos{ offset, line }
+}
+
+fn draw_highlight(canvas : &mut Canvas, pos_a : usize, pos_b : usize, text_buffer : &Rope, attribs : &LayoutAttribs) {
+  let (pos_a, pos_b) = {
+    let a = cmp::min(pos_a, pos_b);
+    let b = cmp::max(pos_a, pos_b);
+    (a, b)
+  };
+  let ga = grapheme_pos(text_buffer, pos_a);
+  let gb = grapheme_pos(text_buffer, pos_b);
+  fn highlight_rect(offset_a : usize, offset_b : usize, line : usize, attribs : &LayoutAttribs) -> Rect {
+    let start = (offset_a as f32 * attribs.advance_width) as i32;
+    let end = (offset_b as f32 * attribs.advance_width) as i32;
+    Rect::new(
+      start,
+      (line as f32 * attribs.advance_height) as i32,
+      (end - start) as u32,
+      (attribs.v_metrics.ascent - attribs.v_metrics.descent) as u32)
+  }
+  if ga.line == gb.line {
+    canvas.fill_rect(highlight_rect(ga.offset, gb.offset, ga.line, attribs)).unwrap();
+  }
+  else{
+    canvas.fill_rect(highlight_rect(ga.offset, line_end(ga.line), ga.line, attribs)).unwrap();
+    for line in (ga.line+1)..gb.line {
+      canvas.fill_rect(highlight_rect(0, line_end(line), line, attribs)).unwrap();
+    }
+    canvas.fill_rect(highlight_rect(0, gb.offset, gb.line, attribs)).unwrap();
+  }
+}
+
+fn draw_caret(canvas : &mut Canvas, char_pos : usize, text_buffer : &Rope, attribs : &LayoutAttribs){
+  let pos = grapheme_pos(text_buffer, char_pos);
+  let cursor_rect =
+    Rect::new(
+      (pos.offset as f32 * attribs.advance_width) as i32,
+      (pos.line as f32 * attribs.advance_height) as i32,
+      2,
+      (attribs.v_metrics.ascent - attribs.v_metrics.descent) as u32);
+  canvas.fill_rect(cursor_rect).unwrap();
+}
+
 pub fn main() {
 
 	let (mut width, mut height) = (800, 600);
@@ -300,11 +348,17 @@ pub fn main() {
       || keyboard.is_scancode_pressed(Scancode::from_keycode(Keycode::RShift).unwrap())
     };
 
-    if shift_down && caret.marker.is_none() {
+    if caret.marker.is_none() && shift_down {
       caret.marker = Some(caret.pos);
     }
 
     // TODO events.mouse_state();
+
+    fn caret_changed(caret : &mut Caret, shift_down : bool){
+      if !shift_down{
+        caret.marker = None;
+      }
+    }
 
     for event in events.poll_iter() {
       match event {
@@ -315,19 +369,24 @@ pub fn main() {
           match k {
             Keycode::Left => {
               step_left(&mut caret, &text_buffer);
+              caret_changed(&mut caret, shift_down);
             }
             Keycode::Right => {
               step_right(&mut caret, &text_buffer);
+              caret_changed(&mut caret, shift_down);
             }
             Keycode::Up => {
               step_up(&mut caret, &text_buffer);
+              caret_changed(&mut caret, shift_down);
             }
             Keycode::Down => {
               step_down(&mut caret, &text_buffer);
+              caret_changed(&mut caret, shift_down);
             }
             Keycode::Backspace => {
               font_scale += 0.1;
               backspace_text(&mut caret, &mut text_buffer);
+              caret_changed(&mut caret, shift_down);
             }
             Keycode::LShift | Keycode::RShift => {
               if caret.marker.is_none() {
@@ -383,41 +442,30 @@ pub fn main() {
     let ty = (height/2) as i32 - (rh/2);
     let text_rectangle = Rect::new(tx, ty, rw as u32, rh as u32);
 
-    canvas.set_viewport(text_rectangle);
+    {
+      canvas.set_clip_rect(text_rectangle);
+      canvas.set_viewport(text_rectangle);
 
-    
-    canvas.fill_rect(Rect::new(0, 0, rw as u32, rh as u32)).unwrap();
-    canvas.set_viewport(None);
+      canvas.fill_rect(Rect::new(0, 0, rw as u32, rh as u32)).unwrap();
 
-    let scale = Scale::uniform(font_scale * dpi_ratio);
-    let attribs = layout_attribs(&font, scale, BOX_W as f32);
+      let scale = Scale::uniform(font_scale * dpi_ratio);
+      let attribs = layout_attribs(&font, scale, BOX_W as f32);
 
-    canvas.set_clip_rect(text_rectangle);
-    canvas.set_draw_color(Color::RGBA(0, 255, 0, 255));
+      canvas.set_draw_color(Color::RGBA(0, 255, 0, 255));
+      if let Some(marker) = caret.marker {
+        draw_highlight(&mut canvas, caret.pos, marker, &text_buffer, &attribs);
+      }
+      else {
+        draw_caret(&mut canvas, caret.pos, &text_buffer, &attribs);
+      }
 
-    /*
-    fn draw_caret(canvas : &mut Canvas, caret : &Caret, text_buffer : &Rope, attribs : &LayoutAttribs){
-      let caret_line = char_to_line(&text_buffer, caret.pos);
-      let caret_offset = {
-        let line_start_pos = text_buffer.line_to_char(caret_line);
-        text_buffer.slice(line_start_pos..caret.pos).graphemes().count()
-      };
-      let cursor_rect =
-        Rect::new(
-          tx + (caret_offset as f32 * attribs.advance_width) as i32,
-          ty + (caret_line as f32 * attribs.advance_height) as i32,
-          2,
-          (attribs.v_metrics.ascent - attribs.v_metrics.descent) as u32);
-      canvas.fill_rect(cursor_rect).unwrap();
+      draw_text(
+        &mut canvas, &font, &text_buffer, &attribs,
+        &mut cache, cache_width, cache_height, &mut cache_tex);
+
+      canvas.set_clip_rect(None);
+      canvas.set_viewport(None);
     }
-    */
-    
-    draw_text(
-      &mut canvas, &font, &text_buffer,
-      tx, ty, &attribs,
-      &mut cache, cache_width, cache_height, &mut cache_tex);
-    canvas.set_clip_rect(None);
-
     canvas.present();
 	}
 }
