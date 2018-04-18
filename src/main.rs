@@ -2,20 +2,23 @@ extern crate sdl2;
 extern crate rusttype;
 extern crate unicode_normalization;
 extern crate ropey;
+extern crate clipboard;
 
 use sdl2::event::Event;
 use sdl2::event::WindowEvent;
-use sdl2::keyboard::{Keycode, Scancode};
+use sdl2::keyboard::{Keycode, Scancode, KeyboardState};
 use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 use std::cmp;
 use std::time::Duration;
+use std::collections::VecDeque;
 use sdl2::pixels::PixelFormatEnum::{RGBA4444};
 use sdl2::render::{TextureAccess::Streaming, Texture, BlendMode};
 use sdl2::video::{Window};
 use rusttype::{point, Font, FontCollection, PositionedGlyph, Scale, VMetrics};
 use rusttype::gpu_cache::{CacheBuilder, Cache};
 use ropey::Rope;
+use clipboard::{ClipboardProvider, ClipboardContext};
 
 type Canvas = sdl2::render::Canvas<sdl2::video::Window>;
 
@@ -149,6 +152,7 @@ fn dpi_ratio(w : &Window) -> f32 {
 
 // TODO: Pos might sometimes be changed in terms of graphemes instead
 // codepoints. Not sure.
+#[derive(Copy, Clone)]
 struct Caret {
   pos : usize,
   pos_remembered : usize,
@@ -215,16 +219,50 @@ fn step_down(c : &mut Caret, text : &Rope){
   line_change(c, text, 1);
 }
 
+fn remove_highlighted_text(caret : &mut Caret, text_buffer : &mut Rope){
+  let marker = caret.marker.unwrap();
+  let pos_a = cmp::min(caret.pos, marker);
+  let pos_b = cmp::max(caret.pos, marker);
+  text_buffer.remove(pos_a..pos_b);
+  caret.pos = pos_a;
+  caret.marker = None;
+}
+
+fn copy_text(caret : &Caret, text_buffer : &Rope){
+  if let Some(marker) = caret.marker {
+    let pos_a = cmp::min(caret.pos, marker);
+    let pos_b = cmp::max(caret.pos, marker);
+    let s = text_buffer.slice(pos_a..pos_b).to_string();
+    let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
+    ctx.set_contents(s).unwrap();
+  }
+}
+
+fn paste_text(caret : &mut Caret, text_buffer : &mut Rope){
+  let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
+  if let Ok(s) = ctx.get_contents() {
+    insert_text(caret, text_buffer, &s);
+  }
+}
+
 fn insert_text(caret : &mut Caret, text_buffer : &mut Rope, text : &str){
+  if caret.marker.is_some() {
+    remove_highlighted_text(caret, text_buffer);
+  }
   text_buffer.insert(caret.pos, text);
-  caret.pos += text.len();
+  caret.pos += text.chars().count();
 }
 
 fn backspace_text(caret : &mut Caret, text_buffer : &mut Rope){
-  if caret.pos == 0 { return; }
-  let start = text_buffer.prev_grapheme_boundary(caret.pos);
-  text_buffer.remove(start..caret.pos);
-  caret.pos = start;
+  if caret.marker.is_some() {
+    remove_highlighted_text(caret, text_buffer);
+  }
+  else {
+    if caret.pos == 0 { return; }
+    let start = text_buffer.prev_grapheme_boundary(caret.pos);
+    text_buffer.remove(start..caret.pos);
+    caret.pos = start;
+  }
 }
 
 struct GraphemePos { line : usize, offset : usize }
@@ -234,6 +272,29 @@ fn grapheme_pos(text_buffer : &Rope, char_pos : usize) -> GraphemePos {
   let line_start_pos = text_buffer.line_to_char(line);
   let offset = text_buffer.slice(line_start_pos..char_pos).graphemes().count();
   GraphemePos{ offset, line }
+}
+
+/// indicates how many chars are in the line before control characters like \n or \r
+fn count_line_chars(text_buffer : &Rope, line : usize) -> usize {
+  let l = text_buffer.line(line);
+  let mut end = l.len_chars();
+  loop {
+    if end <= 0 { return 0; }
+    let prev = l.prev_grapheme_boundary(end);
+    if l.char(prev).is_control() {
+      end = prev;
+    }
+    else {
+      return end;
+    }
+  }
+}
+
+/// count the graphemes in a line before new line characters
+fn count_line_graphemes(text_buffer : &Rope, line : usize) -> usize {
+  let num_line_chars = count_line_chars(text_buffer, line);
+  let line_start_pos = text_buffer.line_to_char(line);
+  text_buffer.slice(line_start_pos..(line_start_pos+num_line_chars)).graphemes().count()
 }
 
 fn draw_highlight(canvas : &mut Canvas, pos_a : usize, pos_b : usize, text_buffer : &Rope, attribs : &LayoutAttribs) {
@@ -257,9 +318,11 @@ fn draw_highlight(canvas : &mut Canvas, pos_a : usize, pos_b : usize, text_buffe
     canvas.fill_rect(highlight_rect(ga.offset, gb.offset, ga.line, attribs)).unwrap();
   }
   else{
-    canvas.fill_rect(highlight_rect(ga.offset, line_end(ga.line), ga.line, attribs)).unwrap();
-    for line in (ga.line+1)..gb.line {
-      canvas.fill_rect(highlight_rect(0, line_end(line), line, attribs)).unwrap();
+    canvas.fill_rect(highlight_rect(ga.offset, count_line_graphemes(text_buffer, ga.line), ga.line, attribs)).unwrap();
+    if (gb.line - ga.line) > 1 {
+      for line in (ga.line+1)..gb.line {
+        canvas.fill_rect(highlight_rect(0, count_line_graphemes(text_buffer, line), line, attribs)).unwrap();
+      }
     }
     canvas.fill_rect(highlight_rect(0, gb.offset, gb.line, attribs)).unwrap();
   }
@@ -274,6 +337,51 @@ fn draw_caret(canvas : &mut Canvas, char_pos : usize, text_buffer : &Rope, attri
       2,
       (attribs.v_metrics.ascent - attribs.v_metrics.descent) as u32);
   canvas.fill_rect(cursor_rect).unwrap();
+}
+
+struct Action {
+  caret : Caret,
+  buffer : String,
+}
+
+struct ActionBuffer {
+  undo_buffer : VecDeque<Action>,
+  redo_buffer : VecDeque<Action>,
+  history_length : usize,
+}
+
+impl ActionBuffer {
+  fn add(&mut self, text : &mut Rope, caret : &Caret) {
+    let a = Action { caret: (*caret).clone(), buffer: text.to_string() };
+    self.undo_buffer.push_front(a);
+    self.redo_buffer.clear();
+    // clear excess values
+    while self.undo_buffer.len() > self.history_length {
+      self.undo_buffer.pop_back();
+    }
+  }
+
+  fn undo(&mut self, text : &mut Rope, caret : &mut Caret){
+    if let Some(undo_action) = self.undo_buffer.pop_front() {
+      let redo_action = Action { caret: (*caret).clone(), buffer: text.to_string() };
+      self.redo_buffer.push_front(redo_action);
+      let len = text.len_chars();
+      text.remove(0..len);
+      text.insert(0, &undo_action.buffer);
+      *caret = undo_action.caret;
+    }
+  }
+
+  fn redo(&mut self, text : &mut Rope, caret : &mut Caret){
+    if let Some(redo_action) = self.redo_buffer.pop_front() {
+      let undo_action = Action { caret: (*caret).clone(), buffer: text.to_string() };
+      self.undo_buffer.push_front(undo_action);
+      let len = text.len_chars();
+      text.remove(0..len);
+      text.insert(0, &redo_action.buffer);
+      *caret = redo_action.caret;
+    }
+  }
 }
 
 pub fn main() {
@@ -342,10 +450,14 @@ pub fn main() {
 
   'mainloop: loop {
 
-    let shift_down = {
+    let (shift_down, ctrl_down) = {
+      fn is_pressed(keyboard : &KeyboardState, key : Keycode) -> bool {
+        keyboard.is_scancode_pressed(Scancode::from_keycode(key).unwrap())
+      }
       let keyboard = events.keyboard_state();
-      keyboard.is_scancode_pressed(Scancode::from_keycode(Keycode::LShift).unwrap())
-      || keyboard.is_scancode_pressed(Scancode::from_keycode(Keycode::RShift).unwrap())
+      let sd = is_pressed(&keyboard, Keycode::LShift) || is_pressed(&keyboard, Keycode::RShift);
+      let cd = is_pressed(&keyboard, Keycode::LCtrl) || is_pressed(&keyboard, Keycode::RCtrl);
+      (sd, cd)
     };
 
     if caret.marker.is_none() && shift_down {
@@ -386,11 +498,30 @@ pub fn main() {
             Keycode::Backspace => {
               font_scale += 0.1;
               backspace_text(&mut caret, &mut text_buffer);
-              caret_changed(&mut caret, shift_down);
             }
             Keycode::LShift | Keycode::RShift => {
               if caret.marker.is_none() {
                 caret.marker = Some(caret.pos);
+              }
+            }
+            Keycode::C => {
+              if ctrl_down {
+                copy_text(&caret, &text_buffer);
+              }
+            }
+            Keycode::V => {
+              if ctrl_down {
+                paste_text(&mut caret, &mut text_buffer);
+              }
+            }
+            Keycode::Z => {
+              if ctrl_down {
+                // TODO: undo
+              }
+            }
+            Keycode::Y => {
+              if ctrl_down {
+                // TODO: redo
               }
             }
             _ => {
