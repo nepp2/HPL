@@ -20,6 +20,16 @@ use rusttype::gpu_cache::{CacheBuilder, Cache};
 use ropey::Rope;
 use clipboard::{ClipboardProvider, ClipboardContext};
 
+/*
+
+TODO:
+
+I have not properly understood the distiction between byte, character and grapheme in
+the Ropey library. As a result I have been programming quite defensively. I might
+be able to simplify some of the code if I look this up. There might be bugs too...
+
+*/
+
 type Canvas = sdl2::render::Canvas<sdl2::video::Window>;
 
 static BOX_W : i32 = 400;
@@ -140,37 +150,47 @@ fn dpi_ratio(w : &Window) -> f32 {
   (w as f32) / (dw as f32)
 }
 
-/*
-
-- Receive some keyboard events
-- Move a caret around
-  - How is the caret's position represented?
-    - Absolute index in text?
-    - Line number and offset?
-
-*/
-
 // TODO: Pos might sometimes be changed in terms of graphemes instead
 // codepoints. Not sure.
 #[derive(Copy, Clone)]
 struct Caret {
   pos : usize,
-  pos_remembered : usize,
+  // maintains consistency for vertical motion of the caret
+  preferred_column : usize,
+  // tracks highlighting
   marker : Option<usize>,
 }
 
-fn step_right(c : &mut Caret, text : &Rope){
-  if c.pos < text.len_chars() {
-    c.pos = text.next_grapheme_boundary(c.pos);
+fn step_right(caret : &mut Caret, text : &Rope, shift_down : bool){
+  if let Some(m) = caret.marker {
+    if !shift_down {
+      // dehighlight and jump to the right of the highlighted region
+      caret.marker = None;
+      caret.pos = cmp::max(m, caret.pos);
+      return;
+    }
   }
-  c.pos_remembered = c.pos;
+  // else, move the caret right
+  if caret.pos < text.len_chars() {
+    caret.pos = text.next_grapheme_boundary(caret.pos);
+  }
+  caret.preferred_column = caret.pos;
 }
 
-fn step_left(c : &mut Caret, text : &Rope){
-  if c.pos > 0 {
-    c.pos = text.prev_grapheme_boundary(c.pos);
+fn step_left(caret : &mut Caret, text : &Rope, shift_down : bool){
+  if let Some(m) = caret.marker {
+    if !shift_down {
+      // dehighlight and jump to the left of the highlighted region
+      caret.marker = None;
+      caret.pos = cmp::min(m, caret.pos);
+      return;
+    }
   }
-  c.pos_remembered = c.pos;
+  // else, move the caret left
+  if caret.pos > 0 {
+    caret.pos = text.prev_grapheme_boundary(caret.pos);
+  }
+  caret.preferred_column = caret.pos;
 }
 
 /*
@@ -186,15 +206,15 @@ fn char_to_line(text : &Rope, pos : usize) -> usize {
   else { l }
 }
 
-fn line_change(c : &mut Caret, text : &Rope, dir : i32){
-  let new_line = char_to_line(text, c.pos) as i32 + dir;
+fn line_change(caret : &mut Caret, text : &Rope, dir : i32){
+  let new_line = char_to_line(text, caret.pos) as i32 + dir;
   if new_line < 0 || new_line >= (text.len_lines() as i32) {
     return;
   }
 
   let mut line_offset_graphemes = {
-    let line_start_pos = text.line_to_char(char_to_line(text, c.pos_remembered));
-    text.slice(line_start_pos..c.pos_remembered).graphemes().count()
+    let line_start_pos = text.line_to_char(char_to_line(text, caret.preferred_column));
+    text.slice(line_start_pos..caret.preferred_column).graphemes().count()
   };
 
   let line = text.line(new_line as usize);
@@ -208,15 +228,21 @@ fn line_change(c : &mut Caret, text : &Rope, dir : i32){
     pos = line.next_grapheme_boundary(pos);
     line_offset_graphemes -= 1;
   }
-  c.pos = text.line_to_char(new_line as usize) + pos;
+  caret.pos = text.line_to_char(new_line as usize) + pos;
 }
 
-fn step_up(c : &mut Caret, text : &Rope){
-  line_change(c, text, -1);
+fn step_up(caret : &mut Caret, text : &Rope, shift_down : bool){
+  if !shift_down {
+    caret.marker = None;
+  }
+  line_change(caret, text, -1);
 }
 
-fn step_down(c : &mut Caret, text : &Rope){
-  line_change(c, text, 1);
+fn step_down(caret : &mut Caret, text : &Rope, shift_down : bool){
+  if !shift_down {
+    caret.marker = None;
+  }
+  line_change(caret, text, 1);
 }
 
 fn remove_highlighted_text(caret : &mut Caret, text_buffer : &mut Rope){
@@ -344,6 +370,66 @@ struct Action {
   buffer : String,
 }
 
+fn modify_text(editor_state : &mut TextEditorState, text_edit : TextEdit) {
+  insert_text(&mut editor_state.caret, &mut editor_state.current_state, &text_edit.text);
+  editor_state.edit_history.push(text_edit);
+}
+
+fn move_caret(editor_state : &mut TextEditorState, caret_move : CaretMove) {
+
+}
+
+fn process_action(editor_state : &mut TextEditorState, action : EditAction) {
+  match action {
+    EditAction::ModifyText(text_edit) => {
+      modify_text(editor_state, text_edit);
+    }
+    EditAction::MoveCaret(caret_move) => {
+      move_caret(editor_state, caret_move);
+    }
+    EditAction::Undo => {
+
+    }
+    EditAction::Redo => {
+
+    }
+  }
+}
+
+struct TextEditorState {
+  initial_state : Rope,
+  current_state : Rope,
+  caret : Caret,
+  edit_history : Vec<TextEdit>,
+  redo_buffer : Vec<TextEdit>,
+}
+
+enum EditAction {
+  ModifyText(TextEdit),
+  MoveCaret(CaretMove),
+  Undo,
+  Redo,
+}
+
+struct CaretMove {
+  highlighting : bool,
+  move_type : CaretMoveType,
+}
+
+enum CaretMoveType {
+  Left, Right, Up, Down
+}
+
+struct TextEdit {
+  caret_before : Caret,
+  text : String,
+  edit_type : EditType,
+}
+
+enum EditType {
+  Insert, Remove
+}
+
 struct ActionBuffer {
   undo_buffer : VecDeque<Action>,
   redo_buffer : VecDeque<Action>,
@@ -351,8 +437,12 @@ struct ActionBuffer {
 }
 
 impl ActionBuffer {
-  fn add(&mut self, text : &mut Rope, caret : &Caret) {
-    let a = Action { caret: (*caret).clone(), buffer: text.to_string() };
+  fn new(history_length : usize) -> ActionBuffer {
+    ActionBuffer { undo_buffer: VecDeque::new(), redo_buffer: VecDeque::new(), history_length }
+  }
+
+  fn add(&mut self, text_buffer : &mut Rope, caret : &Caret) {
+    let a = Action { caret: (*caret).clone(), buffer: text_buffer.to_string() };
     self.undo_buffer.push_front(a);
     self.redo_buffer.clear();
     // clear excess values
@@ -361,24 +451,24 @@ impl ActionBuffer {
     }
   }
 
-  fn undo(&mut self, text : &mut Rope, caret : &mut Caret){
+  fn undo(&mut self, text_buffer : &mut Rope, caret : &mut Caret){
     if let Some(undo_action) = self.undo_buffer.pop_front() {
-      let redo_action = Action { caret: (*caret).clone(), buffer: text.to_string() };
+      let redo_action = Action { caret: (*caret).clone(), buffer: text_buffer.to_string() };
       self.redo_buffer.push_front(redo_action);
-      let len = text.len_chars();
-      text.remove(0..len);
-      text.insert(0, &undo_action.buffer);
+      let len = text_buffer.len_chars();
+      text_buffer.remove(0..len);
+      text_buffer.insert(0, &undo_action.buffer);
       *caret = undo_action.caret;
     }
   }
 
-  fn redo(&mut self, text : &mut Rope, caret : &mut Caret){
+  fn redo(&mut self, text_buffer : &mut Rope, caret : &mut Caret){
     if let Some(redo_action) = self.redo_buffer.pop_front() {
-      let undo_action = Action { caret: (*caret).clone(), buffer: text.to_string() };
+      let undo_action = Action { caret: (*caret).clone(), buffer: text_buffer.to_string() };
       self.undo_buffer.push_front(undo_action);
-      let len = text.len_chars();
-      text.remove(0..len);
-      text.insert(0, &redo_action.buffer);
+      let len = text_buffer.len_chars();
+      text_buffer.remove(0..len);
+      text_buffer.insert(0, &redo_action.buffer);
       *caret = redo_action.caret;
     }
   }
@@ -444,7 +534,8 @@ pub fn main() {
   let mut cache_tex = texture_creator.create_texture(RGBA4444, Streaming, cache_width, cache_height).unwrap();
   cache_tex.set_blend_mode(BlendMode::Blend);
 
-  let mut caret = Caret {pos : 0, pos_remembered : 0, marker : None };
+  let mut caret = Caret {pos : 0, preferred_column : 0, marker : None };
+  let mut action_buffer = ActionBuffer::new(200);
 
   // TODO this boolean flag is too simplistic to handle the various ways of highlighting properly
 
@@ -466,12 +557,6 @@ pub fn main() {
 
     // TODO events.mouse_state();
 
-    fn caret_changed(caret : &mut Caret, shift_down : bool){
-      if !shift_down{
-        caret.marker = None;
-      }
-    }
-
     for event in events.poll_iter() {
       match event {
         Event::Quit{..} |
@@ -480,22 +565,20 @@ pub fn main() {
         Event::KeyDown {keycode: Some(k), ..} => {
           match k {
             Keycode::Left => {
-              step_left(&mut caret, &text_buffer);
-              caret_changed(&mut caret, shift_down);
+              step_left(&mut caret, &text_buffer, shift_down);
             }
             Keycode::Right => {
-              step_right(&mut caret, &text_buffer);
-              caret_changed(&mut caret, shift_down);
+              step_right(&mut caret, &text_buffer, shift_down);
             }
             Keycode::Up => {
-              step_up(&mut caret, &text_buffer);
-              caret_changed(&mut caret, shift_down);
+              step_up(&mut caret, &text_buffer, shift_down);
             }
             Keycode::Down => {
-              step_down(&mut caret, &text_buffer);
-              caret_changed(&mut caret, shift_down);
+              step_down(&mut caret, &text_buffer, shift_down);
             }
             Keycode::Backspace => {
+              println!("Undo action backspace");
+              action_buffer.add(&mut text_buffer, &mut caret);
               font_scale += 0.1;
               backspace_text(&mut caret, &mut text_buffer);
             }
@@ -509,19 +592,29 @@ pub fn main() {
                 copy_text(&caret, &text_buffer);
               }
             }
+            Keycode::X => {
+              if ctrl_down {
+                println!("Undo action cut");
+                action_buffer.add(&mut text_buffer, &mut caret);
+                copy_text(&caret, &text_buffer);
+                backspace_text(&mut caret, &mut text_buffer);
+              }
+            }
             Keycode::V => {
               if ctrl_down {
+                println!("Undo action paste");
+                action_buffer.add(&mut text_buffer, &mut caret);
                 paste_text(&mut caret, &mut text_buffer);
               }
             }
             Keycode::Z => {
               if ctrl_down {
-                // TODO: undo
+                action_buffer.undo(&mut text_buffer, &mut caret);
               }
             }
             Keycode::Y => {
               if ctrl_down {
-                // TODO: redo
+                action_buffer.redo(&mut text_buffer, &mut caret);
               }
             }
             _ => {
@@ -530,10 +623,15 @@ pub fn main() {
         },
 
         Event::TextInput { text, .. } => {
+          println!("Undo action TextInput");
+          action_buffer.add(&mut text_buffer, &mut caret);
           insert_text(&mut caret, &mut text_buffer, &text);
         },
         Event::TextEditing { text, .. } => {
-          insert_text(&mut caret, &mut text_buffer, &text);
+          if text.len() > 0 {
+            action_buffer.add(&mut text_buffer, &mut caret);
+            insert_text(&mut caret, &mut text_buffer, &text);
+          }
         },
         Event::MouseButtonUp {x, y, ..} => {
           let xp = cmp::min(x, xd);
