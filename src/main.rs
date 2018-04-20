@@ -150,31 +150,58 @@ fn dpi_ratio(w : &Window) -> f32 {
   (w as f32) / (dw as f32)
 }
 
-// TODO: Pos might sometimes be changed in terms of graphemes instead
-// codepoints. Not sure.
-#[derive(Copy, Clone)]
-struct Caret {
-  pos : usize,
-  // maintains consistency for vertical motion of the caret
-  preferred_column : usize,
-  // tracks highlighting
-  marker : Option<usize>,
+mod caret {
+  #[derive(Copy, Clone)]
+  pub struct Caret {
+    position : usize,
+    pub preferred_column : Option<usize>,
+    // tracks highlighting
+    pub marker : Option<usize>,
+  }
+
+  impl Caret {
+    pub fn new() -> Caret{
+      Caret {
+        position: 0,
+        preferred_column: None,
+        marker: None,
+      }
+    }
+
+    /// also resets preferred column
+    pub fn set_pos(&mut self, pos : usize) {
+      self.position = pos;
+      self.preferred_column = None;
+    }
+
+    pub fn set_pos_and_preferred_column(&mut self, pos : usize, preferred_column : usize) {
+      self.position = pos;
+      self.preferred_column = Some(preferred_column);
+    }
+
+    pub fn pos(&self) -> usize {
+      self.position
+    }
+  }
 }
+
+use caret::Caret;
 
 fn step_right(caret : &mut Caret, text : &Rope, shift_down : bool){
   if let Some(m) = caret.marker {
     if !shift_down {
       // dehighlight and jump to the right of the highlighted region
       caret.marker = None;
-      caret.pos = cmp::max(m, caret.pos);
+      let pos = cmp::max(m, caret.pos());
+      caret.set_pos(pos);
       return;
     }
   }
   // else, move the caret right
-  if caret.pos < text.len_chars() {
-    caret.pos = text.next_grapheme_boundary(caret.pos);
+  if caret.pos() < text.len_chars() {
+    let pos = text.next_grapheme_boundary(caret.pos());
+    caret.set_pos(pos);
   }
-  caret.preferred_column = caret.pos;
 }
 
 fn step_left(caret : &mut Caret, text : &Rope, shift_down : bool){
@@ -182,15 +209,16 @@ fn step_left(caret : &mut Caret, text : &Rope, shift_down : bool){
     if !shift_down {
       // dehighlight and jump to the left of the highlighted region
       caret.marker = None;
-      caret.pos = cmp::min(m, caret.pos);
+      let pos = cmp::min(m, caret.pos());
+      caret.set_pos(pos);
       return;
     }
   }
   // else, move the caret left
-  if caret.pos > 0 {
-    caret.pos = text.prev_grapheme_boundary(caret.pos);
+  if caret.pos() > 0 {
+    let pos = text.prev_grapheme_boundary(caret.pos());
+    caret.set_pos(pos);
   }
-  caret.preferred_column = caret.pos;
 }
 
 /*
@@ -207,14 +235,15 @@ fn char_to_line(text : &Rope, pos : usize) -> usize {
 }
 
 fn line_change(caret : &mut Caret, text : &Rope, dir : i32){
-  let new_line = char_to_line(text, caret.pos) as i32 + dir;
+  let new_line = char_to_line(text, caret.pos()) as i32 + dir;
   if new_line < 0 || new_line >= (text.len_lines() as i32) {
     return;
   }
 
+  let preferred_column = caret.preferred_column.unwrap_or(caret.pos());
   let mut line_offset_graphemes = {
-    let line_start_pos = text.line_to_char(char_to_line(text, caret.preferred_column));
-    text.slice(line_start_pos..caret.preferred_column).graphemes().count()
+    let line_start_pos = text.line_to_char(char_to_line(text, preferred_column));
+    text.slice(line_start_pos..preferred_column).graphemes().count()
   };
 
   let line = text.line(new_line as usize);
@@ -228,7 +257,9 @@ fn line_change(caret : &mut Caret, text : &Rope, dir : i32){
     pos = line.next_grapheme_boundary(pos);
     line_offset_graphemes -= 1;
   }
-  caret.pos = text.line_to_char(new_line as usize) + pos;
+  pos = text.line_to_char(new_line as usize) + pos;
+  let old_pos = caret.pos();
+  caret.set_pos_and_preferred_column(pos, old_pos);
 }
 
 fn step_up(caret : &mut Caret, text : &Rope, shift_down : bool){
@@ -247,40 +278,94 @@ fn step_down(caret : &mut Caret, text : &Rope, shift_down : bool){
 
 fn copy_text(caret : &Caret, text_buffer : &Rope){
   if let Some(marker) = caret.marker {
-    let pos_a = cmp::min(caret.pos, marker);
-    let pos_b = cmp::max(caret.pos, marker);
+    let (pos_a, pos_b) = order_values(caret.pos(), marker);
     let s = text_buffer.slice(pos_a..pos_b).to_string();
     let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
     ctx.set_contents(s).unwrap();
   }
 }
 
-fn remove_highlighted_text(caret : &mut Caret, text_buffer : &mut Rope){
-  let marker = caret.marker.unwrap();
-  let pos_a = cmp::min(caret.pos, marker);
-  let pos_b = cmp::max(caret.pos, marker);
-  text_buffer.remove(pos_a..pos_b);
-  caret.pos = pos_a;
-  caret.marker = None;
+/// returns a and b in ascending order
+fn order_values(a : usize, b : usize) -> (usize, usize) {
+  (cmp::min(a, b), cmp::max(a, b))
 }
 
-fn insert_text(caret : &mut Caret, text_buffer : &mut Rope, text : &str){
+fn remove_highlighted_text(caret : &mut Caret, text_buffer : &mut Rope) -> String {
+  let (pos_a, pos_b) = order_values(caret.pos(), caret.marker.unwrap());
+  let deleted_string = text_buffer.slice(pos_a..pos_b).to_string();
+  text_buffer.remove(pos_a..pos_b);
+  caret.set_pos(pos_a);
+  caret.marker = None;
+  deleted_string
+}
+
+fn remove_highlighted_text2(caret : &mut Caret, text_buffer : &Rope) -> String {
+  let (pos_a, pos_b) = order_values(caret.pos(), caret.marker.unwrap());
+  let deleted_string = text_buffer.slice(pos_a..pos_b).to_string();
+  caret.set_pos(pos_a);
+  caret.marker = None;
+  deleted_string
+}
+
+fn insert_text_edit(caret : &Caret, text_buffer : &Rope, text_inserted : String) -> TextEdit {
+  let caret_before = *caret;
+  let mut caret = *caret;
+  let text_deleted =
+    if caret.marker.is_some() {
+      remove_highlighted_text2(&mut caret, text_buffer)
+    }
+    else{
+      String::new()
+    };
+  let pos = caret.pos() + text_inserted.chars().count();
+  caret.set_pos(pos);
+  TextEdit{ caret_before, caret_after: caret, text_deleted, text_inserted }
+}
+
+fn delete_text_edit(caret : &Caret, text_buffer : &Rope, is_backspace : bool) -> Option<TextEdit> {
+  let caret_before = *caret;
+  let mut caret = *caret;
+  let text_deleted =
+    if caret.marker.is_some() {
+      remove_highlighted_text2(&mut caret, text_buffer)
+    }
+    else {
+      let delete_to =
+      if is_backspace { text_buffer.prev_grapheme_boundary(caret.pos()) }
+      else { text_buffer.next_grapheme_boundary(caret.pos()) };
+      let (pos_a, pos_b) = order_values(delete_to, caret.pos());
+      caret.set_pos(pos_a);
+      text_buffer.slice(pos_a..pos_b).to_string()
+    };
+  if text_deleted.len() > 0 {
+    Some(TextEdit{ caret_before, caret_after: caret, text_deleted, text_inserted: String::new() })
+  }
+  else { None }
+}
+
+fn insert_text(caret : &mut Caret, text_buffer : &mut Rope, text : &str) {
   if caret.marker.is_some() {
     remove_highlighted_text(caret, text_buffer);
   }
-  text_buffer.insert(caret.pos, text);
-  caret.pos += text.chars().count();
+  text_buffer.insert(caret.pos(), text);
+  let pos = caret.pos() + text.chars().count();
+  caret.set_pos(pos);
 }
 
-fn backspace_text(caret : &mut Caret, text_buffer : &mut Rope){
+/// returns deleted string
+fn delete_at_caret(caret : &mut Caret, text_buffer : &mut Rope, is_backspace : bool) -> String {
   if caret.marker.is_some() {
     remove_highlighted_text(caret, text_buffer);
   }
   else {
-    if caret.pos == 0 { return; }
-    let start = text_buffer.prev_grapheme_boundary(caret.pos);
-    text_buffer.remove(start..caret.pos);
-    caret.pos = start;
+    let delete_to =
+      if is_backspace { text_buffer.prev_grapheme_boundary(caret.pos()) }
+      else { text_buffer.next_grapheme_boundary(caret.pos()) };
+    if delete_to != caret.pos() {
+      let (pos_a, pos_b) = order_values(delete_to, caret.pos());
+      text_buffer.remove(pos_a..pos_b);
+      caret.set_pos(pos_a);
+    }
   }
 }
 
@@ -358,10 +443,6 @@ fn draw_caret(canvas : &mut Canvas, char_pos : usize, text_buffer : &Rope, attri
   canvas.fill_rect(cursor_rect).unwrap();
 }
 
-struct Action {
-  caret : Caret,
-  buffer : String,
-}
 
 fn move_caret(editor_state : &mut TextEditorState, caret_move : CaretMove) {
   match caret_move.move_type {
@@ -393,10 +474,10 @@ fn process_action(editor_state : &mut TextEditorState, action : EditAction) {
       move_caret(editor_state, caret_move);
     }
     EditAction::Backspace => {
-      backspace_text(&mut editor_state.caret, &mut editor_state.buffer);
+      delete_at_caret(&mut editor_state.caret, &mut editor_state.buffer, true);
     }
     EditAction::Delete => {
-      
+      delete_at_caret(&mut editor_state.caret, &mut editor_state.buffer, false);
     }
     EditAction::Undo => {
       
@@ -409,26 +490,15 @@ fn process_action(editor_state : &mut TextEditorState, action : EditAction) {
 
 fn undo(editor_state : &mut TextEditorState){
   if let Some(edit) = editor_state.edit_history.pop() {
-    match edit.edit_type {
-      EditType::Insert => {
-        //backspace_text(caret, text_buffer)
-      }
-      EditType::Remove => {
-
-      }
-    }
+    // TODO
   }
 }
 
 struct TextEdit {
   caret_before : Caret,
   caret_after : Caret,
-  text : String,
-  edit_type : EditType,
-}
-
-enum EditType {
-  Insert, Remove
+  text_deleted : String,
+  text_inserted : String,
 }
 
 struct TextEditorState {
@@ -441,10 +511,10 @@ struct TextEditorState {
 impl TextEditorState {
   fn new(s : &str) -> TextEditorState {
     let mut buffer = Rope::new();
-    buffer.insert(0, TEXT);
+    buffer.insert(0, s);
     TextEditorState {
       buffer,
-      caret : Caret {pos : 0, preferred_column : 0, marker : None },
+      caret : Caret::new(),
       edit_history : vec!(),
       redo_buffer : vec!(),
     }
@@ -528,8 +598,6 @@ pub fn main() {
 
   let mut actions = VecDeque::new();
 
-  // TODO this boolean flag is too simplistic to handle the various ways of highlighting properly
-
   'mainloop: loop {
 
     let (shift_down, ctrl_down) = {
@@ -543,7 +611,7 @@ pub fn main() {
     };
 
     if editor.caret.marker.is_none() && shift_down {
-      editor.caret.marker = Some(editor.caret.pos);
+      editor.caret.marker = Some(editor.caret.pos());
     }
 
     // TODO events.mouse_state();
@@ -578,7 +646,7 @@ pub fn main() {
             }
             Keycode::LShift | Keycode::RShift => {
               if editor.caret.marker.is_none() {
-                editor.caret.marker = Some(editor.caret.pos);
+                editor.caret.marker = Some(editor.caret.pos());
               }
             }
             Keycode::C => {
@@ -675,10 +743,10 @@ pub fn main() {
 
       canvas.set_draw_color(Color::RGBA(0, 255, 0, 255));
       if let Some(marker) = editor.caret.marker {
-        draw_highlight(&mut canvas, editor.caret.pos, marker, &editor.buffer, &attribs);
+        draw_highlight(&mut canvas, editor.caret.pos(), marker, &editor.buffer, &attribs);
       }
       else {
-        draw_caret(&mut canvas, editor.caret.pos, &editor.buffer, &attribs);
+        draw_caret(&mut canvas, editor.caret.pos(), &editor.buffer, &attribs);
       }
 
       draw_text(
