@@ -151,7 +151,7 @@ fn dpi_ratio(w : &Window) -> f32 {
 }
 
 mod caret {
-  #[derive(Copy, Clone)]
+  #[derive(Copy, Clone, Debug)]
   pub struct Caret {
     position : usize,
     pub preferred_column : Option<usize>,
@@ -290,16 +290,7 @@ fn order_values(a : usize, b : usize) -> (usize, usize) {
   (cmp::min(a, b), cmp::max(a, b))
 }
 
-fn remove_highlighted_text(caret : &mut Caret, text_buffer : &mut Rope) -> String {
-  let (pos_a, pos_b) = order_values(caret.pos(), caret.marker.unwrap());
-  let deleted_string = text_buffer.slice(pos_a..pos_b).to_string();
-  text_buffer.remove(pos_a..pos_b);
-  caret.set_pos(pos_a);
-  caret.marker = None;
-  deleted_string
-}
-
-fn remove_highlighted_text2(caret : &mut Caret, text_buffer : &Rope) -> String {
+fn remove_highlighted_text(caret : &mut Caret, text_buffer : &Rope) -> String {
   let (pos_a, pos_b) = order_values(caret.pos(), caret.marker.unwrap());
   let deleted_string = text_buffer.slice(pos_a..pos_b).to_string();
   caret.set_pos(pos_a);
@@ -312,14 +303,18 @@ fn insert_text_edit(caret : &Caret, text_buffer : &Rope, text_inserted : String)
   let mut caret = *caret;
   let text_deleted =
     if caret.marker.is_some() {
-      remove_highlighted_text2(&mut caret, text_buffer)
+      remove_highlighted_text(&mut caret, text_buffer)
     }
     else{
       String::new()
     };
+  let char_index = caret.pos();
   let pos = caret.pos() + text_inserted.chars().count();
   caret.set_pos(pos);
-  TextEdit{ caret_before, caret_after: caret, text_deleted, text_inserted }
+  TextEdit{
+    caret_before, caret_after: caret,
+    text_deleted, text_inserted, char_index
+  }
 }
 
 fn delete_text_edit(caret : &Caret, text_buffer : &Rope, is_backspace : bool) -> Option<TextEdit> {
@@ -327,7 +322,7 @@ fn delete_text_edit(caret : &Caret, text_buffer : &Rope, is_backspace : bool) ->
   let mut caret = *caret;
   let text_deleted =
     if caret.marker.is_some() {
-      remove_highlighted_text2(&mut caret, text_buffer)
+      remove_highlighted_text(&mut caret, text_buffer)
     }
     else {
       let delete_to =
@@ -338,35 +333,12 @@ fn delete_text_edit(caret : &Caret, text_buffer : &Rope, is_backspace : bool) ->
       text_buffer.slice(pos_a..pos_b).to_string()
     };
   if text_deleted.len() > 0 {
-    Some(TextEdit{ caret_before, caret_after: caret, text_deleted, text_inserted: String::new() })
+    let char_index = caret.pos();
+    let caret_after = caret;
+    let text_inserted = String::new();
+    Some(TextEdit{ caret_before, caret_after, text_deleted, text_inserted, char_index })
   }
   else { None }
-}
-
-fn insert_text(caret : &mut Caret, text_buffer : &mut Rope, text : &str) {
-  if caret.marker.is_some() {
-    remove_highlighted_text(caret, text_buffer);
-  }
-  text_buffer.insert(caret.pos(), text);
-  let pos = caret.pos() + text.chars().count();
-  caret.set_pos(pos);
-}
-
-/// returns deleted string
-fn delete_at_caret(caret : &mut Caret, text_buffer : &mut Rope, is_backspace : bool) -> String {
-  if caret.marker.is_some() {
-    remove_highlighted_text(caret, text_buffer);
-  }
-  else {
-    let delete_to =
-      if is_backspace { text_buffer.prev_grapheme_boundary(caret.pos()) }
-      else { text_buffer.next_grapheme_boundary(caret.pos()) };
-    if delete_to != caret.pos() {
-      let (pos_a, pos_b) = order_values(delete_to, caret.pos());
-      text_buffer.remove(pos_a..pos_b);
-      caret.set_pos(pos_a);
-    }
-  }
 }
 
 struct GraphemePos { line : usize, offset : usize }
@@ -461,42 +433,75 @@ fn move_caret(editor_state : &mut TextEditorState, caret_move : CaretMove) {
   }
 }
 
+fn apply_text_edit(editor_state : &mut TextEditorState, edit : &TextEdit){
+  let start = edit.char_index;
+  if edit.text_deleted.len() > 0 {
+    let end_delete = start + edit.text_deleted.chars().count();
+    editor_state.buffer.remove(start..end_delete);
+  }
+  if edit.text_inserted.len() > 0 {
+    editor_state.buffer.insert(start, &edit.text_inserted);
+  }
+  editor_state.caret = edit.caret_after;
+}
+
+fn reverse_text_edit(editor_state : &mut TextEditorState, edit : &TextEdit){
+  let start = edit.char_index;
+  if edit.text_inserted.len() > 0 {
+    let end_delete = start + edit.text_inserted.chars().count();
+    editor_state.buffer.remove(start..end_delete);
+  }
+  if edit.text_deleted.len() > 0 {
+    editor_state.buffer.insert(start, &edit.text_deleted);
+  }
+  editor_state.caret = edit.caret_before;
+}
+
 fn process_action(editor_state : &mut TextEditorState, action : EditAction) {
   match action {
     EditAction::InsertText(text) => {
-      let caret_before = editor_state.caret;
-      insert_text(&mut editor_state.caret, &mut editor_state.buffer, &text);
-      let caret_after = editor_state.caret;
-      let edit = TextEdit { caret_before, caret_after, text, edit_type: EditType::Insert };
+      let edit = insert_text_edit(&editor_state.caret, &editor_state.buffer, text);
+      apply_text_edit(editor_state, &edit);
       editor_state.edit_history.push(edit);
+      editor_state.redo_buffer.clear();
     }
     EditAction::MoveCaret(caret_move) => {
       move_caret(editor_state, caret_move);
     }
     EditAction::Backspace => {
-      delete_at_caret(&mut editor_state.caret, &mut editor_state.buffer, true);
+      if let Some(edit) = delete_text_edit(&editor_state.caret, &editor_state.buffer, true) {
+        apply_text_edit(editor_state, &edit);
+        editor_state.edit_history.push(edit);
+        editor_state.redo_buffer.clear();
+      }
     }
     EditAction::Delete => {
-      delete_at_caret(&mut editor_state.caret, &mut editor_state.buffer, false);
+      if let Some(edit) = delete_text_edit(&editor_state.caret, &editor_state.buffer, false) {
+        apply_text_edit(editor_state, &edit);
+        editor_state.edit_history.push(edit);
+        editor_state.redo_buffer.clear();
+      }
     }
     EditAction::Undo => {
-      
+      if let Some(edit) = editor_state.edit_history.pop() {
+        reverse_text_edit(editor_state, &edit);
+        editor_state.redo_buffer.push(edit);
+      }      
     }
     EditAction::Redo => {
-
+      if let Some(edit) = editor_state.redo_buffer.pop() {
+        apply_text_edit(editor_state, &edit);
+        editor_state.edit_history.push(edit);
+      }
     }
   }
 }
 
-fn undo(editor_state : &mut TextEditorState){
-  if let Some(edit) = editor_state.edit_history.pop() {
-    // TODO
-  }
-}
-
+#[derive(Debug)]
 struct TextEdit {
   caret_before : Caret,
   caret_after : Caret,
+  char_index : usize,
   text_deleted : String,
   text_inserted : String,
 }
@@ -642,7 +647,7 @@ pub fn main() {
               actions.push_back(EditAction::Backspace);
             }
             Keycode::Delete => {
-              actions.push_back(EditAction::Backspace);
+              actions.push_back(EditAction::Delete);
             }
             Keycode::LShift | Keycode::RShift => {
               if editor.caret.marker.is_none() {
