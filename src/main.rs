@@ -32,9 +32,6 @@ be able to simplify some of the code if I look this up. There might be bugs too.
 
 type Canvas = sdl2::render::Canvas<sdl2::video::Window>;
 
-static BOX_W : i32 = 400;
-static BOX_H : i32 = 300;
-
 static TEXT: &str = "Here is some text.\r
 
 cit\u{0065}\u{0301}  <<< this tests grapheme correctness
@@ -46,11 +43,10 @@ struct LayoutAttribs {
   advance_width : f32,
   advance_height : f32,
   v_metrics : VMetrics,
-  buffer_width : f32,
   scale : Scale,
 }
 
-fn layout_attribs(font : &Font, scale : Scale, buffer_width : f32) -> LayoutAttribs {
+fn layout_attribs(font : &Font, scale : Scale) -> LayoutAttribs {
   let v_metrics = font.v_metrics(scale);
   LayoutAttribs {
     advance_height: v_metrics.ascent - v_metrics.descent + v_metrics.line_gap,
@@ -61,7 +57,6 @@ fn layout_attribs(font : &Font, scale : Scale, buffer_width : f32) -> LayoutAttr
       g_width + kern
     },
     v_metrics,
-    buffer_width,
     scale
   }
 }
@@ -571,7 +566,9 @@ pub fn main() {
   let mut xd = 0;
   let mut yd = 0;
 
-  let font_scale = 12.0;
+  let font_scale = 18.0;
+
+  let (box_width, box_height) = (600, 400);
 
   let mut rects = vec!();
 
@@ -732,19 +729,18 @@ pub fn main() {
       canvas.fill_rect(*r).unwrap();
     }
 
-    let (rw, rh) = (BOX_W, BOX_H);
-    let tx = (width/2) as i32 - (rw/2);
-    let ty = (height/2) as i32 - (rh/2);
-    let text_rectangle = Rect::new(tx, ty, rw as u32, rh as u32);
+    let tx = (width/2) as i32 - (box_width/2);
+    let ty = (height/2) as i32 - (box_height/2);
+    let text_rectangle = Rect::new(tx, ty, box_width as u32, box_height as u32);
 
     {
       canvas.set_clip_rect(text_rectangle);
       canvas.set_viewport(text_rectangle);
 
-      canvas.fill_rect(Rect::new(0, 0, rw as u32, rh as u32)).unwrap();
+      canvas.fill_rect(Rect::new(0, 0, box_width as u32, box_height as u32)).unwrap();
 
       let scale = Scale::uniform(font_scale * dpi_ratio);
-      let attribs = layout_attribs(&font, scale, BOX_W as f32);
+      let attribs = layout_attribs(&font, scale);
 
       canvas.set_draw_color(Color::RGBA(0, 255, 0, 255));
       if let Some(marker) = editor.caret.marker {
