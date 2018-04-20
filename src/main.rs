@@ -245,15 +245,6 @@ fn step_down(caret : &mut Caret, text : &Rope, shift_down : bool){
   line_change(caret, text, 1);
 }
 
-fn remove_highlighted_text(caret : &mut Caret, text_buffer : &mut Rope){
-  let marker = caret.marker.unwrap();
-  let pos_a = cmp::min(caret.pos, marker);
-  let pos_b = cmp::max(caret.pos, marker);
-  text_buffer.remove(pos_a..pos_b);
-  caret.pos = pos_a;
-  caret.marker = None;
-}
-
 fn copy_text(caret : &Caret, text_buffer : &Rope){
   if let Some(marker) = caret.marker {
     let pos_a = cmp::min(caret.pos, marker);
@@ -269,6 +260,15 @@ fn paste_text(caret : &mut Caret, text_buffer : &mut Rope){
   if let Ok(s) = ctx.get_contents() {
     insert_text(caret, text_buffer, &s);
   }
+}
+
+fn remove_highlighted_text(caret : &mut Caret, text_buffer : &mut Rope){
+  let marker = caret.marker.unwrap();
+  let pos_a = cmp::min(caret.pos, marker);
+  let pos_b = cmp::max(caret.pos, marker);
+  text_buffer.remove(pos_a..pos_b);
+  caret.pos = pos_a;
+  caret.marker = None;
 }
 
 fn insert_text(caret : &mut Caret, text_buffer : &mut Rope, text : &str){
@@ -376,7 +376,20 @@ fn modify_text(editor_state : &mut TextEditorState, text_edit : TextEdit) {
 }
 
 fn move_caret(editor_state : &mut TextEditorState, caret_move : CaretMove) {
-
+  match caret_move.move_type {
+    CaretMoveType::Left => {
+      step_left(&mut editor_state.caret, &mut editor_state.current_state, caret_move.highlighting)
+    }
+    CaretMoveType::Right => {
+      step_right(&mut editor_state.caret, &mut editor_state.current_state, caret_move.highlighting)
+    }
+    CaretMoveType::Up => {
+      step_up(&mut editor_state.caret, &mut editor_state.current_state, caret_move.highlighting)
+    }
+    CaretMoveType::Down => {
+      step_down(&mut editor_state.caret, &mut editor_state.current_state, caret_move.highlighting)
+    }
+  }
 }
 
 fn process_action(editor_state : &mut TextEditorState, action : EditAction) {
@@ -388,10 +401,23 @@ fn process_action(editor_state : &mut TextEditorState, action : EditAction) {
       move_caret(editor_state, caret_move);
     }
     EditAction::Undo => {
-
+      
     }
     EditAction::Redo => {
 
+    }
+  }
+}
+
+fn undo(editor_state : &mut TextEditorState){
+  if let Some(edit) = editor_state.edit_history.pop() {
+    match edit.edit_type {
+      EditType::Insert => {
+        //backspace_text(caret, text_buffer)
+      }
+      EditType::Remove => {
+
+      }
     }
   }
 }
@@ -536,6 +562,8 @@ pub fn main() {
 
   let mut caret = Caret {pos : 0, preferred_column : 0, marker : None };
   let mut action_buffer = ActionBuffer::new(200);
+
+  let actions = vec!();
 
   // TODO this boolean flag is too simplistic to handle the various ways of highlighting properly
 
