@@ -4,6 +4,8 @@ extern crate unicode_normalization;
 extern crate ropey;
 extern crate clipboard;
 
+mod lexer;
+
 use sdl2::event::Event;
 use sdl2::event::WindowEvent;
 use sdl2::keyboard::{Keycode, Scancode, KeyboardState};
@@ -760,4 +762,3 @@ pub fn main() {
     canvas.present();
 	}
 }
-
