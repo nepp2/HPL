@@ -255,13 +255,6 @@ fn copy_text(caret : &Caret, text_buffer : &Rope){
   }
 }
 
-fn paste_text(caret : &mut Caret, text_buffer : &mut Rope){
-  let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
-  if let Ok(s) = ctx.get_contents() {
-    insert_text(caret, text_buffer, &s);
-  }
-}
-
 fn remove_highlighted_text(caret : &mut Caret, text_buffer : &mut Rope){
   let marker = caret.marker.unwrap();
   let pos_a = cmp::min(caret.pos, marker);
@@ -370,35 +363,40 @@ struct Action {
   buffer : String,
 }
 
-fn modify_text(editor_state : &mut TextEditorState, text_edit : TextEdit) {
-  insert_text(&mut editor_state.caret, &mut editor_state.current_state, &text_edit.text);
-  editor_state.edit_history.push(text_edit);
-}
-
 fn move_caret(editor_state : &mut TextEditorState, caret_move : CaretMove) {
   match caret_move.move_type {
     CaretMoveType::Left => {
-      step_left(&mut editor_state.caret, &mut editor_state.current_state, caret_move.highlighting)
+      step_left(&mut editor_state.caret, &mut editor_state.buffer, caret_move.highlighting)
     }
     CaretMoveType::Right => {
-      step_right(&mut editor_state.caret, &mut editor_state.current_state, caret_move.highlighting)
+      step_right(&mut editor_state.caret, &mut editor_state.buffer, caret_move.highlighting)
     }
     CaretMoveType::Up => {
-      step_up(&mut editor_state.caret, &mut editor_state.current_state, caret_move.highlighting)
+      step_up(&mut editor_state.caret, &mut editor_state.buffer, caret_move.highlighting)
     }
     CaretMoveType::Down => {
-      step_down(&mut editor_state.caret, &mut editor_state.current_state, caret_move.highlighting)
+      step_down(&mut editor_state.caret, &mut editor_state.buffer, caret_move.highlighting)
     }
   }
 }
 
 fn process_action(editor_state : &mut TextEditorState, action : EditAction) {
   match action {
-    EditAction::ModifyText(text_edit) => {
-      modify_text(editor_state, text_edit);
+    EditAction::InsertText(text) => {
+      let caret_before = editor_state.caret;
+      insert_text(&mut editor_state.caret, &mut editor_state.buffer, &text);
+      let caret_after = editor_state.caret;
+      let edit = TextEdit { caret_before, caret_after, text, edit_type: EditType::Insert };
+      editor_state.edit_history.push(edit);
     }
     EditAction::MoveCaret(caret_move) => {
       move_caret(editor_state, caret_move);
+    }
+    EditAction::Backspace => {
+      backspace_text(&mut editor_state.caret, &mut editor_state.buffer);
+    }
+    EditAction::Delete => {
+      
     }
     EditAction::Undo => {
       
@@ -422,17 +420,42 @@ fn undo(editor_state : &mut TextEditorState){
   }
 }
 
+struct TextEdit {
+  caret_before : Caret,
+  caret_after : Caret,
+  text : String,
+  edit_type : EditType,
+}
+
+enum EditType {
+  Insert, Remove
+}
+
 struct TextEditorState {
-  initial_state : Rope,
-  current_state : Rope,
+  buffer : Rope,
   caret : Caret,
   edit_history : Vec<TextEdit>,
   redo_buffer : Vec<TextEdit>,
 }
 
+impl TextEditorState {
+  fn new(s : &str) -> TextEditorState {
+    let mut buffer = Rope::new();
+    buffer.insert(0, TEXT);
+    TextEditorState {
+      buffer,
+      caret : Caret {pos : 0, preferred_column : 0, marker : None },
+      edit_history : vec!(),
+      redo_buffer : vec!(),
+    }
+  }
+}
+
 enum EditAction {
-  ModifyText(TextEdit),
+  InsertText(String),
   MoveCaret(CaretMove),
+  Backspace,
+  Delete,
   Undo,
   Redo,
 }
@@ -444,60 +467,6 @@ struct CaretMove {
 
 enum CaretMoveType {
   Left, Right, Up, Down
-}
-
-struct TextEdit {
-  caret_before : Caret,
-  text : String,
-  edit_type : EditType,
-}
-
-enum EditType {
-  Insert, Remove
-}
-
-struct ActionBuffer {
-  undo_buffer : VecDeque<Action>,
-  redo_buffer : VecDeque<Action>,
-  history_length : usize,
-}
-
-impl ActionBuffer {
-  fn new(history_length : usize) -> ActionBuffer {
-    ActionBuffer { undo_buffer: VecDeque::new(), redo_buffer: VecDeque::new(), history_length }
-  }
-
-  fn add(&mut self, text_buffer : &mut Rope, caret : &Caret) {
-    let a = Action { caret: (*caret).clone(), buffer: text_buffer.to_string() };
-    self.undo_buffer.push_front(a);
-    self.redo_buffer.clear();
-    // clear excess values
-    while self.undo_buffer.len() > self.history_length {
-      self.undo_buffer.pop_back();
-    }
-  }
-
-  fn undo(&mut self, text_buffer : &mut Rope, caret : &mut Caret){
-    if let Some(undo_action) = self.undo_buffer.pop_front() {
-      let redo_action = Action { caret: (*caret).clone(), buffer: text_buffer.to_string() };
-      self.redo_buffer.push_front(redo_action);
-      let len = text_buffer.len_chars();
-      text_buffer.remove(0..len);
-      text_buffer.insert(0, &undo_action.buffer);
-      *caret = undo_action.caret;
-    }
-  }
-
-  fn redo(&mut self, text_buffer : &mut Rope, caret : &mut Caret){
-    if let Some(redo_action) = self.redo_buffer.pop_front() {
-      let undo_action = Action { caret: (*caret).clone(), buffer: text_buffer.to_string() };
-      self.undo_buffer.push_front(undo_action);
-      let len = text_buffer.len_chars();
-      text_buffer.remove(0..len);
-      text_buffer.insert(0, &redo_action.buffer);
-      *caret = redo_action.caret;
-    }
-  }
 }
 
 pub fn main() {
@@ -527,14 +496,9 @@ pub fn main() {
   let mut xd = 0;
   let mut yd = 0;
 
-  let mut font_scale = 12.0;
+  let font_scale = 12.0;
 
   let mut rects = vec!();
-
-  let mut text_buffer = Rope::new();
-  text_buffer.insert(0, TEXT);
-
-  println!("{:?}", TEXT);
 
   // #### Font stuff ####
   let font_data = include_bytes!("../fonts/consola.ttf");
@@ -560,10 +524,9 @@ pub fn main() {
   let mut cache_tex = texture_creator.create_texture(RGBA4444, Streaming, cache_width, cache_height).unwrap();
   cache_tex.set_blend_mode(BlendMode::Blend);
 
-  let mut caret = Caret {pos : 0, preferred_column : 0, marker : None };
-  let mut action_buffer = ActionBuffer::new(200);
+  let mut editor = TextEditorState::new(TEXT);
 
-  let actions = vec!();
+  let mut actions = VecDeque::new();
 
   // TODO this boolean flag is too simplistic to handle the various ways of highlighting properly
 
@@ -579,11 +542,14 @@ pub fn main() {
       (sd, cd)
     };
 
-    if caret.marker.is_none() && shift_down {
-      caret.marker = Some(caret.pos);
+    if editor.caret.marker.is_none() && shift_down {
+      editor.caret.marker = Some(editor.caret.pos);
     }
 
     // TODO events.mouse_state();
+    fn caret_move(move_type : CaretMoveType, highlighting : bool) -> EditAction {
+      EditAction::MoveCaret(CaretMove{ highlighting, move_type })
+    }
 
     for event in events.poll_iter() {
       match event {
@@ -593,72 +559,67 @@ pub fn main() {
         Event::KeyDown {keycode: Some(k), ..} => {
           match k {
             Keycode::Left => {
-              step_left(&mut caret, &text_buffer, shift_down);
+              actions.push_back(caret_move(CaretMoveType::Left, shift_down));
             }
             Keycode::Right => {
-              step_right(&mut caret, &text_buffer, shift_down);
+              actions.push_back(caret_move(CaretMoveType::Right, shift_down));
             }
             Keycode::Up => {
-              step_up(&mut caret, &text_buffer, shift_down);
+              actions.push_back(caret_move(CaretMoveType::Up, shift_down));
             }
             Keycode::Down => {
-              step_down(&mut caret, &text_buffer, shift_down);
+              actions.push_back(caret_move(CaretMoveType::Down, shift_down));
             }
             Keycode::Backspace => {
-              println!("Undo action backspace");
-              action_buffer.add(&mut text_buffer, &mut caret);
-              font_scale += 0.1;
-              backspace_text(&mut caret, &mut text_buffer);
+              actions.push_back(EditAction::Backspace);
+            }
+            Keycode::Delete => {
+              actions.push_back(EditAction::Backspace);
             }
             Keycode::LShift | Keycode::RShift => {
-              if caret.marker.is_none() {
-                caret.marker = Some(caret.pos);
+              if editor.caret.marker.is_none() {
+                editor.caret.marker = Some(editor.caret.pos);
               }
             }
             Keycode::C => {
-              if ctrl_down {
-                copy_text(&caret, &text_buffer);
+              if ctrl_down && editor.caret.marker.is_some() {
+                copy_text(&editor.caret, &editor.buffer);
               }
             }
             Keycode::X => {
-              if ctrl_down {
-                println!("Undo action cut");
-                action_buffer.add(&mut text_buffer, &mut caret);
-                copy_text(&caret, &text_buffer);
-                backspace_text(&mut caret, &mut text_buffer);
+              if ctrl_down && editor.caret.marker.is_some() {
+                copy_text(&editor.caret, &editor.buffer);
+                actions.push_back(EditAction::Backspace);
               }
             }
             Keycode::V => {
               if ctrl_down {
-                println!("Undo action paste");
-                action_buffer.add(&mut text_buffer, &mut caret);
-                paste_text(&mut caret, &mut text_buffer);
+                let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
+                if let Ok(s) = ctx.get_contents() {
+                  actions.push_back(EditAction::InsertText(s));
+                }
               }
             }
             Keycode::Z => {
               if ctrl_down {
-                action_buffer.undo(&mut text_buffer, &mut caret);
+                actions.push_back(EditAction::Undo);
               }
             }
             Keycode::Y => {
               if ctrl_down {
-                action_buffer.redo(&mut text_buffer, &mut caret);
+                actions.push_back(EditAction::Redo);
               }
             }
             _ => {
             }
           }
         },
-
         Event::TextInput { text, .. } => {
-          println!("Undo action TextInput");
-          action_buffer.add(&mut text_buffer, &mut caret);
-          insert_text(&mut caret, &mut text_buffer, &text);
+          actions.push_back(EditAction::InsertText(text));
         },
         Event::TextEditing { text, .. } => {
           if text.len() > 0 {
-            action_buffer.add(&mut text_buffer, &mut caret);
-            insert_text(&mut caret, &mut text_buffer, &text);
+            actions.push_back(EditAction::InsertText(text));
           }
         },
         Event::MouseButtonUp {x, y, ..} => {
@@ -684,6 +645,10 @@ pub fn main() {
         _e => {}
       }
     }
+    while let Some(a) = actions.pop_front() {
+      process_action(&mut editor, a);
+    }
+
     ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
     // The rest of the loop goes here...
 
@@ -709,15 +674,15 @@ pub fn main() {
       let attribs = layout_attribs(&font, scale, BOX_W as f32);
 
       canvas.set_draw_color(Color::RGBA(0, 255, 0, 255));
-      if let Some(marker) = caret.marker {
-        draw_highlight(&mut canvas, caret.pos, marker, &text_buffer, &attribs);
+      if let Some(marker) = editor.caret.marker {
+        draw_highlight(&mut canvas, editor.caret.pos, marker, &editor.buffer, &attribs);
       }
       else {
-        draw_caret(&mut canvas, caret.pos, &text_buffer, &attribs);
+        draw_caret(&mut canvas, editor.caret.pos, &editor.buffer, &attribs);
       }
 
       draw_text(
-        &mut canvas, &font, &text_buffer, &attribs,
+        &mut canvas, &font, &editor.buffer, &attribs,
         &mut cache, cache_width, cache_height, &mut cache_tex);
 
       canvas.set_clip_rect(None);
