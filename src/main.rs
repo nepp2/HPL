@@ -541,7 +541,7 @@ enum CaretMoveType {
   Left, Right, Up, Down
 }
 
-pub fn main() {
+pub fn run_sdl2_app() {
 
 	let (mut width, mut height) = (800, 600);
 
@@ -761,4 +761,9 @@ pub fn main() {
     }
     canvas.present();
 	}
+}
+
+fn main(){
+  //run_sdl2_app();
+  lexer::run_test();
 }
