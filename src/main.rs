@@ -5,6 +5,7 @@ extern crate ropey;
 extern crate clipboard;
 
 mod lexer;
+mod parser;
 
 use sdl2::event::Event;
 use sdl2::event::WindowEvent;
@@ -765,5 +766,5 @@ pub fn run_sdl2_app() {
 
 fn main(){
   //run_sdl2_app();
-  lexer::run_test();
+  parser::test_parse();
 }

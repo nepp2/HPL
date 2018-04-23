@@ -15,7 +15,7 @@ struct TextLocation {
 }
 
 #[derive(Debug)]
-struct Token {
+pub struct Token {
   string : String,
   token_type : TokenType,
   loc : TextLocation,
@@ -165,7 +165,7 @@ impl CStream {
   }
 }
 
-fn lex(code : &str) -> Vec<Token> {
+pub fn lex(code : &str) -> Vec<Token> {
   let mut cs = CStream {
     chars: code.chars().collect(),
     loc : StreamLocation { pos: 0, line : 0 },
@@ -186,7 +186,7 @@ fn lex(code : &str) -> Vec<Token> {
   cs.tokens
 }
 
-pub fn run_test() {
+pub fn test_lex() {
   let code = "(3 + 4) * 10";
   let ts = lex(code);
   for t in ts {
@@ -197,5 +197,5 @@ pub fn run_test() {
 
 #[test]
 fn test () {
-  run_test();
+  test_lex();
 }
