@@ -2,13 +2,13 @@
 use std::str::Chars;
 use std::i32;
 
-#[derive(Debug)]
-enum TokenType {
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum TokenType {
   Symbol, Syntax, FloatLiteral
 }
 
 #[derive(Debug)]
-struct TextLocation {
+pub struct TextLocation {
   start : u32,
   length : u32,
   line : u32,
@@ -16,9 +16,9 @@ struct TextLocation {
 
 #[derive(Debug)]
 pub struct Token {
-  string : String,
-  token_type : TokenType,
-  loc : TextLocation,
+  pub string : String,
+  pub token_type : TokenType,
+  pub loc : TextLocation,
 }
 
 struct CStream {
