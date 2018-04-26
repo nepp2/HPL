@@ -2,6 +2,16 @@
 use ropey::Rope;
 use std::cmp;
 
+/*
+
+TODO:
+
+I have not properly understood the distiction between byte, character and grapheme in
+the Ropey library. As a result I have been programming quite defensively. I might
+be able to simplify some of the code if I look this up. There might be bugs too...
+
+*/
+
 pub mod caret {
   #[derive(Copy, Clone, Debug)]
   pub struct Caret {

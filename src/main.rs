@@ -4,6 +4,29 @@ extern crate unicode_normalization;
 extern crate ropey;
 extern crate clipboard;
 
+/*
+
+TODO:
+
+Currently totally broken.
+
+I'm trying to hide all of the font rendering code in one file, behind a very simple interface.
+
+I have realised that the glyphs for the paragraph don't need to be repositioned every frame.
+Retaining their position is a bit messy given that they hold lifetimes.
+There's probably no point in optimising this now.
+
+Once I'm done with the font stuff I am going to split some of the editing code (undo/redo
+buffer, etc) out of text_edit.rs. Then I can put some custom logic in for doing things
+like live-interpreting code that is typed into the text field.
+
+I expect the first time I get this working it will immediately crash, as I do almost nothing
+to handle errors in the parser or interpreter. It just panics! Hopefully this is easier
+to fix in Rust than it was in F#...
+
+*/
+
+mod font_render;
 mod text_edit;
 mod lexer;
 mod parser;
@@ -20,22 +43,12 @@ use std::collections::VecDeque;
 use sdl2::pixels::PixelFormatEnum::{RGBA4444};
 use sdl2::render::{TextureAccess::Streaming, Texture, BlendMode};
 use sdl2::video::{Window};
-use rusttype::{point, Font, FontCollection, PositionedGlyph, Scale, VMetrics};
-use rusttype::gpu_cache::{CacheBuilder, Cache};
 use ropey::Rope;
 use clipboard::{ClipboardProvider, ClipboardContext};
 use text_edit::{TextEditorState, CaretMove, EditAction, CaretMoveType};
 use text_edit::caret::Caret;
+use font_render::FontRenderState;
 
-/*
-
-TODO:
-
-I have not properly understood the distiction between byte, character and grapheme in
-the Ropey library. As a result I have been programming quite defensively. I might
-be able to simplify some of the code if I look this up. There might be bugs too...
-
-*/
 
 type Canvas = sdl2::render::Canvas<sdl2::video::Window>;
 
@@ -46,27 +59,6 @@ cit\u{0065}\u{0301}  <<< this tests grapheme correctness
 Feel free to type stuff.\r
 And delete it with Backspace.";
 
-struct LayoutAttribs {
-  advance_width : f32,
-  advance_height : f32,
-  v_metrics : VMetrics,
-  scale : Scale,
-}
-
-fn layout_attribs(font : &Font, scale : Scale) -> LayoutAttribs {
-  let v_metrics = font.v_metrics(scale);
-  LayoutAttribs {
-    advance_height: v_metrics.ascent - v_metrics.descent + v_metrics.line_gap,
-    advance_width: {
-      let g = font.glyph('a').scaled(scale);
-      let g_width = g.h_metrics().advance_width;
-      let kern = font.pair_kerning(scale, g.id(), g.id());
-      g_width + kern
-    },
-    v_metrics,
-    scale
-  }
-}
 
 fn layout_paragraph<'a>(
   font: &'a Font,
@@ -272,24 +264,7 @@ pub fn run_sdl2_app() {
   // TODO: this consolas file does not support all unicode characters.
   // The "msgothic.ttc" font file does, but it's not monospaced.
 
-  let collection = FontCollection::from_bytes(font_data as &[u8]).unwrap_or_else(|e| {
-    panic!("error constructing a FontCollection from bytes: {}", e);
-  });
-  let font = collection.font_at(0) // only succeeds if collection consists of one font
-    .unwrap_or_else(|e| {
-      panic!("error turning FontCollection into a Font: {}", e);
-    });
-
-  let (cache_width, cache_height) = (512 * dpi_ratio as u32, 512 * dpi_ratio as u32);
-  let mut cache = CacheBuilder {
-      width: cache_width,
-      height: cache_height,
-      ..CacheBuilder::default()
-  }.build();
-
-  let texture_creator = canvas.texture_creator();
-  let mut cache_tex = texture_creator.create_texture(RGBA4444, Streaming, cache_width, cache_height).unwrap();
-  cache_tex.set_blend_mode(BlendMode::Blend);
+  let font_render = FontRenderState::new();
 
   let mut editor = TextEditorState::new(TEXT);
 
