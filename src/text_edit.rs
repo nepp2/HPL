@@ -138,23 +138,6 @@ fn step_left(caret : &mut Caret, text : &Rope, shift_down : bool){
   }
 }
 
-fn move_caret(editor_state : &mut TextEditorState, caret_move : CaretMove) {
-  match caret_move.move_type {
-    CaretMoveType::Left => {
-      step_left(&mut editor_state.caret, &mut editor_state.buffer, caret_move.highlighting)
-    }
-    CaretMoveType::Right => {
-      step_right(&mut editor_state.caret, &mut editor_state.buffer, caret_move.highlighting)
-    }
-    CaretMoveType::Up => {
-      step_up(&mut editor_state.caret, &mut editor_state.buffer, caret_move.highlighting)
-    }
-    CaretMoveType::Down => {
-      step_down(&mut editor_state.caret, &mut editor_state.buffer, caret_move.highlighting)
-    }
-  }
-}
-
 fn apply_text_edit(editor_state : &mut TextEditorState, edit : &TextEdit){
   let start = edit.char_index;
   if edit.text_deleted.len() > 0 {
@@ -235,48 +218,17 @@ fn delete_text_edit(caret : &Caret, text_buffer : &Rope, is_backspace : bool) ->
   else { None }
 }
 
-fn process_action(editor_state : &mut TextEditorState, action : EditAction) {
-  match action {
-    EditAction::InsertText(text) => {
-      let edit = insert_text_edit(&editor_state.caret, &editor_state.buffer, text);
-      apply_text_edit(editor_state, &edit);
-      editor_state.edit_history.push(edit);
-      editor_state.redo_buffer.clear();
-    }
-    EditAction::MoveCaret(caret_move) => {
-      move_caret(editor_state, caret_move);
-    }
-    EditAction::Backspace => {
-      if let Some(edit) = delete_text_edit(&editor_state.caret, &editor_state.buffer, true) {
-        apply_text_edit(editor_state, &edit);
-        editor_state.edit_history.push(edit);
-        editor_state.redo_buffer.clear();
-      }
-    }
-    EditAction::Delete => {
-      if let Some(edit) = delete_text_edit(&editor_state.caret, &editor_state.buffer, false) {
-        apply_text_edit(editor_state, &edit);
-        editor_state.edit_history.push(edit);
-        editor_state.redo_buffer.clear();
-      }
-    }
-    EditAction::Undo => {
-      if let Some(edit) = editor_state.edit_history.pop() {
-        reverse_text_edit(editor_state, &edit);
-        editor_state.redo_buffer.push(edit);
-      }      
-    }
-    EditAction::Redo => {
-      if let Some(edit) = editor_state.redo_buffer.pop() {
-        apply_text_edit(editor_state, &edit);
-        editor_state.edit_history.push(edit);
-      }
-    }
-  }
+pub struct CaretMove {
+  pub highlighting : bool,
+  pub move_type : CaretMoveType,
+}
+
+pub enum CaretMoveType {
+  Left, Right, Up, Down
 }
 
 #[derive(Debug)]
-struct TextEdit {
+pub struct TextEdit {
   caret_before : Caret,
   caret_after : Caret,
   char_index : usize,
@@ -287,8 +239,6 @@ struct TextEdit {
 pub struct TextEditorState {
   pub buffer : Rope,
   pub caret : Caret,
-  edit_history : Vec<TextEdit>,
-  redo_buffer : Vec<TextEdit>,
 }
 
 impl TextEditorState {
@@ -298,8 +248,6 @@ impl TextEditorState {
     TextEditorState {
       buffer,
       caret : Caret::new(),
-      edit_history : vec!(),
-      redo_buffer : vec!(),
     }
   }
 
@@ -313,25 +261,40 @@ impl TextEditorState {
     }
   }
 
-  pub fn process_action(&mut self, action : EditAction) {
-    process_action(self, action);
+  pub fn move_caret(&mut self, caret_move : CaretMove) {
+    match caret_move.move_type {
+      CaretMoveType::Left => {
+        step_left(&mut self.caret, &mut self.buffer, caret_move.highlighting)
+      }
+      CaretMoveType::Right => {
+        step_right(&mut self.caret, &mut self.buffer, caret_move.highlighting)
+      }
+      CaretMoveType::Up => {
+        step_up(&mut self.caret, &mut self.buffer, caret_move.highlighting)
+      }
+      CaretMoveType::Down => {
+        step_down(&mut self.caret, &mut self.buffer, caret_move.highlighting)
+      }
+    }
   }
-}
 
-pub enum EditAction {
-  InsertText(String),
-  MoveCaret(CaretMove),
-  Backspace,
-  Delete,
-  Undo,
-  Redo,
-}
+  pub fn apply_edit(&mut self, edit : &TextEdit){
+    apply_text_edit(self, edit);
+  }
 
-pub struct CaretMove {
-  pub highlighting : bool,
-  pub move_type : CaretMoveType,
-}
+  pub fn reverse_edit(&mut self, edit : &TextEdit){
+    reverse_text_edit(self, edit);
+  }
 
-pub enum CaretMoveType {
-  Left, Right, Up, Down
+  pub fn insert(&self, text_inserted : String) -> TextEdit {
+    insert_text_edit(&self.caret, &self.buffer, text_inserted)
+  }
+
+  pub fn delete(&self) -> Option<TextEdit> {
+    delete_text_edit(&self.caret, &self.buffer, false)
+  }
+
+  pub fn backspace(&self) -> Option<TextEdit> {
+    delete_text_edit(&self.caret, &self.buffer, true)
+  }
 }

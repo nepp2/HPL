@@ -31,6 +31,7 @@ mod text_edit;
 mod lexer;
 mod parser;
 mod interpreter;
+mod cauldron;
 
 use sdl2::event::Event;
 use sdl2::event::WindowEvent;
@@ -44,19 +45,13 @@ use sdl2::render::BlendMode;
 use sdl2::video::{Window};
 use ropey::Rope;
 use clipboard::{ClipboardProvider, ClipboardContext};
-use text_edit::{TextEditorState, CaretMove, EditAction, CaretMoveType};
+use text_edit::{TextEditorState, CaretMove, CaretMoveType};
 use text_edit::caret::Caret;
 use font_render::{FontRenderState, LayoutAttribs };
+use cauldron::{AppState, EditAction};
 
 
 type Canvas = sdl2::render::Canvas<sdl2::video::Window>;
-
-static TEXT: &str = "Here is some text.\r
-
-cit\u{0065}\u{0301}  <<< this tests grapheme correctness
-
-Feel free to type stuff.\r
-And delete it with Backspace.";
 
 fn dpi_ratio(w : &Window) -> f32 {
   let (dw, _) = w.drawable_size();
@@ -188,7 +183,7 @@ pub fn run_sdl2_app() {
 
   let mut font_render = FontRenderState::new(&mut texture_creator, font_data, dpi_ratio);
 
-  let mut editor = TextEditorState::new(TEXT);
+  let mut app = AppState::new();
 
   let mut actions = VecDeque::new();
   
@@ -308,7 +303,7 @@ pub fn run_sdl2_app() {
       }
     }
     while let Some(a) = actions.pop_front() {
-      editor.process_action(a);
+      app.process_action(a);
     }
 
     ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
