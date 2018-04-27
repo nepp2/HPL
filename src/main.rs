@@ -40,14 +40,13 @@ use sdl2::rect::Rect;
 use std::cmp;
 use std::time::Duration;
 use std::collections::VecDeque;
-use sdl2::pixels::PixelFormatEnum::{RGBA4444};
-use sdl2::render::{TextureAccess::Streaming, Texture, BlendMode};
+use sdl2::render::BlendMode;
 use sdl2::video::{Window};
 use ropey::Rope;
 use clipboard::{ClipboardProvider, ClipboardContext};
 use text_edit::{TextEditorState, CaretMove, EditAction, CaretMoveType};
 use text_edit::caret::Caret;
-use font_render::FontRenderState;
+use font_render::{FontRenderState, LayoutAttribs };
 
 
 type Canvas = sdl2::render::Canvas<sdl2::video::Window>;
@@ -58,85 +57,6 @@ cit\u{0065}\u{0301}  <<< this tests grapheme correctness
 
 Feel free to type stuff.\r
 And delete it with Backspace.";
-
-
-fn layout_paragraph<'a>(
-  font: &'a Font,
-  attribs : &LayoutAttribs,
-  text_buffer : &Rope)
-    -> Vec<PositionedGlyph<'a>>
-{
-    use unicode_normalization::UnicodeNormalization;
-    let mut result = Vec::new();
-    let mut caret = point(0.0, attribs.v_metrics.ascent);
-
-    for l in text_buffer.lines() {
-      // TODO: I'm not convinced that this handles multi-codepoint glyphs properly. Maybe the nfc function does.
-      for c in l.chars().nfc() {
-        if c.is_control() {
-          continue;
-        }
-        let base_glyph = font.glyph(c);
-        let mut glyph = base_glyph.scaled(attribs.scale).positioned(caret);
-        caret.x += attribs.advance_width;
-        result.push(glyph);
-      }
-      caret = point(0.0, caret.y + attribs.advance_height);
-    }
-    result
-}
-
-// TODO: this takes way too many paramters, so there should probably be some structs or something
-fn draw_text<'l>(
-  canvas : &mut Canvas, font : &'l Font, text_buffer : &Rope, attribs : &LayoutAttribs,
-  cache : &mut Cache<'l>, cache_width : u32, cache_height : u32, cache_tex : &mut Texture)
-{
-  let glyphs = layout_paragraph(&font, attribs, text_buffer);
-  for glyph in &glyphs {
-      cache.queue_glyph(0, glyph.clone());
-  }
-  cache
-    .cache_queued(|rect, data| {
-        let r =
-          Rect::new(
-            rect.min.x as i32,
-            rect.min.y as i32,
-            rect.width() as u32,
-            rect.height() as u32);
-        
-        // TODO: this may be very inefficient. Not sure.
-        cache_tex.with_lock(Some(r), |target, pitch|{
-          let (w, h) = (r.width() as usize, r.height() as usize);
-          for y in 0..h {
-            let off = y * pitch;
-            for x in 0..w {
-              let off = off + (x * 2);
-              let v = data[w * y + x] >> 4;
-              target[off] = 0x00 | v; // Blue, Alpha
-              target[off + 1] = 0xF0; // Red, Green
-            }
-          }
-        }).unwrap();
-    })
-    .unwrap();
-
-  let (cw, ch) = (cache_width as f32, cache_height as f32);
-  for g in glyphs.iter() {
-    if let Ok(Some((uv_rect, offset_rect))) = cache.rect_for(0, g) {
-        let screen_rect = Rect::new(
-          offset_rect.min.x,
-          offset_rect.min.y,
-          offset_rect.width() as u32,
-          offset_rect.height() as u32);
-        let source_rect = Rect::new(
-          (uv_rect.min.x * cw) as i32,
-          (uv_rect.min.y * ch) as i32,
-          (uv_rect.width() * cw) as u32,
-          (uv_rect.height() * ch) as u32);
-        canvas.copy(&cache_tex, Some(source_rect), Some(screen_rect)).unwrap();
-    }
-  }
-}
 
 fn dpi_ratio(w : &Window) -> f32 {
   let (dw, _) = w.drawable_size();
@@ -260,16 +180,18 @@ pub fn run_sdl2_app() {
   let mut rects = vec!();
 
   // #### Font stuff ####
-  let font_data = include_bytes!("../fonts/consola.ttf");
+  let font_data : &'static[u8] = include_bytes!("../fonts/consola.ttf");
   // TODO: this consolas file does not support all unicode characters.
   // The "msgothic.ttc" font file does, but it's not monospaced.
 
-  let font_render = FontRenderState::new();
+  let mut texture_creator = canvas.texture_creator();
+
+  let mut font_render = FontRenderState::new(&mut texture_creator, font_data, dpi_ratio);
 
   let mut editor = TextEditorState::new(TEXT);
 
   let mut actions = VecDeque::new();
-
+  
   'mainloop: loop {
 
     let (shift_down, ctrl_down) = {
@@ -409,8 +331,8 @@ pub fn run_sdl2_app() {
 
       canvas.fill_rect(Rect::new(0, 0, box_width as u32, box_height as u32)).unwrap();
 
-      let scale = Scale::uniform(font_scale * dpi_ratio);
-      let attribs = layout_attribs(&font, scale);
+        // TODO: at the moment this is recalculated every frame. Maybe it shouldn't be.
+      let attribs = font_render.layout_attribs(font_scale);
 
       canvas.set_draw_color(Color::RGBA(0, 255, 0, 255));
       if let Some(marker) = editor.caret.marker {
@@ -420,9 +342,7 @@ pub fn run_sdl2_app() {
         draw_caret(&mut canvas, editor.caret.pos(), &editor.buffer, &attribs);
       }
 
-      draw_text(
-        &mut canvas, &font, &editor.buffer, &attribs,
-        &mut cache, cache_width, cache_height, &mut cache_tex);
+      font_render.draw_text(&mut canvas, &editor.buffer, &attribs);
 
       canvas.set_clip_rect(None);
       canvas.set_viewport(None);
