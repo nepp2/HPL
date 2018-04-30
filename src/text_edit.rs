@@ -188,12 +188,10 @@ fn insert_text_edit(caret : &Caret, text_buffer : &Rope, text_inserted : String)
   let char_index = caret.pos();
   let pos = caret.pos() + text_inserted.chars().count();
   caret.set_pos(pos);
-  let edit = TextEdit{
+  TextEdit{
     caret_before, caret_after: caret,
     text_deleted, text_inserted, char_index
-  };
-  println!("TextEdit: {:?}", edit);
-  edit
+  }
 }
 
 fn delete_text_edit(caret : &Caret, text_buffer : &Rope, is_backspace : bool) -> Option<TextEdit> {

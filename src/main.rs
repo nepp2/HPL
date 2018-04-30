@@ -36,12 +36,16 @@ use text_edit::caret::Caret;
 use font_render::{FontRenderState, LayoutAttribs };
 
 
-static TEXT: &str = "Here is some text.\r
+static TEXT: &str = "45 + 58";
+
+/*
+"Here is some text.\r
 
 cit\u{0065}\u{0301}  <<< this tests grapheme correctness
 
 Feel free to type stuff.\r
 And delete it with Backspace.";
+*/
 
 pub struct AppState {
   editor : TextEditorState,
