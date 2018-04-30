@@ -1,13 +1,10 @@
 
-use lexer;
 use lexer::{Token, TokenType};
 use std::collections::HashSet;
 use std::f32;
 use std::str::FromStr;
 
 /*
-
-TODO: I have an awful text editor bug of some kind. Sometimes the caret gets stuck between two positions...
 
 TODO: a lot of string copying happens in this file, which isn't great.
 I guess garbage collection is actually pretty good for strings. A lot of
@@ -246,6 +243,7 @@ fn parse_expression_term(ts : &mut TokenStream) -> Result<Expr, String> {
   let token_type = ts.peek()?.token_type;
   match token_type {
     TokenType::Symbol => Err("Tried to parse symbol. Symbols are not yet supported.".to_string()),
+    TokenType::Keyword => Err("Tried to parse keyword. Keywords are not yet supported.".to_string()),
     TokenType::Syntax => parse_syntax(ts),
     TokenType::FloatLiteral => parse_float(ts),
   }
@@ -256,7 +254,8 @@ pub fn parse(tokens : Vec<Token>) -> Result<Expr, String> {
   parse_expression(&mut ts)
 }
 
-pub fn test_parse() {
+#[test]
+fn test_parse() {
   let code = "(3 + 4) * 10";
   let tokens = lexer::lex(code).unwrap();
   let ast = parse(tokens);

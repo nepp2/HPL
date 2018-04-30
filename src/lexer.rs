@@ -1,10 +1,9 @@
 
-use std::str::Chars;
-use std::i32;
+use std::collections::HashSet;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum TokenType {
-  Symbol, Syntax, FloatLiteral
+  Symbol, Syntax, FloatLiteral, Keyword
 }
 
 #[derive(Debug)]
@@ -25,6 +24,7 @@ struct CStream {
   chars : Vec<char>,
   loc : StreamLocation,
   tokens : Vec<Token>,
+  keywords : HashSet<&'static str>,
 }
 
 #[derive(Clone, Copy)]
@@ -34,6 +34,20 @@ struct StreamLocation {
 }
 
 impl CStream {
+
+  const KEYWORDS : &'static [&'static str] = &["fun", "if", "else", "type", "while", "break", "return", "let"];
+
+  fn new(chars : Vec<char>) -> CStream {
+    let mut keywords = HashSet::new();
+    for &s in CStream::KEYWORDS { keywords.insert(s); }
+    CStream {
+      chars,
+      loc : StreamLocation { pos: 0, line : 0 },
+      tokens: vec!(),
+      keywords,
+    }
+  }
+
   fn has_chars(&self) -> bool {
     self.loc.pos < self.chars.len()
   }
@@ -113,6 +127,35 @@ impl CStream {
     else { false }
   }
 
+  fn is_symbol_start_char(&self) -> bool {
+    let c = self.peek();
+    (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
+  }
+
+  fn is_symbol_middle_char(&self) -> bool {
+    self.is_symbol_start_char() || {
+      let c = self.peek();
+      c >= '0' && c <= '9'
+    }
+  }
+
+  fn parse_symbol_or_keyword(&mut self) -> bool {
+    if self.is_symbol_start_char() {
+      let start_loc = self.loc;
+      let mut string = String::new();
+      self.append_char(&mut string);
+      self.append_char_while (&mut string, &CStream::is_symbol_middle_char);
+      if self.keywords.contains(string.as_str()) {
+        self.complete_token(start_loc, string, TokenType::Keyword);
+      }
+      else {
+        self.complete_token(start_loc, string, TokenType::Symbol);
+      }
+      true
+    }
+    else { false }
+  }
+
   fn is_space_char(&self) -> bool {
     let c = self.peek();
     c.is_whitespace()
@@ -166,36 +209,27 @@ impl CStream {
 }
 
 pub fn lex(code : &str) -> Result<Vec<Token>, String> {
-  let mut cs = CStream {
-    chars: code.chars().collect(),
-    loc : StreamLocation { pos: 0, line : 0 },
-    tokens: vec!(),
-  };
-
+  let mut cs = CStream::new(code.chars().collect());
   while cs.has_chars() {
     if cs.handle_newline(&CStream::skip_char) {}
+    else if cs.parse_symbol_or_keyword() {}
     else if cs.parse_number() {}
     else if cs.skip_space() {}
     else if cs.parse_syntax() {}
     else {
       let c = cs.chars[cs.loc.pos];
-      return Err(format!("Unexpected character encountered '{}'", c));
+      return Err(format!("Unexpected character encountered '{}' at position '{}'", c, cs.loc.pos));
     }
   }
-
   Ok(cs.tokens)
 }
 
-pub fn test_lex() {
+#[test]
+fn test_lex() {
   let code = "(3 + 4) * 10";
   let ts = lex(code).unwrap();
   for t in ts {
     println!("{:?}", t.string);
   }
   //println!("{:?}", ts);
-}
-
-#[test]
-fn test () {
-  test_lex();
 }

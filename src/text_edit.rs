@@ -188,10 +188,12 @@ fn insert_text_edit(caret : &Caret, text_buffer : &Rope, text_inserted : String)
   let char_index = caret.pos();
   let pos = caret.pos() + text_inserted.chars().count();
   caret.set_pos(pos);
-  TextEdit{
+  let edit = TextEdit{
     caret_before, caret_after: caret,
     text_deleted, text_inserted, char_index
-  }
+  };
+  println!("TextEdit: {:?}", edit);
+  edit
 }
 
 fn delete_text_edit(caret : &Caret, text_buffer : &Rope, is_backspace : bool) -> Option<TextEdit> {
@@ -262,6 +264,7 @@ impl TextEditorState {
   }
 
   pub fn move_caret(&mut self, caret_move : CaretMove) {
+    let old_pos = self.caret.pos();
     match caret_move.move_type {
       CaretMoveType::Left => {
         step_left(&mut self.caret, &mut self.buffer, caret_move.highlighting)
@@ -275,6 +278,16 @@ impl TextEditorState {
       CaretMoveType::Down => {
         step_down(&mut self.caret, &mut self.buffer, caret_move.highlighting)
       }
+    }
+    // Turn highlighting off if the caret has returned to the marker position
+    if let Some(marker) = self.caret.marker {
+      if marker == self.caret.pos() {
+        self.caret.marker = None;
+      }
+    }
+    // Turn highlighting on if it is off, but the user has moved the caret while holding highlight
+    else if caret_move.highlighting && self.caret.pos() != old_pos {
+      self.caret.marker = Some(old_pos);
     }
   }
 

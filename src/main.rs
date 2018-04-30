@@ -12,14 +12,6 @@ I have realised that the glyphs for the paragraph don't need to be repositioned 
 Retaining their position is a bit messy given that they hold lifetimes.
 There's probably no point in optimising this now.
 
-Once I'm done with the font stuff I am going to split some of the editing code (undo/redo
-buffer, etc) out of text_edit.rs. Then I can put some custom logic in for doing things
-like live-interpreting code that is typed into the text field.
-
-I expect the first time I get this working it will immediately crash, as I do almost nothing
-to handle errors in the parser or interpreter. It just panics! Hopefully this is easier
-to fix in Rust than it was in F#...
-
 */
 
 mod font_render;
@@ -138,12 +130,6 @@ impl AppState {
         let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
         ctx.set_contents(highlighted_string).unwrap();
       }
-    }
-  }
-
-  fn start_highlighting(&mut self){
-    if self.editor.caret.marker.is_none() {
-      self.editor.caret.marker = Some(self.editor.caret.pos());
     }
   }
 
@@ -286,7 +272,7 @@ fn draw_app(app : &AppState, font_render : &mut FontRenderState, canvas : &mut C
 
 pub fn run_sdl2_app() {
 
-	let (mut width, mut height) = (800, 600);
+	let (width, height) = (800, 600);
 
   let sdl_context = sdl2::init().unwrap();
   let video_subsystem = sdl_context.video().unwrap();
@@ -340,10 +326,6 @@ pub fn run_sdl2_app() {
       let cd = is_pressed(&keyboard, Keycode::LCtrl) || is_pressed(&keyboard, Keycode::RCtrl);
       (sd, cd)
     };
-
-    if shift_down {
-      app.start_highlighting();
-    }
 
     for event in events.poll_iter() {
       match event {
@@ -408,15 +390,15 @@ pub fn run_sdl2_app() {
             app.insert_text(text);
           }
         },
-        Event::MouseButtonUp {x, y, ..} => {
+        Event::MouseButtonUp {x: _, y: _, ..} => {
           // empty
         },
-        Event::MouseButtonDown {x, y, ..} => {
+        Event::MouseButtonDown {x: _, y: _, ..} => {
           // empty
         },
         Event::Window { win_event, .. } => {
           match win_event {
-            WindowEvent::Resized(x, y) => {
+            WindowEvent::Resized(_x, _y) => {
               // empty
             },
             _ => {}

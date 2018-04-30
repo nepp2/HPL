@@ -1,7 +1,4 @@
 
-use lexer;
-use parser;
-
 use parser::Expr;
 
 fn infix(a : Expr, op : &str, b : Expr) -> Result<f32, String> {
@@ -28,14 +25,15 @@ fn prefix(op : &str, a : Expr) -> Result<f32, String> {
 
 pub fn interpret(ast : Expr) -> Result<f32, String> {
   match ast {
-    Expr::FunctionCall{ func, args } => Err(format!("function calls not supported")),
+    Expr::FunctionCall{ func: _, args: _ } => Err(format!("function calls not supported")),
     Expr::InfixOp(a, op, b) => infix(*a, &op, *b),
     Expr::PrefixOp(op, a) => prefix(&op, *a),
     Expr::LiteralFloat(f) => Ok(f),
   }
 }
 
-pub fn test_interpret() {
+#[test]
+fn test_interpret() {
   let code = "(3 + 4) * 10";
   let tokens = lexer::lex(code).unwrap();
   let ast = parser::parse(tokens).unwrap();
