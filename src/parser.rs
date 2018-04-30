@@ -6,6 +6,9 @@ use std::f32;
 use std::str::FromStr;
 
 /*
+
+TODO: I have an awful text editor bug of some kind. Sometimes the caret gets stuck between two positions...
+
 TODO: a lot of string copying happens in this file, which isn't great.
 I guess garbage collection is actually pretty good for strings. A lot of
 them could be static, but I'd have to fiddle the types a lot to do something
