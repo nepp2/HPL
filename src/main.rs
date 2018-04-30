@@ -8,10 +8,6 @@ extern crate clipboard;
 
 TODO:
 
-Currently totally broken.
-
-I'm trying to hide all of the font rendering code in one file, behind a very simple interface.
-
 I have realised that the glyphs for the paragraph don't need to be repositioned every frame.
 Retaining their position is a bit messy given that they hold lifetimes.
 There's probably no point in optimising this now.
@@ -31,7 +27,6 @@ mod text_edit;
 mod lexer;
 mod parser;
 mod interpreter;
-mod cauldron;
 
 use sdl2::event::Event;
 use sdl2::event::WindowEvent;
@@ -40,16 +35,116 @@ use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 use std::cmp;
 use std::time::Duration;
-use std::collections::VecDeque;
 use sdl2::render::BlendMode;
 use sdl2::video::{Window};
 use ropey::Rope;
 use clipboard::{ClipboardProvider, ClipboardContext};
-use text_edit::{TextEditorState, CaretMove, CaretMoveType};
+use text_edit::{TextEditorState, CaretMove, CaretMoveType, TextEdit};
 use text_edit::caret::Caret;
 use font_render::{FontRenderState, LayoutAttribs };
-use cauldron::{AppState, EditAction};
 
+
+static TEXT: &str = "Here is some text.\r
+
+cit\u{0065}\u{0301}  <<< this tests grapheme correctness
+
+Feel free to type stuff.\r
+And delete it with Backspace.";
+
+pub struct AppState {
+  editor : TextEditorState,
+  edit_history : Vec<TextEdit>,
+  redo_buffer : Vec<TextEdit>,
+  editor_rectangle : Rect,
+  font_scale : f32,
+}
+
+impl AppState {
+  pub fn new(editor_rectangle : Rect, font_scale : f32) -> AppState {
+    AppState {
+      editor: TextEditorState::new(TEXT),
+      edit_history: vec!(),
+      redo_buffer: vec!(),
+      editor_rectangle,
+      font_scale,
+    }
+  }
+
+  fn insert_text(&mut self, text : String) {
+    let edit = self.editor.insert(text);
+    self.apply_edit(edit);
+  }
+
+  fn move_caret(&mut self, move_type : CaretMoveType, highlighting : bool) {
+    self.editor.move_caret(CaretMove{ highlighting, move_type });
+  }
+
+  fn backspace(&mut self) {
+    if let Some(edit) = self.editor.backspace() {
+      self.apply_edit(edit);
+    }
+  }
+
+  fn delete(&mut self) {
+    if let Some(edit) = self.editor.delete() {
+      self.apply_edit(edit);
+    }
+  }
+
+  fn apply_edit(&mut self, edit : TextEdit) {
+    self.editor.apply_edit(&edit);
+    self.edit_history.push(edit);
+    self.redo_buffer.clear();
+  }
+
+  fn undo(&mut self) {
+    if let Some(edit) = self.edit_history.pop() {
+      self.editor.reverse_edit(&edit);
+      self.redo_buffer.push(edit);
+    }
+  }
+
+  fn redo(&mut self) {
+    if let Some(edit) = self.redo_buffer.pop() {
+      self.editor.apply_edit(&edit);
+      self.edit_history.push(edit);
+    }
+  }
+
+  fn is_some_text_highlighted(&mut self) -> bool {
+    let c = self.editor.caret;
+    if let Some(marker) = c.marker {
+      marker != c.pos()
+    }
+    else {
+      false
+    }
+  }
+
+  fn paste(&mut self){
+    let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
+    if let Ok(s) = ctx.get_contents() {
+      self.insert_text(s);
+    }
+  }
+
+  fn copy_selection(&mut self){
+    if self.is_some_text_highlighted() {
+      let highlighted_string = self.editor.get_highlighted_string();
+      if !highlighted_string.is_empty() {
+        let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
+        ctx.set_contents(highlighted_string).unwrap();
+      }
+    }
+  }
+
+  fn start_highlighting(&mut self){
+    if self.editor.caret.marker.is_none() {
+      self.editor.caret.marker = Some(self.editor.caret.pos());
+    }
+  }
+
+}
 
 type Canvas = sdl2::render::Canvas<sdl2::video::Window>;
 
@@ -57,14 +152,6 @@ fn dpi_ratio(w : &Window) -> f32 {
   let (dw, _) = w.drawable_size();
   let (w, _) = w.size();
   (w as f32) / (dw as f32)
-}
-
-fn copy_text(text_editor : &TextEditorState){
-  let highlighted_string = text_editor.get_highlighted_string();
-  if !highlighted_string.is_empty() {
-    let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
-    ctx.set_contents(highlighted_string).unwrap();
-  }
 }
 
 struct GraphemePos { line : usize, offset : usize }
@@ -141,6 +228,39 @@ fn draw_caret(canvas : &mut Canvas, char_pos : usize, text_buffer : &Rope, attri
   canvas.fill_rect(cursor_rect).unwrap();
 }
 
+fn draw_app(app : &AppState, font_render : &mut FontRenderState, canvas : &mut Canvas) {
+  canvas.set_draw_color(Color::RGBA(0, 0, 0, 255));
+  canvas.clear();
+
+  {
+    let rect = app.editor_rectangle;
+    canvas.set_clip_rect(rect);
+    canvas.set_viewport(rect);
+
+    canvas.set_draw_color(Color::RGBA(255, 255, 255, 255));
+    canvas.fill_rect(Rect::new(0, 0, rect.width(), rect.height())).unwrap();
+
+      // TODO: at the moment this is recalculated every frame. Maybe it shouldn't be.
+    let attribs = font_render.layout_attribs(app.font_scale);
+
+    canvas.set_draw_color(Color::RGBA(0, 255, 0, 255));
+
+    let editor = &app.editor;
+    if let Some(marker) = editor.caret.marker {
+      draw_highlight(canvas, editor.caret.pos(), marker, &editor.buffer, &attribs);
+    }
+    else {
+      draw_caret(canvas, editor.caret.pos(), &editor.buffer, &attribs);
+    }
+
+    font_render.draw_text(canvas, &editor.buffer, &attribs);
+
+    canvas.set_clip_rect(None);
+    canvas.set_viewport(None);
+  }
+  canvas.present();
+}
+
 pub fn run_sdl2_app() {
 
 	let (mut width, mut height) = (800, 600);
@@ -165,14 +285,9 @@ pub fn run_sdl2_app() {
 
   let mut events = sdl_context.event_pump().unwrap();
 
-  let mut xd = 0;
-  let mut yd = 0;
-
   let font_scale = 18.0;
 
   let (box_width, box_height) = (600, 400);
-
-  let mut rects = vec!();
 
   // #### Font stuff ####
   let font_data : &'static[u8] = include_bytes!("../fonts/consola.ttf");
@@ -183,9 +298,13 @@ pub fn run_sdl2_app() {
 
   let mut font_render = FontRenderState::new(&mut texture_creator, font_data, dpi_ratio);
 
-  let mut app = AppState::new();
+  let editor_rectangle = {
+    let tx = (width/2) as i32 - (box_width/2);
+    let ty = (height/2) as i32 - (box_height/2);
+    Rect::new(tx, ty, box_width as u32, box_height as u32)
+  };
 
-  let mut actions = VecDeque::new();
+  let mut app = AppState::new(editor_rectangle, font_scale);
   
   'mainloop: loop {
 
@@ -199,13 +318,8 @@ pub fn run_sdl2_app() {
       (sd, cd)
     };
 
-    if editor.caret.marker.is_none() && shift_down {
-      editor.caret.marker = Some(editor.caret.pos());
-    }
-
-    // TODO events.mouse_state();
-    fn caret_move(move_type : CaretMoveType, highlighting : bool) -> EditAction {
-      EditAction::MoveCaret(CaretMove{ highlighting, move_type })
+    if shift_down {
+      app.start_highlighting();
     }
 
     for event in events.poll_iter() {
@@ -216,55 +330,47 @@ pub fn run_sdl2_app() {
         Event::KeyDown {keycode: Some(k), ..} => {
           match k {
             Keycode::Left => {
-              actions.push_back(caret_move(CaretMoveType::Left, shift_down));
+              app.move_caret(CaretMoveType::Left, shift_down);
             }
             Keycode::Right => {
-              actions.push_back(caret_move(CaretMoveType::Right, shift_down));
+              app.move_caret(CaretMoveType::Right, shift_down);
             }
             Keycode::Up => {
-              actions.push_back(caret_move(CaretMoveType::Up, shift_down));
+              app.move_caret(CaretMoveType::Up, shift_down);
             }
             Keycode::Down => {
-              actions.push_back(caret_move(CaretMoveType::Down, shift_down));
+              app.move_caret(CaretMoveType::Down, shift_down);
             }
             Keycode::Backspace => {
-              actions.push_back(EditAction::Backspace);
+              app.backspace();
             }
             Keycode::Delete => {
-              actions.push_back(EditAction::Delete);
-            }
-            Keycode::LShift | Keycode::RShift => {
-              if editor.caret.marker.is_none() {
-                editor.caret.marker = Some(editor.caret.pos());
-              }
+              app.delete();
             }
             Keycode::C => {
-              if ctrl_down && editor.caret.marker.is_some() {
-                copy_text(&editor);
+              if ctrl_down {
+                app.copy_selection();
               }
             }
             Keycode::X => {
-              if ctrl_down && editor.caret.marker.is_some() {
-                copy_text(&editor);
-                actions.push_back(EditAction::Backspace);
+              if ctrl_down && app.is_some_text_highlighted() {
+                app.copy_selection();
+                app.backspace();
               }
             }
             Keycode::V => {
               if ctrl_down {
-                let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
-                if let Ok(s) = ctx.get_contents() {
-                  actions.push_back(EditAction::InsertText(s));
-                }
+                app.paste();
               }
             }
             Keycode::Z => {
               if ctrl_down {
-                actions.push_back(EditAction::Undo);
+                app.undo();
               }
             }
             Keycode::Y => {
               if ctrl_down {
-                actions.push_back(EditAction::Redo);
+                app.redo();
               }
             }
             _ => {
@@ -272,29 +378,23 @@ pub fn run_sdl2_app() {
           }
         },
         Event::TextInput { text, .. } => {
-          actions.push_back(EditAction::InsertText(text));
+          app.insert_text(text);
         },
         Event::TextEditing { text, .. } => {
           if text.len() > 0 {
-            actions.push_back(EditAction::InsertText(text));
+            app.insert_text(text);
           }
         },
         Event::MouseButtonUp {x, y, ..} => {
-          let xp = cmp::min(x, xd);
-          let yp = cmp::min(y, yd);
-          let w = (x - xd).abs() as u32;
-          let h = (y - yd).abs() as u32;
-          rects.push(Rect::new(xp, yp, w, h));
+          // empty
         },
         Event::MouseButtonDown {x, y, ..} => {
-            xd = x;
-            yd = y;
+          // empty
         },
         Event::Window { win_event, .. } => {
           match win_event {
             WindowEvent::Resized(x, y) => {
-              width = x as u32;
-              height = y as u32;
+              // empty
             },
             _ => {}
           }
@@ -302,47 +402,11 @@ pub fn run_sdl2_app() {
         _e => {}
       }
     }
-    while let Some(a) = actions.pop_front() {
-      app.process_action(a);
-    }
 
     ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
     // The rest of the loop goes here...
 
-    canvas.set_draw_color(Color::RGBA(0, 0, 0, 255));
-    canvas.clear();
-    canvas.set_draw_color(Color::RGBA(255, 255, 255, 255));
-    for r in rects.iter() {
-      canvas.fill_rect(*r).unwrap();
-    }
-
-    let tx = (width/2) as i32 - (box_width/2);
-    let ty = (height/2) as i32 - (box_height/2);
-    let text_rectangle = Rect::new(tx, ty, box_width as u32, box_height as u32);
-
-    {
-      canvas.set_clip_rect(text_rectangle);
-      canvas.set_viewport(text_rectangle);
-
-      canvas.fill_rect(Rect::new(0, 0, box_width as u32, box_height as u32)).unwrap();
-
-        // TODO: at the moment this is recalculated every frame. Maybe it shouldn't be.
-      let attribs = font_render.layout_attribs(font_scale);
-
-      canvas.set_draw_color(Color::RGBA(0, 255, 0, 255));
-      if let Some(marker) = editor.caret.marker {
-        draw_highlight(&mut canvas, editor.caret.pos(), marker, &editor.buffer, &attribs);
-      }
-      else {
-        draw_caret(&mut canvas, editor.caret.pos(), &editor.buffer, &attribs);
-      }
-
-      font_render.draw_text(&mut canvas, &editor.buffer, &attribs);
-
-      canvas.set_clip_rect(None);
-      canvas.set_viewport(None);
-    }
-    canvas.present();
+    draw_app(&mut app, &mut font_render, &mut canvas);
 	}
 }
 
@@ -351,3 +415,4 @@ fn main(){
   //parser::test_parse();
   //interpreter::test_interpret();
 }
+
