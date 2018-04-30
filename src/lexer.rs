@@ -165,7 +165,7 @@ impl CStream {
   }
 }
 
-pub fn lex(code : &str) -> Vec<Token> {
+pub fn lex(code : &str) -> Result<Vec<Token>, String> {
   let mut cs = CStream {
     chars: code.chars().collect(),
     loc : StreamLocation { pos: 0, line : 0 },
@@ -178,17 +178,17 @@ pub fn lex(code : &str) -> Vec<Token> {
     else if cs.skip_space() {}
     else if cs.parse_syntax() {}
     else {
-      let s : String = cs.chars[cs.loc.pos..].into_iter().collect();
-      panic!("Unexpected characters: \"{}\"", s);
+      let c = cs.chars[cs.loc.pos];
+      return Err(format!("Unexpected character encountered '{}'", c));
     }
   }
 
-  cs.tokens
+  Ok(cs.tokens)
 }
 
 pub fn test_lex() {
   let code = "(3 + 4) * 10";
-  let ts = lex(code);
+  let ts = lex(code).unwrap();
   for t in ts {
     println!("{:?}", t.string);
   }

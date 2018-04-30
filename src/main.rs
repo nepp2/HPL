@@ -95,12 +95,14 @@ impl AppState {
     self.editor.apply_edit(&edit);
     self.edit_history.push(edit);
     self.redo_buffer.clear();
+    self.text_changed();
   }
 
   fn undo(&mut self) {
     if let Some(edit) = self.edit_history.pop() {
       self.editor.reverse_edit(&edit);
       self.redo_buffer.push(edit);
+      self.text_changed();
     }
   }
 
@@ -108,6 +110,7 @@ impl AppState {
     if let Some(edit) = self.redo_buffer.pop() {
       self.editor.apply_edit(&edit);
       self.edit_history.push(edit);
+      self.text_changed();
     }
   }
 
@@ -142,6 +145,26 @@ impl AppState {
     if self.editor.caret.marker.is_none() {
       self.editor.caret.marker = Some(self.editor.caret.pos());
     }
+  }
+
+  fn interpret(&self) -> Result<f32, String> {
+    let text = self.editor.buffer.to_string();
+    let tokens = lexer::lex(&text)?;
+    let ast = parser::parse(tokens)?;
+    let value = interpreter::interpret(ast)?;
+    Ok(value)
+  }
+
+  /// this is called when the contents of the text editor have been modified
+  fn text_changed(&mut self) {
+    match self.interpret() {
+      Ok(v) => {
+        println!("Value is '{}'", v);  
+      }
+      Err(e) => {
+        println!("Error; {}", e);
+      }
+    };
   }
 
 }
