@@ -20,10 +20,17 @@ pub struct Token {
   pub loc : TextLocation,
 }
 
+#[derive(Debug)]
+pub struct LexError {
+  message : String,
+  loc : TextLocation,
+}
+
 struct CStream {
   chars : Vec<char>,
   loc : StreamLocation,
   tokens : Vec<Token>,
+  errors : Vec<LexError>,
   keywords : HashSet<&'static str>,
 }
 
@@ -44,6 +51,7 @@ impl CStream {
       chars,
       loc : StreamLocation { pos: 0, line : 0 },
       tokens: vec!(),
+      errors: vec!(),
       keywords,
     }
   }
@@ -58,19 +66,34 @@ impl CStream {
     self.loc.pos += 1;
   }
 
-  fn complete_token(&mut self, start_loc : StreamLocation, string : String, token_type : TokenType) {
+  fn pop(&mut self) -> char {
+    let c = self.peek();
+    self.skip_char();
+    c
+  }
+
+  fn get_text_location(&mut self, start_loc : StreamLocation) -> TextLocation {
     let len = self.loc.pos - start_loc.pos;
-    let loc = TextLocation {
+    TextLocation {
       start: start_loc.pos as u32,
       length: len as u32,
       line: start_loc.line as u32,
-    };
+    }
+  }
+
+  fn complete_token(&mut self, start_loc : StreamLocation, string : String, token_type : TokenType) {
+    let loc = self.get_text_location(start_loc);
     let t = Token {
       string,
       token_type: token_type,
       loc : loc,
     };
     self.tokens.push(t);
+  }
+
+  fn error(&mut self, start_loc : StreamLocation, message : String) {
+    let loc = self.get_text_location(start_loc);
+    self.errors.push(LexError{ message, loc });
   }
 
   fn handle_newline(&mut self, operation : &Fn(&mut CStream)) -> bool {
@@ -82,7 +105,7 @@ impl CStream {
     else { false }
   }
 
-  fn is_symbol_number(&self) -> bool {
+  fn is_number(&self) -> bool {
     let c = self.peek();
     c >= '0' && c <= '9'
   }
@@ -113,15 +136,21 @@ impl CStream {
   }
 
   fn parse_number(&mut self) -> bool {
-    if self.is_symbol_number() {
+    if self.is_number() {
       let start_loc = self.loc;
       let mut string = String::new();
-      self.append_char_while(&mut string, &CStream::is_symbol_number);
+      self.append_char_while(&mut string, &CStream::is_number);
       if self.has_chars() && self.peek() == '.' {
         self.append_char(&mut string);
-        self.append_char_while(&mut string, &CStream::is_symbol_number);
+        self.append_char_while(&mut string, &CStream::is_number);
       }
-      self.complete_token(start_loc, string, TokenType::FloatLiteral);
+      if self.has_chars() && self.is_symbol_start_char() {
+        self.append_char_while(&mut string, &CStream::is_symbol_middle_char);
+        self.error(start_loc, "Malformed floating point literal".to_string());
+      }
+      else{
+        self.complete_token(start_loc, string, TokenType::FloatLiteral);
+      }
       true
     }
     else { false }
@@ -193,6 +222,12 @@ impl CStream {
     return false;
   }
 
+  fn unknown_token(&mut self) {
+    let start_loc = self.loc;
+    let _ = self.pop(); 
+    self.error(start_loc, "Unknown token".to_string());
+  }
+
   const SYNTAX : &'static [&'static str] =
     &["==", "!=", "<=", ">=", "=>", "+=", "-=", "*=", "/=", "||",
       "&&", "{", "}", "(", ")", "[", "]", "<", ">", ";", ":", ",",
@@ -208,7 +243,7 @@ impl CStream {
   }
 }
 
-pub fn lex(code : &str) -> Result<Vec<Token>, String> {
+pub fn lex(code : &str) -> Result<Vec<Token>, Vec<LexError>> {
   let mut cs = CStream::new(code.chars().collect());
   while cs.has_chars() {
     if cs.handle_newline(&CStream::skip_char) {}
@@ -217,11 +252,15 @@ pub fn lex(code : &str) -> Result<Vec<Token>, String> {
     else if cs.skip_space() {}
     else if cs.parse_syntax() {}
     else {
-      let c = cs.chars[cs.loc.pos];
-      return Err(format!("Unexpected character encountered '{}' at position '{}'", c, cs.loc.pos));
+      cs.unknown_token();
     }
   }
-  Ok(cs.tokens)
+  if cs.errors.is_empty() {
+    Ok(cs.tokens)
+  }
+  else {
+    Err(cs.errors)
+  }
 }
 
 #[test]
