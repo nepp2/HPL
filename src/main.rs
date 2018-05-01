@@ -34,6 +34,7 @@ use clipboard::{ClipboardProvider, ClipboardContext};
 use text_edit::{TextEditorState, CaretMove, CaretMoveType, TextEdit};
 use text_edit::caret::Caret;
 use font_render::{FontRenderState, LayoutAttribs };
+use std::collections::HashMap;
 
 
 static TEXT: &str = "45 + 58";
@@ -47,89 +48,124 @@ Feel free to type stuff.\r
 And delete it with Backspace.";
 */
 
-pub struct AppState {
+type uid = u64;
+
+pub struct TextNode {
+  uid : uid,
   editor : TextEditorState,
+  bounds : Rect,
+}
+
+pub struct AppState {
+  uid_generator : uid,
+  active_node : Option<uid>,
+  text_nodes : HashMap<uid, TextNode>,
   edit_history : Vec<TextEdit>,
   redo_buffer : Vec<TextEdit>,
-  editor_rectangle : Rect,
   font_scale : f32,
 }
 
 impl AppState {
-  pub fn new(editor_rectangle : Rect, font_scale : f32) -> AppState {
+
+  fn new(font_scale : f32) -> AppState {
     AppState {
-      editor: TextEditorState::new(TEXT),
+      uid_generator: 0,
+      active_node: None,
+      text_nodes: HashMap::new(),
       edit_history: vec!(),
       redo_buffer: vec!(),
-      editor_rectangle,
       font_scale,
     }
   }
 
-  fn insert_text(&mut self, text : String) {
-    let edit = self.editor.insert(text);
-    self.apply_edit(edit);
+  fn add_node(&mut self, text : &str, bounds : Rect) -> uid {
+    self.uid_generator += 1;
+    let node = TextNode {
+      uid: self.uid_generator,
+      editor: TextEditorState::new(text),
+      bounds,
+    };
+    self.text_nodes.insert(self.uid_generator, node);
+    self.uid_generator
   }
 
-  fn move_caret(&mut self, move_type : CaretMoveType, highlighting : bool) {
-    self.editor.move_caret(CaretMove{ highlighting, move_type });
+  fn node(&mut self, uid : uid) -> &mut TextNode {
+    self.text_nodes.get_mut(&uid).unwrap()
   }
 
-  fn backspace(&mut self) {
-    if let Some(edit) = self.editor.backspace() {
-      self.apply_edit(edit);
+  fn insert_text(&mut self, uid : uid, text : String) {
+    let node = self.node(uid);
+    let edit = node.editor.insert(text);
+    self.apply_edit(uid, edit);
+  }
+
+  fn move_caret(&mut self, uid : uid, move_type : CaretMoveType, highlighting : bool) {
+    let node = self.node(uid);
+    node.editor.move_caret(CaretMove{ highlighting, move_type });
+  }
+
+  fn backspace(&mut self, uid : uid) {
+    let node = self.node(uid);
+    if let Some(edit) = node.editor.backspace() {
+      self.apply_edit(uid, edit);
     }
   }
 
-  fn delete(&mut self) {
-    if let Some(edit) = self.editor.delete() {
-      self.apply_edit(edit);
+  fn delete(&mut self, uid : uid) {
+    let node = self.node(uid);
+    if let Some(edit) = node.editor.delete() {
+      self.apply_edit(uid, edit);
     }
   }
 
-  fn apply_edit(&mut self, edit : TextEdit) {
-    self.editor.apply_edit(&edit);
+  fn apply_edit(&mut self, uid : uid, edit : TextEdit) {
+    let node = self.node(uid);
+    node.editor.apply_edit(&edit);
     self.edit_history.push(edit);
     self.redo_buffer.clear();
-    self.text_changed();
+    self.text_changed(node);
   }
 
   fn undo(&mut self) {
+    /* TODO
     if let Some(edit) = self.edit_history.pop() {
       self.editor.reverse_edit(&edit);
       self.redo_buffer.push(edit);
       self.text_changed();
     }
+    */
   }
 
   fn redo(&mut self) {
+    /* TODO
     if let Some(edit) = self.redo_buffer.pop() {
       self.editor.apply_edit(&edit);
       self.edit_history.push(edit);
       self.text_changed();
     }
+    */
   }
 
-  fn is_some_text_highlighted(&mut self) -> bool {
-    let c = self.editor.caret;
+  fn is_some_text_highlighted(&mut self, uid : uid) -> bool {
+    let node = self.node(uid);
+    let c = node.editor.caret;
     if let Some(marker) = c.marker {
-      marker != c.pos()
+      return marker != c.pos()
     }
-    else {
-      false
-    }
+    return false;
   }
 
-  fn paste(&mut self){
+  fn paste(&mut self, uid : uid){
     let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
     if let Ok(s) = ctx.get_contents() {
-      self.insert_text(s);
+      self.insert_text(uid, s);
     }
   }
 
-  fn copy_selection(&mut self){
-    if self.is_some_text_highlighted() {
-      let highlighted_string = self.editor.get_highlighted_string();
+  fn copy_selection(&mut self, uid : uid){
+    if self.is_some_text_highlighted(uid) {
+      let node = self.node(uid);
+      let highlighted_string = node.editor.get_highlighted_string();
       if !highlighted_string.is_empty() {
         let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
         ctx.set_contents(highlighted_string).unwrap();
@@ -137,17 +173,9 @@ impl AppState {
     }
   }
 
-  fn interpret(&self) -> Result<f32, String> {
-    let text = self.editor.buffer.to_string();
-    let tokens = lexer::lex(&text)?;
-    let ast = parser::parse(tokens)?;
-    let value = interpreter::interpret(ast)?;
-    Ok(value)
-  }
-
   /// this is called when the contents of the text editor have been modified
-  fn text_changed(&mut self) {
-    match self.interpret() {
+  fn text_changed(&mut self, node : &TextNode) {
+    match interpret(&node.editor.buffer.to_string()) {
       Ok(v) => {
         println!("Value is '{}'", v);  
       }
@@ -157,6 +185,13 @@ impl AppState {
     };
   }
 
+}
+
+fn interpret(text : &str) -> Result<f32, String> {
+  let tokens = lexer::lex(text)?;
+  let ast = parser::parse(tokens)?;
+  let value = interpreter::interpret(ast)?;
+  Ok(value)
 }
 
 type Canvas = sdl2::render::Canvas<sdl2::video::Window>;
@@ -246,6 +281,7 @@ fn draw_app(app : &AppState, font_render : &mut FontRenderState, canvas : &mut C
   canvas.clear();
 
   {
+    /*
     let rect = app.editor_rectangle;
     canvas.set_clip_rect(rect);
     canvas.set_viewport(rect);
@@ -270,6 +306,7 @@ fn draw_app(app : &AppState, font_render : &mut FontRenderState, canvas : &mut C
 
     canvas.set_clip_rect(None);
     canvas.set_viewport(None);
+    */
   }
   canvas.present();
 }
@@ -311,13 +348,15 @@ pub fn run_sdl2_app() {
 
   let mut font_render = FontRenderState::new(&mut texture_creator, font_data, dpi_ratio);
 
+  let mut app = AppState::new(font_scale);
+
   let editor_rectangle = {
     let tx = (width/2) as i32 - (box_width/2);
     let ty = (height/2) as i32 - (box_height/2);
     Rect::new(tx, ty, box_width as u32, box_height as u32)
   };
 
-  let mut app = AppState::new(editor_rectangle, font_scale);
+  app.add_node(TEXT, editor_rectangle);
   
   'mainloop: loop {
 
@@ -331,6 +370,8 @@ pub fn run_sdl2_app() {
       (sd, cd)
     };
 
+    let uid = app.active_node.unwrap();
+
     for event in events.poll_iter() {
       match event {
         Event::Quit{..} |
@@ -339,37 +380,37 @@ pub fn run_sdl2_app() {
         Event::KeyDown {keycode: Some(k), ..} => {
           match k {
             Keycode::Left => {
-              app.move_caret(CaretMoveType::Left, shift_down);
+              app.move_caret(uid, CaretMoveType::Left, shift_down);
             }
             Keycode::Right => {
-              app.move_caret(CaretMoveType::Right, shift_down);
+              app.move_caret(uid, CaretMoveType::Right, shift_down);
             }
             Keycode::Up => {
-              app.move_caret(CaretMoveType::Up, shift_down);
+              app.move_caret(uid, CaretMoveType::Up, shift_down);
             }
             Keycode::Down => {
-              app.move_caret(CaretMoveType::Down, shift_down);
+              app.move_caret(uid, CaretMoveType::Down, shift_down);
             }
             Keycode::Backspace => {
-              app.backspace();
+              app.backspace(uid);
             }
             Keycode::Delete => {
-              app.delete();
+              app.delete(uid);
             }
             Keycode::C => {
               if ctrl_down {
-                app.copy_selection();
+                app.copy_selection(uid);
               }
             }
             Keycode::X => {
-              if ctrl_down && app.is_some_text_highlighted() {
-                app.copy_selection();
-                app.backspace();
+              if ctrl_down && app.is_some_text_highlighted(uid) {
+                app.copy_selection(uid);
+                app.backspace(uid);
               }
             }
             Keycode::V => {
               if ctrl_down {
-                app.paste();
+                app.paste(uid);
               }
             }
             Keycode::Z => {
@@ -387,11 +428,11 @@ pub fn run_sdl2_app() {
           }
         },
         Event::TextInput { text, .. } => {
-          app.insert_text(text);
+          app.insert_text(uid, text);
         },
         Event::TextEditing { text, .. } => {
           if text.len() > 0 {
-            app.insert_text(text);
+            app.insert_text(uid, text);
           }
         },
         Event::MouseButtonUp {x: _, y: _, ..} => {
