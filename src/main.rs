@@ -54,6 +54,10 @@ struct NodePair {
 
 struct TextNode {
   editor : TextEditorState,
+  output : TextEditorState,
+}
+
+struct Node {
   bounds : Rect,
 }
 
@@ -154,10 +158,18 @@ impl NodePair {
   }
 }
 
+enum EditMode {
+  TextEditing,
+  Dragging { offset : Point },
+}
+
 struct AppState {
+  uid_generator : u64,
   node_pair : NodePair,
+  nodes : Vec<TextNode>,
   edit_history : EditHistory,
   font_scale : f32,
+  edit_mode : EditMode,
 }
 
 struct EditHistory {
@@ -199,11 +211,19 @@ impl AppState {
         redo_buffer: vec!(),
       },
       font_scale,
+      edit_mode: EditMode::TextEditing,
     }
   }
 
   fn handle_focused_node_event(&mut self, event : &Event, shift_down : bool, ctrl_down : bool) {
-    handle_text_node_event(&mut self.node_pair, &mut self.edit_history, event, shift_down, ctrl_down)
+    match self.edit_mode {
+      EditMode::TextEditing => {
+        handle_text_editing_event(&mut self.node_pair, &mut self.edit_mode, &mut self.edit_history, event, shift_down, ctrl_down)
+      }
+      EditMode::Dragging { offset } => {
+        handle_dragging_event(&mut self.node_pair, &mut self.edit_mode, event, offset);
+      }
+    }
   }
 
   fn undo(&mut self) {
@@ -366,7 +386,7 @@ fn draw_app(app : &AppState, width : i32, height : i32, font_render : &mut FontR
   canvas.present();
 }
 
-fn handle_text_node_event(node : &mut NodePair, edit_history : &mut EditHistory, event : &Event, shift_down : bool, ctrl_down : bool) {
+fn handle_text_editing_event(node : &mut NodePair, edit_mode : &mut EditMode, edit_history : &mut EditHistory, event : &Event, shift_down : bool, ctrl_down : bool) {
   match event {
     &Event::KeyDown {keycode: Some(k), ..} => {
       match k {
@@ -418,6 +438,25 @@ fn handle_text_node_event(node : &mut NodePair, edit_history : &mut EditHistory,
       //if text.len() > 0 {
       //  app.insert_text(uid, text);
       //}
+    }
+    &Event::MouseButtonDown {x, y, ..} => {
+      let r = node.input.header_rect();
+      if r.contains_point((x, y)) {
+        *edit_mode = EditMode::Dragging { offset: Point::new(x - r.x(), y - r.y()) };
+      }
+    }
+    _e => {}
+  }
+}
+
+fn handle_dragging_event(node : &mut NodePair, edit_mode : &mut EditMode, event : &Event, drag_offset : Point) {
+  match event {
+    &Event::MouseButtonUp {x: _, y: _, ..} => {
+      *edit_mode = EditMode::TextEditing;
+    }
+    &Event::MouseMotion {x, y, ..} => {
+      node.input.bounds.set_x(x - drag_offset.x());
+      node.input.bounds.set_y(y - drag_offset.y());
     }
     _e => {}
   }
@@ -511,10 +550,9 @@ pub fn run_sdl2_app() {
       app.handle_focused_node_event(&event, shift_down, ctrl_down);
     }
 
-    ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
-    // The rest of the loop goes here...
-
     draw_app(&mut app, width as i32, height as i32, &mut font_render, &mut canvas);
+
+    ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
 	}
 }
 
