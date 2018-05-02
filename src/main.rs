@@ -57,6 +57,34 @@ struct TextNode {
   bounds : Rect,
 }
 
+impl TextNode {
+
+  const HEADER_HEIGHT : i32 = 20;
+
+  fn header_rect(&self) -> Rect {
+    Rect::new(
+      self.bounds.x(), self.bounds.y(),
+      self.bounds.width(), TextNode::HEADER_HEIGHT as u32)
+  }
+
+  fn text_rect(&self) -> Rect {
+    Rect::new(
+      self.bounds.x(), self.bounds.y() + TextNode::HEADER_HEIGHT,
+      self.bounds.width(), self.bounds.height() - (TextNode::HEADER_HEIGHT as u32))
+  }
+}
+
+trait RectExt<T> {
+    fn subtract_margin(&self, thickness : i32) -> T;
+}
+
+impl RectExt<Rect> for Rect {
+  fn subtract_margin(&self, thickness : i32) -> Rect {
+    let t = (thickness * 2) as u32;
+    Rect::new(self.x() + thickness, self.y() + thickness, self.width() - t, self.height() - t)
+  }
+}
+
 impl NodePair {
   fn insert_text(&mut self, edit_history : &mut EditHistory, text : String) {
     let edit = self.input.editor.insert(text);
@@ -149,15 +177,15 @@ impl EditHistory {
 impl AppState {
 
   fn new(text : &str) -> AppState {
-    let font_scale = 18.0;
-    let (box_width, box_height) = (600, 400);
+    let font_scale = 16.0;
+    let (box_width, box_height) = (400, 300);
     let input = TextNode {
       editor: TextEditorState::new(text),
-      bounds: Rect::new(50, 50, box_width as u32, box_height as u32),
+      bounds: Rect::new(40, 40, box_width as u32, box_height as u32),
     };
     let output = TextNode {
       editor: TextEditorState::new(""),
-      bounds: Rect::new(box_width + 100, 50, box_width as u32, box_height as u32),
+      bounds: Rect::new(box_width + 80, 40, box_width as u32, box_height as u32),
     };
     let mut node_pair = NodePair {
       input,
@@ -287,10 +315,11 @@ fn draw_text_node(node : &TextNode, font_render : &mut FontRenderState, canvas :
     canvas.set_draw_color(Color::RGBA(100, 100, 100, 255));
     canvas.fill_rect(back_rect).unwrap();
 
-    let text_rect = Rect::new(rect.x() + 2, rect.y() + 22, rect.width() - 4, rect.height() - 24);
+    let text_rect = node.text_rect().subtract_margin(2);
     canvas.set_draw_color(Color::RGBA(39, 40, 34, 255));
     canvas.fill_rect(text_rect).unwrap();
 
+    let text_rect = text_rect.subtract_margin(4);
     canvas.set_clip_rect(text_rect);
     canvas.set_viewport(text_rect);
 
@@ -316,13 +345,11 @@ fn draw_text_node(node : &TextNode, font_render : &mut FontRenderState, canvas :
 }
 
 fn draw_app(app : &AppState, width : i32, height : i32, font_render : &mut FontRenderState, canvas : &mut Canvas) {
-  canvas.set_draw_color(Color::RGBA(15, 15, 15, 255));
+  canvas.set_draw_color(Color::RGBA(20, 20, 20, 255));
   canvas.clear();
 
+  // draw background lines
   canvas.set_draw_color(Color::RGBA(0, 0, 0, 255));
-  
-  //canvas.t
-
   let line_interval = 15;
   for x in 0..(width/line_interval) {
     canvas.draw_line(Point::new(x * line_interval, 0), Point::new(x * line_interval, height)).unwrap();
@@ -331,9 +358,8 @@ fn draw_app(app : &AppState, width : i32, height : i32, font_render : &mut FontR
     canvas.draw_line(Point::new(0, y * line_interval), Point::new(width, y * line_interval)).unwrap();
   }
 
-  // TODO: at the moment this is recalculated every frame. Maybe it shouldn't be.
+  // draw the text nodes
   let attribs = font_render.layout_attribs(app.font_scale);
-
   draw_text_node(&app.node_pair.input, font_render, canvas, &attribs, true);
   draw_text_node(&app.node_pair.output, font_render, canvas, &attribs, false);
 
@@ -404,7 +430,7 @@ pub fn run_sdl2_app() {
   let sdl_context = sdl2::init().unwrap();
   let video_subsystem = sdl_context.video().unwrap();
 
-  let window = video_subsystem.window("cauldron", width, height)
+  let window = video_subsystem.window("demo", width, height)
     .position_centered()
     .resizable()
     .build()

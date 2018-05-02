@@ -146,19 +146,22 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
   fn pratt_parse(ts : &mut TokenStream, precedence : i32) -> Result<Expr, String> {
     // TODO: this is currently implemented with an enum in a dumb way to handle limitation of Rust's
     // lifetime inference. Once these limitations are fixed (non-lexical lifetimes) I can fix this.
-    enum Action { FunctionCall, Infix(i32), Break }
+    enum Action { FunctionCall, Infix(i32) }
     let mut expr = parse_prefix(ts)?;
     while ts.has_tokens() {
-      let mut action = Action::Break;
+      let action;
       { // open scope to scope-limit lifetime of token
         let t = ts.peek()?;
         if t.token_type == TokenType::Syntax && ts.terminating_syntax.contains(t.string.as_str()) {
-          // this case should break
+          break;
         }
         else if t.token_type == TokenType::Syntax && t.string == "(" {
           let next_precedence = operator_precedence(&t.string)?;
           if next_precedence > precedence {
             action = Action::FunctionCall;
+          }
+          else {
+            break;
           }
         }
         else if t.token_type == TokenType::Syntax && ts.infix_operators.contains(t.string.as_str()) {
@@ -166,10 +169,15 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
           if next_precedence > precedence {
             action = Action::Infix(next_precedence);
           }
+          else {
+            break;
+          }
+        }
+        else {
+          return Err(format!("Unexpected token '{}' of type '{:?}'", t.string, t.token_type));
         }
       };
       match action {
-        Action::Break => break,
         Action::FunctionCall => expr = parse_function_call(ts, expr)?,
         Action::Infix(next_precedence) => expr = parse_infix(ts, expr, next_precedence)?,
       }
