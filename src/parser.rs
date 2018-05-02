@@ -259,7 +259,12 @@ fn parse_expression_term(ts : &mut TokenStream) -> Result<Expr, String> {
 
 pub fn parse(tokens : Vec<Token>) -> Result<Expr, String> {
   let mut ts = TokenStream::new(tokens);
-  parse_expression(&mut ts)
+  let e = parse_expression(&mut ts)?;
+  if ts.has_tokens() {
+    let t = ts.peek()?;
+    return Err(format!("Unexpected token '{}' of type '{:?}'", t.string, t.token_type));
+  }
+  return Ok(e);
 }
 
 #[test]
