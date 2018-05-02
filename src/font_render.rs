@@ -68,8 +68,8 @@ impl<'a> FontRenderState<'a> {
               for x in 0..w {
                 let off = off + (x * 2);
                 let v = data[w * y + x] >> 4;
-                target[off] = 0x00 | v; // Blue, Alpha
-                target[off + 1] = 0xF0; // Red, Green
+                target[off] = 0xF0 | v; // Blue, Alpha
+                target[off + 1] = 0xFF; // Red, Green
               }
             }
           }).unwrap();

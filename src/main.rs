@@ -24,7 +24,7 @@ use sdl2::event::Event;
 use sdl2::event::WindowEvent;
 use sdl2::keyboard::{Keycode, Scancode, KeyboardState};
 use sdl2::pixels::Color;
-use sdl2::rect::Rect;
+use sdl2::rect::{Rect, Point};
 use std::cmp;
 use std::time::Duration;
 use sdl2::render::BlendMode;
@@ -282,24 +282,30 @@ fn draw_caret(canvas : &mut Canvas, char_pos : usize, text_buffer : &Rope, attri
 
 fn draw_text_node(node : &TextNode, font_render : &mut FontRenderState, canvas : &mut Canvas, attribs : &LayoutAttribs, focused : bool){
     let rect = node.bounds;
-    canvas.set_clip_rect(rect);
-    canvas.set_viewport(rect);
 
-    canvas.set_draw_color(Color::RGBA(255, 255, 255, 255));
-    canvas.fill_rect(Rect::new(0, 0, rect.width(), rect.height())).unwrap();
+    let back_rect = rect;
+    canvas.set_draw_color(Color::RGBA(100, 100, 100, 255));
+    canvas.fill_rect(back_rect).unwrap();
+
+    let text_rect = Rect::new(rect.x() + 2, rect.y() + 22, rect.width() - 4, rect.height() - 24);
+    canvas.set_draw_color(Color::RGBA(39, 40, 34, 255));
+    canvas.fill_rect(text_rect).unwrap();
+
+    canvas.set_clip_rect(text_rect);
+    canvas.set_viewport(text_rect);
 
     let editor = &node.editor;
     if let Some(marker) = editor.caret.marker {
       if focused {
-        canvas.set_draw_color(Color::RGBA(0, 255, 0, 255));
+        canvas.set_draw_color(Color::RGBA(73, 72, 62, 255));
       }
       else {
-        canvas.set_draw_color(Color::RGBA(200, 200, 200, 255));
+        canvas.set_draw_color(Color::RGBA(73, 73, 73, 255));
       }
       draw_highlight(canvas, editor.caret.pos(), marker, &editor.buffer, &attribs);
     }
-    else if focused {
-      canvas.set_draw_color(Color::RGBA(0, 255, 0, 255));
+    if focused {
+      canvas.set_draw_color(Color::RGBA(230, 219, 116, 255));
       draw_caret(canvas, editor.caret.pos(), &editor.buffer, &attribs);
     }
 
@@ -309,9 +315,21 @@ fn draw_text_node(node : &TextNode, font_render : &mut FontRenderState, canvas :
     canvas.set_viewport(None);
 }
 
-fn draw_app(app : &AppState, font_render : &mut FontRenderState, canvas : &mut Canvas) {
-  canvas.set_draw_color(Color::RGBA(0, 0, 0, 255));
+fn draw_app(app : &AppState, width : i32, height : i32, font_render : &mut FontRenderState, canvas : &mut Canvas) {
+  canvas.set_draw_color(Color::RGBA(15, 15, 15, 255));
   canvas.clear();
+
+  canvas.set_draw_color(Color::RGBA(0, 0, 0, 255));
+  
+  //canvas.t
+
+  let line_interval = 15;
+  for x in 0..(width/line_interval) {
+    canvas.draw_line(Point::new(x * line_interval, 0), Point::new(x * line_interval, height)).unwrap();
+  }
+  for y in 0..(height/line_interval) {
+    canvas.draw_line(Point::new(0, y * line_interval), Point::new(width, y * line_interval)).unwrap();
+  }
 
   // TODO: at the moment this is recalculated every frame. Maybe it shouldn't be.
   let attribs = font_render.layout_attribs(app.font_scale);
@@ -470,7 +488,7 @@ pub fn run_sdl2_app() {
     ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
     // The rest of the loop goes here...
 
-    draw_app(&mut app, &mut font_render, &mut canvas);
+    draw_app(&mut app, width as i32, height as i32, &mut font_render, &mut canvas);
 	}
 }
 
