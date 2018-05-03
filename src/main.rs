@@ -47,35 +47,36 @@ Feel free to type stuff.\r
 And delete it with Backspace.";
 */
 
-struct NodePair {
-  input : TextNode,
-  output : TextNode,
-}
+/*
 
-struct TextNode {
-  editor : TextEditorState,
-  output : TextEditorState,
-}
+I now want a scene graph, because I'm moving nodes relative to other nodes.
+This is likely to happen more in the future, so it might be worth investing
+in the abstraction now. On the other hand, I have made this early investment
+mistake repeatedly. Right now it is quite a special case, so maybe I should
+forget about it.
+
+If I _were_ to make a scene graph, how would I do it?
+- Copy the Unity "transform" style?
+- 
+
+*/
+
 
 struct Node {
+  uid : u64,
+  parent : Option<u64>,
   bounds : Rect,
 }
 
-impl TextNode {
+impl Node {
+  const HEADER_HEIGHT : u32 = 20;
+}
 
-  const HEADER_HEIGHT : i32 = 20;
-
-  fn header_rect(&self) -> Rect {
-    Rect::new(
-      self.bounds.x(), self.bounds.y(),
-      self.bounds.width(), TextNode::HEADER_HEIGHT as u32)
-  }
-
-  fn text_rect(&self) -> Rect {
-    Rect::new(
-      self.bounds.x(), self.bounds.y() + TextNode::HEADER_HEIGHT,
-      self.bounds.width(), self.bounds.height() - (TextNode::HEADER_HEIGHT as u32))
-  }
+struct CodeEditor {
+  input_node_uid : u64,
+  input : TextEditorState,
+  output : TextEditorState,
+  output_node_uid : u64,
 }
 
 trait RectExt<T> {
@@ -89,30 +90,31 @@ impl RectExt<Rect> for Rect {
   }
 }
 
-impl NodePair {
+impl CodeEditor {
+
   fn insert_text(&mut self, edit_history : &mut EditHistory, text : String) {
-    let edit = self.input.editor.insert(text);
-    edit_history.apply_edit(self, edit);
+    let edit = self.input.insert(text);
+    edit_history.apply_text_edit(self, edit);
   }
 
   fn move_caret(&mut self, move_type : CaretMoveType, highlighting : bool) {
-    self.input.editor.move_caret(CaretMove{ highlighting, move_type });
+    self.input.move_caret(CaretMove{ highlighting, move_type });
   }
 
   fn backspace(&mut self, edit_history : &mut EditHistory) {
-    if let Some(edit) = self.input.editor.backspace() {
-      edit_history.apply_edit(self, edit);
+    if let Some(edit) = self.input.backspace() {
+      edit_history.apply_text_edit(self, edit);
     }
   }
 
   fn delete(&mut self, edit_history : &mut EditHistory) {
-    if let Some(edit) = self.input.editor.delete() {
-      edit_history.apply_edit(self, edit);
+    if let Some(edit) = self.input.delete() {
+      edit_history.apply_text_edit(self, edit);
     }
   }
 
   fn is_some_text_highlighted(&mut self) -> bool {
-    let c = self.input.editor.caret;
+    let c = self.input.caret;
     if let Some(marker) = c.marker {
       return marker != c.pos()
     }
@@ -128,7 +130,7 @@ impl NodePair {
 
   fn copy_selection(&mut self){
     if self.is_some_text_highlighted() {
-      let highlighted_string = self.input.editor.get_highlighted_string();
+      let highlighted_string = self.input.get_highlighted_string();
       if !highlighted_string.is_empty() {
         let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
         ctx.set_contents(highlighted_string).unwrap();
@@ -149,98 +151,173 @@ impl NodePair {
         }
       }
     }
-    let s = match interpret(&self.input.editor.buffer.to_string()) {
+    let s = match interpret(&self.input.buffer.to_string()) {
       Ok(v) => format!("{}", v), Err(e) => e,
     };
     let mut buffer = Rope::new();
     buffer.insert(0, &s);
-    self.output.editor.buffer = buffer;
+    self.output.buffer = buffer;
   }
 }
 
+#[derive(PartialEq, Clone)]
 enum EditMode {
-  TextEditing,
-  Dragging { offset : Point },
+  NoFocusedNode,
+  TextEditing(u64),
+  Dragging { uid : u64, offset : Point },
 }
 
 struct AppState {
   uid_generator : u64,
-  node_pair : NodePair,
-  nodes : Vec<TextNode>,
+  nodes : Vec<Node>,
+  code_editors : Vec<CodeEditor>,
   edit_history : EditHistory,
   font_scale : f32,
   edit_mode : EditMode,
 }
 
+struct NodeEdit {
+  uid : u64,
+  edit : TextEdit,
+}
+
 struct EditHistory {
-  undo_buffer : Vec<TextEdit>,
-  redo_buffer : Vec<TextEdit>,
+  undo_buffer : Vec<NodeEdit>,
+  redo_buffer : Vec<NodeEdit>,
 }
 
 impl EditHistory {
-  fn apply_edit(&mut self, node_pair : &mut NodePair, text_edit : TextEdit) {
-    node_pair.input.editor.apply_edit(&text_edit);
-    self.undo_buffer.push(text_edit);
+  fn apply_text_edit(&mut self, code_editor : &mut CodeEditor, edit : TextEdit) {
+    code_editor.input.apply_edit(&edit);
+    self.undo_buffer.push(NodeEdit{ uid: code_editor.input_node_uid, edit });
     self.redo_buffer.clear();
-    node_pair.text_changed();
+    code_editor.text_changed();
   }
 }
 
 impl AppState {
 
-  fn new(text : &str) -> AppState {
+  fn new() -> AppState {
     let font_scale = 16.0;
     let (box_width, box_height) = (400, 300);
-    let input = TextNode {
-      editor: TextEditorState::new(text),
-      bounds: Rect::new(40, 40, box_width as u32, box_height as u32),
-    };
-    let output = TextNode {
-      editor: TextEditorState::new(""),
-      bounds: Rect::new(box_width + 80, 40, box_width as u32, box_height as u32),
-    };
-    let mut node_pair = NodePair {
-      input,
-      output,
-    };
-    node_pair.text_changed();
-    AppState {
-      node_pair,
-      edit_history : EditHistory {
+    let mut app = AppState {
+      uid_generator: 0,
+      nodes: vec!(),
+      code_editors: vec!(),
+      edit_history: EditHistory {
         undo_buffer: vec!(),
         redo_buffer: vec!(),
       },
       font_scale,
-      edit_mode: EditMode::TextEditing,
+      edit_mode: EditMode::NoFocusedNode,
+    };
+    let bounds = Rect::new(40, 40, box_width as u32, box_height as u32);
+    let output_bounds = Rect::new(40 + box_width, 0, box_width as u32, box_height as u32);
+    let uid = app.create_code_editor(TEXT, bounds, output_bounds);
+    app.edit_mode = EditMode::TextEditing(uid);
+    app
+  }
+
+  fn create_node(&mut self, bounds : Rect, parent : Option<u64>) -> u64 {
+    let uid = self.uid_generator;
+    self.uid_generator += 1;
+    let node = Node { uid, bounds, parent };
+    self.nodes.push(node);
+    uid
+  }
+
+  fn absolute_bounds(&self, uid : u64) -> Rect {
+    let (mut bounds, mut parent_uid) = {
+      let n = self.nodes.iter().find(|tn| tn.uid == uid).unwrap();
+      (n.bounds, n.parent)
+    };
+    loop {
+      if let Some(puid) = parent_uid {
+        if let Some(parent) = self.nodes.iter().find(|tn| tn.uid == puid) {
+          let (x, y) = (bounds.x(), bounds.y());
+          bounds.set_x(x + parent.bounds.x());
+          bounds.set_y(y + parent.bounds.y());
+          parent_uid = parent.parent;
+          continue;
+        }
+      }
+      return bounds;
     }
   }
 
-  fn handle_focused_node_event(&mut self, event : &Event, shift_down : bool, ctrl_down : bool) {
+  fn create_code_editor(&mut self, text : &str, bounds : Rect, relative_output_bounds : Rect) -> u64 {
+    let input_node_uid = self.create_node(bounds, None);
+    let output_node_uid = self.create_node(relative_output_bounds, Some(input_node_uid));
+    let mut code_editor = CodeEditor {
+      input_node_uid,
+      output_node_uid,
+      input: TextEditorState::new(text),
+      output: TextEditorState::new(""),
+    };
+    code_editor.text_changed();
+    self.code_editors.push(code_editor);
+    input_node_uid
+  }
+
+  fn handle_event(&mut self, event : &Event, shift_down : bool, ctrl_down : bool) {
+    // Handle node events
+    //handle_node_bounds_event(uid, self.absolute_bounds(uid), &mut self.edit_mode, event);
+    match event {
+      &Event::MouseButtonDown {x, y, ..} => {
+        for n in self.nodes.iter() {
+          let b = self.absolute_bounds(n.uid);
+          let r = Rect::new(b.x(), b.y(), b.width(), Node::HEADER_HEIGHT);
+          if r.contains_point((x, y)) {
+            self.edit_mode = EditMode::Dragging {
+              uid: n.uid, offset: Point::new(x - r.x(), y - r.y()),
+            };
+            break;
+          }
+        }
+      }
+      _e => {}
+    }
+
+    /*
+    let r = Rect::new(bounds.x(), bounds.y(), bounds.width(), Node::HEADER_HEIGHT);
+    if r.contains_point((x, y)) {
+      *edit_mode = EditMode::Dragging { uid, offset: Point::new(x - r.x(), y - r.y()) };
+    }
+    */
+
+    // Handle focused events
     match self.edit_mode {
-      EditMode::TextEditing => {
-        handle_text_editing_event(&mut self.node_pair, &mut self.edit_mode, &mut self.edit_history, event, shift_down, ctrl_down)
+      EditMode::TextEditing(uid) => {
+        let code_editor = self.code_editors.iter_mut().find(|x| x.input_node_uid == uid).unwrap();
+        handle_text_editing_event(code_editor, &mut self.edit_history, event, shift_down, ctrl_down)
       }
-      EditMode::Dragging { offset } => {
-        handle_dragging_event(&mut self.node_pair, &mut self.edit_mode, event, offset);
+      EditMode::Dragging { uid, offset } => {
+        let mut node = self.nodes.iter_mut().find(|tn| tn.uid == uid).unwrap();
+        handle_dragging_event(&mut node, &mut self.edit_mode, event, offset);
       }
+      EditMode::NoFocusedNode => (),
     }
   }
 
   fn undo(&mut self) {
     let history = &mut self.edit_history;
     if let Some(edit) = history.undo_buffer.pop() {
-      self.node_pair.input.editor.reverse_edit(&edit);
+      let node = self.code_editors.iter_mut().find(|x| x.input_node_uid == edit.uid).unwrap();
+      node.input.reverse_edit(&edit.edit);
       history.redo_buffer.push(edit);
-      self.node_pair.text_changed();
+      self.edit_mode = EditMode::TextEditing(node.input_node_uid);
+      node.text_changed();
     }
   }
 
   fn redo(&mut self) {
     let history = &mut self.edit_history;
     if let Some(edit) = history.redo_buffer.pop() {
-      self.node_pair.input.editor.apply_edit(&edit);
+      let node = self.code_editors.iter_mut().find(|x| x.input_node_uid == edit.uid).unwrap();
+      node.input.apply_edit(&edit.edit);
       history.undo_buffer.push(edit);
-      self.node_pair.text_changed();
+      self.edit_mode = EditMode::TextEditing(node.input_node_uid);
+      node.text_changed();
     }
   }
 
@@ -328,14 +405,17 @@ fn draw_caret(canvas : &mut Canvas, char_pos : usize, text_buffer : &Rope, attri
   canvas.fill_rect(cursor_rect).unwrap();
 }
 
-fn draw_text_node(node : &TextNode, font_render : &mut FontRenderState, canvas : &mut Canvas, attribs : &LayoutAttribs, focused : bool){
-    let rect = node.bounds;
+fn draw_text_node(bounds : Rect, editor : &TextEditorState, font_render : &mut FontRenderState, canvas : &mut Canvas, attribs : &LayoutAttribs, focused : bool){
+    fn content_rect(bounds : Rect) -> Rect {
+      Rect::new(
+        bounds.x(), bounds.y() + (Node::HEADER_HEIGHT as i32),
+        bounds.width(), bounds.height() - Node::HEADER_HEIGHT)
+    }
 
-    let back_rect = rect;
     canvas.set_draw_color(Color::RGBA(100, 100, 100, 255));
-    canvas.fill_rect(back_rect).unwrap();
+    canvas.fill_rect(bounds).unwrap();
 
-    let text_rect = node.text_rect().subtract_margin(2);
+    let text_rect = content_rect(bounds).subtract_margin(2);
     canvas.set_draw_color(Color::RGBA(39, 40, 34, 255));
     canvas.fill_rect(text_rect).unwrap();
 
@@ -343,7 +423,6 @@ fn draw_text_node(node : &TextNode, font_render : &mut FontRenderState, canvas :
     canvas.set_clip_rect(text_rect);
     canvas.set_viewport(text_rect);
 
-    let editor = &node.editor;
     if let Some(marker) = editor.caret.marker {
       if focused {
         canvas.set_draw_color(Color::RGBA(73, 72, 62, 255));
@@ -357,7 +436,6 @@ fn draw_text_node(node : &TextNode, font_render : &mut FontRenderState, canvas :
       canvas.set_draw_color(Color::RGBA(230, 219, 116, 255));
       draw_caret(canvas, editor.caret.pos(), &editor.buffer, &attribs);
     }
-
     font_render.draw_text(canvas, &editor.buffer, &attribs);
 
     canvas.set_clip_rect(None);
@@ -380,58 +458,62 @@ fn draw_app(app : &AppState, width : i32, height : i32, font_render : &mut FontR
 
   // draw the text nodes
   let attribs = font_render.layout_attribs(app.font_scale);
-  draw_text_node(&app.node_pair.input, font_render, canvas, &attribs, true);
-  draw_text_node(&app.node_pair.output, font_render, canvas, &attribs, false);
+
+  for c in app.code_editors.iter() {
+    let focus = EditMode::TextEditing(c.input_node_uid) == app.edit_mode;
+    draw_text_node(app.absolute_bounds(c.input_node_uid), &c.input, font_render, canvas, &attribs, focus);
+    draw_text_node(app.absolute_bounds(c.output_node_uid), &c.output, font_render, canvas, &attribs, false);
+  }
 
   canvas.present();
 }
 
-fn handle_text_editing_event(node : &mut NodePair, edit_mode : &mut EditMode, edit_history : &mut EditHistory, event : &Event, shift_down : bool, ctrl_down : bool) {
+fn handle_text_editing_event(editor: &mut CodeEditor, edit_history : &mut EditHistory, event : &Event, shift_down : bool, ctrl_down : bool) {
   match event {
     &Event::KeyDown {keycode: Some(k), ..} => {
       match k {
         Keycode::Left => {
-          node.move_caret(CaretMoveType::Left, shift_down);
+          editor.move_caret(CaretMoveType::Left, shift_down);
         }
         Keycode::Right => {
-          node.move_caret(CaretMoveType::Right, shift_down);
+          editor.move_caret(CaretMoveType::Right, shift_down);
         }
         Keycode::Up => {
-          node.move_caret(CaretMoveType::Up, shift_down);
+          editor.move_caret(CaretMoveType::Up, shift_down);
         }
         Keycode::Down => {
-          node.move_caret(CaretMoveType::Down, shift_down);
+          editor.move_caret(CaretMoveType::Down, shift_down);
         }
         Keycode::Return => {
-          node.insert_text(edit_history, "\n".to_string());
+          editor.insert_text(edit_history, "\n".to_string());
         }
         Keycode::Backspace => {
-          node.backspace(edit_history);
+          editor.backspace(edit_history);
         }
         Keycode::Delete => {
-          node.delete(edit_history);
+          editor.delete(edit_history);
         }
         Keycode::C => {
           if ctrl_down {
-            node.copy_selection();
+            editor.copy_selection();
           }
         }
         Keycode::X => {
-          if ctrl_down && node.is_some_text_highlighted() {
-            node.copy_selection();
-            node.backspace(edit_history);
+          if ctrl_down && editor.is_some_text_highlighted() {
+            editor.copy_selection();
+            editor.backspace(edit_history);
           }
         }
         Keycode::V => {
           if ctrl_down {
-            node.paste(edit_history);
+            editor.paste(edit_history);
           }
         }
         _ => {}
       }
     }
     &Event::TextInput { ref text, .. } => {
-      node.insert_text(edit_history, text.to_string());
+      editor.insert_text(edit_history, text.to_string());
     }
     &Event::TextEditing { text: _, .. } => {
       // TODO: Apparently text editing is just a component of text input, so it might not need to be here.
@@ -439,24 +521,18 @@ fn handle_text_editing_event(node : &mut NodePair, edit_mode : &mut EditMode, ed
       //  app.insert_text(uid, text);
       //}
     }
-    &Event::MouseButtonDown {x, y, ..} => {
-      let r = node.input.header_rect();
-      if r.contains_point((x, y)) {
-        *edit_mode = EditMode::Dragging { offset: Point::new(x - r.x(), y - r.y()) };
-      }
-    }
     _e => {}
   }
 }
 
-fn handle_dragging_event(node : &mut NodePair, edit_mode : &mut EditMode, event : &Event, drag_offset : Point) {
+fn handle_dragging_event(node : &mut Node, edit_mode : &mut EditMode, event : &Event, drag_offset : Point) {
   match event {
     &Event::MouseButtonUp {x: _, y: _, ..} => {
-      *edit_mode = EditMode::TextEditing;
+      *edit_mode = EditMode::TextEditing(node.uid);
     }
     &Event::MouseMotion {x, y, ..} => {
-      node.input.bounds.set_x(x - drag_offset.x());
-      node.input.bounds.set_y(y - drag_offset.y());
+      node.bounds.set_x(x - drag_offset.x());
+      node.bounds.set_y(y - drag_offset.y());
     }
     _e => {}
   }
@@ -495,7 +571,7 @@ pub fn run_sdl2_app() {
 
   let mut font_render = FontRenderState::new(&mut texture_creator, font_data, dpi_ratio);
 
-  let mut app = AppState::new(TEXT);
+  let mut app = AppState::new();
   
   'mainloop: loop {
 
@@ -547,7 +623,7 @@ pub fn run_sdl2_app() {
         _e => {}
       }
 
-      app.handle_focused_node_event(&event, shift_down, ctrl_down);
+      app.handle_event(&event, shift_down, ctrl_down);
     }
 
     draw_app(&mut app, width as i32, height as i32, &mut font_render, &mut canvas);
