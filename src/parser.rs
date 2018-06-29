@@ -1,4 +1,5 @@
 
+use lexer;
 use lexer::{Token, TokenType};
 use std::collections::HashSet;
 use std::f32;

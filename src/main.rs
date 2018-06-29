@@ -34,6 +34,7 @@ use clipboard::{ClipboardProvider, ClipboardContext};
 use text_edit::{TextEditorState, CaretMove, CaretMoveType, TextEdit};
 use text_edit::caret::Caret;
 use font_render::{FontRenderState, LayoutAttribs };
+use rand;
 
 
 static TEXT: &str = "45 + 58";
@@ -75,8 +76,6 @@ impl Node {
 struct CodeEditor {
   input_node_uid : u64,
   input : TextEditorState,
-  output : TextEditorState,
-  output_node_uid : u64,
 }
 
 trait RectExt<T> {
@@ -151,12 +150,14 @@ impl CodeEditor {
         }
       }
     }
+    /*
     let s = match interpret(&self.input.buffer.to_string()) {
       Ok(v) => format!("{}", v), Err(e) => e,
     };
     let mut buffer = Rope::new();
     buffer.insert(0, &s);
     self.output.buffer = buffer;
+    */
   }
 }
 
@@ -212,8 +213,7 @@ impl AppState {
       edit_mode: EditMode::NoFocusedNode,
     };
     let bounds = Rect::new(40, 40, box_width as u32, box_height as u32);
-    let output_bounds = Rect::new(40 + box_width, 0, box_width as u32, box_height as u32);
-    let uid = app.create_code_editor(TEXT, bounds, output_bounds);
+    let uid = app.create_code_editor(TEXT, bounds);
     app.edit_mode = EditMode::TextEditing(uid);
     app
   }
@@ -245,14 +245,12 @@ impl AppState {
     }
   }
 
-  fn create_code_editor(&mut self, text : &str, bounds : Rect, relative_output_bounds : Rect) -> u64 {
+  fn create_code_editor(&mut self, text : &str, bounds : Rect) -> u64 {
     let input_node_uid = self.create_node(bounds, None);
-    let output_node_uid = self.create_node(relative_output_bounds, Some(input_node_uid));
     let mut code_editor = CodeEditor {
       input_node_uid,
-      output_node_uid,
       input: TextEditorState::new(text),
-      output: TextEditorState::new(""),
+      //output: TextEditorState::new(""),
     };
     code_editor.text_changed();
     self.code_editors.push(code_editor);
@@ -462,7 +460,7 @@ fn draw_app(app : &AppState, width : i32, height : i32, font_render : &mut FontR
   for c in app.code_editors.iter() {
     let focus = EditMode::TextEditing(c.input_node_uid) == app.edit_mode;
     draw_text_node(app.absolute_bounds(c.input_node_uid), &c.input, font_render, canvas, &attribs, focus);
-    draw_text_node(app.absolute_bounds(c.output_node_uid), &c.output, font_render, canvas, &attribs, false);
+    //draw_text_node(app.absolute_bounds(c.output_node_uid), &c.output, font_render, canvas, &attribs, false);
   }
 
   canvas.present();
@@ -538,6 +536,13 @@ fn handle_dragging_event(node : &mut Node, edit_mode : &mut EditMode, event : &E
   }
 }
 
+fn generate_app_state(app : &mut AppState) {
+  for i in 0..10 {
+    let bounds = Rect::new(rand::random(), rand::random(), rand::random(), rand::random());
+    app.create_code_editor("butt", bounds);
+  }
+}
+
 pub fn run_sdl2_app() {
 
 	let (width, height) = (1800, 900);
@@ -572,6 +577,8 @@ pub fn run_sdl2_app() {
   let mut font_render = FontRenderState::new(&mut texture_creator, font_data, dpi_ratio);
 
   let mut app = AppState::new();
+
+  generate_app_state(&mut app);
   
   'mainloop: loop {
 

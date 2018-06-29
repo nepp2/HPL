@@ -1,4 +1,6 @@
 
+use parser;
+use lexer;
 use parser::Expr;
 
 fn infix(a : Expr, op : &str, b : Expr) -> Result<f32, String> {
