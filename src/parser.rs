@@ -9,7 +9,7 @@ use std::str::FromStr;
 TODO: a lot of string copying happens in this file, which isn't great.
 I guess garbage collection is actually pretty good for strings. A lot of
 them could be static, but I'd have to fiddle the types a lot to do something
-about that. I could also consume the tokens for way more efficiency, but I'd
+about that. I could also consume the tokens way more efficiency, but I'd
 have to change a lot of code.
 
 TODO: Question. does creating a new string from a static string actually allocate?
