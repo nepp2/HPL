@@ -263,16 +263,19 @@ impl AppState {
     //handle_node_bounds_event(uid, self.absolute_bounds(uid), &mut self.edit_mode, event);
     match event {
       &Event::MouseButtonDown {x, y, ..} => {
+        let mut clicked = None;
         for n in self.nodes.iter() {
           let b = self.absolute_bounds(n.uid);
           let r = Rect::new(b.x(), b.y(), b.width(), Node::HEADER_HEIGHT);
           if r.contains_point((x, y)) {
+            clicked = Some(n);
             self.edit_mode = EditMode::Dragging {
               uid: n.uid, offset: Point::new(x - r.x(), y - r.y()),
             };
             break;
           }
         }
+        // TODO: select the node, and bring it to the front
       }
       _e => {}
     }
@@ -404,14 +407,17 @@ fn draw_caret(canvas : &mut Canvas, char_pos : usize, text_buffer : &Rope, attri
   canvas.fill_rect(cursor_rect).unwrap();
 }
 
-fn draw_text_node(bounds : Rect, editor : &TextEditorState, font_render : &mut FontRenderState, canvas : &mut Canvas, attribs : &LayoutAttribs, focused : bool){
+fn draw_text_node(bounds : Rect, editor : &TextEditorState, font_render : &mut FontRenderState, canvas : &mut Canvas, attribs : &LayoutAttribs, focused : bool, dragging : bool){
     fn content_rect(bounds : Rect) -> Rect {
       Rect::new(
         bounds.x(), bounds.y() + (Node::HEADER_HEIGHT as i32),
         bounds.width(), bounds.height() - Node::HEADER_HEIGHT)
     }
 
-    canvas.set_draw_color(Color::RGBA(100, 100, 100, 255));
+    let back_colour =
+      if focused || dragging { Color::RGBA(150, 150, 150, 255) }
+      else { Color::RGBA(100, 100, 100, 255) };
+    canvas.set_draw_color(back_colour);
     canvas.fill_rect(bounds).unwrap();
 
     let text_rect = content_rect(bounds).subtract_margin(2);
@@ -460,7 +466,8 @@ fn draw_app(app : &AppState, width : i32, height : i32, font_render : &mut FontR
 
   for c in app.code_editors.iter() {
     let focus = EditMode::TextEditing(c.input_node_uid) == app.edit_mode;
-    draw_text_node(app.absolute_bounds(c.input_node_uid), &c.input, font_render, canvas, &attribs, focus);
+    let dragging = if let EditMode::Dragging { uid, .. } = app.edit_mode { uid == c.input_node_uid } else { false };
+    draw_text_node(app.absolute_bounds(c.input_node_uid), &c.input, font_render, canvas, &attribs, focus, dragging);
     //draw_text_node(app.absolute_bounds(c.output_node_uid), &c.output, font_render, canvas, &attribs, false);
   }
 
@@ -539,7 +546,7 @@ fn handle_dragging_event(node : &mut Node, edit_mode : &mut EditMode, event : &E
 
 fn generate_app_state(app : &mut AppState) {  
   let mut rng = rand::thread_rng();
-  for _ in 0..10 {
+  for _ in 0..5 {
     let x = rng.gen_range(0, 1000);
     let y = rng.gen_range(0, 1000);
     let w = rng.gen_range(100, 400);
