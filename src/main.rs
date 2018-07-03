@@ -3,6 +3,7 @@ extern crate rusttype;
 extern crate unicode_normalization;
 extern crate ropey;
 extern crate clipboard;
+extern crate rand;
 
 /*
 
@@ -34,7 +35,7 @@ use clipboard::{ClipboardProvider, ClipboardContext};
 use text_edit::{TextEditorState, CaretMove, CaretMoveType, TextEdit};
 use text_edit::caret::Caret;
 use font_render::{FontRenderState, LayoutAttribs };
-use rand;
+use rand::Rng;
 
 
 static TEXT: &str = "45 + 58";
@@ -536,9 +537,14 @@ fn handle_dragging_event(node : &mut Node, edit_mode : &mut EditMode, event : &E
   }
 }
 
-fn generate_app_state(app : &mut AppState) {
-  for i in 0..10 {
-    let bounds = Rect::new(rand::random(), rand::random(), rand::random(), rand::random());
+fn generate_app_state(app : &mut AppState) {  
+  let mut rng = rand::thread_rng();
+  for _ in 0..10 {
+    let x = rng.gen_range(0, 1000);
+    let y = rng.gen_range(0, 1000);
+    let w = rng.gen_range(100, 400);
+    let h = rng.gen_range(100, 400);
+    let bounds = Rect::new(x, y, w, h);
     app.create_code_editor("butt", bounds);
   }
 }
