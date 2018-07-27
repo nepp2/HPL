@@ -47,7 +47,7 @@ pub mod caret {
   }
 }
 
-use Caret;
+use text_edit::caret::Caret;
 
 /*
   This is basically a replacement for the "char_to_line" function
