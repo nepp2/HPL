@@ -9,6 +9,7 @@ unicode-normalization = "0.1.5"
 ropey = "0.6.3"
 clipboard = "0.4.6"
 rand = "0.5.3"
+rustyline = "1.0.0"
 
 [dependencies.rusttype]
 version = "0.5.2"

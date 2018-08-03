@@ -5,6 +5,7 @@ extern crate unicode_normalization;
 extern crate ropey;
 extern crate clipboard;
 extern crate rand;
+extern crate rustyline;
 
 mod font_render;
 mod text_edit;
