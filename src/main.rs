@@ -14,6 +14,7 @@ mod parser;
 mod interpreter;
 mod visual_edit;
 mod repl;
+mod preparse;
 
 fn main(){
   repl::repl();

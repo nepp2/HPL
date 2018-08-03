@@ -1,18 +1,6 @@
 
-enum ExpTree {
-  Token(Token),
-  Tree(Vec<ExpTree>, TreeType)
-}
-
-enum TreeType {
-  Brace, Paren, Bracket
-}
-
-const TERMINATING_SYNTAX : &'static [&'static str] = &["}", ")", "]", ";", ","];
-
-// succeeds and returns a thing
-// fails and returns an error
-// fails as incomplete
+use lexer;
+use lexer::{Token, TokenType};
 
 // TODO: this might be better implemented with a ring buffer (or just a backwards vec)
 struct TokenStream {
@@ -95,27 +83,69 @@ impl TokenStream {
   }
 }
 
+#[derive(PartialEq, Debug)]
+pub enum Arg {
+  Expr(Expr),
+  Symbol(String),
+  Literal(f32),
+}
+
+#[derive(PartialEq, Debug)]
+pub struct Expr {
+  symbol : String,
+  args : Vec<Arg>,
+}
+
+const TERMINATING_SYNTAX : &'static [&'static str] = &["}", ")", "]", ";", ","];
 
 
-
-enum PreparseError {
+#[derive(Debug)]
+pub enum PreparseError {
   Incomplete, Error(String)
 }
 
-fn parse_expression_tree(ts : &mut TokenStream) -> Result<ExpTree, PreparseError> {
+fn parse_expr(ts : &mut TokenStream) -> Result<Expr, PreparseError> {
   // if open syntax
-  // 
+  //
+  panic!();
 }
 
-pub fn preparse(tokens : Vec<Token>) -> Result<ExpTree, PreparseError> {
+fn wrap_err<T>(r : Result<T, String>) -> Result<T, PreparseError> {
+  match r {
+    Ok(x) => Ok(x),
+    Err(s) => Err(PreparseError::Error(s)),
+  }
+}
+
+fn err<T>(s : String) -> Result<T, PreparseError> {
+  Err(PreparseError::Error(s))
+}
+
+pub fn preparse(tokens : Vec<Token>) -> Result<Expr, PreparseError> {
   let mut ts = TokenStream::new(tokens);
-
-
-
-  let e = parse_expression(&mut ts)?;
+  let e = parse_expr(&mut ts)?;
   if ts.has_tokens() {
-    let t = ts.peek()?;
-    return Err(format!("Unexpected token '{}' of type '{:?}'", t.string, t.token_type));
+    let t = wrap_err(ts.peek())?;
+    return err(format!("Unexpected token '{}' of type '{:?}'", t.string, t.token_type));
   }
   return Ok(e);
 }
+
+fn expr(s : &str, args : Vec<Arg>) -> Expr {
+  Expr { symbol: s.to_string(), args }
+}
+
+#[test]
+fn test_preparse() {
+  let code = "(3 + 4) * 10";
+  let tokens = lexer::lex(code).unwrap();
+  let ast = preparse(tokens).unwrap();
+
+  use self::Arg::*;
+
+  let three_plus_4 = expr("+", vec!(Literal(3.0), Literal(4.0)));
+  let expected_ast = expr("*", vec!(Expr(three_plus_4), Literal(10.0)));
+
+  assert_eq!(ast, expected_ast);
+}
+
