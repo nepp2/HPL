@@ -7,6 +7,8 @@ use std::str::FromStr;
 
 /*
 
+TODO: there should be a symbol table!
+
 TODO: a lot of string copying happens in this file, which isn't great.
 I guess garbage collection is actually pretty good for strings. A lot of
 them could be static, but I'd have to fiddle the types a lot to do something
@@ -16,7 +18,14 @@ have to change a lot of code.
 TODO: Question. does creating a new string from a static string actually allocate?
 */
 
+#[derive(PartialEq, Debug)]
+pub enum Expr {
+  Expr { symbol : String, args : Vec<Expr> },
+  Symbol(String),
+  Literal(f32),
+}
 
+/*
 #[derive(Debug)]
 pub enum Expr {
   InfixOp(Box<Expr>, String, Box<Expr>),
@@ -24,6 +33,7 @@ pub enum Expr {
   LiteralFloat(f32),
   FunctionCall { func : Box<Expr>, args : Vec<Expr> }
 }
+*/
 
 // TODO: this might be better implemented with a ring buffer (or just a backwards vec)
 struct TokenStream {
@@ -188,7 +198,7 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
 
   fn parse_function_call(ts : &mut TokenStream, function_expr : Expr) -> Result<Expr, String> {
     ts.expect_string("(")?;
-    let mut exprs = vec!();
+    let mut exprs = vec!(function_expr);
     loop {
       exprs.push(parse_expression(ts)?);
       if !ts.accept_string(",") {
@@ -196,7 +206,7 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
       }
     }
     ts.expect_string(")")?;
-    Ok(Expr::FunctionCall{ func: Box::new(function_expr), args: exprs })
+    Ok(Expr::Expr { symbol: "call".to_string(), args: exprs } )
   }
 
   fn parse_prefix(ts : &mut TokenStream) -> Result<Expr, String> {
@@ -209,7 +219,7 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
     if is_prefix {
       ts.expect_type(TokenType::Syntax)?;
       let expr = parse_expression_term(ts)?;
-      Ok(Expr::PrefixOp(s, Box::new(expr)))
+      Ok(Expr::Expr{ symbol: "call".to_string(), args: vec!(Expr::Symbol(s), expr) })
     }
     else {
       parse_expression_term(ts)
@@ -219,16 +229,16 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
   fn parse_infix(ts : &mut TokenStream, left_expr : Expr, precedence : i32) -> Result<Expr, String> {
     let string = ts.pop_type(TokenType::Syntax)?.string.clone();
     let right_expr = pratt_parse(ts, precedence)?;
-    Ok(Expr::InfixOp(Box::new(left_expr), string, Box::new(right_expr)))
+    Ok(Expr::Expr { symbol: string, args: vec!(left_expr, right_expr)})
   }
 
   pratt_parse(ts, 0)
 }
 
-fn parse_float(ts : &mut TokenStream) -> Result<Expr, String> {
+fn parse_float(ts : &mut TokenStream) -> Result<f32, String> {
   let t = ts.pop_type(TokenType::FloatLiteral)?;
   if let Ok(f) = f32::from_str(&t.string) {
-    Ok(Expr::LiteralFloat(f))
+    Ok(f)
   }
   else {
     Err(format!("Failed to parse float from '{}'", t.string))
@@ -239,9 +249,9 @@ fn parse_syntax(ts : &mut TokenStream) -> Result<Expr, String> {
   let paren = ts.peek()?.string == "(";
   if paren {
     ts.expect_string("(")?;
-    let e = parse_expression(ts)?;
+    let a = parse_expression(ts)?;
     ts.expect_string(")")?;
-    Ok(e)
+    Ok(a)
   }
   else {
     Err(format!("Unexpected syntax '{}'", ts.peek()?.string))
@@ -254,7 +264,7 @@ fn parse_expression_term(ts : &mut TokenStream) -> Result<Expr, String> {
     TokenType::Symbol => Err("Tried to parse symbol. Symbols are not yet supported.".to_string()),
     TokenType::Keyword => Err("Tried to parse keyword. Keywords are not yet supported.".to_string()),
     TokenType::Syntax => parse_syntax(ts),
-    TokenType::FloatLiteral => parse_float(ts),
+    TokenType::FloatLiteral => Ok(Expr::Literal(parse_float(ts)?)),
   }
 }
 

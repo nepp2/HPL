@@ -25,12 +25,23 @@ fn prefix(op : &str, a : Expr) -> Result<f32, String> {
   }
 }
 
-pub fn interpret(ast : Expr) -> Result<f32, String> {
+fn interpret_instr(instr : &str, args : Vec<Expr>) -> Result<f32, String> {
+  match (instr, args.as_slice()) {
+    ("call", [Expr::Symbol(s), args..]) => {
+      match (s.as_str(), args) {
+        ("+", [a, b]) => Ok(interpret(a)? + interpret(b)?),
+        _ => Ok(0.0),
+      }
+    }
+    _ => Err(format!("not implemented")),
+  }
+}
+
+pub fn interpret(ast : &Expr) -> Result<f32, String> {
   match ast {
-    Expr::FunctionCall{ func: _, args: _ } => Err(format!("function calls not supported")),
-    Expr::InfixOp(a, op, b) => infix(*a, &op, *b),
-    Expr::PrefixOp(op, a) => prefix(&op, *a),
-    Expr::LiteralFloat(f) => Ok(f),
+    Expr::Expr{ symbol, args } => Err(format!("symbols not supported")),
+    Expr::Symbol(_) => Err(format!("symbols not supported")),
+    Expr::Literal(f) => Ok(*f),
   }
 }
 

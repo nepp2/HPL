@@ -1,4 +1,6 @@
 
+#![feature(slice_patterns)]
+
 extern crate sdl2;
 extern crate rusttype;
 extern crate unicode_normalization;
