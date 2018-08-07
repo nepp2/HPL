@@ -10,7 +10,7 @@ fn interpret(text : &str) -> Result<f32, String> {
   match lexer::lex(text) {
     Ok(tokens) => {
       let ast = parser::parse(tokens)?;
-      let value = interpreter::interpret(ast)?;
+      let value = interpreter::interpret(&ast)?;
       Ok(value)
     }
     Err(errors) => {

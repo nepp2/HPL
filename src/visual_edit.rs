@@ -137,7 +137,7 @@ impl CodeEditor {
       match lexer::lex(text) {
         Ok(tokens) => {
           let ast = parser::parse(tokens)?;
-          let value = interpreter::interpret(ast)?;
+          let value = interpreter::interpret(&ast)?;
           Ok(value)
         }
         Err(errors) => {
@@ -207,9 +207,6 @@ impl AppState {
       font_scale,
       edit_mode: EditMode::NoFocusedNode,
     };
-    let bounds = Rect::new(40, 40, box_width as u32, box_height as u32);
-    let uid = app.create_code_editor(TEXT, bounds);
-    app.edit_mode = EditMode::TextEditing(uid);
     app
   }
 
@@ -245,7 +242,6 @@ impl AppState {
     let mut code_editor = CodeEditor {
       input_node_uid,
       input: TextEditorState::new(text),
-      //output: TextEditorState::new(""),
     };
     code_editor.text_changed();
     self.code_editors.push(code_editor);
@@ -538,18 +534,6 @@ fn handle_dragging_event(node : &mut Node, edit_mode : &mut EditMode, event : &E
   }
 }
 
-fn generate_app_state(app : &mut AppState) {  
-  let mut rng = rand::thread_rng();
-  for _ in 0..5 {
-    let x = rng.gen_range(0, 1000);
-    let y = rng.gen_range(0, 1000);
-    let w = rng.gen_range(100, 400);
-    let h = rng.gen_range(100, 400);
-    let bounds = Rect::new(x, y, w, h);
-    app.create_code_editor("butt", bounds);
-  }
-}
-
 pub fn run_sdl2_app() {
 
 	let (width, height) = (1800, 900);
@@ -585,7 +569,12 @@ pub fn run_sdl2_app() {
 
   let mut app = AppState::new();
 
-  generate_app_state(&mut app);
+  // Initial state
+  {
+    let bounds = Rect::new(0, 0, width/2, height);
+    let uid = app.create_code_editor(TEXT, bounds);
+    app.edit_mode = EditMode::TextEditing(uid);
+  }
   
   'mainloop: loop {
 

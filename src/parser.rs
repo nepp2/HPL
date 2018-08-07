@@ -211,7 +211,7 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
 
   fn parse_prefix(ts : &mut TokenStream) -> Result<Expr, String> {
     // TODO: fix this with non-lexical lifetimes at some point
-    let (is_prefix, s) = {
+    let (is_prefix, operator) = {
       let t = ts.peek()?;
       let b = t.token_type == TokenType::Syntax && ts.prefix_operators.contains(t.string.as_str());
       (b, if b { t.string.clone()} else { String::new() })
@@ -219,7 +219,7 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
     if is_prefix {
       ts.expect_type(TokenType::Syntax)?;
       let expr = parse_expression_term(ts)?;
-      Ok(Expr::Expr{ symbol: "call".to_string(), args: vec!(Expr::Symbol(s), expr) })
+      Ok(Expr::Expr{ symbol: "call".to_string(), args: vec!(Expr::Symbol(operator), expr) })
     }
     else {
       parse_expression_term(ts)
@@ -227,9 +227,9 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
   }
 
   fn parse_infix(ts : &mut TokenStream, left_expr : Expr, precedence : i32) -> Result<Expr, String> {
-    let string = ts.pop_type(TokenType::Syntax)?.string.clone();
+    let operator = ts.pop_type(TokenType::Syntax)?.string.clone();
     let right_expr = pratt_parse(ts, precedence)?;
-    Ok(Expr::Expr { symbol: string, args: vec!(left_expr, right_expr)})
+    Ok(Expr::Expr { symbol: "call".to_string(), args: vec!(Expr::Symbol(operator), left_expr, right_expr)})
   }
 
   pratt_parse(ts, 0)
