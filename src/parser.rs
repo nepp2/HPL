@@ -7,7 +7,7 @@ use std::str::FromStr;
 
 /*
 
-TODO: there should be a symbol table!
+TODO: there should be a symbol table to get rid of all the string duplication.
 
 TODO: a lot of string copying happens in this file, which isn't great.
 I guess garbage collection is actually pretty good for strings. A lot of
@@ -235,6 +235,11 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
   pratt_parse(ts, 0)
 }
 
+fn parse_symbol(ts : &mut TokenStream) -> Result<Expr, String> {
+  let t = ts.pop_type(TokenType::Symbol)?;
+  Ok(Expr::Symbol(t.string.clone()))
+} 
+
 fn parse_float(ts : &mut TokenStream) -> Result<f32, String> {
   let t = ts.pop_type(TokenType::FloatLiteral)?;
   if let Ok(f) = f32::from_str(&t.string) {
@@ -261,16 +266,44 @@ fn parse_syntax(ts : &mut TokenStream) -> Result<Expr, String> {
 fn parse_expression_term(ts : &mut TokenStream) -> Result<Expr, String> {
   let token_type = ts.peek()?.token_type;
   match token_type {
-    TokenType::Symbol => Err("Tried to parse symbol. Symbols are not yet supported.".to_string()),
+    TokenType::Symbol => parse_symbol(ts),
     TokenType::Keyword => Err("Tried to parse keyword. Keywords are not yet supported.".to_string()),
     TokenType::Syntax => parse_syntax(ts),
     TokenType::FloatLiteral => Ok(Expr::Literal(parse_float(ts)?)),
   }
 }
 
+fn parse_block(ts : &mut TokenStream) -> Result<Expr, String> {
+  let mut exprs = vec!();
+  loop {
+    let e = parse_expression(ts)?;
+    exprs.push(e);
+    if ts.has_tokens() {
+      let semicolon = {
+        let t = ts.peek()?;
+        if t.token_type == TokenType::Syntax && t.string == "}" {
+          break;
+        }
+        t.token_type == TokenType::Syntax && t.string == ";"
+      };
+      if semicolon {
+        let _ = ts.pop_type(TokenType::Syntax);
+        continue;
+      }
+    }
+    break;
+  }
+  if exprs.len() == 1 {
+    Ok(exprs.pop().unwrap())
+  }
+  else {
+    Ok(Expr::Expr { symbol: "block".to_string(), args: exprs })
+  }
+}
+
 pub fn parse(tokens : Vec<Token>) -> Result<Expr, String> {
   let mut ts = TokenStream::new(tokens);
-  let e = parse_expression(&mut ts)?;
+  let e = parse_block(&mut ts)?;
   if ts.has_tokens() {
     let t = ts.peek()?;
     return Err(format!("Unexpected token '{}' of type '{:?}'", t.string, t.token_type));

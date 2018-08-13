@@ -23,6 +23,15 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>) -> Result<f32, String> {
         _ => Err(format!("unsupported operation '{}'", s)),
       }
     }
+    ("block", exprs) => {
+      let expr_count = exprs.len();
+      if expr_count > 1 {
+        for i in 0..expr_count {
+          let _ = interpret(&exprs[i])?;
+        }
+      }
+      interpret(&exprs[expr_count-1])
+    }
     _ => Err(format!("not implemented")),
   }
 }
