@@ -25,9 +25,12 @@ fn interpret(code: &str) -> Result<f32, String> {
 fn load_and_run(path : &PathBuf){
   let mut f = File::open(path).expect("file not found");
   let mut code = String::new();
-  f.read_to_string(&mut code);
+  f.read_to_string(&mut code).unwrap();
   let result = interpret(&code);
-  println!("{:?}", result);
+  match result {
+    Ok(f) => println!("Output: '{}'", f),
+    Err(s) => println!("Error: {}", s),
+  }
 }
 
 pub fn watch(path : &str) {
