@@ -1,2 +1,14 @@
-6 + 6 + asda;
-3 + 3.3453 + 6
+
+fun mult(a, b) {
+  a * b
+};
+
+fun add(a, b) {
+  a + mult(b, 1)
+};
+
+let asd = 32;
+6 + 6 + asd;
+let asd = 10;
+let value = 3 + 3.3453 + 6 + asd;
+mult(10 + 10, value)

@@ -18,7 +18,7 @@ have to change a lot of code.
 TODO: Question. does creating a new string from a static string actually allocate?
 */
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum Expr {
   Expr { symbol : String, args : Vec<Expr> },
   Symbol(String),
@@ -263,11 +263,74 @@ fn parse_syntax(ts : &mut TokenStream) -> Result<Expr, String> {
   }
 }
 
+fn parse_fun(ts : &mut TokenStream) -> Result<Expr, String> {
+  ts.expect_string("fun")?;
+  let fun_name = ts.pop_type(TokenType::Symbol)?.string.clone();
+  let mut arg_names = vec!();
+  ts.expect_string("(")?;
+  loop {
+    if ts.peek()?.token_type != TokenType::Symbol {
+      break;
+    }
+    let arg_name = ts.pop_type(TokenType::Symbol)?.string.to_string();
+    arg_names.push(Expr::Symbol(arg_name));
+    if ts.peek()?.string == "," {
+      ts.skip();
+    }
+    else {
+      break;
+    }
+  }
+  ts.expect_string(")")?;
+  ts.expect_string("{")?;
+  let function_block = parse_block(ts)?;
+  ts.expect_string("}")?;
+  let fun_symbol = Expr::Symbol(fun_name);
+  let args_expr =
+    Expr::Expr {
+      symbol: "args".to_string(),
+      args: arg_names,
+    };
+  let fun_expr =
+    Expr::Expr{
+      symbol: "fun".to_string(),
+      args: vec!(fun_symbol, args_expr, function_block),
+    };
+  Ok(fun_expr)
+}
+
+fn parse_let(ts : &mut TokenStream) -> Result<Expr, String> {
+  ts.expect_string("let")?;
+  let var_name = ts.pop_type(TokenType::Symbol)?.string.clone();
+  ts.expect_string("=")?;
+  let initialiser = parse_expression(ts)?;
+  // TODO: ts.expect_string(";")?;
+  let var_symbol = Expr::Symbol(var_name);
+  Ok(Expr::Expr{ symbol: "let".to_string(), args: vec!(var_symbol, initialiser)})
+}
+
+fn parse_keyword_term(ts : &mut TokenStream) -> Result<Expr, String> {
+  enum Keyword { Let, Fun, Other }
+  let keyword = {
+    let t = ts.peek()?;
+    match t.string.as_str() {
+      "let" => Keyword::Let,
+      "fun" => Keyword::Fun,
+      _ => Keyword::Other,
+    }
+  };
+  match keyword {
+    Keyword::Let => parse_let(ts),
+    Keyword::Fun => parse_fun(ts),
+    Keyword::Other => Err(format!("Tried to parse keyword {}. This keywork is not yet supported.", ts.peek()?.string)),
+  }
+}
+
 fn parse_expression_term(ts : &mut TokenStream) -> Result<Expr, String> {
   let token_type = ts.peek()?.token_type;
   match token_type {
     TokenType::Symbol => parse_symbol(ts),
-    TokenType::Keyword => Err("Tried to parse keyword. Keywords are not yet supported.".to_string()),
+    TokenType::Keyword => parse_keyword_term(ts),
     TokenType::Syntax => parse_syntax(ts),
     TokenType::FloatLiteral => Ok(Expr::Literal(parse_float(ts)?)),
   }
@@ -275,23 +338,27 @@ fn parse_expression_term(ts : &mut TokenStream) -> Result<Expr, String> {
 
 fn parse_block(ts : &mut TokenStream) -> Result<Expr, String> {
   let mut exprs = vec!();
+  let e = parse_expression(ts)?;
+  exprs.push(e);
   loop {
-    let e = parse_expression(ts)?;
-    exprs.push(e);
-    if ts.has_tokens() {
-      let semicolon = {
-        let t = ts.peek()?;
-        if t.token_type == TokenType::Syntax && t.string == "}" {
-          break;
-        }
-        t.token_type == TokenType::Syntax && t.string == ";"
-      };
-      if semicolon {
-        let _ = ts.pop_type(TokenType::Syntax);
-        continue;
+    if !ts.has_tokens() {
+      break;
+    }
+    let semicolon = {
+      let t = ts.peek()?;
+      if t.token_type == TokenType::Syntax && t.string == "}" {
+        break;
+      }
+      t.token_type == TokenType::Syntax && t.string == ";"
+    };
+    if semicolon {
+      let _ = ts.pop_type(TokenType::Syntax);
+      if !ts.has_tokens() {
+        break;
       }
     }
-    break;
+    let e = parse_expression(ts)?;
+    exprs.push(e);
   }
   if exprs.len() == 1 {
     Ok(exprs.pop().unwrap())
