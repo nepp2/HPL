@@ -5,6 +5,11 @@ use parser::Expr;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+enum Value {
+  Float(f32),
+  String(String)
+}
+
 struct Environment<'l> {
   map : HashMap<String, f32>,
   functions : &'l mut HashMap<String, FunctionDef>,

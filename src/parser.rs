@@ -251,15 +251,32 @@ fn parse_float(ts : &mut TokenStream) -> Result<f32, String> {
 }
 
 fn parse_syntax(ts : &mut TokenStream) -> Result<Expr, String> {
-  let paren = ts.peek()?.string == "(";
-  if paren {
-    ts.expect_string("(")?;
-    let a = parse_expression(ts)?;
-    ts.expect_string(")")?;
-    Ok(a)
-  }
-  else {
-    Err(format!("Unexpected syntax '{}'", ts.peek()?.string))
+  match ts.peek()?.string.as_str() {
+    "[" => {
+      ts.expect_string("[")?;
+      let mut exprs = vec!();
+      loop {
+        if ts.peek()?.string == "]" {
+          break;
+        }
+        exprs.push(parse_expression(ts)?);
+        if ts.peek()?.string == "," {
+          ts.skip()
+        }
+        else {
+          break;
+        }
+      }
+      ts.expect_string("]")?;
+      Ok(Expr::Expr { symbol: "LiteralArray".to_string(), args: exprs })
+    }
+    "(" => {
+      ts.expect_string("(")?;
+      let a = parse_expression(ts)?;
+      ts.expect_string(")")?;
+      Ok(a)
+    }
+    _ => Err(format!("Unexpected syntax '{}'", ts.peek()?.string)),
   }
 }
 
@@ -310,19 +327,10 @@ fn parse_let(ts : &mut TokenStream) -> Result<Expr, String> {
 }
 
 fn parse_keyword_term(ts : &mut TokenStream) -> Result<Expr, String> {
-  enum Keyword { Let, Fun, Other }
-  let keyword = {
-    let t = ts.peek()?;
-    match t.string.as_str() {
-      "let" => Keyword::Let,
-      "fun" => Keyword::Fun,
-      _ => Keyword::Other,
-    }
-  };
-  match keyword {
-    Keyword::Let => parse_let(ts),
-    Keyword::Fun => parse_fun(ts),
-    Keyword::Other => Err(format!("Tried to parse keyword {}. This keywork is not yet supported.", ts.peek()?.string)),
+  match ts.peek()?.string.as_str() {
+    "let" => parse_let(ts),
+    "fun" => parse_fun(ts),
+    _ => Err(format!("Tried to parse keyword {}. This keyword is not yet supported.", ts.peek()?.string)),
   }
 }
 
