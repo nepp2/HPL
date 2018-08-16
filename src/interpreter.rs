@@ -3,21 +3,16 @@ use parser;
 use lexer;
 use parser::Expr;
 use std::collections::HashMap;
+use std::rc::Rc;
 
-struct Environment {
+struct Environment<'l> {
   map : HashMap<String, f32>,
-  functions : HashMap<String, FunctionDef>,
+  functions : &'l mut HashMap<String, FunctionDef>,
 }
 
 struct FunctionDef {
   args : Vec<String>,
-  expr : Expr,
-}
-
-impl Environment {
-  fn new() -> Environment {
-    Environment { map: HashMap::new(), functions: HashMap::new() }
-  }
+  expr : Rc<Expr>,
 }
 
 fn interpret_function_call(function_name: &str, args: &[Expr], env : &mut Environment)
@@ -28,15 +23,19 @@ fn interpret_function_call(function_name: &str, args: &[Expr], env : &mut Enviro
     let v = interpret_with_env(&args[i], env)?;
     arg_values.push(v);
   }
-  let fun = match env.functions.get(function_name) {
-    Some(fd) => fd,
-    None => return Err(format!("Found no function called '{}'", function_name)),
+  let (map, expr) = {
+    let fun = match env.functions.get(function_name) {
+      Some(fd) => fd,
+      None => return Err(format!("Found no function called '{}'", function_name)),
+    };
+    let mut m = HashMap::new();
+    for i in 0..arg_values.len() {
+      m.insert(fun.args[i].to_string(), arg_values[i]);
+    }
+    (m, fun.expr.clone())
   };
-  let mut new_env = Environment::new();
-  for i in 0..arg_values.len() {
-    new_env.map.insert(fun.args[i].to_string(), arg_values[i]);
-  }
-  interpret_with_env(&fun.expr, &mut new_env)
+  let mut new_env = Environment{ map, functions: env.functions };
+  interpret_with_env(&expr, &mut new_env)
 }
 
 fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> Result<f32, String> {
@@ -56,26 +55,6 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
         _ => interpret_function_call(symbol.as_str(), params, env),
       }
     }
-    /*
-    ("call", [Expr::Symbol(s), a, b]) => {
-      let av = interpret_with_env(a, env)?;
-      let bv = interpret_with_env(b, env)?;
-      match s.as_str() {
-        "+" => Ok(av + bv),
-        "-" => Ok(av - bv),
-        "*" => Ok(av * bv),
-        "/" => Ok(av / bv),
-        _ => Err(format!("unsupported operation '{}'", s)),
-      }
-    }
-    ("call", [Expr::Symbol(s), a]) => {
-      let v = interpret(a)?;
-      match s.as_str() {
-        "-" => Ok(-v),
-        _ => Err(format!("unsupported operation '{}'", s)),
-      }
-    }
-    */
     ("block", exprs) => {
       let expr_count = exprs.len();
       if expr_count > 1 {
@@ -95,7 +74,7 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
     ("fun", exprs) => {
       let name = match &exprs[0] { Expr::Symbol(s) => s, _ => { return Err(format!("expected a symbol")); }};
       let args_exprs = match &exprs[1] { Expr::Expr{ args, .. } => args, _ => { return Err(format!("expected an expression")); }};
-      let function_body = exprs[2].clone();
+      let function_body = Rc::new(exprs[2].clone());
       let mut args = vec!();
       for e in args_exprs {
         if let Expr::Symbol(s) = e {
@@ -124,12 +103,13 @@ fn interpret_with_env(ast : &Expr, env : &mut Environment) -> Result<f32, String
         None => Err(format!("symbols '{}' was not defined", s)),
       }
     }
-    Expr::Literal(f) => Ok(*f),
+    Expr::LiteralFloat(f) => Ok(*f)
   }
 }
 
 pub fn interpret(ast : &Expr) -> Result<f32, String> {
-  let mut env = Environment::new();
+  let mut functions = HashMap::new();
+  let mut env = Environment { map: HashMap::new(), functions: &mut functions };
   interpret_with_env(ast, &mut env)
 }
 

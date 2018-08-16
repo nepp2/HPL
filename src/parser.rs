@@ -22,7 +22,7 @@ TODO: Question. does creating a new string from a static string actually allocat
 pub enum Expr {
   Expr { symbol : String, args : Vec<Expr> },
   Symbol(String),
-  Literal(f32),
+  LiteralFloat(f32),
 }
 
 /*
@@ -332,7 +332,7 @@ fn parse_expression_term(ts : &mut TokenStream) -> Result<Expr, String> {
     TokenType::Symbol => parse_symbol(ts),
     TokenType::Keyword => parse_keyword_term(ts),
     TokenType::Syntax => parse_syntax(ts),
-    TokenType::FloatLiteral => Ok(Expr::Literal(parse_float(ts)?)),
+    TokenType::FloatLiteral => Ok(Expr::LiteralFloat(parse_float(ts)?)),
   }
 }
 

@@ -4,11 +4,11 @@ fun mult(a, b) {
 };
 
 fun add(a, b) {
-  a + mult(b, 1)
+  a + mult(b, 2)
 };
 
 let asd = 32;
-6 + 6 + asd;
-let asd = 10;
+6 + 5 + asd;
+let asd = 100;
 let value = 3 + 3.3453 + 6 + asd;
-mult(10 + 10, value)
+add(10 + 10, value)
