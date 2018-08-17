@@ -7,7 +7,8 @@ use std::rc::Rc;
 
 enum Value {
   Float(f32),
-  String(String)
+  String(String),
+  Array(),
 }
 
 struct Environment<'l> {
@@ -91,6 +92,9 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
       }
       env.functions.insert(name.to_string(), FunctionDef { args, expr: function_body });
       Ok(0.0)
+    }
+    ("LiteralArray", exprs) => {
+      Err(format!("LiteralArrays aren't implemented, because the interpreter only supports floats!"))
     }
     _ => Err(format!("instruction '{}' is not supported by the interpreter.", instr)),
   }
