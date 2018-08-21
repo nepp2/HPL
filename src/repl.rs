@@ -5,8 +5,9 @@ use rustyline::Editor;
 use lexer;
 use parser;
 use interpreter;
+use interpreter::Value;
 
-fn interpret(text : &str) -> Result<f32, String> {
+fn interpret(text : &str) -> Result<Value, String> {
   match lexer::lex(text) {
     Ok(tokens) => {
       let ast = parser::parse(tokens)?;
@@ -36,8 +37,8 @@ pub fn repl() {
         // TODO rl.save_history(".mal-history").unwrap();
         if line.len() > 0 {
           match interpret(&line) {
-            Ok(f) => {
-              println!("{}", f);
+            Ok(v) => {
+              println!("{:?}", v);
             }
             Err(s) => {
               println!("{}", s);

@@ -23,6 +23,7 @@ pub enum Expr {
   Expr { symbol : String, args : Vec<Expr> },
   Symbol(String),
   LiteralFloat(f32),
+  LiteralBool(bool),
 }
 
 /*
@@ -141,13 +142,17 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
   fn operator_precedence(s : &str) -> Result<i32, String> {
     let p =
       match s {
-        ">" => 1,
-        "<" => 1,
-        "+" => 2,
-        "-" => 2,
-        "*" => 3,
-        "/" => 3,
-        "(" => 4,
+        "&&" => 1,
+        "||" => 1,
+        ">" => 2,
+        "<" => 2,
+        "==" => 2,
+        "+" => 3,
+        "-" => 3,
+        "*" => 4,
+        "/" => 4,
+        "(" => 5,
+        "[" => 5,
         _ => return Err(format!("Unexpected operator '{}'", s)),
       };
     Ok(p)
@@ -157,7 +162,7 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
   fn pratt_parse(ts : &mut TokenStream, precedence : i32) -> Result<Expr, String> {
     // TODO: this is currently implemented with an enum in a dumb way to handle limitation of Rust's
     // lifetime inference. Once these limitations are fixed (non-lexical lifetimes) I can fix this.
-    enum Action { FunctionCall, Infix(i32) }
+    enum Action { FunctionCall, IndexExpression, Infix(i32) }
     let mut expr = parse_prefix(ts)?;
     while ts.has_tokens() {
       let action;
@@ -166,10 +171,15 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
         if t.token_type == TokenType::Syntax && ts.terminating_syntax.contains(t.string.as_str()) {
           break;
         }
-        else if t.token_type == TokenType::Syntax && t.string == "(" {
+        else if t.token_type == TokenType::Syntax && (t.string == "(" || t.string == "[") {
           let next_precedence = operator_precedence(&t.string)?;
           if next_precedence > precedence {
-            action = Action::FunctionCall;
+            action = if t.string == "(" {
+              Action::FunctionCall
+            }
+            else {
+              Action::IndexExpression
+            };
           }
           else {
             break;
@@ -185,15 +195,26 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
           }
         }
         else {
-          return Err(format!("Unexpected token '{}' of type '{:?}'", t.string, t.token_type));
+          // TODO: this seems crazy
+          //return Err(format!("Unexpected token '{}' of type '{:?}' (PRATT)", t.string, t.token_type));
+          break;
         }
       };
       match action {
         Action::FunctionCall => expr = parse_function_call(ts, expr)?,
+        Action::IndexExpression => expr = parse_index_expression(ts, expr)?,
         Action::Infix(next_precedence) => expr = parse_infix(ts, expr, next_precedence)?,
       }
     }
     Ok(expr)
+  }
+
+  fn parse_index_expression(ts : &mut TokenStream, indexee_expr : Expr) -> Result<Expr, String> {
+    ts.expect_string("[")?;
+    let indexing_expr = parse_expression(ts)?;
+    ts.expect_string("]")?;
+    let args = vec!(indexee_expr, indexing_expr);
+    Ok(Expr::Expr { symbol: "index".to_string(), args } )
   }
 
   fn parse_function_call(ts : &mut TokenStream, function_expr : Expr) -> Result<Expr, String> {
@@ -236,8 +257,16 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
 }
 
 fn parse_symbol(ts : &mut TokenStream) -> Result<Expr, String> {
-  let t = ts.pop_type(TokenType::Symbol)?;
-  Ok(Expr::Symbol(t.string.clone()))
+  let symbol = ts.pop_type(TokenType::Symbol)?.string.clone();
+  if ts.has_tokens() {
+    match ts.peek()?.string.as_str() {
+      "." => {
+
+      }
+      _ => (),
+    }
+  }
+  Ok(Expr::Symbol(symbol))
 } 
 
 fn parse_float(ts : &mut TokenStream) -> Result<f32, String> {
@@ -268,7 +297,7 @@ fn parse_syntax(ts : &mut TokenStream) -> Result<Expr, String> {
         }
       }
       ts.expect_string("]")?;
-      Ok(Expr::Expr { symbol: "LiteralArray".to_string(), args: exprs })
+      Ok(Expr::Expr { symbol: "literal_array".to_string(), args: exprs })
     }
     "(" => {
       ts.expect_string("(")?;
@@ -326,10 +355,35 @@ fn parse_let(ts : &mut TokenStream) -> Result<Expr, String> {
   Ok(Expr::Expr{ symbol: "let".to_string(), args: vec!(var_symbol, initialiser)})
 }
 
+fn parse_if(ts : &mut TokenStream) -> Result<Expr, String> {
+  ts.expect_string("if")?;
+  let conditional = parse_expression(ts)?;
+  ts.expect_string("{")?;
+  let then_block = parse_block(ts)?;
+  ts.expect_string("}")?;
+  let mut args = vec!(conditional, then_block);
+  if ts.accept_string("else") {
+    ts.expect_string("{")?;
+    let else_block = parse_block(ts)?;
+    ts.expect_string("}")?;
+    args.push(else_block);
+  }
+  Ok(Expr::Expr{ symbol: "if".to_string(), args })
+}
+
 fn parse_keyword_term(ts : &mut TokenStream) -> Result<Expr, String> {
   match ts.peek()?.string.as_str() {
     "let" => parse_let(ts),
     "fun" => parse_fun(ts),
+    "if" => parse_if(ts),
+    "true" => {
+      ts.expect_string("true")?;
+      Ok(Expr::LiteralBool(true))
+    }
+    "false" => {
+      ts.expect_string("false")?;
+      Ok(Expr::LiteralBool(false))
+    }
     _ => Err(format!("Tried to parse keyword {}. This keyword is not yet supported.", ts.peek()?.string)),
   }
 }

@@ -1,5 +1,5 @@
 
-let a = [4, 5, 6];
+let a = [4, [1, 2, 3], 6];
 
 fun mult(a, b) {
   a * b
@@ -13,6 +13,14 @@ let asd = 32;
 6 + 5 + asd;
 let asd = 100;
 let value = 3 + 3.3453 + 6 + asd;
-add(10 + 10, value)
+add(10 + 10, value);
 
+if a[1][0] < 5 {
+  let butt = add(25, asd);
+  3
+}
+else {
+  4
+};
 
+butt

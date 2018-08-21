@@ -21,14 +21,12 @@ use sdl2::video::{Window};
 use ropey::Rope;
 use clipboard::{ClipboardProvider, ClipboardContext};
 use text_edit::{TextEditorState, CaretMove, CaretMoveType, TextEdit};
-use text_edit::caret::Caret;
 use font_render::{FontRenderState, LayoutAttribs };
-use rand;
-use rand::Rng;
 
 use lexer;
 use parser;
 use interpreter;
+use interpreter::Value;
 use text_edit;
 
 
@@ -133,7 +131,7 @@ impl CodeEditor {
   }
 
   fn text_changed(&mut self) {
-    fn interpret(text : &str) -> Result<f32, String> {
+    fn interpret(text : &str) -> Result<Value, String> {
       match lexer::lex(text) {
         Ok(tokens) => {
           let ast = parser::parse(tokens)?;

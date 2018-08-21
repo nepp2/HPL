@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use parser;
 use lexer;
 use interpreter;
+use interpreter::Value;
 
 fn stringify_error<A, B>(r : Result<A, B>, s : &str) -> Result<A, String> {
   match r {
@@ -16,7 +17,7 @@ fn stringify_error<A, B>(r : Result<A, B>, s : &str) -> Result<A, String> {
   }
 }
 
-fn interpret(code: &str) -> Result<f32, String> {
+fn interpret(code: &str) -> Result<Value, String> {
   let tokens = stringify_error(lexer::lex(&code), "Lexer Error")?;
   let ast = parser::parse(tokens)?;
   interpreter::interpret(&ast)
@@ -28,7 +29,7 @@ fn load_and_run(path : &PathBuf){
   f.read_to_string(&mut code).unwrap();
   let result = interpret(&code);
   match result {
-    Ok(f) => println!("Output: '{}'", f),
+    Ok(f) => println!("Output: '{:?}'", f),
     Err(s) => println!("Error: {}", s),
   }
 }
