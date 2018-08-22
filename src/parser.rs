@@ -142,11 +142,12 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
   fn operator_precedence(s : &str) -> Result<i32, String> {
     let p =
       match s {
-        "&&" => 1,
-        "||" => 1,
-        ">" => 2,
-        "<" => 2,
-        "==" => 2,
+        "=" => 1,
+        ">" => 1,
+        "<" => 1,
+        "==" => 1,
+        "&&" => 2,
+        "||" => 2,
         "+" => 3,
         "-" => 3,
         "*" => 4,
@@ -250,24 +251,18 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
   fn parse_infix(ts : &mut TokenStream, left_expr : Expr, precedence : i32) -> Result<Expr, String> {
     let operator = ts.pop_type(TokenType::Syntax)?.string.clone();
     let right_expr = pratt_parse(ts, precedence)?;
-    Ok(Expr::Expr { symbol: "call".to_string(), args: vec!(Expr::Symbol(operator), left_expr, right_expr)})
+    if operator.as_str() == "=" {
+      let args = vec!(left_expr, right_expr);
+      Ok(Expr::Expr { symbol: "assign".to_string(), args })
+    }
+    else {
+      let args = vec!(Expr::Symbol(operator), left_expr, right_expr);
+      Ok(Expr::Expr { symbol: "call".to_string(), args })
+    }
   }
 
   pratt_parse(ts, 0)
 }
-
-fn parse_symbol(ts : &mut TokenStream) -> Result<Expr, String> {
-  let symbol = ts.pop_type(TokenType::Symbol)?.string.clone();
-  if ts.has_tokens() {
-    match ts.peek()?.string.as_str() {
-      "." => {
-
-      }
-      _ => (),
-    }
-  }
-  Ok(Expr::Symbol(symbol))
-} 
 
 fn parse_float(ts : &mut TokenStream) -> Result<f32, String> {
   let t = ts.pop_type(TokenType::FloatLiteral)?;
@@ -384,13 +379,29 @@ fn parse_keyword_term(ts : &mut TokenStream) -> Result<Expr, String> {
       ts.expect_string("false")?;
       Ok(Expr::LiteralBool(false))
     }
-    _ => Err(format!("Tried to parse keyword {}. This keyword is not yet supported.", ts.peek()?.string)),
+    _ => Err(format!("Encountered unexpected keyword '{}'. This keyword is not supported here.", ts.peek()?.string)),
   }
 }
 
+fn parse_symbol(ts : &mut TokenStream) -> Result<Expr, String> {
+  let symbol = Expr::Symbol(ts.pop_type(TokenType::Symbol)?.string.clone());
+  // TODO
+  if ts.has_tokens() {
+    let mut symbols = vec!();
+    while ts.peek()?.string.as_str() == "." {
+      ts.skip();
+      symbols.push(Expr::Symbol(ts.pop_type(TokenType::Symbol)?.string.clone()));
+    }
+    if symbols.len() > 0 {
+      symbols.insert(0, symbol);
+      return Ok(Expr::Expr { symbol: "symbol_chain".to_string(), args: symbols });
+    }
+  }
+  return Ok(symbol);
+}
+
 fn parse_expression_term(ts : &mut TokenStream) -> Result<Expr, String> {
-  let token_type = ts.peek()?.token_type;
-  match token_type {
+  match ts.peek()?.token_type {
     TokenType::Symbol => parse_symbol(ts),
     TokenType::Keyword => parse_keyword_term(ts),
     TokenType::Syntax => parse_syntax(ts),

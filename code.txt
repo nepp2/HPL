@@ -9,7 +9,11 @@ fun add(a, b) {
   a + mult(b, 2)
 };
 
-let asd = 32;
+fun blah(a) {
+  4
+}
+
+3 + blah(let asd = 32);
 6 + 5 + asd;
 let asd = 100;
 let value = 3 + 3.3453 + 6 + asd;
@@ -18,6 +22,7 @@ add(10 + 10, value);
 let butt = 30;
 
 if a[1][0] < 5 {
+  butt = butt + 40;
   let butt = add(25, asd);
   3
 }
@@ -25,4 +30,6 @@ else {
   4
 };
 
-butt
+a[0] = 5;
+
+a

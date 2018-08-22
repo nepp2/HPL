@@ -29,10 +29,10 @@ fn scoped_insert<T>(stack : &mut Vec<HashMap<String, T>>, s : String, t : T) {
   stack[i].insert(s, t);
 }
 
-fn scoped_get<'l, T>(stack : &'l Vec<HashMap<String, T>>, s : &str) -> Option<&'l T> {
-  for map in stack.iter().rev() {
+fn scoped_get<'l, T>(stack : &'l mut Vec<HashMap<String, T>>, s : &str) -> Option<&'l mut T> {
+  for map in stack.iter_mut().rev() {
     if map.contains_key(s) {
-      return Some(&map[s]);
+      return Some(map.get_mut(s).unwrap());
     }
   }
   return None;
@@ -58,7 +58,7 @@ fn interpret_function_call(function_name: &str, args: &[Expr], env : &mut Enviro
   }
   let mut args = HashMap::new();
   let expr = {
-    let fun = match scoped_get(&env.functions, function_name) {
+    let fun = match scoped_get(&mut env.functions, function_name) {
       Some(fd) => fd,
       None => return Err(format!("Found no function called '{}'", function_name)),
     };
@@ -141,6 +141,16 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
       //println!("Assign value '{}' to variable '{}'", v, name);
       Ok(Value::Unit)
     }
+    ("assign", [Expr::Symbol(var_symbol), value_expr]) => {
+      let v = interpret_with_env(&value_expr, env)?;
+      match scoped_get(&mut env.values, var_symbol) {
+        Some(variable) => {
+          *variable = v;
+          Ok(Value::Unit)
+        }
+        None => Err(format!("symbol '{}' was not defined", var_symbol)),
+      }
+    }
     ("if", exprs) => {
       if exprs.len() < 2 {
         return Err(format!("malformed if expression"));
@@ -198,7 +208,7 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
         Err(format!("index instruction expected 2 arguments. Found {}.", exprs.len()))
       }
     }
-    _ => Err(format!("instruction '{}' is not supported by the interpreter.", instr)),
+    _ => Err(format!("instruction '{}' with args {:?} is not supported by the interpreter.", instr, args)),
   }
 }
 
@@ -208,7 +218,7 @@ fn interpret_with_env(ast : &Expr, env : &mut Environment) -> Result<Value, Stri
       interpret_instr(symbol, args, env)
     }
     Expr::Symbol(s) => {
-      match scoped_get(&env.values, s) {
+      match scoped_get(&mut env.values, s) {
         Some(v) => Ok(v.clone()),
         None => Err(format!("symbol '{}' was not defined", s)),
       }
