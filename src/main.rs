@@ -16,7 +16,6 @@ mod parser;
 mod interpreter;
 mod visual_edit;
 mod repl;
-mod preparse;
 mod watcher;
 
 fn main(){
