@@ -24,32 +24,23 @@ pub enum Value {
   Unit,
 }
 
-/*
-
-struct ScopeStack<T> {
-  map : HashMap<String, T>,
-  parent : Option<Rc<ScopeStack<T>>>,
+fn scoped_insert<T>(stack : &mut Vec<HashMap<String, T>>, s : String, t : T) {
+  let i = stack.len()-1;
+  stack[i].insert(s, t);
 }
 
-impl<T> ScopeStack<T> {
-  fn get(&self, s : &str) -> Result<&T, String> {
-    match self.map.get(s) {
-      Some(t) => Ok(t),
-      None => Err(format!("")),
+fn scoped_get<'l, T>(stack : &'l Vec<HashMap<String, T>>, s : &str) -> Option<&'l T> {
+  for map in stack.iter().rev() {
+    if map.contains_key(s) {
+      return Some(&map[s]);
     }
   }
+  return None;
 }
-
-struct Environment {
-  map : ScopeStack<Value>,
-  functions : ScopeStack<FunctionDef>,
-}
-
-*/
 
 struct Environment<'l> {
-  map : HashMap<String, Value>,
-  functions : &'l mut HashMap<String, FunctionDef>,
+  values : &'l mut Vec<HashMap<String, Value>>,
+  functions : &'l mut Vec<HashMap<String, FunctionDef>>,
 }
 
 struct FunctionDef {
@@ -65,18 +56,19 @@ fn interpret_function_call(function_name: &str, args: &[Expr], env : &mut Enviro
     let v = interpret_with_env(&args[i], env)?;
     arg_values.push(v);
   }
-  let (map, expr) = {
-    let fun = match env.functions.get(function_name) {
+  let mut args = HashMap::new();
+  let expr = {
+    let fun = match scoped_get(&env.functions, function_name) {
       Some(fd) => fd,
       None => return Err(format!("Found no function called '{}'", function_name)),
     };
-    let mut m = HashMap::new();
     for (v, n) in arg_values.into_iter().zip(&fun.args) {
-      m.insert(n.to_string(), v);
+      args.insert(n.to_string(), v);
     }
-    (m, fun.expr.clone())
+    fun.expr.clone()
   };
-  let mut new_env = Environment{ map, functions: env.functions };
+  let mut vs = vec!(args);
+  let mut new_env = Environment{ values: &mut vs, functions: env.functions };
   interpret_with_env(&expr, &mut new_env)
 }
 
@@ -129,18 +121,23 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
       }
     }
     ("block", exprs) => {
-      let expr_count = exprs.len();
-      if expr_count > 1 {
-        for i in 0..expr_count {
-          let _ = interpret_with_env(&exprs[i], env)?;
+      env.values.push(HashMap::new());
+      let last_val = {
+        let expr_count = exprs.len();
+        if expr_count > 1 {
+          for i in 0..expr_count {
+            let _ = interpret_with_env(&exprs[i], env)?;
+          }
         }
-      }
-      interpret_with_env(&exprs[expr_count-1], env)
+        interpret_with_env(&exprs[expr_count-1], env)
+      };
+      env.values.pop();
+      last_val
     }
     ("let", exprs) => {
       let name = match &exprs[0] { Expr::Symbol(s) => s, _ => { return Err(format!("expected a symbol")); }};
       let v = interpret_with_env(&exprs[1], env)?;
-      env.map.insert(name.to_string(), v);
+      scoped_insert(&mut env.values, name.to_string(), v);
       //println!("Assign value '{}' to variable '{}'", v, name);
       Ok(Value::Unit)
     }
@@ -172,7 +169,7 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
           return Err(format!("expected a symbol"));
         }
       }
-      env.functions.insert(name.to_string(), FunctionDef { args, expr: function_body });
+      scoped_insert(&mut env.functions, name.to_string(), FunctionDef { args, expr: function_body });
       Ok(Value::Unit)
     }
     ("literal_array", exprs) => {
@@ -211,9 +208,9 @@ fn interpret_with_env(ast : &Expr, env : &mut Environment) -> Result<Value, Stri
       interpret_instr(symbol, args, env)
     }
     Expr::Symbol(s) => {
-      match env.map.get(s) {
+      match scoped_get(&env.values, s) {
         Some(v) => Ok(v.clone()),
-        None => Err(format!("symbols '{}' was not defined", s)),
+        None => Err(format!("symbol '{}' was not defined", s)),
       }
     }
     Expr::LiteralFloat(f) => Ok(Value::Float(*f)),
@@ -222,8 +219,12 @@ fn interpret_with_env(ast : &Expr, env : &mut Environment) -> Result<Value, Stri
 }
 
 pub fn interpret(ast : &Expr) -> Result<Value, String> {
-  let mut functions = HashMap::new();
-  let mut env = Environment { map: HashMap::new(), functions: &mut functions };
+  let mut vs = vec!(HashMap::new());
+  let mut fs = vec!(HashMap::new());
+  let mut env = Environment {
+    values: &mut vs,
+    functions: &mut fs,
+  };
   interpret_with_env(ast, &mut env)
 }
 
