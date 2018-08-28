@@ -229,6 +229,25 @@ impl CStream {
     self.error(start_loc, "Unknown token".to_string());
   }
 
+  fn parse_comment(&mut self) -> bool {
+    if self.peek_string("//") {
+      self.skip_char_while(&|cs : &CStream| {
+        let c = cs.peek();
+        c != '\n'
+      });
+      return true;
+    }
+    else if self.peek_string("/*") {
+      self.skip_char();
+      self.skip_char();
+      self.skip_char_while(&|cs : &CStream| { !cs.peek_string("*/") });
+      self.skip_char();
+      self.skip_char();
+      return true;
+    }
+    return false;
+  }
+
   const SYNTAX : &'static [&'static str] =
     &["==", "!=", "<=", ">=", "=>", "+=", "-=", "*=", "/=", "||",
       "&&", "{", "}", "(", ")", "[", "]", "<", ">", ";", ":", ",",
@@ -251,6 +270,7 @@ pub fn lex(code : &str) -> Result<Vec<Token>, Vec<LexError>> {
     else if cs.parse_symbol_or_keyword() {}
     else if cs.parse_number() {}
     else if cs.skip_space() {}
+    else if cs.parse_comment() {}
     else if cs.parse_syntax() {}
     else {
       cs.unknown_token();
