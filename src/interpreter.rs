@@ -99,6 +99,16 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
     Ok(Value::Bool(b))
   }
 
+  fn array_index(array : &Vec<Value>, index : f32) -> Result<usize, String> {
+    let i = index as usize;
+    if index >= 0.0 && i < array.len() {
+      Ok(i)
+    }
+    else {
+      Err(format!("Index out of bounds error. Array of {} elements given index {}.", array.len(), index))
+    }
+  }
+
   match (instr, args.as_slice()) {
     ("call", exprs) => {
       let symbol = match &exprs[0] {
@@ -151,6 +161,20 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
         None => Err(format!("symbol '{}' was not defined", var_symbol)),
       }
     }
+    ("assign", [Expr::Expr { symbol, args }, value_expr]) => {
+      match (symbol.as_str(), args.as_slice()) {
+        ("index", [array_expr, index_expr]) => {
+          let v = interpret_with_env(&value_expr, env)?;
+          let array_rc = to_array(array_expr, env)?;
+          let mut array = array_rc.borrow_mut();
+          let f = to_f(index_expr, env)?;
+          let i = array_index(&array, f)?;
+          array[i] = v;
+          Ok(Value::Unit)
+        }
+        _ => Err(format!("can't assign to '{:?}'", (symbol, args))),
+      }
+    }
     ("if", exprs) => {
       if exprs.len() < 2 {
         return Err(format!("malformed if expression"));
@@ -195,14 +219,8 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
         let array_rc = to_array(array_expr, env)?;
         let array = array_rc.borrow();
         let f = to_f(index_expr, env)?;
-        let i = f as usize;
-        if f >= 0.0 && i < array.len() {
-          let v = array[i].clone();
-          Ok(v)
-        }
-        else {
-          Err(format!("Index out of bounds error. Array of {} elements given index {}.", exprs.len(), f))
-        }
+        let i = array_index(&array, f)?;
+        Ok(array[i].clone())
       }
       else {
         Err(format!("index instruction expected 2 arguments. Found {}.", exprs.len()))
