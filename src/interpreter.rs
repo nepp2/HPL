@@ -38,9 +38,29 @@ fn scoped_get<'l, T>(stack : &'l mut Vec<HashMap<String, T>>, s : &str) -> Optio
   return None;
 }
 
+#[derive(PartialEq)]
+enum BreakState {
+  Breaking,
+  NotBreaking,
+}
+
 struct Environment<'l> {
   values : &'l mut Vec<HashMap<String, Value>>,
   functions : &'l mut Vec<HashMap<String, FunctionDef>>,
+  loop_depth : i32,
+  break_state : BreakState,
+}
+
+impl <'l> Environment<'l> {
+  fn new(
+    values : &'l mut Vec<HashMap<String, Value>>,
+    functions : &'l mut Vec<HashMap<String, FunctionDef>>
+  ) -> Environment<'l> {
+    Environment{
+      values, functions, loop_depth: 0,
+      break_state: BreakState::NotBreaking
+    }
+  }
 }
 
 struct FunctionDef {
@@ -68,7 +88,7 @@ fn interpret_function_call(function_name: &str, args: &[Expr], env : &mut Enviro
     fun.expr.clone()
   };
   let mut vs = vec!(args);
-  let mut new_env = Environment{ values: &mut vs, functions: env.functions };
+  let mut new_env = Environment::new(&mut vs, env.functions);
   interpret_with_env(&expr, &mut new_env)
 }
 
@@ -195,9 +215,12 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
       if exprs.len() != 2 {
         return Err(format!("malformed while block"));
       }
-      while to_b(&exprs[0], env)? {
+      env.loop_depth += 1;
+      while env.break_state != BreakState::Breaking && to_b(&exprs[0], env)? {
         interpret_with_env(&exprs[1], env)?;
       }
+      env.loop_depth -= 1;
+      env.break_state = BreakState::NotBreaking;
       Ok(Value::Unit)
     }
     ("fun", exprs) => {
@@ -241,14 +264,28 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
 }
 
 fn interpret_with_env(ast : &Expr, env : &mut Environment) -> Result<Value, String> {
+  if env.break_state == BreakState::Breaking {
+    return Ok(Value::Unit);
+  }
   match ast {
     Expr::Expr{ symbol, args } => {
       interpret_instr(symbol, args, env)
     }
     Expr::Symbol(s) => {
-      match scoped_get(&mut env.values, s) {
-        Some(v) => Ok(v.clone()),
-        None => Err(format!("symbol '{}' was not defined", s)),
+      if s == "break" {
+        if env.loop_depth > 0 {
+          env.break_state = BreakState::Breaking;
+          Ok(Value::Unit)
+        }
+        else {
+          Err(format!("can't break outside a loop"))
+        }
+      }
+      else {
+        match scoped_get(&mut env.values, s) {
+          Some(v) => Ok(v.clone()),
+          None => Err(format!("symbol '{}' was not defined", s)),
+        }
       }
     }
     Expr::LiteralFloat(f) => Ok(Value::Float(*f)),
@@ -259,10 +296,7 @@ fn interpret_with_env(ast : &Expr, env : &mut Environment) -> Result<Value, Stri
 pub fn interpret(ast : &Expr) -> Result<Value, String> {
   let mut vs = vec!(HashMap::new());
   let mut fs = vec!(HashMap::new());
-  let mut env = Environment {
-    values: &mut vs,
-    functions: &mut fs,
-  };
+  let mut env = Environment::new(&mut vs, &mut fs);
   interpret_with_env(ast, &mut env)
 }
 

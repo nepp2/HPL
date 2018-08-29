@@ -20,11 +20,11 @@ let value = 3 + 3.3453 + 6 + asd;
 add(10 + 10, value);
 
 let butt = 30;
-
-
-while butt > 0 {
+while true {
   butt = butt - 1;
-  break;
+  if butt < 5 {
+    break;
+  }
   a[1][0] = a[1][0] + butt;
 }
 
