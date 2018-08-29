@@ -22,7 +22,7 @@ add(10 + 10, value);
 let butt = 30;
 while true {
   butt = butt - 1;
-  if butt < 5 {
+  if butt <= 5 {
     break;
   }
   a[1][0] = a[1][0] + butt;

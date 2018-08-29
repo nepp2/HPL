@@ -137,6 +137,8 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
         "+=" => 1,
         ">" => 2,
         "<" => 2,
+        ">=" => 2,
+        "<=" => 2,
         "==" => 2,
         "&&" => 3,
         "||" => 3,

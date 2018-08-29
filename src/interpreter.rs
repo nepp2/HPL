@@ -143,6 +143,8 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
         ("/", [a, b]) => f_to_val(to_f(a, env)? / to_f(b, env)?),
         (">", [a, b]) => b_to_val(to_f(a, env)? > to_f(b, env)?),
         ("<", [a, b]) => b_to_val(to_f(a, env)? < to_f(b, env)?),
+        ("<=", [a, b]) => b_to_val(to_f(a, env)? <= to_f(b, env)?),
+        (">=", [a, b]) => b_to_val(to_f(a, env)? >= to_f(b, env)?),
         ("==", [a, b]) => b_to_val(interpret_with_env(a, env)? == interpret_with_env(b, env)?),
         ("&&", [a, b]) => b_to_val(to_b(a, env)? && to_b(b, env)?),
         ("||", [a, b]) => b_to_val(to_b(a, env)? || to_b(b, env)?),
