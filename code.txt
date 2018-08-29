@@ -1,13 +1,13 @@
 
-let a = [4, [1, 2, 3], 6];
+let a = [0, [1, 2, 3], 6];
 
 fun mult(a, b) {
   a * b
-};
+}
 
 fun add(a, b) {
   a + mult(b, 2)
-};
+}
 
 fun blah(a) {
   4
@@ -21,16 +21,21 @@ add(10 + 10, value);
 
 let butt = 30;
 
+
+while butt > 0 {
+  butt = butt - 1;
+  break;
+  a[1][0] = a[1][0] + butt;
+}
+
 if a[1][0] < 5 {
   butt = butt + 40;
   let butt = add(25, asd);
-  3
+  a[0] = 3;
 }
 else {
-  4
-};
-
-a[1][0] = 5;
+  a[0] = 4;
+}
 
 // uncomment for stack overflow, lol: a[1][0] = a[1];
 

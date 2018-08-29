@@ -26,20 +26,11 @@ pub enum Expr {
   LiteralBool(bool),
 }
 
-/*
-#[derive(Debug)]
-pub enum Expr {
-  InfixOp(Box<Expr>, String, Box<Expr>),
-  PrefixOp(String, Box<Expr>),
-  LiteralFloat(f32),
-  FunctionCall { func : Box<Expr>, args : Vec<Expr> }
-}
-*/
-
 // TODO: this might be better implemented with a ring buffer (or just a backwards vec)
 struct TokenStream {
   tokens : Vec<Token>,
   pos : usize,
+  // TODO: these can be globals I think, with the help of some macro
   terminating_syntax : HashSet<&'static str>,
   infix_operators : HashSet<&'static str>,
   prefix_operators : HashSet<&'static str>,
@@ -143,17 +134,18 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
     let p =
       match s {
         "=" => 1,
-        ">" => 1,
-        "<" => 1,
-        "==" => 1,
-        "&&" => 2,
-        "||" => 2,
-        "+" => 3,
-        "-" => 3,
-        "*" => 4,
-        "/" => 4,
-        "(" => 5,
-        "[" => 5,
+        "+=" => 1,
+        ">" => 2,
+        "<" => 2,
+        "==" => 2,
+        "&&" => 3,
+        "||" => 3,
+        "+" => 4,
+        "-" => 4,
+        "*" => 5,
+        "/" => 5,
+        "(" => 6,
+        "[" => 6,
         _ => return Err(format!("Unexpected operator '{}'", s)),
       };
     Ok(p)
@@ -255,6 +247,10 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
       let args = vec!(left_expr, right_expr);
       Ok(Expr::Expr { symbol: "assign".to_string(), args })
     }
+    else if operator.as_str() == "+=" {
+      let args = vec!(left_expr, right_expr, Expr::Symbol("+".to_string()));
+      Ok(Expr::Expr { symbol: "assign_modify".to_string(), args })
+    }
     else {
       let args = vec!(Expr::Symbol(operator), left_expr, right_expr);
       Ok(Expr::Expr { symbol: "call".to_string(), args })
@@ -300,7 +296,7 @@ fn parse_syntax(ts : &mut TokenStream) -> Result<Expr, String> {
       ts.expect_string(")")?;
       Ok(a)
     }
-    _ => Err(format!("Unexpected syntax '{}'", ts.peek()?.string)),
+    _ => Err(format!("Unexpected syntax '{}' at position '{:?}'", ts.peek()?.string, ts.peek()?.loc)),
   }
 }
 
@@ -345,7 +341,6 @@ fn parse_let(ts : &mut TokenStream) -> Result<Expr, String> {
   let var_name = ts.pop_type(TokenType::Symbol)?.string.clone();
   ts.expect_string("=")?;
   let initialiser = parse_expression(ts)?;
-  // TODO: ts.expect_string(";")?;
   let var_symbol = Expr::Symbol(var_name);
   Ok(Expr::Expr{ symbol: "let".to_string(), args: vec!(var_symbol, initialiser)})
 }
@@ -366,11 +361,26 @@ fn parse_if(ts : &mut TokenStream) -> Result<Expr, String> {
   Ok(Expr::Expr{ symbol: "if".to_string(), args })
 }
 
+fn parse_while(ts : &mut TokenStream) -> Result<Expr, String> {
+  ts.expect_string("while")?;
+  let conditional = parse_expression(ts)?;
+  ts.expect_string("{")?;
+  let loop_block = parse_block(ts)?;
+  ts.expect_string("}")?;
+  let args = vec!(conditional, loop_block);
+  Ok(Expr::Expr{ symbol: "while".to_string(), args })
+}
+
 fn parse_keyword_term(ts : &mut TokenStream) -> Result<Expr, String> {
   match ts.peek()?.string.as_str() {
     "let" => parse_let(ts),
     "fun" => parse_fun(ts),
     "if" => parse_if(ts),
+    "break" => {
+      ts.expect_string("break")?;
+      Ok(Expr::Symbol("break".to_string()))
+    }
+    "while" => parse_while(ts),
     "true" => {
       ts.expect_string("true")?;
       Ok(Expr::LiteralBool(true))
@@ -411,27 +421,17 @@ fn parse_expression_term(ts : &mut TokenStream) -> Result<Expr, String> {
 
 fn parse_block(ts : &mut TokenStream) -> Result<Expr, String> {
   let mut exprs = vec!();
-  let e = parse_expression(ts)?;
-  exprs.push(e);
-  loop {
-    if !ts.has_tokens() {
-      break;
-    }
-    let semicolon = {
-      let t = ts.peek()?;
-      if t.token_type == TokenType::Syntax && t.string == "}" {
-        break;
+  'outer: loop {
+    exprs.push(parse_expression(ts)?);
+    'inner: loop {
+      if !ts.has_tokens() || ts.peek()?.string == "}" {
+        break 'outer;
       }
-      t.token_type == TokenType::Syntax && t.string == ";"
-    };
-    if semicolon {
-      let _ = ts.pop_type(TokenType::Syntax);
-      if !ts.has_tokens() {
-        break;
+      if ts.peek()?.string != ";" {
+        break 'inner;
       }
+      ts.skip(); // skip the semicolon
     }
-    let e = parse_expression(ts)?;
-    exprs.push(e);
   }
   if exprs.len() == 1 {
     Ok(exprs.pop().unwrap())

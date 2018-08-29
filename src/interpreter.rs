@@ -176,19 +176,29 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
       }
     }
     ("if", exprs) => {
-      if exprs.len() < 2 {
+      let arg_count = exprs.len();
+      if arg_count < 2 || arg_count > 3 {
         return Err(format!("malformed if expression"));
       }
       let condition = to_b(&exprs[0], env)?;
       if condition {
         interpret_with_env(&exprs[1], env)
       }
-      else if exprs.len() > 2 {
+      else if arg_count == 3 {
         interpret_with_env(&exprs[2], env)
       }
       else {
         Ok(Value::Unit)
       }
+    }
+    ("while", exprs) => {
+      if exprs.len() != 2 {
+        return Err(format!("malformed while block"));
+      }
+      while to_b(&exprs[0], env)? {
+        interpret_with_env(&exprs[1], env)?;
+      }
+      Ok(Value::Unit)
     }
     ("fun", exprs) => {
       let name = match &exprs[0] { Expr::Symbol(s) => s, _ => { return Err(format!("expected a symbol")); }};
