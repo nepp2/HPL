@@ -3,6 +3,7 @@ use parser;
 use lexer;
 use parser::Expr;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -14,13 +15,22 @@ struct Array {
 }
 */
 
-type Array = Rc<RefCell<Vec<Value>>>;
+#[derive(Debug, PartialEq)]
+pub struct Struct {
+  name : String,
+  fields : HashMap<String, Value>,
+}
+
+pub type StructVal = Rc<RefCell<Struct>>;
+
+pub type Array = Rc<RefCell<Vec<Value>>>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
   Float(f32),
   Array(Array),
   Bool(bool),
+  Struct(StructVal),
   Unit,
 }
 
@@ -44,28 +54,37 @@ enum BreakState {
   NotBreaking,
 }
 
+struct FunctionDef {
+  args : Vec<String>,
+  expr : Rc<Expr>,
+}
+
+type StructDef = HashSet<String>;
+
 struct Environment<'l> {
   values : &'l mut Vec<HashMap<String, Value>>,
   functions : &'l mut Vec<HashMap<String, FunctionDef>>,
+  structs : &'l mut HashMap<String, StructDef>,
+
+  // indicates how many nested loops we are inside in the local function scope
   loop_depth : i32,
+
+  // indicates whether the program is currently breaking out of a loop
   break_state : BreakState,
 }
 
 impl <'l> Environment<'l> {
   fn new(
     values : &'l mut Vec<HashMap<String, Value>>,
-    functions : &'l mut Vec<HashMap<String, FunctionDef>>
+    functions : &'l mut Vec<HashMap<String, FunctionDef>>,
+    structs : &'l mut HashMap<String, StructDef>,
   ) -> Environment<'l> {
     Environment{
-      values, functions, loop_depth: 0,
+      values, functions, structs,
+      loop_depth: 0,
       break_state: BreakState::NotBreaking
     }
   }
-}
-
-struct FunctionDef {
-  args : Vec<String>,
-  expr : Rc<Expr>,
 }
 
 fn interpret_function_call(function_name: &str, args: &[Expr], env : &mut Environment)
@@ -88,7 +107,7 @@ fn interpret_function_call(function_name: &str, args: &[Expr], env : &mut Enviro
     fun.expr.clone()
   };
   let mut vs = vec!(args);
-  let mut new_env = Environment::new(&mut vs, env.functions);
+  let mut new_env = Environment::new(&mut vs, env.functions, env.structs);
   interpret_with_env(&expr, &mut new_env)
 }
 
@@ -112,11 +131,28 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
       x => Err(format!("Expected array, found {:?}.", x))
     }
   }
+  fn to_struct(v : &Expr, env : &mut Environment) -> Result<StructVal, String> {
+    match interpret_with_env(v, env)? {
+      Value::Struct(s) => Ok(s),
+      x => Err(format!("Expected struct, found {:?}.", x))
+    }
+  }
   fn f_to_val(f : f32) -> Result<Value, String> {
     Ok(Value::Float(f))
   }
   fn b_to_val(b : bool) -> Result<Value, String> {
     Ok(Value::Bool(b))
+  }
+  fn symbol_to_str(e : &Expr) -> Result<&str, String> {
+    if let Expr::Symbol(s) = e {
+      Ok(s)
+    }
+    else {
+      Err(format!("expected a symbol, found {:?}", e))
+    }
+  }
+  fn symbol_to_string(e : &Expr) -> Result<String, String> {
+    symbol_to_str(e).map(|s| s.to_string())
   }
 
   fn array_index(array : &Vec<Value>, index : f32) -> Result<usize, String> {
@@ -173,7 +209,7 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
       //println!("Assign value '{}' to variable '{}'", v, name);
       Ok(Value::Unit)
     }
-    ("assign", [Expr::Symbol(var_symbol), value_expr]) => {
+    ("=", [Expr::Symbol(var_symbol), value_expr]) => {
       let v = interpret_with_env(&value_expr, env)?;
       match scoped_get(&mut env.values, var_symbol) {
         Some(variable) => {
@@ -183,7 +219,7 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
         None => Err(format!("symbol '{}' was not defined", var_symbol)),
       }
     }
-    ("assign", [Expr::Expr { symbol, args }, value_expr]) => {
+    ("=", [Expr::Expr { symbol, args }, value_expr]) => {
       match (symbol.as_str(), args.as_slice()) {
         ("index", [array_expr, index_expr]) => {
           let v = interpret_with_env(&value_expr, env)?;
@@ -194,7 +230,16 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
           array[i] = v;
           Ok(Value::Unit)
         }
-        _ => Err(format!("can't assign to '{:?}'", (symbol, args))),
+        (".", [struct_expr, field_expr]) => {
+          let v = interpret_with_env(&value_expr, env)?;
+          let structure = to_struct(struct_expr, env)?;
+          let field_name = symbol_to_str(field_expr)?;
+          structure.borrow().fields.get(field_name)
+            .ok_or_else(||format!("field {} does not exist on struct {:?}.", field_name, structure))?;
+          *structure.borrow_mut().fields.get_mut(field_name).unwrap() = v;
+          Ok(Value::Unit)
+        }
+        _ => Err(format!("can't assign to {:?}", (symbol, args))),
       }
     }
     ("if", exprs) => {
@@ -212,6 +257,53 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
       else {
         Ok(Value::Unit)
       }
+    }
+    ("struct_define", exprs) => {
+      if exprs.len() < 1 {
+        return Err(format!("malformed struct definition"));
+      }
+      let struct_name = symbol_to_string(&exprs[0])?;
+      if env.structs.contains_key(&struct_name) {
+        return Err(format!("A struct called {} has already been defined.", struct_name));
+      }
+      let field_names =
+        exprs[1..].iter().map(symbol_to_string)
+        .collect::<Result<HashSet<String>, String>>()?;
+      env.structs.insert(struct_name, field_names);
+      Ok(Value::Unit)
+    }
+    ("struct_instantiate", exprs) => {
+      if exprs.len() < 1 || exprs.len() % 2 == 0 {
+        return Err(format!("malformed struct instantiation {:?}", exprs));
+      }
+      let name = symbol_to_string(&exprs[0])?;
+      {
+        let struct_def =
+          env.structs.get(name.as_str())
+          .ok_or_else(|| format!("struct {} does not exist", name))?;
+        for i in (1..exprs.len()).step_by(2) {
+          let field_name = symbol_to_str(&exprs[i])?;
+          struct_def.get(field_name)
+            .ok_or_else(|| format!("unexpected field '{}'", field_name))?;
+        }
+      };
+      let mut fields = HashMap::new();
+      for i in (1..exprs.len()).step_by(2) {
+        let field_name = symbol_to_string(&exprs[i])?;
+        let field_value = interpret_with_env(&exprs[i+1], env)?;
+        fields.insert(field_name, field_value);
+      }
+      let s = Rc::new(RefCell::new(Struct { name, fields }));
+      Ok(Value::Struct(s))
+    }
+    (".", [expr, field_name]) => {
+      let s = to_struct(expr, env)?;
+      let name = symbol_to_str(field_name)?;
+      let v =
+        s.borrow().fields.get(name)
+        .ok_or_else(||format!("field {} does not exist on struct {:?}.", name, s))?
+        .clone();
+      Ok(v)
     }
     ("while", exprs) => {
       if exprs.len() != 2 {
@@ -267,6 +359,8 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
 
 fn interpret_with_env(ast : &Expr, env : &mut Environment) -> Result<Value, String> {
   if env.break_state == BreakState::Breaking {
+    // this basically skips all evaluations until we backtrack to the loop,
+    // which will spot the break state and stop iterating.
     return Ok(Value::Unit);
   }
   match ast {
@@ -298,7 +392,8 @@ fn interpret_with_env(ast : &Expr, env : &mut Environment) -> Result<Value, Stri
 pub fn interpret(ast : &Expr) -> Result<Value, String> {
   let mut vs = vec!(HashMap::new());
   let mut fs = vec!(HashMap::new());
-  let mut env = Environment::new(&mut vs, &mut fs);
+  let mut structs = HashMap::new();
+  let mut env = Environment::new(&mut vs, &mut fs, &mut structs);
   interpret_with_env(ast, &mut env)
 }
 

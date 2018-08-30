@@ -1,4 +1,3 @@
-
 use lexer;
 use lexer::{Token, TokenType};
 use std::collections::HashSet;
@@ -30,30 +29,12 @@ pub enum Expr {
 struct TokenStream {
   tokens : Vec<Token>,
   pos : usize,
-  // TODO: these can be globals I think, with the help of some macro
-  terminating_syntax : HashSet<&'static str>,
-  infix_operators : HashSet<&'static str>,
-  prefix_operators : HashSet<&'static str>,
 }
 
 impl TokenStream {
 
   fn new(tokens : Vec<Token>) -> TokenStream {
-    fn to_hashset(syntax : &[&'static str]) -> HashSet<&'static str> {
-      let mut set = HashSet::new();
-      for &s in syntax {
-        set.insert(s);
-      }
-      set
-    }
-
-    TokenStream {
-      tokens,
-      pos: 0,
-      terminating_syntax: to_hashset(TERMINATING_SYNTAX),
-      infix_operators: to_hashset(INFIX_SYNTAX),
-      prefix_operators: to_hashset(PREFIX_SYNTAX),
-    }
+    TokenStream { tokens, pos: 0 }
   }
 
   fn has_tokens(&self) -> bool {
@@ -66,6 +47,16 @@ impl TokenStream {
     }
     else {
       Err("Expected token. Found nothing.".to_string())
+    }
+  }
+
+  fn peek_ahead(&self, offset : usize) -> Result<&Token, String> {
+    let i = self.pos + offset;
+    if i < self.tokens.len() {
+      Ok(&self.tokens[i])
+    }
+    else {
+      Err(format!("Expected token {} steps ahead. Found nothing.", offset))
     }
   }
 
@@ -122,11 +113,17 @@ impl TokenStream {
   }
 }
 
-const TERMINATING_SYNTAX : &'static [&'static str] = &["}", ")", "]", ";", ","];
-const PREFIX_SYNTAX : &'static [&'static str] = &["-", "!"];
-const INFIX_SYNTAX : &'static [&'static str] =
-  &["==", "!=", "<=", ">=", "=>", "+=", "-=", "*=", "/=", "||", "&&",
-    "<", ">", "=", "+", "-", "*", "/", "|", "&", "^"];
+lazy_static! {
+  static ref TERMINATING_SYNTAX : HashSet<&'static str> =
+    vec!["}", ")", "]", ";", ","].into_iter().collect();
+  static ref PREFIX_OPERATORS : HashSet<&'static str> =
+    vec!["-", "!"].into_iter().collect();
+  static ref INFIX_OPERATORS : HashSet<&'static str> =
+    vec!["=", ".", "==", "!=", "<=", ">=", "=>", "+=", "-=", "*=", "/=", "||", "&&",
+      "<", ">", "+", "-", "*", "/", "|", "&", "^"].into_iter().collect();
+  static ref SPECIAL_OPERATORS : HashSet<&'static str> =
+    vec!["=", ".", "+="].into_iter().collect();
+}
 
 fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
   
@@ -148,6 +145,7 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
         "/" => 5,
         "(" => 6,
         "[" => 6,
+        "." => 7,
         _ => return Err(format!("Unexpected operator '{}'", s)),
       };
     Ok(p)
@@ -159,11 +157,12 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
     // lifetime inference. Once these limitations are fixed (non-lexical lifetimes) I can fix this.
     enum Action { FunctionCall, IndexExpression, Infix(i32) }
     let mut expr = parse_prefix(ts)?;
+    let map : HashSet<&'static str> = vec!["=", ".", "+="].into_iter().collect();
     while ts.has_tokens() {
       let action;
       { // open scope to scope-limit lifetime of token
         let t = ts.peek()?;
-        if t.token_type == TokenType::Syntax && ts.terminating_syntax.contains(t.string.as_str()) {
+        if t.token_type == TokenType::Syntax && TERMINATING_SYNTAX.contains(t.string.as_str()) {
           break;
         }
         else if t.token_type == TokenType::Syntax && (t.string == "(" || t.string == "[") {
@@ -180,7 +179,7 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
             break;
           }
         }
-        else if t.token_type == TokenType::Syntax && ts.infix_operators.contains(t.string.as_str()) {
+        else if t.token_type == TokenType::Syntax && INFIX_OPERATORS.contains(t.string.as_str()) {
           let next_precedence = operator_precedence(&t.string)?;
           if next_precedence > precedence {
             action = Action::Infix(next_precedence);
@@ -229,7 +228,7 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
     // TODO: fix this with non-lexical lifetimes at some point
     let (is_prefix, operator) = {
       let t = ts.peek()?;
-      let b = t.token_type == TokenType::Syntax && ts.prefix_operators.contains(t.string.as_str());
+      let b = t.token_type == TokenType::Syntax && PREFIX_OPERATORS.contains(t.string.as_str());
       (b, if b { t.string.clone()} else { String::new() })
     };
     if is_prefix {
@@ -245,13 +244,9 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
   fn parse_infix(ts : &mut TokenStream, left_expr : Expr, precedence : i32) -> Result<Expr, String> {
     let operator = ts.pop_type(TokenType::Syntax)?.string.clone();
     let right_expr = pratt_parse(ts, precedence)?;
-    if operator.as_str() == "=" {
+    if SPECIAL_OPERATORS.contains(operator.as_str()) {
       let args = vec!(left_expr, right_expr);
-      Ok(Expr::Expr { symbol: "assign".to_string(), args })
-    }
-    else if operator.as_str() == "+=" {
-      let args = vec!(left_expr, right_expr, Expr::Symbol("+".to_string()));
-      Ok(Expr::Expr { symbol: "assign_modify".to_string(), args })
+      Ok(Expr::Expr { symbol: operator, args })
     }
     else {
       let args = vec!(Expr::Symbol(operator), left_expr, right_expr);
@@ -373,6 +368,55 @@ fn parse_while(ts : &mut TokenStream) -> Result<Expr, String> {
   Ok(Expr::Expr{ symbol: "while".to_string(), args })
 }
 
+fn parse_struct_definition(ts : &mut TokenStream) -> Result<Expr, String> {
+  ts.expect_string("struct")?;
+  let struct_name = ts.pop_type(TokenType::Symbol)?.string.clone();
+  ts.expect_string("{")?;
+  let mut field_names = vec!(Expr::Symbol(struct_name));
+  'outer: loop {
+    'inner: loop {
+      if !ts.has_tokens() || ts.peek()?.string == "}" {
+        break 'outer;
+      }
+      if ts.peek()?.string == "," {
+        ts.skip();
+      }
+      else {
+        break 'inner;
+      }
+    }
+    let symbol = Expr::Symbol(ts.pop_type(TokenType::Symbol)?.string.clone());
+    field_names.push(symbol);
+  }
+  ts.expect_string("}")?;
+  Ok(Expr::Expr { symbol: "struct_define".to_string(), args: field_names })
+}
+
+fn parse_struct_instantiate(ts : &mut TokenStream) -> Result<Expr, String> {
+  let struct_name = ts.pop_type(TokenType::Symbol)?.string.clone();
+  ts.expect_string("{")?;
+  let mut args = vec!(Expr::Symbol(struct_name));
+  'outer: loop {
+    'inner: loop {
+      if !ts.has_tokens() || ts.peek()?.string == "}" {
+        break 'outer;
+      }
+      if ts.peek()?.string == "," {
+        ts.skip();
+      }
+      else {
+        break 'inner;
+      }
+    }
+    let symbol = ts.pop_type(TokenType::Symbol)?.string.clone();
+    args.push(Expr::Symbol(symbol));
+    ts.expect_string(":")?;
+    args.push(parse_expression(ts)?);
+  }
+  ts.expect_string("}")?;
+  Ok(Expr::Expr { symbol: "struct_instantiate".to_string(), args })
+}
+
 fn parse_keyword_term(ts : &mut TokenStream) -> Result<Expr, String> {
   match ts.peek()?.string.as_str() {
     "let" => parse_let(ts),
@@ -383,6 +427,7 @@ fn parse_keyword_term(ts : &mut TokenStream) -> Result<Expr, String> {
       Ok(Expr::Symbol("break".to_string()))
     }
     "while" => parse_while(ts),
+    "struct" => parse_struct_definition(ts),
     "true" => {
       ts.expect_string("true")?;
       Ok(Expr::LiteralBool(true))
@@ -395,26 +440,25 @@ fn parse_keyword_term(ts : &mut TokenStream) -> Result<Expr, String> {
   }
 }
 
-fn parse_symbol(ts : &mut TokenStream) -> Result<Expr, String> {
+fn parse_symbol_reference(ts : &mut TokenStream) -> Result<Expr, String> {
   let symbol = Expr::Symbol(ts.pop_type(TokenType::Symbol)?.string.clone());
-  // TODO
-  if ts.has_tokens() {
-    let mut symbols = vec!();
-    while ts.peek()?.string.as_str() == "." {
-      ts.skip();
-      symbols.push(Expr::Symbol(ts.pop_type(TokenType::Symbol)?.string.clone()));
-    }
-    if symbols.len() > 0 {
-      symbols.insert(0, symbol);
-      return Ok(Expr::Expr { symbol: "symbol_chain".to_string(), args: symbols });
-    }
-  }
   return Ok(symbol);
+}
+
+fn parse_symbol_term(ts : &mut TokenStream) -> Result<Expr, String> {
+  let is_struct =
+    if let Ok(t) = ts.peek_ahead(1) { t.string == "{" } else { false };
+  if is_struct {
+    parse_struct_instantiate(ts)
+  }
+  else{
+    parse_symbol_reference(ts)
+  }
 }
 
 fn parse_expression_term(ts : &mut TokenStream) -> Result<Expr, String> {
   match ts.peek()?.token_type {
-    TokenType::Symbol => parse_symbol(ts),
+    TokenType::Symbol => parse_symbol_term(ts),
     TokenType::Keyword => parse_keyword_term(ts),
     TokenType::Syntax => parse_syntax(ts),
     TokenType::FloatLiteral => Ok(Expr::LiteralFloat(parse_float(ts)?)),
@@ -429,10 +473,12 @@ fn parse_block(ts : &mut TokenStream) -> Result<Expr, String> {
       if !ts.has_tokens() || ts.peek()?.string == "}" {
         break 'outer;
       }
-      if ts.peek()?.string != ";" {
+      if ts.peek()?.string == ";" {
+        ts.skip();
+      }
+      else {
         break 'inner;
       }
-      ts.skip(); // skip the semicolon
     }
   }
   if exprs.len() == 1 {

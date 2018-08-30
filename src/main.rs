@@ -9,6 +9,9 @@ extern crate rand;
 extern crate rustyline;
 extern crate notify;
 
+#[macro_use]
+extern crate lazy_static;
+
 mod font_render;
 mod text_edit;
 mod lexer;

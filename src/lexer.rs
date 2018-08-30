@@ -44,7 +44,8 @@ struct StreamLocation {
 impl CStream {
 
   const KEYWORDS : &'static [&'static str] =
-    &["fun", "if", "else", "type", "while", "break", "return", "let", "true", "false"];
+    &["fun", "if", "else", "type", "while", "struct",
+      "break", "return", "let", "true", "false"];
 
   fn new(chars : Vec<char>) -> CStream {
     let mut keywords = HashSet::new();
