@@ -44,11 +44,9 @@ else {
   a[0] = 4;
 }
 
-// uncomment for stack overflow, lol: a[1][0] = a[1];
+// uncomment for stack overflow, lol: a[1][0] = a[1]; a
 
 a
 
-q.b.a[1] = 600
-
-q.b.a
+// uncomment for stack overflow, lol: q.b.a = q; q
 
