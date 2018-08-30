@@ -7,14 +7,6 @@ use std::collections::HashSet;
 use std::rc::Rc;
 use std::cell::RefCell;
 
-/* TODO
-#[derive(Debug)]
-struct Array {
-  step : u32,
-  data : Vec<u32>
-}
-*/
-
 #[derive(Debug, PartialEq)]
 pub struct Struct {
   name : String,

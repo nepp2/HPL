@@ -157,7 +157,6 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
     // lifetime inference. Once these limitations are fixed (non-lexical lifetimes) I can fix this.
     enum Action { FunctionCall, IndexExpression, Infix(i32) }
     let mut expr = parse_prefix(ts)?;
-    let map : HashSet<&'static str> = vec!["=", ".", "+="].into_iter().collect();
     while ts.has_tokens() {
       let action;
       { // open scope to scope-limit lifetime of token
