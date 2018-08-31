@@ -1,5 +1,12 @@
 
 use std::collections::HashSet;
+use std::rc::Rc;
+
+lazy_static! {
+  static ref KEYWORDS : HashSet<&'static str> =
+    vec!["fun", "if", "else", "type", "while", "struct",
+    "break", "return", "let", "true", "false"].into_iter().collect();
+}
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum TokenType {
@@ -13,9 +20,12 @@ pub struct TextLocation {
   length : u32,
 }
 
+/// An immutable, reference counted string
+pub type RefStr = Rc<str>;
+
 #[derive(Debug)]
 pub struct Token {
-  pub string : String,
+  pub string : RefStr,
   pub token_type : TokenType,
   pub loc : TextLocation,
 }
@@ -31,7 +41,8 @@ struct CStream {
   loc : StreamLocation,
   tokens : Vec<Token>,
   errors : Vec<LexError>,
-  keywords : HashSet<&'static str>,
+  string_intern : HashSet<RefStr>,
+  current_token : String,
 }
 
 #[derive(Clone, Copy)]
@@ -43,19 +54,14 @@ struct StreamLocation {
 
 impl CStream {
 
-  const KEYWORDS : &'static [&'static str] =
-    &["fun", "if", "else", "type", "while", "struct",
-      "break", "return", "let", "true", "false"];
-
   fn new(chars : Vec<char>) -> CStream {
-    let mut keywords = HashSet::new();
-    for &s in CStream::KEYWORDS { keywords.insert(s); }
     CStream {
       chars,
       loc : StreamLocation { pos: 0, line: 1, line_start: 0 },
       tokens: vec!(),
       errors: vec!(),
-      keywords,
+      string_intern: HashSet::new(),
+      current_token: String::new(),
     }
   }
 
@@ -85,8 +91,18 @@ impl CStream {
     }
   }
 
-  fn complete_token(&mut self, start_loc : StreamLocation, string : String, token_type : TokenType) {
+  fn complete_token(&mut self, start_loc : StreamLocation, token_type : TokenType) {
     let loc = self.get_text_location(start_loc);
+    let string =
+      if self.string_intern.contains(self.current_token.as_str()) {
+        self.string_intern.get(self.current_token.as_str()).unwrap().clone()
+      }
+      else {
+        let s : RefStr = Rc::from(self.current_token.as_str());
+        self.string_intern.insert(s.clone());
+        s
+      };
+    self.current_token.clear();
     let t = Token {
       string,
       token_type: token_type,
@@ -138,31 +154,30 @@ impl CStream {
     self.iter_char_while(condition, &mut CStream::skip_char);
   }
 
-  fn append_char(&mut self, string : &mut String) {
+  fn append_char(&mut self) {
     let c = self.peek();
-    string.push(c);
+    self.current_token.push(c);
     self.skip_char();
   }
 
-  fn append_char_while(&mut self, string : &mut String, condition : &Fn(&CStream) -> bool) {
-    self.iter_char_while(condition, &mut |cs : &mut CStream| { cs.append_char(string) });
+  fn append_char_while(&mut self, condition : &Fn(&CStream) -> bool) {
+    self.iter_char_while(condition, &mut |cs : &mut CStream| { cs.append_char() });
   }
 
   fn parse_number(&mut self) -> bool {
     if self.is_number() {
       let start_loc = self.loc;
-      let mut string = String::new();
-      self.append_char_while(&mut string, &CStream::is_number);
+      self.append_char_while(&CStream::is_number);
       if self.has_chars() && self.peek() == '.' {
-        self.append_char(&mut string);
-        self.append_char_while(&mut string, &CStream::is_number);
+        self.append_char();
+        self.append_char_while(&CStream::is_number);
       }
       if self.has_chars() && self.is_symbol_start_char() {
-        self.append_char_while(&mut string, &CStream::is_symbol_middle_char);
+        self.append_char_while(&CStream::is_symbol_middle_char);
         self.error(start_loc, "Malformed floating point literal".to_string());
       }
       else{
-        self.complete_token(start_loc, string, TokenType::FloatLiteral);
+        self.complete_token(start_loc, TokenType::FloatLiteral);
       }
       true
     }
@@ -184,14 +199,13 @@ impl CStream {
   fn parse_symbol_or_keyword(&mut self) -> bool {
     if self.is_symbol_start_char() {
       let start_loc = self.loc;
-      let mut string = String::new();
-      self.append_char(&mut string);
-      self.append_char_while (&mut string, &CStream::is_symbol_middle_char);
-      if self.keywords.contains(string.as_str()) {
-        self.complete_token(start_loc, string, TokenType::Keyword);
+      self.append_char();
+      self.append_char_while (&CStream::is_symbol_middle_char);
+      if KEYWORDS.contains(self.current_token.as_str()) {
+        self.complete_token(start_loc, TokenType::Keyword);
       }
       else {
-        self.complete_token(start_loc, string, TokenType::Symbol);
+        self.complete_token(start_loc, TokenType::Symbol);
       }
       true
     }
@@ -236,7 +250,8 @@ impl CStream {
   fn parse_string(&mut self, s : &str, token_type : TokenType) -> bool {
     let start_loc = self.loc;
     if self.skip_string(s) {
-      self.complete_token(start_loc, s.to_string(), token_type);
+      self.current_token.push_str(s);
+      self.complete_token(start_loc, token_type);
       return true;
     }
     return false;

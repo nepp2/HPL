@@ -1,5 +1,5 @@
 use lexer;
-use lexer::{Token, TokenType};
+use lexer::{Token, TokenType, RefStr};
 use std::collections::HashSet;
 use std::f32;
 use std::str::FromStr;
@@ -17,10 +17,26 @@ have to change a lot of code.
 TODO: Question. does creating a new string from a static string actually allocate?
 */
 
+// TODO: this might be slow because lazy_static is threadsafe
+lazy_static! {
+  static ref CALL : RefStr = "call".into();
+  static ref INDEX : RefStr = "index".into();
+  static ref LITERAL_ARRAY : RefStr = "literal_array".into();
+  static ref ARGS : RefStr = "args".into();
+  static ref FUN : RefStr = "fun".into();
+  static ref LET : RefStr = "let".into();
+  static ref IF : RefStr = "if".into();
+  static ref WHILE : RefStr = "while".into();
+  static ref STRUCT_DEFINE : RefStr = "struct_define".into();
+  static ref STRUCT_INSTANTIATE : RefStr = "struct_instantiate".into();
+  static ref BREAK : RefStr = "break".into();
+  static ref BLOCK : RefStr = "block".into();
+}
+
 #[derive(PartialEq, Debug, Clone)]
 pub enum Expr {
-  Expr { symbol : String, args : Vec<Expr> },
-  Symbol(String),
+  Expr { symbol : RefStr, args : Vec<Expr> },
+  Symbol(RefStr),
   LiteralFloat(f32),
   LiteralBool(bool),
 }
@@ -72,7 +88,7 @@ impl TokenStream {
   fn accept_string(&mut self, string : &str) -> bool {
     let accept = {
       if let Ok(t) = self.peek() {
-        t.string == string
+        &*t.string == string
       }
       else { false }
     };
@@ -84,7 +100,7 @@ impl TokenStream {
     {
       let t = self.peek();
       if let Ok(t) = t {
-        if t.string != string {
+        if t.string.as_ref() != string {
           return Err(format!("Expected token '{}', found token '{}'", string, t.string));
         }
       }
@@ -161,13 +177,13 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
       let action;
       { // open scope to scope-limit lifetime of token
         let t = ts.peek()?;
-        if t.token_type == TokenType::Syntax && TERMINATING_SYNTAX.contains(t.string.as_str()) {
+        if t.token_type == TokenType::Syntax && TERMINATING_SYNTAX.contains(&*t.string) {
           break;
         }
-        else if t.token_type == TokenType::Syntax && (t.string == "(" || t.string == "[") {
+        else if t.token_type == TokenType::Syntax && (&*t.string == "(" || &*t.string == "[") {
           let next_precedence = operator_precedence(&t.string)?;
           if next_precedence > precedence {
-            action = if t.string == "(" {
+            action = if &*t.string == "(" {
               Action::FunctionCall
             }
             else {
@@ -178,7 +194,7 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
             break;
           }
         }
-        else if t.token_type == TokenType::Syntax && INFIX_OPERATORS.contains(t.string.as_str()) {
+        else if t.token_type == TokenType::Syntax && INFIX_OPERATORS.contains(&*t.string) {
           let next_precedence = operator_precedence(&t.string)?;
           if next_precedence > precedence {
             action = Action::Infix(next_precedence);
@@ -207,7 +223,7 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
     let indexing_expr = parse_expression(ts)?;
     ts.expect_string("]")?;
     let args = vec!(indexee_expr, indexing_expr);
-    Ok(Expr::Expr { symbol: "index".to_string(), args } )
+    Ok(Expr::Expr { symbol: INDEX, args } )
   }
 
   fn parse_function_call(ts : &mut TokenStream, function_expr : Expr) -> Result<Expr, String> {
@@ -220,20 +236,22 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
       }
     }
     ts.expect_string(")")?;
-    Ok(Expr::Expr { symbol: "call".to_string(), args: exprs } )
+    Ok(Expr::Expr { symbol: CALL, args: exprs } )
   }
 
   fn parse_prefix(ts : &mut TokenStream) -> Result<Expr, String> {
     // TODO: fix this with non-lexical lifetimes at some point
-    let (is_prefix, operator) = {
+    let prefix_operator = {
       let t = ts.peek()?;
-      let b = t.token_type == TokenType::Syntax && PREFIX_OPERATORS.contains(t.string.as_str());
-      (b, if b { t.string.clone()} else { String::new() })
+      if t.token_type == TokenType::Syntax && PREFIX_OPERATORS.contains(&*t.string) {
+        Some(t.string.clone())
+      }
+      else { None }
     };
-    if is_prefix {
+    if let Some(operator) = prefix_operator {
       ts.expect_type(TokenType::Syntax)?;
       let expr = parse_expression_term(ts)?;
-      Ok(Expr::Expr{ symbol: "call".to_string(), args: vec!(Expr::Symbol(operator), expr) })
+      Ok(Expr::Expr{ symbol: CALL, args: vec!(Expr::Symbol(operator), expr) })
     }
     else {
       parse_expression_term(ts)
@@ -243,13 +261,13 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
   fn parse_infix(ts : &mut TokenStream, left_expr : Expr, precedence : i32) -> Result<Expr, String> {
     let operator = ts.pop_type(TokenType::Syntax)?.string.clone();
     let right_expr = pratt_parse(ts, precedence)?;
-    if SPECIAL_OPERATORS.contains(operator.as_str()) {
+    if SPECIAL_OPERATORS.contains(&*operator) {
       let args = vec!(left_expr, right_expr);
       Ok(Expr::Expr { symbol: operator, args })
     }
     else {
       let args = vec!(Expr::Symbol(operator), left_expr, right_expr);
-      Ok(Expr::Expr { symbol: "call".to_string(), args })
+      Ok(Expr::Expr { symbol: CALL, args })
     }
   }
 
@@ -267,16 +285,16 @@ fn parse_float(ts : &mut TokenStream) -> Result<f32, String> {
 }
 
 fn parse_syntax(ts : &mut TokenStream) -> Result<Expr, String> {
-  match ts.peek()?.string.as_str() {
+  match &*ts.peek()?.string {
     "[" => {
       ts.expect_string("[")?;
       let mut exprs = vec!();
       loop {
-        if ts.peek()?.string == "]" {
+        if &*ts.peek()?.string == "]" {
           break;
         }
         exprs.push(parse_expression(ts)?);
-        if ts.peek()?.string == "," {
+        if &*ts.peek()?.string == "," {
           ts.skip()
         }
         else {
@@ -284,7 +302,7 @@ fn parse_syntax(ts : &mut TokenStream) -> Result<Expr, String> {
         }
       }
       ts.expect_string("]")?;
-      Ok(Expr::Expr { symbol: "literal_array".to_string(), args: exprs })
+      Ok(Expr::Expr { symbol: LITERAL_ARRAY, args: exprs })
     }
     "(" => {
       ts.expect_string("(")?;
@@ -305,9 +323,9 @@ fn parse_fun(ts : &mut TokenStream) -> Result<Expr, String> {
     if ts.peek()?.token_type != TokenType::Symbol {
       break;
     }
-    let arg_name = ts.pop_type(TokenType::Symbol)?.string.to_string();
+    let arg_name = ts.pop_type(TokenType::Symbol)?.string.clone();
     arg_names.push(Expr::Symbol(arg_name));
-    if ts.peek()?.string == "," {
+    if &*ts.peek()?.string == "," {
       ts.skip();
     }
     else {
@@ -321,12 +339,12 @@ fn parse_fun(ts : &mut TokenStream) -> Result<Expr, String> {
   let fun_symbol = Expr::Symbol(fun_name);
   let args_expr =
     Expr::Expr {
-      symbol: "args".to_string(),
+      symbol: ARGS,
       args: arg_names,
     };
   let fun_expr =
     Expr::Expr{
-      symbol: "fun".to_string(),
+      symbol: FUN,
       args: vec!(fun_symbol, args_expr, function_block),
     };
   Ok(fun_expr)
@@ -338,7 +356,7 @@ fn parse_let(ts : &mut TokenStream) -> Result<Expr, String> {
   ts.expect_string("=")?;
   let initialiser = parse_expression(ts)?;
   let var_symbol = Expr::Symbol(var_name);
-  Ok(Expr::Expr{ symbol: "let".to_string(), args: vec!(var_symbol, initialiser)})
+  Ok(Expr::Expr{ symbol: LET, args: vec!(var_symbol, initialiser)})
 }
 
 fn parse_if(ts : &mut TokenStream) -> Result<Expr, String> {
@@ -354,7 +372,7 @@ fn parse_if(ts : &mut TokenStream) -> Result<Expr, String> {
     ts.expect_string("}")?;
     args.push(else_block);
   }
-  Ok(Expr::Expr{ symbol: "if".to_string(), args })
+  Ok(Expr::Expr{ symbol: IF, args })
 }
 
 fn parse_while(ts : &mut TokenStream) -> Result<Expr, String> {
@@ -364,7 +382,7 @@ fn parse_while(ts : &mut TokenStream) -> Result<Expr, String> {
   let loop_block = parse_block(ts)?;
   ts.expect_string("}")?;
   let args = vec!(conditional, loop_block);
-  Ok(Expr::Expr{ symbol: "while".to_string(), args })
+  Ok(Expr::Expr{ symbol: WHILE, args })
 }
 
 fn parse_struct_definition(ts : &mut TokenStream) -> Result<Expr, String> {
@@ -374,10 +392,10 @@ fn parse_struct_definition(ts : &mut TokenStream) -> Result<Expr, String> {
   let mut field_names = vec!(Expr::Symbol(struct_name));
   'outer: loop {
     'inner: loop {
-      if !ts.has_tokens() || ts.peek()?.string == "}" {
+      if !ts.has_tokens() || &*ts.peek()?.string == "}" {
         break 'outer;
       }
-      if ts.peek()?.string == "," {
+      if &*ts.peek()?.string == "," {
         ts.skip();
       }
       else {
@@ -388,7 +406,7 @@ fn parse_struct_definition(ts : &mut TokenStream) -> Result<Expr, String> {
     field_names.push(symbol);
   }
   ts.expect_string("}")?;
-  Ok(Expr::Expr { symbol: "struct_define".to_string(), args: field_names })
+  Ok(Expr::Expr { symbol: STRUCT_DEFINE, args: field_names })
 }
 
 fn parse_struct_instantiate(ts : &mut TokenStream) -> Result<Expr, String> {
@@ -397,10 +415,10 @@ fn parse_struct_instantiate(ts : &mut TokenStream) -> Result<Expr, String> {
   let mut args = vec!(Expr::Symbol(struct_name));
   'outer: loop {
     'inner: loop {
-      if !ts.has_tokens() || ts.peek()?.string == "}" {
+      if !ts.has_tokens() || &*ts.peek()?.string == "}" {
         break 'outer;
       }
-      if ts.peek()?.string == "," {
+      if &*ts.peek()?.string == "," {
         ts.skip();
       }
       else {
@@ -413,17 +431,17 @@ fn parse_struct_instantiate(ts : &mut TokenStream) -> Result<Expr, String> {
     args.push(parse_expression(ts)?);
   }
   ts.expect_string("}")?;
-  Ok(Expr::Expr { symbol: "struct_instantiate".to_string(), args })
+  Ok(Expr::Expr { symbol: STRUCT_INSTANTIATE, args })
 }
 
 fn parse_keyword_term(ts : &mut TokenStream) -> Result<Expr, String> {
-  match ts.peek()?.string.as_str() {
+  match &*ts.peek()?.string {
     "let" => parse_let(ts),
     "fun" => parse_fun(ts),
     "if" => parse_if(ts),
     "break" => {
       ts.expect_string("break")?;
-      Ok(Expr::Symbol("break".to_string()))
+      Ok(Expr::Symbol(BREAK))
     }
     "while" => parse_while(ts),
     "struct" => parse_struct_definition(ts),
@@ -446,7 +464,7 @@ fn parse_symbol_reference(ts : &mut TokenStream) -> Result<Expr, String> {
 
 fn parse_symbol_term(ts : &mut TokenStream) -> Result<Expr, String> {
   let is_struct =
-    if let Ok(t) = ts.peek_ahead(1) { t.string == "{" } else { false };
+    if let Ok(t) = ts.peek_ahead(1) { &*t.string == "{" } else { false };
   if is_struct {
     parse_struct_instantiate(ts)
   }
@@ -469,10 +487,10 @@ fn parse_block(ts : &mut TokenStream) -> Result<Expr, String> {
   'outer: loop {
     exprs.push(parse_expression(ts)?);
     'inner: loop {
-      if !ts.has_tokens() || ts.peek()?.string == "}" {
+      if !ts.has_tokens() || &*ts.peek()?.string == "}" {
         break 'outer;
       }
-      if ts.peek()?.string == ";" {
+      if &*ts.peek()?.string == ";" {
         ts.skip();
       }
       else {
@@ -484,7 +502,7 @@ fn parse_block(ts : &mut TokenStream) -> Result<Expr, String> {
     Ok(exprs.pop().unwrap())
   }
   else {
-    Ok(Expr::Expr { symbol: "block".to_string(), args: exprs })
+    Ok(Expr::Expr { symbol: BLOCK, args: exprs })
   }
 }
 
