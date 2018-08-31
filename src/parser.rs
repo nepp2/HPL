@@ -1,5 +1,5 @@
 use lexer;
-use lexer::{Token, TokenType, RefStr};
+use lexer::{Token, TokenType, RefStr, SymbolCache};
 use std::collections::HashSet;
 use std::f32;
 use std::str::FromStr;
@@ -18,20 +18,19 @@ TODO: Question. does creating a new string from a static string actually allocat
 */
 
 // TODO: this might be slow because lazy_static is threadsafe
-lazy_static! {
-  static ref CALL : RefStr = "call".into();
-  static ref INDEX : RefStr = "index".into();
-  static ref LITERAL_ARRAY : RefStr = "literal_array".into();
-  static ref ARGS : RefStr = "args".into();
-  static ref FUN : RefStr = "fun".into();
-  static ref LET : RefStr = "let".into();
-  static ref IF : RefStr = "if".into();
-  static ref WHILE : RefStr = "while".into();
-  static ref STRUCT_DEFINE : RefStr = "struct_define".into();
-  static ref STRUCT_INSTANTIATE : RefStr = "struct_instantiate".into();
-  static ref BREAK : RefStr = "break".into();
-  static ref BLOCK : RefStr = "block".into();
-}
+
+static CALL : &str = "call";
+static INDEX : &str = "index";
+static LITERAL_ARRAY : &str = "literal_array";
+static ARGS : &str = "args";
+static FUN : &str = "fun";
+static LET : &str = "let";
+static IF : &str = "if";
+static WHILE : &str = "while";
+static STRUCT_DEFINE : &str = "struct_define";
+static STRUCT_INSTANTIATE : &str = "struct_instantiate";
+static BREAK : &str = "break";
+static BLOCK : &str = "block";
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum Expr {
@@ -45,12 +44,17 @@ pub enum Expr {
 struct TokenStream {
   tokens : Vec<Token>,
   pos : usize,
+  symbol_cache : SymbolCache,
 }
 
 impl TokenStream {
 
   fn new(tokens : Vec<Token>) -> TokenStream {
-    TokenStream { tokens, pos: 0 }
+    TokenStream { tokens, pos: 0, symbol_cache: SymbolCache::new() }
+  }
+
+  fn symbol(&mut self, s : &str) -> RefStr {
+    self.symbol_cache.symbol(s)
   }
 
   fn has_tokens(&self) -> bool {
@@ -223,7 +227,7 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
     let indexing_expr = parse_expression(ts)?;
     ts.expect_string("]")?;
     let args = vec!(indexee_expr, indexing_expr);
-    Ok(Expr::Expr { symbol: INDEX, args } )
+    Ok(Expr::Expr { symbol: ts.symbol(INDEX), args } )
   }
 
   fn parse_function_call(ts : &mut TokenStream, function_expr : Expr) -> Result<Expr, String> {
@@ -236,7 +240,7 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
       }
     }
     ts.expect_string(")")?;
-    Ok(Expr::Expr { symbol: CALL, args: exprs } )
+    Ok(Expr::Expr { symbol: ts.symbol(CALL), args: exprs } )
   }
 
   fn parse_prefix(ts : &mut TokenStream) -> Result<Expr, String> {
@@ -251,7 +255,7 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
     if let Some(operator) = prefix_operator {
       ts.expect_type(TokenType::Syntax)?;
       let expr = parse_expression_term(ts)?;
-      Ok(Expr::Expr{ symbol: CALL, args: vec!(Expr::Symbol(operator), expr) })
+      Ok(Expr::Expr{ symbol: ts.symbol(CALL), args: vec!(Expr::Symbol(operator), expr) })
     }
     else {
       parse_expression_term(ts)
@@ -267,7 +271,7 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
     }
     else {
       let args = vec!(Expr::Symbol(operator), left_expr, right_expr);
-      Ok(Expr::Expr { symbol: CALL, args })
+      Ok(Expr::Expr { symbol: ts.symbol(CALL), args })
     }
   }
 
@@ -302,7 +306,7 @@ fn parse_syntax(ts : &mut TokenStream) -> Result<Expr, String> {
         }
       }
       ts.expect_string("]")?;
-      Ok(Expr::Expr { symbol: LITERAL_ARRAY, args: exprs })
+      Ok(Expr::Expr { symbol: ts.symbol(LITERAL_ARRAY), args: exprs })
     }
     "(" => {
       ts.expect_string("(")?;
@@ -339,12 +343,12 @@ fn parse_fun(ts : &mut TokenStream) -> Result<Expr, String> {
   let fun_symbol = Expr::Symbol(fun_name);
   let args_expr =
     Expr::Expr {
-      symbol: ARGS,
+      symbol: ts.symbol(ARGS),
       args: arg_names,
     };
   let fun_expr =
     Expr::Expr{
-      symbol: FUN,
+      symbol: ts.symbol(FUN),
       args: vec!(fun_symbol, args_expr, function_block),
     };
   Ok(fun_expr)
@@ -356,7 +360,7 @@ fn parse_let(ts : &mut TokenStream) -> Result<Expr, String> {
   ts.expect_string("=")?;
   let initialiser = parse_expression(ts)?;
   let var_symbol = Expr::Symbol(var_name);
-  Ok(Expr::Expr{ symbol: LET, args: vec!(var_symbol, initialiser)})
+  Ok(Expr::Expr{ symbol: ts.symbol(LET), args: vec!(var_symbol, initialiser)})
 }
 
 fn parse_if(ts : &mut TokenStream) -> Result<Expr, String> {
@@ -372,7 +376,7 @@ fn parse_if(ts : &mut TokenStream) -> Result<Expr, String> {
     ts.expect_string("}")?;
     args.push(else_block);
   }
-  Ok(Expr::Expr{ symbol: IF, args })
+  Ok(Expr::Expr{ symbol: ts.symbol(IF), args })
 }
 
 fn parse_while(ts : &mut TokenStream) -> Result<Expr, String> {
@@ -382,7 +386,7 @@ fn parse_while(ts : &mut TokenStream) -> Result<Expr, String> {
   let loop_block = parse_block(ts)?;
   ts.expect_string("}")?;
   let args = vec!(conditional, loop_block);
-  Ok(Expr::Expr{ symbol: WHILE, args })
+  Ok(Expr::Expr{ symbol: ts.symbol(WHILE), args })
 }
 
 fn parse_struct_definition(ts : &mut TokenStream) -> Result<Expr, String> {
@@ -406,7 +410,7 @@ fn parse_struct_definition(ts : &mut TokenStream) -> Result<Expr, String> {
     field_names.push(symbol);
   }
   ts.expect_string("}")?;
-  Ok(Expr::Expr { symbol: STRUCT_DEFINE, args: field_names })
+  Ok(Expr::Expr { symbol: ts.symbol(STRUCT_DEFINE), args: field_names })
 }
 
 fn parse_struct_instantiate(ts : &mut TokenStream) -> Result<Expr, String> {
@@ -431,7 +435,7 @@ fn parse_struct_instantiate(ts : &mut TokenStream) -> Result<Expr, String> {
     args.push(parse_expression(ts)?);
   }
   ts.expect_string("}")?;
-  Ok(Expr::Expr { symbol: STRUCT_INSTANTIATE, args })
+  Ok(Expr::Expr { symbol: ts.symbol(STRUCT_INSTANTIATE), args })
 }
 
 fn parse_keyword_term(ts : &mut TokenStream) -> Result<Expr, String> {
@@ -441,7 +445,7 @@ fn parse_keyword_term(ts : &mut TokenStream) -> Result<Expr, String> {
     "if" => parse_if(ts),
     "break" => {
       ts.expect_string("break")?;
-      Ok(Expr::Symbol(BREAK))
+      Ok(Expr::Symbol(ts.symbol(BREAK)))
     }
     "while" => parse_while(ts),
     "struct" => parse_struct_definition(ts),
@@ -502,7 +506,7 @@ fn parse_block(ts : &mut TokenStream) -> Result<Expr, String> {
     Ok(exprs.pop().unwrap())
   }
   else {
-    Ok(Expr::Expr { symbol: BLOCK, args: exprs })
+    Ok(Expr::Expr { symbol: ts.symbol(BLOCK), args: exprs })
   }
 }
 

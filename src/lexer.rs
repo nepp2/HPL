@@ -36,12 +36,33 @@ pub struct LexError {
   loc : TextLocation,
 }
 
+pub struct SymbolCache {
+  symbols : HashSet<RefStr>
+}
+
+impl SymbolCache {
+  pub fn new() -> SymbolCache {
+    SymbolCache{ symbols: HashSet::new() }
+  }
+
+  pub fn symbol(&mut self, s : &str) -> RefStr {
+    if self.symbols.contains(s) {
+      self.symbols.get(s).unwrap().clone()
+    }
+    else {
+      let s : RefStr = Rc::from(s);
+      self.symbols.insert(s.clone());
+      s
+    }
+  }
+}
+
 struct CStream {
   chars : Vec<char>,
   loc : StreamLocation,
   tokens : Vec<Token>,
   errors : Vec<LexError>,
-  string_intern : HashSet<RefStr>,
+  symbol_cache : SymbolCache,
   current_token : String,
 }
 
@@ -60,7 +81,7 @@ impl CStream {
       loc : StreamLocation { pos: 0, line: 1, line_start: 0 },
       tokens: vec!(),
       errors: vec!(),
-      string_intern: HashSet::new(),
+      symbol_cache: SymbolCache::new(),
       current_token: String::new(),
     }
   }
@@ -93,15 +114,7 @@ impl CStream {
 
   fn complete_token(&mut self, start_loc : StreamLocation, token_type : TokenType) {
     let loc = self.get_text_location(start_loc);
-    let string =
-      if self.string_intern.contains(self.current_token.as_str()) {
-        self.string_intern.get(self.current_token.as_str()).unwrap().clone()
-      }
-      else {
-        let s : RefStr = Rc::from(self.current_token.as_str());
-        self.string_intern.insert(s.clone());
-        s
-      };
+    let string = self.symbol_cache.symbol(self.current_token.as_str());
     self.current_token.clear();
     let t = Token {
       string,
