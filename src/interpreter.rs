@@ -165,7 +165,7 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
         _ => return Err(format!("expected symbol")),
       };
       let params = &exprs[1..];
-      match (&**symbol, params) {
+      match (symbol.as_str(), params) {
         ("+", [a, b]) => f_to_val(to_f(a, env)? + to_f(b, env)?),
         ("-", [a, b]) => f_to_val(to_f(a, env)? - to_f(b, env)?),
         ("*", [a, b]) => f_to_val(to_f(a, env)? * to_f(b, env)?),
@@ -213,7 +213,7 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
       }
     }
     ("=", [Expr::Expr { symbol, args }, value_expr]) => {
-      match (&**symbol, args.as_slice()) {
+      match (symbol.as_str(), args.as_slice()) {
         ("index", [array_expr, index_expr]) => {
           let v = interpret_with_env(&value_expr, env)?;
           let array_rc = to_array(array_expr, env)?;
@@ -361,7 +361,7 @@ fn interpret_with_env(ast : &Expr, env : &mut Environment) -> Result<Value, Stri
       interpret_instr(symbol, args, env)
     }
     Expr::Symbol(s) => {
-      if &**s == "break" {
+      if s.as_str() == "break" {
         if env.loop_depth > 0 {
           env.break_state = BreakState::Breaking;
           Ok(Value::Unit)

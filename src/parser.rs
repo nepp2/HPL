@@ -1,5 +1,5 @@
 use lexer;
-use lexer::{Token, TokenType, RefStr, SymbolCache};
+use lexer::{Token, TokenType, RefStr, AsStr, SymbolCache};
 use std::collections::HashSet;
 use std::f32;
 use std::str::FromStr;
@@ -92,7 +92,7 @@ impl TokenStream {
   fn accept_string(&mut self, string : &str) -> bool {
     let accept = {
       if let Ok(t) = self.peek() {
-        &*t.string == string
+        t.string.as_str() == string
       }
       else { false }
     };
@@ -181,13 +181,13 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
       let action;
       { // open scope to scope-limit lifetime of token
         let t = ts.peek()?;
-        if t.token_type == TokenType::Syntax && TERMINATING_SYNTAX.contains(&*t.string) {
+        if t.token_type == TokenType::Syntax && TERMINATING_SYNTAX.contains(t.string.as_str()) {
           break;
         }
-        else if t.token_type == TokenType::Syntax && (&*t.string == "(" || &*t.string == "[") {
+        else if t.token_type == TokenType::Syntax && (t.string.as_str() == "(" || t.string.as_str() == "[") {
           let next_precedence = operator_precedence(&t.string)?;
           if next_precedence > precedence {
-            action = if &*t.string == "(" {
+            action = if t.string.as_str() == "(" {
               Action::FunctionCall
             }
             else {
@@ -198,7 +198,7 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
             break;
           }
         }
-        else if t.token_type == TokenType::Syntax && INFIX_OPERATORS.contains(&*t.string) {
+        else if t.token_type == TokenType::Syntax && INFIX_OPERATORS.contains(t.string.as_str()) {
           let next_precedence = operator_precedence(&t.string)?;
           if next_precedence > precedence {
             action = Action::Infix(next_precedence);
@@ -247,7 +247,7 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
     // TODO: fix this with non-lexical lifetimes at some point
     let prefix_operator = {
       let t = ts.peek()?;
-      if t.token_type == TokenType::Syntax && PREFIX_OPERATORS.contains(&*t.string) {
+      if t.token_type == TokenType::Syntax && PREFIX_OPERATORS.contains(t.string.as_str()) {
         Some(t.string.clone())
       }
       else { None }
@@ -265,7 +265,7 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
   fn parse_infix(ts : &mut TokenStream, left_expr : Expr, precedence : i32) -> Result<Expr, String> {
     let operator = ts.pop_type(TokenType::Syntax)?.string.clone();
     let right_expr = pratt_parse(ts, precedence)?;
-    if SPECIAL_OPERATORS.contains(&*operator) {
+    if SPECIAL_OPERATORS.contains(operator.as_str()) {
       let args = vec!(left_expr, right_expr);
       Ok(Expr::Expr { symbol: operator, args })
     }
@@ -289,16 +289,16 @@ fn parse_float(ts : &mut TokenStream) -> Result<f32, String> {
 }
 
 fn parse_syntax(ts : &mut TokenStream) -> Result<Expr, String> {
-  match &*ts.peek()?.string {
+  match ts.peek()?.string.as_str() {
     "[" => {
       ts.expect_string("[")?;
       let mut exprs = vec!();
       loop {
-        if &*ts.peek()?.string == "]" {
+        if ts.peek()?.string.as_str() == "]" {
           break;
         }
         exprs.push(parse_expression(ts)?);
-        if &*ts.peek()?.string == "," {
+        if ts.peek()?.string.as_str() == "," {
           ts.skip()
         }
         else {
@@ -329,7 +329,7 @@ fn parse_fun(ts : &mut TokenStream) -> Result<Expr, String> {
     }
     let arg_name = ts.pop_type(TokenType::Symbol)?.string.clone();
     arg_names.push(Expr::Symbol(arg_name));
-    if &*ts.peek()?.string == "," {
+    if ts.peek()?.string.as_str() == "," {
       ts.skip();
     }
     else {
@@ -396,10 +396,10 @@ fn parse_struct_definition(ts : &mut TokenStream) -> Result<Expr, String> {
   let mut field_names = vec!(Expr::Symbol(struct_name));
   'outer: loop {
     'inner: loop {
-      if !ts.has_tokens() || &*ts.peek()?.string == "}" {
+      if !ts.has_tokens() || ts.peek()?.string.as_str() == "}" {
         break 'outer;
       }
-      if &*ts.peek()?.string == "," {
+      if ts.peek()?.string.as_str() == "," {
         ts.skip();
       }
       else {
@@ -419,10 +419,10 @@ fn parse_struct_instantiate(ts : &mut TokenStream) -> Result<Expr, String> {
   let mut args = vec!(Expr::Symbol(struct_name));
   'outer: loop {
     'inner: loop {
-      if !ts.has_tokens() || &*ts.peek()?.string == "}" {
+      if !ts.has_tokens() || ts.peek()?.string.as_str() == "}" {
         break 'outer;
       }
-      if &*ts.peek()?.string == "," {
+      if ts.peek()?.string.as_str() == "," {
         ts.skip();
       }
       else {
@@ -439,7 +439,7 @@ fn parse_struct_instantiate(ts : &mut TokenStream) -> Result<Expr, String> {
 }
 
 fn parse_keyword_term(ts : &mut TokenStream) -> Result<Expr, String> {
-  match &*ts.peek()?.string {
+  match ts.peek()?.string.as_str() {
     "let" => parse_let(ts),
     "fun" => parse_fun(ts),
     "if" => parse_if(ts),
@@ -468,7 +468,7 @@ fn parse_symbol_reference(ts : &mut TokenStream) -> Result<Expr, String> {
 
 fn parse_symbol_term(ts : &mut TokenStream) -> Result<Expr, String> {
   let is_struct =
-    if let Ok(t) = ts.peek_ahead(1) { &*t.string == "{" } else { false };
+    if let Ok(t) = ts.peek_ahead(1) { t.string.as_str() == "{" } else { false };
   if is_struct {
     parse_struct_instantiate(ts)
   }
@@ -491,10 +491,10 @@ fn parse_block(ts : &mut TokenStream) -> Result<Expr, String> {
   'outer: loop {
     exprs.push(parse_expression(ts)?);
     'inner: loop {
-      if !ts.has_tokens() || &*ts.peek()?.string == "}" {
+      if !ts.has_tokens() || ts.peek()?.string.as_str() == "}" {
         break 'outer;
       }
-      if &*ts.peek()?.string == ";" {
+      if ts.peek()?.string.as_str() == ";" {
         ts.skip();
       }
       else {
