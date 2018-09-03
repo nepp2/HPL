@@ -18,6 +18,11 @@ pub type StructVal = Rc<RefCell<Struct>>;
 
 pub type Array = Rc<RefCell<Vec<Value>>>;
 
+/// Represents a value in the interpreted language.
+/// Currently uses 16 bytes. I think this is because there are 8 byte
+/// RC pointers in the union, and the discriminating value is being
+/// padded to word size (also 8 bytes). Could probably be optimised
+/// down to 8 bytes total, with some ugly pointer hacks.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
   Float(f32),
@@ -27,11 +32,14 @@ pub enum Value {
   Unit,
 }
 
+/// Insert the value in the last hashmap in the vector, which represents the local scope.
 fn scoped_insert<T>(stack : &mut Vec<HashMap<RefStr, T>>, s : RefStr, t : T) {
   let i = stack.len()-1;
   stack[i].insert(s, t);
 }
 
+/// Retrieve the value closest to the end of the vector of hashmaps (the most local scope)
+/// in the environment
 fn scoped_get<'l, T>(stack : &'l mut Vec<HashMap<RefStr, T>>, s : &str) -> Option<&'l mut T> {
   for map in stack.iter_mut().rev() {
     if map.contains_key(s) {
@@ -59,10 +67,10 @@ struct Environment<'l> {
   functions : &'l mut Vec<HashMap<RefStr, FunctionDef>>,
   structs : &'l mut HashMap<RefStr, StructDef>,
 
-  // indicates how many nested loops we are inside in the local function scope
+  /// indicates how many nested loops we are inside in the currently-executing function
   loop_depth : i32,
 
-  // indicates whether the program is currently breaking out of a loop
+  /// indicates whether the program is currently breaking out of a loop
   break_state : BreakState,
 }
 
