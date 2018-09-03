@@ -1,6 +1,7 @@
 
 use parser;
 use lexer;
+use lexer::{RefStr, AsStr};
 use parser::Expr;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -9,8 +10,8 @@ use std::cell::RefCell;
 
 #[derive(Debug, PartialEq)]
 pub struct Struct {
-  name : String,
-  fields : HashMap<String, Value>,
+  name : RefStr,
+  fields : HashMap<RefStr, Value>,
 }
 
 pub type StructVal = Rc<RefCell<Struct>>;
@@ -26,12 +27,12 @@ pub enum Value {
   Unit,
 }
 
-fn scoped_insert<T>(stack : &mut Vec<HashMap<String, T>>, s : String, t : T) {
+fn scoped_insert<T>(stack : &mut Vec<HashMap<RefStr, T>>, s : RefStr, t : T) {
   let i = stack.len()-1;
   stack[i].insert(s, t);
 }
 
-fn scoped_get<'l, T>(stack : &'l mut Vec<HashMap<String, T>>, s : &str) -> Option<&'l mut T> {
+fn scoped_get<'l, T>(stack : &'l mut Vec<HashMap<RefStr, T>>, s : &str) -> Option<&'l mut T> {
   for map in stack.iter_mut().rev() {
     if map.contains_key(s) {
       return Some(map.get_mut(s).unwrap());
@@ -47,16 +48,16 @@ enum BreakState {
 }
 
 struct FunctionDef {
-  args : Vec<String>,
+  args : Vec<RefStr>,
   expr : Rc<Expr>,
 }
 
-type StructDef = HashSet<String>;
+type StructDef = HashSet<RefStr>;
 
 struct Environment<'l> {
-  values : &'l mut Vec<HashMap<String, Value>>,
-  functions : &'l mut Vec<HashMap<String, FunctionDef>>,
-  structs : &'l mut HashMap<String, StructDef>,
+  values : &'l mut Vec<HashMap<RefStr, Value>>,
+  functions : &'l mut Vec<HashMap<RefStr, FunctionDef>>,
+  structs : &'l mut HashMap<RefStr, StructDef>,
 
   // indicates how many nested loops we are inside in the local function scope
   loop_depth : i32,
@@ -67,9 +68,9 @@ struct Environment<'l> {
 
 impl <'l> Environment<'l> {
   fn new(
-    values : &'l mut Vec<HashMap<String, Value>>,
-    functions : &'l mut Vec<HashMap<String, FunctionDef>>,
-    structs : &'l mut HashMap<String, StructDef>,
+    values : &'l mut Vec<HashMap<RefStr, Value>>,
+    functions : &'l mut Vec<HashMap<RefStr, FunctionDef>>,
+    structs : &'l mut HashMap<RefStr, StructDef>,
   ) -> Environment<'l> {
     Environment{
       values, functions, structs,
@@ -94,7 +95,7 @@ fn interpret_function_call(function_name: &str, args: &[Expr], env : &mut Enviro
       None => return Err(format!("Found no function called '{}'", function_name)),
     };
     for (v, n) in arg_values.into_iter().zip(&fun.args) {
-      args.insert(n.to_string(), v);
+      args.insert(n.clone(), v);
     }
     fun.expr.clone()
   };
@@ -135,7 +136,7 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
   fn b_to_val(b : bool) -> Result<Value, String> {
     Ok(Value::Bool(b))
   }
-  fn symbol_to_str(e : &Expr) -> Result<&str, String> {
+  fn symbol_unwrap(e : &Expr) -> Result<&RefStr, String> {
     if let Expr::Symbol(s) = e {
       Ok(s)
     }
@@ -143,8 +144,8 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
       Err(format!("expected a symbol, found {:?}", e))
     }
   }
-  fn symbol_to_string(e : &Expr) -> Result<String, String> {
-    symbol_to_str(e).map(|s| s.to_string())
+  fn symbol_to_refstr(e : &Expr) -> Result<RefStr, String> {
+    symbol_unwrap(e).map(|s| s.clone())
   }
 
   fn array_index(array : &Vec<Value>, index : f32) -> Result<usize, String> {
@@ -197,7 +198,7 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
     ("let", exprs) => {
       let name = match &exprs[0] { Expr::Symbol(s) => s, _ => { return Err(format!("expected a symbol")); }};
       let v = interpret_with_env(&exprs[1], env)?;
-      scoped_insert(&mut env.values, name.to_string(), v);
+      scoped_insert(&mut env.values, name.clone(), v);
       //println!("Assign value '{}' to variable '{}'", v, name);
       Ok(Value::Unit)
     }
@@ -225,7 +226,7 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
         (".", [struct_expr, field_expr]) => {
           let v = interpret_with_env(&value_expr, env)?;
           let structure = to_struct(struct_expr, env)?;
-          let field_name = symbol_to_str(field_expr)?;
+          let field_name : &str = symbol_unwrap(field_expr)?;
           structure.borrow().fields.get(field_name)
             .ok_or_else(||format!("field {} does not exist on struct {:?}.", field_name, structure))?;
           *structure.borrow_mut().fields.get_mut(field_name).unwrap() = v;
@@ -254,13 +255,13 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
       if exprs.len() < 1 {
         return Err(format!("malformed struct definition"));
       }
-      let struct_name = symbol_to_string(&exprs[0])?;
+      let struct_name = symbol_to_refstr(&exprs[0])?;
       if env.structs.contains_key(&struct_name) {
         return Err(format!("A struct called {} has already been defined.", struct_name));
       }
       let field_names =
-        exprs[1..].iter().map(symbol_to_string)
-        .collect::<Result<HashSet<String>, String>>()?;
+        exprs[1..].iter().map(symbol_to_refstr)
+        .collect::<Result<HashSet<RefStr>, String>>()?;
       env.structs.insert(struct_name, field_names);
       Ok(Value::Unit)
     }
@@ -268,20 +269,20 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
       if exprs.len() < 1 || exprs.len() % 2 == 0 {
         return Err(format!("malformed struct instantiation {:?}", exprs));
       }
-      let name = symbol_to_string(&exprs[0])?;
+      let name = symbol_to_refstr(&exprs[0])?;
       {
         let struct_def =
           env.structs.get(name.as_str())
           .ok_or_else(|| format!("struct {} does not exist", name))?;
         for i in (1..exprs.len()).step_by(2) {
-          let field_name = symbol_to_str(&exprs[i])?;
+          let field_name = symbol_unwrap(&exprs[i])?;
           struct_def.get(field_name)
             .ok_or_else(|| format!("unexpected field '{}'", field_name))?;
         }
       };
       let mut fields = HashMap::new();
       for i in (1..exprs.len()).step_by(2) {
-        let field_name = symbol_to_string(&exprs[i])?;
+        let field_name = symbol_to_refstr(&exprs[i])?;
         let field_value = interpret_with_env(&exprs[i+1], env)?;
         fields.insert(field_name, field_value);
       }
@@ -290,7 +291,7 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
     }
     (".", [expr, field_name]) => {
       let s = to_struct(expr, env)?;
-      let name = symbol_to_str(field_name)?;
+      let name = symbol_unwrap(field_name)?;
       let v =
         s.borrow().fields.get(name)
         .ok_or_else(||format!("field {} does not exist on struct {:?}.", name, s))?
@@ -316,13 +317,13 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
       let mut args = vec!();
       for e in args_exprs {
         if let Expr::Symbol(s) = e {
-          args.push(s.to_string());
+          args.push(s.clone());
         }
         else {
           return Err(format!("expected a symbol"));
         }
       }
-      scoped_insert(&mut env.functions, name.to_string(), FunctionDef { args, expr: function_body });
+      scoped_insert(&mut env.functions, name.clone(), FunctionDef { args, expr: function_body });
       Ok(Value::Unit)
     }
     ("literal_array", exprs) => {

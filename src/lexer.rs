@@ -23,6 +23,16 @@ pub struct TextLocation {
 /// An immutable, reference counted string
 pub type RefStr = Rc<str>;
 
+pub trait AsStr {
+  fn as_str(&self) -> &str;
+}
+
+impl AsStr for RefStr {
+  fn as_str(&self) -> &str {
+    self
+  }
+}
+
 #[derive(Debug)]
 pub struct Token {
   pub string : RefStr,
