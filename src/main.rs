@@ -15,6 +15,7 @@ extern crate lazy_static;
 mod lexer;
 mod parser;
 mod interpreter;
+mod bytecode_vm;
 mod repl;
 mod watcher;
 

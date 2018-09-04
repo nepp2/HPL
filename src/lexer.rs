@@ -55,12 +55,12 @@ impl SymbolCache {
     SymbolCache{ symbols: HashSet::new() }
   }
 
-  pub fn symbol(&mut self, s : &str) -> RefStr {
-    if self.symbols.contains(s) {
-      self.symbols.get(s).unwrap().clone()
+  pub fn symbol<T : AsRef<str> + Into<RefStr>>(&mut self, s : T) -> RefStr {
+    if self.symbols.contains(s.as_ref()) {
+      self.symbols.get(s.as_ref()).unwrap().clone()
     }
     else {
-      let s : RefStr = Rc::from(s);
+      let s : RefStr = s.into();
       self.symbols.insert(s.clone());
       s
     }

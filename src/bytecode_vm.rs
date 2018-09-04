@@ -1,35 +1,29 @@
 
-use parser;
-use lexer;
-use lexer::{RefStr, AsStr};
 use parser::Expr;
-use std::collections::HashMap;
-use std::collections::HashSet;
+use lexer::{RefStr, AsStr, SymbolCache};
+use interpreter::{Value, Struct, Array, StructVal};
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::cell::RefCell;
 
-#[derive(Debug, PartialEq)]
-pub struct Struct {
-  pub name : RefStr,
-  pub fields : HashMap<RefStr, Value>,
+type FunctionHandle = usize;
+
+enum BytecodeInstruction {
+  Push(Value),
+  PushVar(usize),
+  Add,
+  Call(FunctionHandle),
+  Jump(RefStr),
+  Label(RefStr),
+  Return,
 }
 
-pub type StructVal = Rc<RefCell<Struct>>;
+struct BytecodeFunction {
+  instructions : Vec<BytecodeInstruction>
+}
 
-pub type Array = Rc<RefCell<Vec<Value>>>;
-
-/// Represents a value in the interpreted language.
-/// Currently uses 16 bytes. I think this is because there are 8 byte
-/// RC pointers in the union, and the discriminating value is being
-/// padded to word size (also 8 bytes). Could probably be optimised
-/// down to 8 bytes total, with some ugly pointer hacks.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Value {
-  Float(f32),
-  Array(Array),
-  Bool(bool),
-  Struct(StructVal),
-  Unit,
+struct BytecodeProgram {
+  functions : Vec<BytecodeFunction>,
 }
 
 /// Insert the value in the last hashmap in the vector, which represents the local scope.
@@ -49,12 +43,6 @@ fn scoped_get<'l, T>(stack : &'l mut Vec<HashMap<RefStr, T>>, s : &str) -> Optio
   return None;
 }
 
-#[derive(PartialEq)]
-enum BreakState {
-  Breaking,
-  NotBreaking,
-}
-
 struct FunctionDef {
   args : Vec<RefStr>,
   expr : Rc<Expr>,
@@ -62,38 +50,62 @@ struct FunctionDef {
 
 type StructDef = HashSet<RefStr>;
 
+struct VarScope {
+  base_index : usize,
+  vars : Vec<RefStr>,
+}
+
 struct Environment<'l> {
-  values : &'l mut Vec<HashMap<RefStr, Value>>,
-  functions : &'l mut Vec<HashMap<RefStr, FunctionDef>>,
+  functions : &'l mut HashMap<RefStr, BytecodeFunction>,
   structs : &'l mut HashMap<RefStr, StructDef>,
+  symbol_cache : &'l mut SymbolCache,
+
+  /// stores offset of each local variable in the stack frame
+  locals : Vec<VarScope>,
+
+  /// the maximum number of locals visible in any scope of the function
+  max_locals : i32,
+
+  instructions : Vec<BytecodeInstruction>,
 
   /// indicates how many nested loops we are inside in the currently-executing function
   loop_depth : i32,
-
-  /// indicates whether the program is currently breaking out of a loop
-  break_state : BreakState,
 }
 
 impl <'l> Environment<'l> {
   fn new(
-    values : &'l mut Vec<HashMap<RefStr, Value>>,
-    functions : &'l mut Vec<HashMap<RefStr, FunctionDef>>,
+    functions : &'l mut HashMap<RefStr, BytecodeFunction>,
     structs : &'l mut HashMap<RefStr, StructDef>,
+    symbol_cache : &'l mut SymbolCache,
   ) -> Environment<'l> {
     Environment{
-      values, functions, structs,
+      functions, structs, symbol_cache,
+      locals: vec!(),
+      max_locals: 0,
+      instructions: vec!(),
       loop_depth: 0,
-      break_state: BreakState::NotBreaking
     }
+  }
+
+  fn find_var_offset(&self, v : &str) -> Result<usize, String> {
+    for vs in self.locals.iter().rev() {
+      for i in (0..vs.vars.len()).rev() {
+        if vs.vars[i].as_ref() == v {
+          return Ok(vs.base_index + i);
+        }
+      }
+    }
+    Err(format!("no variable called '{}' found in scope", v))
   }
 }
 
-fn interpret_function_call(function_name: &str, args: &[Expr], env : &mut Environment)
+/*
+fn compile_function_call(function_name: &str, args: &[Expr], env : &mut Environment)
   -> Result<Value, String>
 {
   let mut arg_values = vec!();
   for i in 0..args.len() {
-    let v = interpret_with_env(&args[i], env)?;
+    let v = compile(&args[i], env)?;
     arg_values.push(v);
   }
   let mut args = HashMap::new();
@@ -109,31 +121,31 @@ fn interpret_function_call(function_name: &str, args: &[Expr], env : &mut Enviro
   };
   let mut vs = vec!(args);
   let mut new_env = Environment::new(&mut vs, env.functions, env.structs);
-  interpret_with_env(&expr, &mut new_env)
+  compile(&expr, &mut new_env)
 }
 
-fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> Result<Value, String> {
+fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> Result<Value, String> {
 
   fn to_f(v : &Expr, env : &mut Environment) -> Result<f32, String> {
-    match interpret_with_env(v, env)? {
+    match compile(v, env)? {
       Value::Float(f) => Ok(f),
       x => Err(format!("Expected float, found {:?}.", x))
     }
   }
   fn to_b(v : &Expr, env : &mut Environment) -> Result<bool, String> {
-    match interpret_with_env(v, env)? {
+    match compile(v, env)? {
       Value::Bool(b) => Ok(b),
       x => Err(format!("Expected boolean, found {:?}.", x))
     }
   }
   fn to_array(v : &Expr, env : &mut Environment) -> Result<Array, String> {
-    match interpret_with_env(v, env)? {
+    match compile(v, env)? {
       Value::Array(a) => Ok(a),
       x => Err(format!("Expected array, found {:?}.", x))
     }
   }
   fn to_struct(v : &Expr, env : &mut Environment) -> Result<StructVal, String> {
-    match interpret_with_env(v, env)? {
+    match compile(v, env)? {
       Value::Struct(s) => Ok(s),
       x => Err(format!("Expected struct, found {:?}.", x))
     }
@@ -182,11 +194,11 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
         ("<", [a, b]) => b_to_val(to_f(a, env)? < to_f(b, env)?),
         ("<=", [a, b]) => b_to_val(to_f(a, env)? <= to_f(b, env)?),
         (">=", [a, b]) => b_to_val(to_f(a, env)? >= to_f(b, env)?),
-        ("==", [a, b]) => b_to_val(interpret_with_env(a, env)? == interpret_with_env(b, env)?),
+        ("==", [a, b]) => b_to_val(compile(a, env)? == compile(b, env)?),
         ("&&", [a, b]) => b_to_val(to_b(a, env)? && to_b(b, env)?),
         ("||", [a, b]) => b_to_val(to_b(a, env)? || to_b(b, env)?),
         ("-", [v]) => f_to_val(-to_f(v, env)?),
-        _ => interpret_function_call(symbol, params, env),
+        _ => compile_function_call(symbol, params, env),
       }
     }
     ("block", exprs) => {
@@ -195,23 +207,23 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
         let expr_count = exprs.len();
         if expr_count > 1 {
           for i in 0..expr_count {
-            let _ = interpret_with_env(&exprs[i], env)?;
+            let _ = compile(&exprs[i], env)?;
           }
         }
-        interpret_with_env(&exprs[expr_count-1], env)
+        compile(&exprs[expr_count-1], env)
       };
       env.values.pop();
       last_val
     }
     ("let", exprs) => {
       let name = match &exprs[0] { Expr::Symbol(s) => s, _ => { return Err(format!("expected a symbol")); }};
-      let v = interpret_with_env(&exprs[1], env)?;
+      let v = compile(&exprs[1], env)?;
       scoped_insert(&mut env.values, name.clone(), v);
       //println!("Assign value '{}' to variable '{}'", v, name);
       Ok(Value::Unit)
     }
     ("=", [Expr::Symbol(var_symbol), value_expr]) => {
-      let v = interpret_with_env(&value_expr, env)?;
+      let v = compile(&value_expr, env)?;
       match scoped_get(&mut env.values, var_symbol) {
         Some(variable) => {
           *variable = v;
@@ -223,7 +235,7 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
     ("=", [Expr::Expr { symbol, args }, value_expr]) => {
       match (symbol.as_str(), args.as_slice()) {
         ("index", [array_expr, index_expr]) => {
-          let v = interpret_with_env(&value_expr, env)?;
+          let v = compile(&value_expr, env)?;
           let array_rc = to_array(array_expr, env)?;
           let mut array = array_rc.borrow_mut();
           let f = to_f(index_expr, env)?;
@@ -232,7 +244,7 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
           Ok(Value::Unit)
         }
         (".", [struct_expr, field_expr]) => {
-          let v = interpret_with_env(&value_expr, env)?;
+          let v = compile(&value_expr, env)?;
           let structure = to_struct(struct_expr, env)?;
           let field_name : &str = symbol_unwrap(field_expr)?;
           structure.borrow().fields.get(field_name)
@@ -250,10 +262,10 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
       }
       let condition = to_b(&exprs[0], env)?;
       if condition {
-        interpret_with_env(&exprs[1], env)
+        compile(&exprs[1], env)
       }
       else if arg_count == 3 {
-        interpret_with_env(&exprs[2], env)
+        compile(&exprs[2], env)
       }
       else {
         Ok(Value::Unit)
@@ -291,7 +303,7 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
       let mut fields = HashMap::new();
       for i in (1..exprs.len()).step_by(2) {
         let field_name = symbol_to_refstr(&exprs[i])?;
-        let field_value = interpret_with_env(&exprs[i+1], env)?;
+        let field_value = compile(&exprs[i+1], env)?;
         fields.insert(field_name, field_value);
       }
       let s = Rc::new(RefCell::new(Struct { name, fields }));
@@ -312,7 +324,7 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
       }
       env.loop_depth += 1;
       while env.break_state != BreakState::Breaking && to_b(&exprs[0], env)? {
-        interpret_with_env(&exprs[1], env)?;
+        compile(&exprs[1], env)?;
       }
       env.loop_depth -= 1;
       env.break_state = BreakState::NotBreaking;
@@ -337,7 +349,7 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
     ("literal_array", exprs) => {
       let mut array_contents = Rc::new(RefCell::new(vec!()));
       for e in exprs {
-        let v = interpret_with_env(e, env)?;
+        let v = compile(e, env)?;
         array_contents.borrow_mut().push(v);
       }
       Ok(Value::Array(array_contents))
@@ -358,52 +370,68 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
   }
 }
 
-fn interpret_with_env(ast : &Expr, env : &mut Environment) -> Result<Value, String> {
-  if env.break_state == BreakState::Breaking {
-    // this basically skips all evaluations until we backtrack to the loop,
-    // which will spot the break state and stop iterating.
-    return Ok(Value::Unit);
-  }
+*/
+
+fn compile(ast : &Expr, env : &mut Environment) -> Result<(), String> {
   match ast {
     Expr::Expr{ symbol, args } => {
-      interpret_instr(symbol, args, env)
+      //compile_instr(symbol, args, env)
+      return Err(format!("exprs are not implemented"));
     }
     Expr::Symbol(s) => {
       if s.as_str() == "break" {
         if env.loop_depth > 0 {
-          env.break_state = BreakState::Breaking;
-          Ok(Value::Unit)
+          let l = env.symbol_cache.symbol(format!("loop_end_{}", env.loop_depth));
+          env.instructions.push(BytecodeInstruction::Jump(l));
         }
         else {
-          Err(format!("can't break outside a loop"))
+          return Err(format!("can't break outside a loop"));
         }
       }
       else {
-        match scoped_get(&mut env.values, s) {
-          Some(v) => Ok(v.clone()),
-          None => Err(format!("symbol '{}' was not defined", s)),
-        }
+        let offset = env.find_var_offset(s)?;
+        env.instructions.push(BytecodeInstruction::PushVar(offset));
       }
     }
-    Expr::LiteralFloat(f) => Ok(Value::Float(*f)),
-    Expr::LiteralBool(b) => Ok(Value::Bool(*b)),
+    Expr::LiteralFloat(f) => {
+      let v = Value::Float(*f);
+      env.instructions.push(BytecodeInstruction::Push(v));
+    }
+    Expr::LiteralBool(b) => {
+      let v = Value::Bool(*b);
+      env.instructions.push(BytecodeInstruction::Push(v));
+    }
   }
+  Ok(())
+}
+
+fn compile_bytecode(ast : &Expr) -> Result<BytecodeProgram, String> {
+  let mut fs = HashMap::new();
+  let mut structs = HashMap::new();
+  let mut symbol_cache = SymbolCache::new();
+  let mut env = Environment::new(&mut fs, &mut structs, &mut symbol_cache);
+  compile(ast, &mut env)?;
+  Err(format!("compiler does not exist"))
+}
+
+fn interpret_bytecode(program : &BytecodeProgram, entry_point : FunctionHandle) -> Result<Value, String> {
+  let mut stack : Vec<Value> = vec!();
+  let mut function =
+    program.functions.get(entry_point).ok_or_else(|| format!("No function found"))?;
+  let mut program_counter = 0;
+  loop {
+    if program_counter >= function.instructions.len() {
+      return Err(format!("program counter out of bounds"));
+    }
+    match function.instructions[program_counter] {
+      _ => (),
+    }
+    program_counter += 1;
+  }
+  return Ok(Value::Unit);
 }
 
 pub fn interpret(ast : &Expr) -> Result<Value, String> {
-  let mut vs = vec!(HashMap::new());
-  let mut fs = vec!(HashMap::new());
-  let mut structs = HashMap::new();
-  let mut env = Environment::new(&mut vs, &mut fs, &mut structs);
-  interpret_with_env(ast, &mut env)
+  let program = compile_bytecode(ast)?;
+  interpret_bytecode(&program, 0)
 }
-
-#[test]
-fn test_interpret() {
-  let code = "(3 + 4) * 10";
-  let tokens = lexer::lex(code).unwrap();
-  let ast = parser::parse(tokens).unwrap();
-  let result = interpret(&ast);
-  println!("{:?}", result);
-}
-

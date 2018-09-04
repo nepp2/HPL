@@ -9,6 +9,7 @@ use parser;
 use lexer;
 use interpreter;
 use interpreter::Value;
+use bytecode_vm;
 
 fn stringify_error<A, B>(r : Result<A, B>, s : &str) -> Result<A, String> {
   match r {
@@ -20,7 +21,7 @@ fn stringify_error<A, B>(r : Result<A, B>, s : &str) -> Result<A, String> {
 fn interpret(code: &str) -> Result<Value, String> {
   let tokens = stringify_error(lexer::lex(&code), "Lexer Error")?;
   let ast = parser::parse(tokens)?;
-  interpreter::interpret(&ast)
+  bytecode_vm::interpret(&ast)
 }
 
 fn load_and_run(path : &PathBuf){
