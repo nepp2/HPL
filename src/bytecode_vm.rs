@@ -131,7 +131,13 @@ impl <'l> Environment<'l> {
     self.functions.insert(self.function_name, function);
   }
 
-  fn emit(&mut self, instruction : BytecodeInstruction) {
+  fn emit(&mut self, instruction : BytecodeInstruction, do_emit : bool) {
+    if do_emit {
+      self.instructions.push(instruction);
+    }
+  }
+
+  fn emit_always(&mut self, instruction : BytecodeInstruction) {
     self.instructions.push(instruction);
   }
 
@@ -147,13 +153,13 @@ impl <'l> Environment<'l> {
   fn emit_jump(&mut self, label : &str) {
     let location = self.instructions.len();
     self.labels.get_mut(label).unwrap().references.push(location);
-    self.emit(BC::Jump(usize::MAX))
+    self.emit_always(BC::Jump(usize::MAX))
   }
 
   fn emit_jump_if_false(&mut self, label : &str) {
     let location = self.instructions.len();
     self.labels.get_mut(label).unwrap().references.push(location);
-    self.emit(BC::JumpIfFalse(usize::MAX))
+    self.emit_always(BC::JumpIfFalse(usize::MAX))
   }
 
   fn label(&mut self, s : String) -> RefStr {
@@ -214,7 +220,7 @@ fn compile_function_call(function_name: &str, args: &[Expr], env : &mut Environm
 
 */
 
-fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> Result<(), String> {
+fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_answer : bool) -> Result<(), String> {
 
   // fn symbol_unwrap(e : &Expr) -> Result<&RefStr, String> {
   //   if let Expr::Symbol(s) = e {
@@ -248,13 +254,13 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> Res
       if BYTECODE_OPERATORS.contains(symbol.as_ref()) {
         match params {
           [a, b] => {
-            compile(a, env)?;
-            compile(b, env)?;
-            env.emit(BC::BinaryOperator(symbol.clone()));
+            compile(a, env, push_answer)?;
+            compile(b, env, push_answer)?;
+            env.emit(BC::BinaryOperator(symbol.clone()), push_answer);
           }
           [v] => {
-            compile(v, env)?;
-            env.emit(BC::UnaryOperator(symbol.clone()));
+            compile(v, env, push_answer)?;
+            env.emit(BC::UnaryOperator(symbol.clone()), push_answer);
           }
           _ => {
             return Err(format!("wrong number of arguments for operator"));
@@ -269,9 +275,13 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> Res
     ("block", exprs) => {
       let v = VarScope { base_index: env.count_locals(), vars: vec!() };
       env.locals.push(v);
-      for e in exprs {
-        compile(e, env)?;
+      let num_exprs = exprs.len();
+      if num_exprs > 1 {
+        for i in 0..(num_exprs-1) {
+          compile(&exprs[i], env, false)?;
+        }
       }
+      compile(&exprs[num_exprs-1], env, push_answer);
       let new_local_count = env.count_locals();
       if new_local_count > env.max_locals {
         env.max_locals = new_local_count;
@@ -280,15 +290,15 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> Res
     }
     ("let", exprs) => {
       let name = match &exprs[0] { Expr::Symbol(s) => s, _ => { return Err(format!("expected a symbol")); }};
-      compile(&exprs[1], env)?;
+      compile(&exprs[1], env, true)?;
       let offset = env.count_locals();
       env.locals.last_mut().unwrap().vars.push(name.clone());
-      env.emit(BC::SetVar(offset));
+      env.emit_always(BC::SetVar(offset));
     }
     ("=", [Expr::Symbol(var_symbol), value_expr]) => {
-      compile(&value_expr, env)?; // emit value
+      compile(&value_expr, env, true)?; // emit value
       let offset = env.find_var_offset(var_symbol)?;
-      env.emit(BC::SetVar(offset));
+      env.emit_always(BC::SetVar(offset));
     }
     // ("=", [Expr::Expr { symbol, args }, value_expr]) => {
     //   match (symbol.as_str(), args.as_slice()) {
@@ -385,9 +395,9 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> Res
       let condition_label = env.label(format!("loop_condition_{}", id));
       let end_label = env.label(format!("loop_end_{}", id));
       env.emit_label(condition_label.clone());
-      compile(&exprs[0], env)?; // emit condition
+      compile(&exprs[0], env, true)?; // emit condition
       env.emit_jump_if_false(&end_label); // exit loop if condition fails
-      compile(&exprs[1], env)?; // emit loop body
+      compile(&exprs[1], env, false)?; // emit loop body
       env.emit_jump(&condition_label); // jump back to the condition
       env.emit_label(end_label);
       env.loop_depth -= 1;
@@ -436,10 +446,10 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> Res
 }
 
 
-fn compile(ast : &Expr, env : &mut Environment) -> Result<(), String> {
+fn compile(ast : &Expr, env : &mut Environment, push_answer : bool) -> Result<(), String> {
   match ast {
     Expr::Expr{ symbol, args } => {
-      compile_instr(symbol, args, env)?;
+      compile_instr(symbol, args, env, push_answer)?;
       //return Err(format!("exprs are not implemented"));
     }
     Expr::Symbol(s) => {
@@ -454,16 +464,16 @@ fn compile(ast : &Expr, env : &mut Environment) -> Result<(), String> {
       }
       else {
         let offset = env.find_var_offset(s)?;
-        env.emit(BC::PushVar(offset));
+        env.emit(BC::PushVar(offset), push_answer);
       }
     }
     Expr::LiteralFloat(f) => {
       let v = Value::Float(*f);
-      env.emit(BC::Push(v));
+      env.emit(BC::Push(v), push_answer);
     }
     Expr::LiteralBool(b) => {
       let v = Value::Bool(*b);
-      env.emit(BC::Push(v));
+      env.emit(BC::Push(v), push_answer);
     }
   }
   Ok(())
@@ -474,7 +484,7 @@ fn compile_bytecode(ast : &Expr, entry_function_name : RefStr, symbol_cache : &m
   let mut structs = HashMap::new();
   {
     let mut env = Environment::new(entry_function_name, &mut functions, &mut structs, symbol_cache);
-    compile(ast, &mut env)?;
+    compile(ast, &mut env, true)?;
     env.complete();
   }
   Ok(BytecodeProgram { functions })
