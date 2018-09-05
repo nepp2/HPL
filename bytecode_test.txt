@@ -1,8 +1,11 @@
 
 
+/* this is broken because 10 will be pushed
+onto the stack 30 times and never popped. */
+
 let a = 0;
 while a < 30 {
+  10;
   a = a + 1;
 }
 a;
-
