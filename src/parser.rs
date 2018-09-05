@@ -502,12 +502,7 @@ fn parse_block(ts : &mut TokenStream) -> Result<Expr, String> {
       }
     }
   }
-  if exprs.len() == 1 {
-    Ok(exprs.pop().unwrap())
-  }
-  else {
-    Ok(Expr::Expr { symbol: ts.symbol(BLOCK), args: exprs })
-  }
+  Ok(Expr::Expr { symbol: ts.symbol(BLOCK), args: exprs })
 }
 
 pub fn parse(tokens : Vec<Token>) -> Result<Expr, String> {

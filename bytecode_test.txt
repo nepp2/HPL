@@ -1,6 +1,8 @@
 
 
-let a = true;
-3;
-true;
+let a = 0;
+while a < 30 {
+  a = a + 1;
+}
 a;
+
