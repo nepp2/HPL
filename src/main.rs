@@ -20,6 +20,6 @@ mod repl;
 mod watcher;
 
 fn main(){
-  watcher::watch("code.txt");
+  watcher::watch("bytecode_test.txt");
   //repl::repl();
 }
