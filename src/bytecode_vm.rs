@@ -245,6 +245,15 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_a
   //   }
   // }
 
+  fn does_not_push(instr : &str, push_answer : bool) -> Result<(), String> {
+    if push_answer {
+      Err(format!("instruction '{}' is void, where a result is expected", instr))
+    }
+    else {
+      Ok(())
+    }
+  }
+
   match (instr, args.as_slice()) {
     ("call", exprs) => {
       let symbol = match &exprs[0] {
@@ -282,7 +291,7 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_a
           compile(&exprs[i], env, false)?;
         }
       }
-      compile(&exprs[num_exprs-1], env, push_answer);
+      compile(&exprs[num_exprs-1], env, push_answer)?;
       let new_local_count = env.count_locals();
       if new_local_count > env.max_locals {
         env.max_locals = new_local_count;
@@ -290,6 +299,7 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_a
       env.locals.pop();
     }
     ("let", exprs) => {
+      does_not_push(instr, push_answer)?;
       let name = match &exprs[0] { Expr::Symbol(s) => s, _ => { return Err(format!("expected a symbol")); }};
       compile(&exprs[1], env, true)?;
       let offset = env.count_locals();
@@ -297,6 +307,7 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_a
       env.emit_always(BC::SetVar(offset));
     }
     ("=", [Expr::Symbol(var_symbol), value_expr]) => {
+      does_not_push(instr, push_answer)?;
       compile(&value_expr, env, true)?; // emit value
       let offset = env.find_var_offset(var_symbol)?;
       env.emit_always(BC::SetVar(offset));
@@ -388,6 +399,7 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_a
     //   Ok(v)
     // }
     ("while", exprs) => {
+      does_not_push(instr, push_answer)?;
       if exprs.len() != 2 {
         return Err(format!("malformed while block"));
       }
@@ -451,7 +463,6 @@ fn compile(ast : &Expr, env : &mut Environment, push_answer : bool) -> Result<()
   match ast {
     Expr::Expr{ symbol, args } => {
       compile_instr(symbol, args, env, push_answer)?;
-      //return Err(format!("exprs are not implemented"));
     }
     Expr::Symbol(s) => {
       if s.as_str() == "break" {
@@ -527,7 +538,6 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : RefStr) -> Re
     let function =
       program.functions.get(&entry_function).ok_or_else(|| format!("No function found"))?;
     let mut vars = vec!(Value::Unit; function.locals);
-    //stack.extend(iter::repeat(Value::Unit).take(function.locals));
     let mut program_counter = 0;
     loop {
       if program_counter >= function.instructions.len() {
