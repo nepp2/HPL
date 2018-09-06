@@ -1,6 +1,6 @@
 
 let a = 0;
-while a < 30 {
+while let a = 5 {
   10;
   a = a + 1;
 }

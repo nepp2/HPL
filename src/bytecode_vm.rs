@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::usize;
+use std::iter;
 
 type FunctionHandle = usize;
 
@@ -522,75 +523,86 @@ fn b_to_val(b : bool) -> Value {
 }
 
 fn interpret_bytecode(program : &BytecodeProgram, entry_function : RefStr) -> Result<Value, String> {
-  let function =
-    program.functions.get(&entry_function).ok_or_else(|| format!("No function found"))?;
-
-  let mut stack : Vec<Value> = vec![Value::Unit; function.locals];
-  let mut program_counter = 0;
-  loop {
-    if program_counter >= function.instructions.len() {
+  fn interpret_inner(program : &BytecodeProgram, entry_function : RefStr, stack : &mut Vec<Value>) -> Result<Value, String> {
+    let function =
+      program.functions.get(&entry_function).ok_or_else(|| format!("No function found"))?;
+    let mut vars = vec!(Value::Unit; function.locals);
+    //stack.extend(iter::repeat(Value::Unit).take(function.locals));
+    let mut program_counter = 0;
+    loop {
+      if program_counter >= function.instructions.len() {
+        return Err(format!("program counter out of bounds"));
+      }
+      println!("vars: {:?}, stack: {:?}", vars, stack);
+      println!("PC: {}, instruction: {:?}", program_counter, &function.instructions[program_counter]);
+      match &function.instructions[program_counter] {
+        BC::Push(value) => {
+          stack.push(value.clone());
+        }
+        BC::PushVar(var_slot) => {
+          let v = vars[*var_slot].clone();
+          stack.push(v);
+        }
+        BC::SetVar(var_slot) => {
+          let v = stack.pop().unwrap();
+          vars[*var_slot] = v;
+        }
+        BC::JumpIfFalse(location) => {
+          if !to_b(stack.pop().unwrap())? {
+            program_counter = *location;
+            continue;
+          }
+        }
+        BC::Jump(location) => {
+          program_counter = *location;
+          continue;
+        }
+        BC::BinaryOperator(operator) => {
+          let b = stack.pop().unwrap();
+          let a = stack.pop().unwrap();
+          let v = match operator.as_ref() {
+            "+" => Value::Float(to_f(a)? + to_f(b)?),
+            "-" => Value::Float(to_f(a)? - to_f(b)?),
+            "*" => Value::Float(to_f(a)? * to_f(b)?),
+            "/" => Value::Float(to_f(a)? / to_f(b)?),
+            ">" => Value::Bool(to_f(a)? > to_f(b)?),
+            "<" => Value::Bool(to_f(a)? < to_f(b)?),
+            "<=" => Value::Bool(to_f(a)? <= to_f(b)?),
+            ">=" => Value::Bool(to_f(a)? >= to_f(b)?),
+            "==" => Value::Bool(a == b),
+            "&&" => Value::Bool(to_b(a)? && to_b(b)?),
+            "||" => Value::Bool(to_b(a)? || to_b(b)?),
+            op => return Err(format!("unsupported binary operator {}", op)),
+          };
+          stack.push(v);
+        }
+        BC::UnaryOperator(operator) => {
+          let a = stack.pop().unwrap();
+          let v = match operator.as_ref() {
+            "-" => Value::Float(-to_f(a)?),
+            op => return Err(format!("unsupported unary operator {}", op)),
+          };
+          stack.push(v);
+        }
+        i => return Err(format!("instruction '{:?}' not yet implemented.", i)),
+      }
+      program_counter += 1;
+    }
+    return Ok(Value::Unit);
+  }
+  let mut stack : Vec<Value> = vec![];
+  match interpret_inner(program, entry_function, &mut stack) {
+    Ok(v) => Ok(v),
+    Err(s) => {
       println!("--------------------------------");
       println!("Stack contents:");
       for (i, v) in stack.iter().enumerate() {
         println!("s{}:   {:?}", i, v);
       }
       println!();
-      return Err(format!("program counter out of bounds"));
+      Err(s)
     }
-    match &function.instructions[program_counter] {
-      BC::Push(value) => {
-        stack.push(value.clone());
-      }
-      BC::PushVar(var_slot) => {
-        let v = stack[*var_slot].clone();
-        stack.push(v);
-      }
-      BC::SetVar(var_slot) => {
-        let v = stack.pop().unwrap();
-        stack[*var_slot] = v;
-      }
-      BC::JumpIfFalse(location) => {
-        if !to_b(stack.pop().unwrap())? {
-          program_counter = *location;
-          continue;
-        }
-      }
-      BC::Jump(location) => {
-        program_counter = *location;
-        continue;
-      }
-      BC::BinaryOperator(operator) => {
-        let b = stack.pop().unwrap();
-        let a = stack.pop().unwrap();
-        let v = match operator.as_ref() {
-          "+" => Value::Float(to_f(a)? + to_f(b)?),
-          "-" => Value::Float(to_f(a)? - to_f(b)?),
-          "*" => Value::Float(to_f(a)? * to_f(b)?),
-          "/" => Value::Float(to_f(a)? / to_f(b)?),
-          ">" => Value::Bool(to_f(a)? > to_f(b)?),
-          "<" => Value::Bool(to_f(a)? < to_f(b)?),
-          "<=" => Value::Bool(to_f(a)? <= to_f(b)?),
-          ">=" => Value::Bool(to_f(a)? >= to_f(b)?),
-          "==" => Value::Bool(a == b),
-          "&&" => Value::Bool(to_b(a)? && to_b(b)?),
-          "||" => Value::Bool(to_b(a)? || to_b(b)?),
-          op => return Err(format!("unsupported binary operator {}", op)),
-        };
-        stack.push(v);
-      }
-      BC::UnaryOperator(operator) => {
-        let a = stack.pop().unwrap();
-        let v = match operator.as_ref() {
-          "-" => Value::Float(-to_f(a)?),
-          op => return Err(format!("unsupported unary operator {}", op)),
-        };
-        stack.push(v);
-      }
-      i => return Err(format!("instruction '{:?}' not yet implemented.", i)),
-    }
-    program_counter += 1;
   }
-  return Ok(Value::Unit);
 }
 
 pub fn interpret(ast : &Expr) -> Result<Value, String> {
