@@ -20,7 +20,9 @@ enum BytecodeInstruction {
   NewStruct(Rc<StructDef>),
   StructFieldInit(usize),
   PushStructField(RefStr),
+  SetStructField(RefStr),
   ArrayIndex,
+  SetArrayIndex,
   SetVar(usize),
   Call(FunctionHandle),
   JumpIfFalse(usize),
@@ -314,29 +316,24 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_a
       let offset = env.find_var_offset(var_symbol)?;
       env.emit_always(BC::SetVar(offset));
     }
-    // ("=", [Expr::Expr { symbol, args }, value_expr]) => {
-    //   match (symbol.as_str(), args.as_slice()) {
-    //     ("index", [array_expr, index_expr]) => {
-    //       let v = compile(&value_expr, env)?;
-    //       let array_rc = to_array(array_expr, env)?;
-    //       let mut array = array_rc.borrow_mut();
-    //       let f = to_f(index_expr, env)?;
-    //       let i = array_index(&array, f)?;
-    //       array[i] = v;
-    //       Ok(Value::Unit)
-    //     }
-    //     (".", [struct_expr, field_expr]) => {
-    //       let v = compile(&value_expr, env)?;
-    //       let structure = to_struct(struct_expr, env)?;
-    //       let field_name : &str = symbol_unwrap(field_expr)?;
-    //       structure.borrow().fields.get(field_name)
-    //         .ok_or_else(||format!("field {} does not exist on struct {:?}.", field_name, structure))?;
-    //       *structure.borrow_mut().fields.get_mut(field_name).unwrap() = v;
-    //       Ok(Value::Unit)
-    //     }
-    //     _ => Err(format!("can't assign to {:?}", (symbol, args))),
-    //   }
-    // }
+    ("=", [Expr::Expr { symbol, args }, value_expr]) => {
+      does_not_push(instr, push_answer)?;
+      match (symbol.as_str(), args.as_slice()) {
+        ("index", [array_expr, index_expr]) => {
+          compile(array_expr, env, true)?;
+          compile(index_expr, env, true)?;
+          compile(&value_expr, env, true)?;
+          env.emit_always(BC::SetArrayIndex);
+        }
+        (".", [struct_expr, field_expr]) => {
+          compile(struct_expr, env, true)?;
+          compile(&value_expr, env, true)?;
+          let field_name = symbol_unwrap(field_expr)?;
+          env.emit_always(BC::SetStructField(field_name.clone()));
+        }
+        _ => return Err(format!("can't assign to {:?}", (symbol, args))),
+      }
+    }
     ("if", exprs) => {
       let arg_count = exprs.len();
       if arg_count < 2 || arg_count > 3 {
@@ -588,6 +585,14 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : RefStr) -> Re
         let i = array_index(&a, float_index)?;
         stack.push(a[i].clone());
       }
+      BC::SetArrayIndex => {
+        let v = stack.pop().unwrap();
+        let f_index = to_f(stack.pop().unwrap())?;
+        let a = to_array(stack.pop().unwrap())?;
+        let mut array = a.borrow_mut();
+        let i = array_index(&array, f_index)?;
+        array[i] = v;
+      }
       BC::NewStruct(def) => {
         let fields = vec![Value::Unit ; def.fields.len()];
         let s = Rc::new(RefCell::new(Struct { def: def.clone(), fields }));
@@ -604,6 +609,13 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : RefStr) -> Re
         let index = struct_field_index(&s.borrow().def, name)?;
         let v = s.borrow().fields[index].clone();
         stack.push(v);
+      }
+      BC::SetStructField(name) => {
+        let v = stack.pop().unwrap();
+        let s = stack.pop().unwrap();
+        let s = to_struct(&s)?;
+        let index = struct_field_index(&s.borrow().def, name)?;
+        s.borrow_mut().fields[index] = v;
       }
       BC::SetVar(var_slot) => {
         let v = stack.pop().unwrap();

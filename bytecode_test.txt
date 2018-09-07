@@ -6,7 +6,7 @@ struct test {
   a, b
 }
 
-let t = test { a: 4, b: 6 };
+let t = test { a: 4, b: b };
 
 while a < 30 {
   let b = 40;
@@ -21,4 +21,6 @@ else {
   b[1]
 }
 
-t.a
+t.b[0] = 100;
+
+t
