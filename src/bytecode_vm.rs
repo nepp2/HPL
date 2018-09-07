@@ -24,7 +24,8 @@ enum BytecodeInstruction {
   ArrayIndex,
   SetArrayIndex,
   SetVar(usize),
-  Call(FunctionHandle),
+  CallVoid(RefStr),
+  CallReturn(RefStr),
   JumpIfFalse(usize),
   Jump(usize),
   BinaryOperator(RefStr),
@@ -208,32 +209,22 @@ impl <'l> Environment<'l> {
   }
 }
 
-/*
-fn compile_function_call(function_name: &str, args: &[Expr], env : &mut Environment)
-  -> Result<Value, String>
+fn compile_function_call(function_name: RefStr, args: &[Expr], env : &mut Environment, push_answer : bool)
+  -> Result<(), String>
 {
-  let mut arg_values = vec!();
   for i in 0..args.len() {
-    let v = compile(&args[i], env)?;
-    arg_values.push(v);
+    compile(&args[i], env, true)?;
   }
-  let mut args = HashMap::new();
-  let expr = {
-    let fun = match scoped_get(&mut env.functions, function_name) {
-      Some(fd) => fd,
-      None => return Err(format!("Found no function called '{}'", function_name)),
-    };
-    for (v, n) in arg_values.into_iter().zip(&fun.args) {
-      args.insert(n.clone(), v);
-    }
-    fun.expr.clone()
-  };
-  let mut vs = vec!(args);
-  let mut new_env = Environment::new(&mut vs, env.functions, env.structs);
-  compile(&expr, &mut new_env)
+  env.functions.get(&function_name)
+    .ok_or_else(||format!("Found no function called '{}'", function_name))?;
+  if push_answer {
+    env.emit_always(BC::CallReturn(function_name));
+  }
+  else {
+    env.emit_always(BC::CallVoid(function_name));
+  }
+  Ok(())
 }
-
-*/
 
 fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_answer : bool) -> Result<(), String> {
 
@@ -282,8 +273,7 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_a
         }
       }
       else {
-        // TODO: compile_function_call(symbol, params, env);
-        return Err(format!("user-defined functions not yet implemented"));
+        compile_function_call(symbol.clone(), params, env, push_answer)?;
       }
     }
     ("block", exprs) => {
@@ -421,22 +411,24 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_a
       env.emit_label(end_label);
       env.loop_break_labels.pop();
     }
-    // ("fun", exprs) => {
-    //   let name = match &exprs[0] { Expr::Symbol(s) => s, _ => { return Err(format!("expected a symbol")); }};
-    //   let args_exprs = match &exprs[1] { Expr::Expr{ args, .. } => args, _ => { return Err(format!("expected an expression")); }};
-    //   let function_body = Rc::new(exprs[2].clone());
-    //   let mut args = vec!();
-    //   for e in args_exprs {
-    //     if let Expr::Symbol(s) = e {
-    //       args.push(s.clone());
-    //     }
-    //     else {
-    //       return Err(format!("expected a symbol"));
-    //     }
-    //   }
-    //   scoped_insert(&mut env.functions, name.clone(), FunctionDef { args, expr: function_body });
-    //   Ok(Value::Unit)
-    // }
+    ("fun", exprs) => {
+      let name = match &exprs[0] { Expr::Symbol(s) => s, _ => { return Err(format!("expected a symbol")); }};
+      let args_exprs = match &exprs[1] { Expr::Expr{ args, .. } => args, _ => { return Err(format!("expected an expression")); }};
+      let function_body = &exprs[2];
+      let mut new_env = Environment::new(name.clone(), &mut env.functions, &mut env.structs, &mut env.symbol_cache);
+      let mut vs = VarScope { base_index: 0, vars: vec!() };
+      for e in args_exprs {
+        if let Expr::Symbol(s) = e {
+          vs.vars.push(s.clone());
+        }
+        else {
+          return Err(format!("expected a symbol"));
+        }
+      }
+      new_env.locals.push(vs);
+      compile(function_body, &mut new_env, true)?;
+      new_env.complete();
+    }
     ("literal_array", exprs) => {
       for e in exprs {
         compile(e, env, push_answer)?;
@@ -620,6 +612,12 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : RefStr) -> Re
       BC::SetVar(var_slot) => {
         let v = stack.pop().unwrap();
         vars[*var_slot] = v;
+      }
+      BC::CallReturn(name) => {
+        return Err(format!("CallReturn not yet implemented."));
+      }
+      BC::CallVoid(name) => {
+        return Err(format!("CallVoid not yet implemented."));
       }
       BC::JumpIfFalse(location) => {
         if !to_b(stack.pop().unwrap())? {

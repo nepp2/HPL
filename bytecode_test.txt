@@ -2,6 +2,10 @@
 let a = 0;
 let b = [0, 6];
 
+fun mult(a, b) {
+  a * b
+}
+
 struct test {
   a, b
 }
@@ -21,6 +25,8 @@ else {
   b[1]
 }
 
-t.b[0] = 100;
+mult(100, 5);
+
+t.b[0] = mult(100, 5);
 
 t
