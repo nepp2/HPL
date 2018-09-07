@@ -17,7 +17,7 @@ enum BytecodeInstruction {
   Pop,
   Dup,
   NewArray(usize),
-  ArrayPush,
+  ArrayIndex,
   SetVar(usize),
   Call(FunctionHandle),
   JumpIfFalse(usize),
@@ -246,16 +246,6 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_a
   //   symbol_unwrap(e).map(|s| s.clone())
   // }
 
-  // fn array_index(array : &Vec<Value>, index : f32) -> Result<usize, String> {
-  //   let i = index as usize;
-  //   if index >= 0.0 && i < array.len() {
-  //     Ok(i)
-  //   }
-  //   else {
-  //     Err(format!("Index out of bounds error. Array of {} elements given index {}.", array.len(), index))
-  //   }
-  // }
-
   fn does_not_push(instr : &str, push_answer : bool) -> Result<(), String> {
     if push_answer {
       Err(format!("instruction '{}' is void, where a result is expected", instr))
@@ -447,18 +437,16 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_a
       }
       env.emit(BC::NewArray(exprs.len()), push_answer);
     }
-    // ("index", exprs) => {
-    //   if let [array_expr, index_expr] = exprs {
-    //     let array_rc = to_array(array_expr, env)?;
-    //     let array = array_rc.borrow();
-    //     let f = to_f(index_expr, env)?;
-    //     let i = array_index(&array, f)?;
-    //     Ok(array[i].clone())
-    //   }
-    //   else {
-    //     Err(format!("index instruction expected 2 arguments. Found {}.", exprs.len()))
-    //   }
-    // }
+    ("index", exprs) => {
+      if let [array_expr, index_expr] = exprs {
+        compile(array_expr, env, push_answer)?;
+        compile(index_expr, env, push_answer)?;
+        env.emit(BC::ArrayIndex, push_answer);
+      }
+      else {
+        return Err(format!("index instruction expected 2 arguments. Found {}.", exprs.len()));
+      }
+    }
     _ => {
       return Err(format!("instruction '{}' with args {:?} is not supported by the interpreter.", instr, args));
     }
@@ -540,11 +528,17 @@ fn b_to_val(b : bool) -> Value {
   Value::Bool(b)
 }
 
-fn interpret_bytecode(program : &BytecodeProgram, entry_function : RefStr) -> Result<Value, String> {
-  fn print(vars : &Vec<Value>, stack : &Vec<Value>, program_counter : usize, function : &BytecodeFunction) {
-    println!("vars: {:?}, stack: {:?}", vars, stack);
-    println!("PC: {}, instruction: {:?}", program_counter, &function.instructions[program_counter]);    
+fn array_index(array : &Vec<Value>, index : f32) -> Result<usize, String> {
+  let i = index as usize;
+  if index >= 0.0 && i < array.len() {
+    Ok(i)
   }
+  else {
+    Err(format!("Index out of bounds error. Array of {} elements given index {}.", array.len(), index))
+  }
+}
+
+fn interpret_bytecode(program : &BytecodeProgram, entry_function : RefStr) -> Result<Value, String> {
   let mut stack : Vec<Value> = vec![];
   let function =
     program.functions.get(&entry_function).ok_or_else(|| format!("No function found"))?;
@@ -552,9 +546,11 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : RefStr) -> Re
   let mut program_counter = 0;
   loop {
     if program_counter >= function.instructions.len() {
+      println!("vars: {:?}, stack: {:?}", vars, stack);
       return Err(format!("program counter out of bounds"));
     }
-    print(&vars, &stack, program_counter, function);
+    println!("vars: {:?}, stack: {:?}", vars, stack);
+    println!("PC: {}, instruction: {:?}", program_counter, &function.instructions[program_counter]);    
     match &function.instructions[program_counter] {
       BC::Push(value) => {
         stack.push(value.clone());
@@ -578,10 +574,12 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : RefStr) -> Re
         let array = Rc::new(RefCell::new(a));
         stack.push(Value::Array(array));
       }
-      BC::ArrayPush => {
-        let v = stack.pop().unwrap();
+      BC::ArrayIndex => {
+        let float_index = to_f(stack.pop().unwrap())?;
         let a = to_array(stack.pop().unwrap())?;
-        a.borrow_mut().push(v);
+        let a = a.borrow();
+        let i = array_index(&a, float_index)?;
+        stack.push(a[i].clone());
       }
       BC::SetVar(var_slot) => {
         let v = stack.pop().unwrap();
