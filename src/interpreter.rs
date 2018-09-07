@@ -9,9 +9,15 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 #[derive(Debug, PartialEq)]
+pub struct StructDef {
+  name : RefStr,
+  fields : Vec<RefStr>,
+}
+
+#[derive(Debug, PartialEq)]
 pub struct Struct {
-  pub name : RefStr,
-  pub fields : HashMap<RefStr, Value>,
+  pub def : Rc<StructDef>,
+  pub fields : Vec<Value>,
 }
 
 pub type StructVal = Rc<RefCell<Struct>>;
@@ -60,12 +66,10 @@ struct FunctionDef {
   expr : Rc<Expr>,
 }
 
-type StructDef = HashSet<RefStr>;
-
 struct Environment<'l> {
   values : &'l mut Vec<HashMap<RefStr, Value>>,
   functions : &'l mut Vec<HashMap<RefStr, FunctionDef>>,
-  structs : &'l mut HashMap<RefStr, StructDef>,
+  structs : &'l mut HashMap<RefStr, Rc<StructDef>>,
 
   /// indicates how many nested loops we are inside in the currently-executing function
   loop_depth : i32,
@@ -78,7 +82,7 @@ impl <'l> Environment<'l> {
   fn new(
     values : &'l mut Vec<HashMap<RefStr, Value>>,
     functions : &'l mut Vec<HashMap<RefStr, FunctionDef>>,
-    structs : &'l mut HashMap<RefStr, StructDef>,
+    structs : &'l mut HashMap<RefStr, Rc<StructDef>>,
   ) -> Environment<'l> {
     Environment{
       values, functions, structs,
@@ -137,6 +141,10 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
       Value::Struct(s) => Ok(s),
       x => Err(format!("Expected struct, found {:?}.", x))
     }
+  }
+  fn struct_field_index(def : &StructDef, field_name : &str) -> Result<usize, String> {
+    def.fields.iter().position(|s| s.as_ref() == field_name)
+    .ok_or_else(||format!("field {} does not exist on struct {:?}.", field_name, def))
   }
   fn f_to_val(f : f32) -> Result<Value, String> {
     Ok(Value::Float(f))
@@ -235,9 +243,8 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
           let v = interpret_with_env(&value_expr, env)?;
           let structure = to_struct(struct_expr, env)?;
           let field_name : &str = symbol_unwrap(field_expr)?;
-          structure.borrow().fields.get(field_name)
-            .ok_or_else(||format!("field {} does not exist on struct {:?}.", field_name, structure))?;
-          *structure.borrow_mut().fields.get_mut(field_name).unwrap() = v;
+          let index = struct_field_index(&structure.borrow().def, field_name)?;
+          structure.borrow_mut().fields[index] = v;
           Ok(Value::Unit)
         }
         _ => Err(format!("can't assign to {:?}", (symbol, args))),
@@ -263,14 +270,16 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
       if exprs.len() < 1 {
         return Err(format!("malformed struct definition"));
       }
-      let struct_name = symbol_to_refstr(&exprs[0])?;
-      if env.structs.contains_key(&struct_name) {
-        return Err(format!("A struct called {} has already been defined.", struct_name));
+      let name = symbol_to_refstr(&exprs[0])?;
+      if env.structs.contains_key(&name) {
+        return Err(format!("A struct called {} has already been defined.", name));
       }
-      let field_names =
+      // TODO: check for duplicates?
+      let struct_def =
         exprs[1..].iter().map(symbol_to_refstr)
-        .collect::<Result<HashSet<RefStr>, String>>()?;
-      env.structs.insert(struct_name, field_names);
+        .collect::<Result<Vec<RefStr>, String>>()
+        .map(|fields| Rc::new(StructDef { name: name.clone(), fields}))?;
+      env.structs.insert(name, struct_def);
       Ok(Value::Unit)
     }
     ("struct_instantiate", exprs) => {
@@ -278,32 +287,33 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
         return Err(format!("malformed struct instantiation {:?}", exprs));
       }
       let name = symbol_to_refstr(&exprs[0])?;
+      let def =
+        env.structs.get(name.as_str())
+        .ok_or_else(|| format!("struct {} does not exist", name))?.clone();
+      let mut fields = vec![Value::Unit ; def.fields.len()];
       {
-        let struct_def =
-          env.structs.get(name.as_str())
-          .ok_or_else(|| format!("struct {} does not exist", name))?;
+        let mut field_index_map =
+          def.fields.iter().enumerate()
+          .map(|(i, s)| (s.as_ref(), i)).collect::<HashMap<&str, usize>>();
         for i in (1..exprs.len()).step_by(2) {
-          let field_name = symbol_unwrap(&exprs[i])?;
-          struct_def.get(field_name)
-            .ok_or_else(|| format!("unexpected field '{}'", field_name))?;
+          let field_name = symbol_to_refstr(&exprs[i])?;
+          let field_value = interpret_with_env(&exprs[i+1], env)?;
+          let index = field_index_map.remove(field_name.as_str())
+            .ok_or_else(|| format!("field {} does not exist", name))?;
+          fields[index] = field_value;
         }
-      };
-      let mut fields = HashMap::new();
-      for i in (1..exprs.len()).step_by(2) {
-        let field_name = symbol_to_refstr(&exprs[i])?;
-        let field_value = interpret_with_env(&exprs[i+1], env)?;
-        fields.insert(field_name, field_value);
+        if field_index_map.len() > 0 {
+          return Err(format!("Some fields not initialised"));
+        }
       }
-      let s = Rc::new(RefCell::new(Struct { name, fields }));
+      let s = Rc::new(RefCell::new(Struct { def, fields }));
       Ok(Value::Struct(s))
     }
     (".", [expr, field_name]) => {
       let s = to_struct(expr, env)?;
       let name = symbol_unwrap(field_name)?;
-      let v =
-        s.borrow().fields.get(name)
-        .ok_or_else(||format!("field {} does not exist on struct {:?}.", name, s))?
-        .clone();
+      let index = struct_field_index(&s.borrow().def, name)?;
+      let v = s.borrow().fields[index].clone();
       Ok(v)
     }
     ("while", exprs) => {
