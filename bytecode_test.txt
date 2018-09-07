@@ -1,15 +1,16 @@
 
 let a = 0;
-let b = [0, [1, 2, 3], 6];
+let b = [0, 6];
 
 while a < 30 {
   let b = 40;
   10;
   a = a + 1;
 }
-while a < 30 {
-  10;
-  a = a + 1;
+
+if true {
+  b[0]
 }
-a;
-b[1][2]
+else {
+  b[1]
+}

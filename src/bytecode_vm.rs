@@ -336,22 +336,32 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_a
     //     _ => Err(format!("can't assign to {:?}", (symbol, args))),
     //   }
     // }
-    // ("if", exprs) => {
-    //   let arg_count = exprs.len();
-    //   if arg_count < 2 || arg_count > 3 {
-    //     return Err(format!("malformed if expression"));
-    //   }
-    //   let condition = to_b(&exprs[0], env)?;
-    //   if condition {
-    //     compile(&exprs[1], env)
-    //   }
-    //   else if arg_count == 3 {
-    //     compile(&exprs[2], env)
-    //   }
-    //   else {
-    //     Ok(Value::Unit)
-    //   }
-    // }
+    ("if", exprs) => {
+      let arg_count = exprs.len();
+      if arg_count < 2 || arg_count > 3 {
+        return Err(format!("malformed if expression"));
+      }
+      let false_label = env.label("if_false_label");
+      if arg_count == 3 {
+        // has else branch
+        let else_end_label = env.label("else_end_label");
+        compile(&exprs[0], env, true)?;
+        env.emit_jump_if_false(&false_label);
+        compile(&exprs[1], env, push_answer)?;
+        env.emit_jump(&else_end_label);
+        env.emit_label(false_label);
+        compile(&exprs[2], env, push_answer)?;
+        env.emit_label(else_end_label);
+      }
+      else {
+        // has no else branch
+        does_not_push(instr, push_answer)?;
+        compile(&exprs[0], env, true)?;
+        env.emit_jump_if_false(&false_label);
+        compile(&exprs[1], env, false)?;
+        env.emit_label(false_label);
+      }
+    }
     // ("struct_define", exprs) => {
     //   if exprs.len() < 1 {
     //     return Err(format!("malformed struct definition"));
@@ -433,7 +443,7 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_a
     // }
     ("literal_array", exprs) => {
       for e in exprs {
-        let v = compile(e, env, push_answer)?;
+        compile(e, env, push_answer)?;
       }
       env.emit(BC::NewArray(exprs.len()), push_answer);
     }
