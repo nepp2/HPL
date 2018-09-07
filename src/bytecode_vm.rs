@@ -96,7 +96,7 @@ struct Environment<'l> {
   instructions : Vec<BytecodeInstruction>,
 
   /// indicates how many nested loops we are inside in the currently-executing function
-  loop_depth : i32,
+  loop_break_labels : Vec<RefStr>,
 }
 
 impl <'l> Environment<'l> {
@@ -112,7 +112,7 @@ impl <'l> Environment<'l> {
       labels: HashMap::new(),
       max_locals: 0,
       instructions: vec!(),
-      loop_depth: 0,
+      loop_break_labels: vec!(),
     }
   }
 
@@ -163,11 +163,18 @@ impl <'l> Environment<'l> {
     self.emit_always(BC::JumpIfFalse(usize::MAX))
   }
 
-  fn label(&mut self, s : String) -> RefStr {
-    if self.labels.contains_key(s.as_str()) {
-      panic!("duplicate label used in compiler");
+  fn label(&mut self, s : &str) -> RefStr {
+    let mut i = 0;
+    let mut label_string;
+    // TODO: this is not very efficient, and should maybe be fixed
+    loop {
+      label_string = format!("{}_{}",s, i);
+      if !self.labels.contains_key(label_string.as_str()) {
+        break;
+      }
+      i += 1;
     }
-    let label = self.symbol_cache.symbol(s);
+    let label = self.symbol_cache.symbol(label_string);
     self.labels.insert(label.clone(), LabelState { location: usize::MAX, references: vec!() });
     label
   }
@@ -403,17 +410,16 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_a
       if exprs.len() != 2 {
         return Err(format!("malformed while block"));
       }
-      env.loop_depth += 1;
-      let id = env.loop_depth;
-      let condition_label = env.label(format!("loop_condition_{}", id));
-      let end_label = env.label(format!("loop_end_{}", id));
+      let condition_label = env.label("loop_condition");
+      let end_label = env.label("loop_end");
+      env.loop_break_labels.push(end_label.clone());
       env.emit_label(condition_label.clone());
       compile(&exprs[0], env, true)?; // emit condition
       env.emit_jump_if_false(&end_label); // exit loop if condition fails
       compile(&exprs[1], env, false)?; // emit loop body
       env.emit_jump(&condition_label); // jump back to the condition
       env.emit_label(end_label);
-      env.loop_depth -= 1;
+      env.loop_break_labels.pop();
     }
     // ("fun", exprs) => {
     //   let name = match &exprs[0] { Expr::Symbol(s) => s, _ => { return Err(format!("expected a symbol")); }};
@@ -466,8 +472,7 @@ fn compile(ast : &Expr, env : &mut Environment, push_answer : bool) -> Result<()
     }
     Expr::Symbol(s) => {
       if s.as_str() == "break" {
-        if env.loop_depth > 0 {
-          let l = format!("loop_end_{}", env.loop_depth);
+        if let Some(l) = env.loop_break_labels.last().map(|s| s.clone()) {
           env.emit_jump(l.as_str());
         }
         else {
