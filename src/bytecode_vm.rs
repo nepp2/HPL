@@ -534,12 +534,6 @@ fn struct_field_index(def : &StructDef, field_name : &str) -> Result<usize, Stri
   def.fields.iter().position(|s| s.as_ref() == field_name)
   .ok_or_else(||format!("field {} does not exist on struct '{:?}'.", field_name, def))
 }
-fn f_to_val(f : f32) -> Value {
-  Value::Float(f)
-}
-fn b_to_val(b : bool) -> Value {
-  Value::Bool(b)
-}
 
 fn array_index(array : &Vec<Value>, index : f32) -> Result<usize, String> {
   let i = index as usize;
