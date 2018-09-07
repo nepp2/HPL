@@ -1,7 +1,7 @@
 
 use parser::Expr;
 use lexer::{RefStr, AsStr, SymbolCache};
-use interpreter::{Value, Struct, Array, StructVal};
+use interpreter::{Value, Struct, Array, StructVal, StructDef};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -17,6 +17,9 @@ enum BytecodeInstruction {
   Pop,
   Dup,
   NewArray(usize),
+  NewStruct(Rc<StructDef>),
+  StructFieldInit(usize),
+  PushStructField(RefStr),
   ArrayIndex,
   SetVar(usize),
   Call(FunctionHandle),
@@ -68,8 +71,6 @@ struct BytecodeProgram {
 //   expr : Rc<Expr>,
 // }
 
-type StructDef = HashSet<RefStr>;
-
 struct VarScope {
   base_index : usize,
   vars : Vec<RefStr>,
@@ -82,7 +83,7 @@ struct LabelState {
 
 struct Environment<'l> {
   functions : &'l mut HashMap<RefStr, BytecodeFunction>,
-  structs : &'l mut HashMap<RefStr, StructDef>,
+  structs : &'l mut HashMap<RefStr, Rc<StructDef>>,
   symbol_cache : &'l mut SymbolCache,
 
   /// function name
@@ -107,7 +108,7 @@ impl <'l> Environment<'l> {
   fn new(
     function_name : RefStr,
     functions : &'l mut HashMap<RefStr, BytecodeFunction>,
-    structs : &'l mut HashMap<RefStr, StructDef>,
+    structs : &'l mut HashMap<RefStr, Rc<StructDef>>,
     symbol_cache : &'l mut SymbolCache,
   ) -> Environment<'l> {
     Environment{
@@ -234,17 +235,17 @@ fn compile_function_call(function_name: &str, args: &[Expr], env : &mut Environm
 
 fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_answer : bool) -> Result<(), String> {
 
-  // fn symbol_unwrap(e : &Expr) -> Result<&RefStr, String> {
-  //   if let Expr::Symbol(s) = e {
-  //     Ok(s)
-  //   }
-  //   else {
-  //     Err(format!("expected a symbol, found {:?}", e))
-  //   }
-  // }
-  // fn symbol_to_refstr(e : &Expr) -> Result<RefStr, String> {
-  //   symbol_unwrap(e).map(|s| s.clone())
-  // }
+  fn symbol_unwrap(e : &Expr) -> Result<&RefStr, String> {
+    if let Expr::Symbol(s) = e {
+      Ok(s)
+    }
+    else {
+      Err(format!("expected a symbol, found {:?}", e))
+    }
+  }
+  fn symbol_to_refstr(e : &Expr) -> Result<RefStr, String> {
+    symbol_unwrap(e).map(|s| s.clone())
+  }
 
   fn does_not_push(instr : &str, push_answer : bool) -> Result<(), String> {
     if push_answer {
@@ -362,53 +363,51 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_a
         env.emit_label(false_label);
       }
     }
-    // ("struct_define", exprs) => {
-    //   if exprs.len() < 1 {
-    //     return Err(format!("malformed struct definition"));
-    //   }
-    //   let struct_name = symbol_to_refstr(&exprs[0])?;
-    //   if env.structs.contains_key(&struct_name) {
-    //     return Err(format!("A struct called {} has already been defined.", struct_name));
-    //   }
-    //   let field_names =
-    //     exprs[1..].iter().map(symbol_to_refstr)
-    //     .collect::<Result<HashSet<RefStr>, String>>()?;
-    //   env.structs.insert(struct_name, field_names);
-    //   Ok(Value::Unit)
-    // }
-    // ("struct_instantiate", exprs) => {
-    //   if exprs.len() < 1 || exprs.len() % 2 == 0 {
-    //     return Err(format!("malformed struct instantiation {:?}", exprs));
-    //   }
-    //   let name = symbol_to_refstr(&exprs[0])?;
-    //   {
-    //     let struct_def =
-    //       env.structs.get(name.as_str())
-    //       .ok_or_else(|| format!("struct {} does not exist", name))?;
-    //     for i in (1..exprs.len()).step_by(2) {
-    //       let field_name = symbol_unwrap(&exprs[i])?;
-    //       struct_def.get(field_name)
-    //         .ok_or_else(|| format!("unexpected field '{}'", field_name))?;
-    //     }
-    //   };
-    //   let mut fields = HashMap::new();
-    //   for i in (1..exprs.len()).step_by(2) {
-    //     let field_name = symbol_to_refstr(&exprs[i])?;
-    //     let field_value = compile(&exprs[i+1], env)?;
-    //     fields.insert(field_name, field_value);
-    //   }
-    //   let s = Rc::new(RefCell::new(Struct { name, fields }));
-    //   Ok(Value::Struct(s))
-    // }
-    // (".", [expr, field_name]) => {
-    //   let s = to_struct(expr, env)?;
-    //   let name = symbol_unwrap(field_name)?;
-    //   let v =
-    //     s.borrow().fields.get(name)
-    //     .ok_or_else(||format!("field {} does not exist on struct {:?}.", name, s))?
-    //     .clone();
-    //   Ok(v)
-    // }
+    ("struct_define", exprs) => {
+      if exprs.len() < 1 {
+        return Err(format!("malformed struct definition"));
+      }
+      let name = symbol_to_refstr(&exprs[0])?;
+      if env.structs.contains_key(&name) {
+        return Err(format!("A struct called {} has already been defined.", name));
+      }
+      // TODO: check for duplicates?
+      let struct_def =
+        exprs[1..].iter().map(symbol_to_refstr)
+        .collect::<Result<Vec<RefStr>, String>>()
+        .map(|fields| Rc::new(StructDef { name: name.clone(), fields}))?;
+      env.structs.insert(name, struct_def);
+    }
+    ("struct_instantiate", exprs) => {
+      if exprs.len() < 1 || exprs.len() % 2 == 0 {
+        return Err(format!("malformed struct instantiation {:?}", exprs));
+      }
+      let name = symbol_to_refstr(&exprs[0])?;
+      let def =
+        env.structs.get(name.as_str())
+        .ok_or_else(|| format!("struct {} does not exist", name))?.clone();
+      env.emit(BC::NewStruct(def.clone()), push_answer);
+      {
+        let mut field_index_map =
+          def.fields.iter().enumerate()
+          .map(|(i, s)| (s.as_ref(), i)).collect::<HashMap<&str, usize>>();
+        for i in (1..exprs.len()).step_by(2) {
+          let field_name = symbol_to_refstr(&exprs[i])?;
+          compile(&exprs[i+1], env, push_answer)?;
+          let index = field_index_map.remove(field_name.as_str())
+            .ok_or_else(|| format!("field {} does not exist", name))?;
+          env.emit(BC::StructFieldInit(index), push_answer);
+        }
+        if field_index_map.len() > 0 {
+          return Err(format!("Some fields not initialised"));
+        }
+      }
+    }
+    (".", [expr, field_name]) => {
+      compile(expr, env, push_answer)?;
+      let name = symbol_unwrap(field_name)?;
+      env.emit(BC::PushStructField(name.clone()), push_answer);
+    }
     ("while", exprs) => {
       does_not_push(instr, push_answer)?;
       if exprs.len() != 2 {
@@ -525,11 +524,15 @@ fn to_array(v : Value) -> Result<Array, String> {
     x => Err(format!("Expected array, found {:?}.", x))
   }
 }
-fn to_struct(v : Value) -> Result<StructVal, String> {
+fn to_struct(v : &Value) -> Result<&StructVal, String> {
   match v {
     Value::Struct(s) => Ok(s),
     x => Err(format!("Expected struct, found {:?}.", x))
   }
+}
+fn struct_field_index(def : &StructDef, field_name : &str) -> Result<usize, String> {
+  def.fields.iter().position(|s| s.as_ref() == field_name)
+  .ok_or_else(||format!("field {} does not exist on struct '{:?}'.", field_name, def))
 }
 fn f_to_val(f : f32) -> Value {
   Value::Float(f)
@@ -590,6 +593,23 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : RefStr) -> Re
         let a = a.borrow();
         let i = array_index(&a, float_index)?;
         stack.push(a[i].clone());
+      }
+      BC::NewStruct(def) => {
+        let fields = vec![Value::Unit ; def.fields.len()];
+        let s = Rc::new(RefCell::new(Struct { def: def.clone(), fields }));
+        stack.push(Value::Struct(s));
+      }
+      BC::StructFieldInit(index) => {
+        let v = stack.pop().unwrap();
+        let s = to_struct(stack.last().unwrap())?;
+        s.borrow_mut().fields[*index] = v;
+      }
+      BC::PushStructField(name) => {
+        let s = stack.pop().unwrap();
+        let s = to_struct(&s)?;
+        let index = struct_field_index(&s.borrow().def, name)?;
+        let v = s.borrow().fields[index].clone();
+        stack.push(v);
       }
       BC::SetVar(var_slot) => {
         let v = stack.pop().unwrap();

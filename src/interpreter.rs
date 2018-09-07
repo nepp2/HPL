@@ -10,8 +10,8 @@ use std::cell::RefCell;
 
 #[derive(Debug, PartialEq)]
 pub struct StructDef {
-  name : RefStr,
-  fields : Vec<RefStr>,
+  pub name : RefStr,
+  pub fields : Vec<RefStr>,
 }
 
 #[derive(Debug, PartialEq)]

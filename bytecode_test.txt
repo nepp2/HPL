@@ -2,6 +2,12 @@
 let a = 0;
 let b = [0, 6];
 
+struct test {
+  a, b
+}
+
+let t = test { a: 4, b: 6 };
+
 while a < 30 {
   let b = 40;
   10;
@@ -14,3 +20,5 @@ if true {
 else {
   b[1]
 }
+
+t.a
