@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::fmt;
 
 #[derive(Debug, PartialEq)]
 pub struct StructDef {
@@ -29,13 +30,36 @@ pub type Array = Rc<RefCell<Vec<Value>>>;
 /// RC pointers in the union, and the discriminating value is being
 /// padded to word size (also 8 bytes). Could probably be optimised
 /// down to 8 bytes total, with some ugly pointer hacks.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum Value {
   Float(f32),
   Array(Array),
   Bool(bool),
   Struct(StructVal),
   Unit,
+}
+
+
+impl fmt::Debug for Value {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      Value::Float(x) => write!(f, "{}", x),
+      Value::Array(a) => write!(f, "{:?}", &*a.borrow()),
+      Value::Bool(b) => write!(f, "{}", b),
+      Value::Struct(s) => {
+        let Struct { def, fields } = &*s.borrow();
+        let name = &def.name;
+        write!(f, "{} {{ ", name)?;
+        let end = fields.len() - 1;
+        for (i, (n, v)) in def.fields.iter().zip(fields.iter()).enumerate() {
+          let sep = if i == end {""} else {","};
+          write!(f, "{}: {:?}{} ", n, v, sep)?;
+        }
+        write!(f, "}}")
+      }
+      Value::Unit => write!(f, "Unit"),
+    }
+  }
 }
 
 /// Insert the value in the last hashmap in the vector, which represents the local scope.

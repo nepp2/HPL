@@ -535,17 +535,18 @@ fn array_index(array : &Vec<Value>, index : f32) -> Result<usize, String> {
 }
 
 fn interpret_bytecode(program : &BytecodeProgram, entry_function : RefStr) -> Result<Value, String> {
-  let mut stack : Vec<Value> = vec![];
   let function =
     program.functions.get(&entry_function).ok_or_else(|| format!("No function found"))?;
-  let mut vars = vec!(Value::Unit; function.locals);
+  let mut stack : Vec<Value> = vec![Value::Unit; function.locals];
+  let mut var_base = 0;
+  let locals = function.locals;
   let mut program_counter = 0;
   loop {
     if program_counter >= function.instructions.len() {
-      println!("vars: {:?}, stack: {:?}", vars, stack);
+      println!("stack: {:?}", stack);
       return Err(format!("program counter out of bounds"));
     }
-    println!("vars: {:?}, stack: {:?}", vars, stack);
+    println!("stack: {:?}", stack);
     println!("PC: {}, instruction: {:?}", program_counter, &function.instructions[program_counter]);    
     match &function.instructions[program_counter] {
       BC::Push(value) => {
@@ -555,7 +556,7 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : RefStr) -> Re
         stack.pop();
       }
       BC::PushVar(var_slot) => {
-        let v = vars[*var_slot].clone();
+        let v = stack[var_base + *var_slot].clone();
         stack.push(v);
       }
       BC::Dup => {
@@ -611,7 +612,7 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : RefStr) -> Re
       }
       BC::SetVar(var_slot) => {
         let v = stack.pop().unwrap();
-        vars[*var_slot] = v;
+        stack[var_base + *var_slot] = v;
       }
       BC::CallReturn(name) => {
         return Err(format!("CallReturn not yet implemented."));
