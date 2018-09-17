@@ -115,7 +115,6 @@ impl <'l> Environment<'l> {
     structs : &'l mut HashMap<RefStr, Rc<StructDef>>,
     symbol_cache : &'l mut SymbolCache,
   ) -> Environment<'l> {
-    // reverse arguments for stack ordering
     let vs = VarScope { base_index: 0, vars: arguments.clone() };
     let locals = vec![vs];
     Environment{
