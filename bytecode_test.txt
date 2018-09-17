@@ -6,6 +6,10 @@ fun mult(a, b) {
   a * b
 }
 
+fun subtract(a, b) {
+  a - b
+}
+
 struct test {
   a, b
 }
@@ -27,6 +31,6 @@ else {
 
 mult(mult(100, 5), 2);
 
-t.b[0] = mult(100, 5);
+t.b[0] = subtract(100, 5);
 
 t

@@ -99,8 +99,7 @@ impl <'l> Environment<'l> {
     symbol_cache : &'l mut SymbolCache,
   ) -> Environment<'l> {
     // reverse arguments for stack ordering
-    let vars : Vec<RefStr> = arguments.iter().rev().cloned().collect();
-    let vs = VarScope { base_index: 0, vars };
+    let vs = VarScope { base_index: 0, vars: arguments.clone() };
     let locals = vec![vs];
     Environment{
       function_name, arguments, functions,
