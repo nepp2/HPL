@@ -29,8 +29,8 @@ else {
   b[1]
 }
 
-mult(mult(100, 5), 2);
+let boop = mult(mult(100, 5), 2);
 
-t.b[0] = subtract(100, 5);
+t.b[0] = subtract(boop, 5);
 
 t

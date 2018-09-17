@@ -6,9 +6,6 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::usize;
-use std::iter;
-
-type FunctionHandle = usize;
 
 #[derive(Debug)]
 enum BytecodeInstruction {
@@ -23,7 +20,7 @@ enum BytecodeInstruction {
   ArrayIndex,
   SetArrayIndex,
   SetVar(usize),
-  CallFunction(RefStr),
+  CallFunction(usize),
   JumpIfFalse(usize),
   Jump(usize),
   BinaryOperator(RefStr),
@@ -38,20 +35,38 @@ lazy_static! {
     "==", "&&", "||", "-"].into_iter().collect();
 }
 
-#[derive(Debug)]
-struct BytecodeFunction {
-  instructions : Vec<BytecodeInstruction>,
+type FunctionBytecode = Vec<BytecodeInstruction>;
 
-  /// number of arguments the function accepts
+#[derive(Debug)]
+struct FunctionInfo {
+  name : RefStr,
+
+  /// Number of arguments the function accepts
   arguments : Vec<RefStr>,
 
-  /// arguments count towards this number
+  /// Number of local variables which may be used. Arguments count towards this number.
   locals : usize,
 }
 
 #[derive(Debug)]
 struct BytecodeProgram {
-  functions : HashMap<RefStr, BytecodeFunction>,
+  bytecode : Vec<FunctionBytecode>,
+  info : Vec<FunctionInfo>,
+}
+
+impl BytecodeProgram {
+  fn new() -> BytecodeProgram {
+    BytecodeProgram {
+      bytecode: vec![],
+      info: vec![],
+    }
+  }
+}
+
+struct FunctionDef {
+  handle : usize,
+  bytecode : FunctionBytecode,
+  info : FunctionInfo,
 }
 
 struct VarScope {
@@ -65,7 +80,9 @@ struct LabelState {
 }
 
 struct Environment<'l> {
-  functions : &'l mut HashMap<RefStr, BytecodeFunction>,
+  /// the "usize" represents the function handle
+  functions : &'l mut HashMap<RefStr, FunctionDef>,
+
   structs : &'l mut HashMap<RefStr, Rc<StructDef>>,
   symbol_cache : &'l mut SymbolCache,
 
@@ -94,7 +111,7 @@ impl <'l> Environment<'l> {
   fn new(
     function_name : RefStr,
     arguments : Vec<RefStr>,
-    functions : &'l mut HashMap<RefStr, BytecodeFunction>,
+    functions : &'l mut HashMap<RefStr, FunctionDef>,
     structs : &'l mut HashMap<RefStr, Rc<StructDef>>,
     symbol_cache : &'l mut SymbolCache,
   ) -> Environment<'l> {
@@ -123,7 +140,11 @@ impl <'l> Environment<'l> {
         self.instructions[r] = instr;
       }
     }
-    let function = BytecodeFunction { instructions: self.instructions, arguments: self.arguments, locals: self.max_locals };
+    let function = FunctionDef {
+      handle: self.functions.len(),
+      bytecode: self.instructions,
+      info: FunctionInfo { name: self.function_name.clone(), arguments: self.arguments, locals: self.max_locals },
+    };
     self.functions.insert(self.function_name, function);
   }
 
@@ -202,9 +223,9 @@ fn compile_function_call(function_name: RefStr, args: &[Expr], env : &mut Enviro
   for i in 0..args.len() {
     compile(&args[i], env, true)?;
   }
-  env.functions.get(&function_name)
-    .ok_or_else(||format!("Found no function called '{}'", function_name))?;
-  env.emit_always(BC::CallFunction(function_name));
+  let handle = env.functions.get(&function_name)
+    .ok_or_else(||format!("Found no function called '{}'", function_name))?.handle;
+  env.emit_always(BC::CallFunction(handle));
   if !push_answer {
     env.emit_always(BC::Pop);
   }
@@ -476,7 +497,14 @@ fn compile_bytecode(ast : &Expr, entry_function_name : RefStr, symbol_cache : &m
     compile(ast, &mut env, true)?;
     env.complete();
   }
-  Ok(BytecodeProgram { functions })
+  let mut bp = BytecodeProgram::new();
+  let mut defs = functions.into_iter().map(|x| x.1).collect::<Vec<FunctionDef>>();
+  defs.sort_unstable_by_key(|d| d.handle);
+  for def in defs {
+    bp.bytecode.push(def.bytecode);
+    bp.info.push(def.info);
+  }
+  Ok(bp)
 }
 
 fn to_f(v : Value) -> Result<f32, String> {
@@ -519,34 +547,32 @@ fn array_index(array : &Vec<Value>, index : f32) -> Result<usize, String> {
 }
 
 struct Call {
-  function_name : RefStr,
+  function_handle : usize,
   var_base : usize,
   program_counter : usize,
-  started : bool,
 }
 
-fn interpret_bytecode(program : &BytecodeProgram, entry_function : RefStr) -> Result<Value, String> {
+fn new_function_call(function_handle : usize, stack : &mut Vec<Value>, info : &Vec<FunctionInfo>) -> Call{
+  let info = &info[function_handle];
+  let args = info.arguments.len();
+  for _ in 0..(info.locals - args) {
+    stack.push(Value::Unit);
+  }
+  Call {
+    function_handle,
+    var_base: stack.len() - info.locals,
+    program_counter: 0,
+  }
+}
+
+fn interpret_bytecode(program : &BytecodeProgram, entry_function : usize) -> Result<Value, String> {
   let mut stack : Vec<Value> = vec![];
   let mut callstack : Vec<Call> = vec![];
-  let mut c = Call {
-    function_name: entry_function,
-    var_base: 0,
-    program_counter: 0,
-    started : false,
-  };
+  let mut c = new_function_call(entry_function, &mut stack, &program.info);
   loop {
-    let function =
-        program.functions.get(&c.function_name).ok_or_else(|| format!("No function found"))?;
-    if !c.started {
-      let args = function.arguments.len();
-      for _ in 0..(function.locals - args) {
-        stack.push(Value::Unit);
-      }
-      c.started = true;
-      c.var_base = stack.len() - function.locals;
-    }
+    let instructions = &program.bytecode[c.function_handle];
     loop {
-      if c.program_counter >= function.instructions.len() {
+      if c.program_counter >= instructions.len() {
         // Return (lol)
         let return_value = stack.pop().unwrap();
         if c.var_base == 0 {
@@ -558,9 +584,9 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : RefStr) -> Re
         c.program_counter += 1;
         break;
       }
-      println!("stack: {:?}", stack);
-      println!("PC: {}, instruction: {:?}", c.program_counter, &function.instructions[c.program_counter]);    
-      match &function.instructions[c.program_counter] {
+      // println!("stack: {:?}", stack);
+      // println!("PC: {}, instruction: {:?}", c.program_counter, &instructions[c.program_counter]);    
+      match &instructions[c.program_counter] {
         BC::Push(value) => {
           stack.push(value.clone());
         }
@@ -622,14 +648,9 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : RefStr) -> Re
           let v = stack.pop().unwrap();
           stack[c.var_base + *var_slot] = v;
         }
-        BC::CallFunction(name) => {
+        BC::CallFunction(handle) => {
           callstack.push(c);
-          c = Call {
-            function_name: name.clone(),
-            var_base: 0,
-            program_counter: 0,
-            started : false,
-          };
+          c = new_function_call(*handle, &mut stack, &program.info);
           break;
         }
         BC::JumpIfFalse(location) => {
@@ -680,15 +701,16 @@ pub fn interpret(ast : &Expr) -> Result<Value, String> {
   let mut symbol_cache = SymbolCache::new();
   let entry_function_name = symbol_cache.symbol("main");
   let program = compile_bytecode(ast, entry_function_name.clone(), &mut symbol_cache)?;
-  for (name, f) in program.functions.iter() {
+  for (info, bytecode) in program.info.iter().zip(program.bytecode.iter()) {
     println!("--------------------------------");
-    println!("Function '{}':", name);
-    for (i, instr) in f.instructions.iter().enumerate() {
+    println!("Function '{}':", info.name);
+    for (i, instr) in bytecode.iter().enumerate() {
       println!("{}:   {:?}", i, instr);
     }
     println!();
-    println!("Max local variables: {}", f.locals);
+    println!("Max local variables: {}", info.locals);
     println!();
   }
-  interpret_bytecode(&program, entry_function_name)
+  let entry_function_handle = program.info.iter().position(|i| i.name == entry_function_name).unwrap();
+  interpret_bytecode(&program, entry_function_handle)
 }
