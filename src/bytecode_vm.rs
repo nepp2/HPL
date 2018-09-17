@@ -15,7 +15,6 @@ enum BytecodeInstruction {
   Push(Value),
   PushVar(usize),
   Pop,
-  Dup,
   NewArray(usize),
   NewStruct(Rc<StructDef>),
   StructFieldInit(usize),
@@ -24,13 +23,11 @@ enum BytecodeInstruction {
   ArrayIndex,
   SetArrayIndex,
   SetVar(usize),
-  CallVoid(RefStr),
-  CallReturn(RefStr),
+  CallFunction(RefStr),
   JumpIfFalse(usize),
   Jump(usize),
   BinaryOperator(RefStr),
   UnaryOperator(RefStr),
-  Return,
 }
 
 use bytecode_vm::BytecodeInstruction as BC;
@@ -44,6 +41,11 @@ lazy_static! {
 #[derive(Debug)]
 struct BytecodeFunction {
   instructions : Vec<BytecodeInstruction>,
+
+  /// number of arguments the function accepts
+  arguments : Vec<RefStr>,
+
+  /// arguments count towards this number
   locals : usize,
 }
 
@@ -92,6 +94,9 @@ struct Environment<'l> {
   /// function name
   function_name : RefStr,
 
+  /// the arguments that this function receives
+  arguments : Vec<RefStr>,
+
   /// stores offset of each local variable in the stack frame
   locals : Vec<VarScope>,
 
@@ -110,13 +115,18 @@ struct Environment<'l> {
 impl <'l> Environment<'l> {
   fn new(
     function_name : RefStr,
+    arguments : Vec<RefStr>,
     functions : &'l mut HashMap<RefStr, BytecodeFunction>,
     structs : &'l mut HashMap<RefStr, Rc<StructDef>>,
     symbol_cache : &'l mut SymbolCache,
   ) -> Environment<'l> {
+    // reverse arguments for stack ordering
+    let vars : Vec<RefStr> = arguments.iter().rev().cloned().collect();
+    let vs = VarScope { base_index: 0, vars };
+    let locals = vec![vs];
     Environment{
-      function_name, functions, structs, symbol_cache,
-      locals: vec!(),
+      function_name, arguments, functions,
+      structs, symbol_cache, locals,
       labels: HashMap::new(),
       max_locals: 0,
       instructions: vec!(),
@@ -136,7 +146,7 @@ impl <'l> Environment<'l> {
         self.instructions[r] = instr;
       }
     }
-    let function = BytecodeFunction { instructions: self.instructions, locals: self.max_locals };
+    let function = BytecodeFunction { instructions: self.instructions, arguments: self.arguments, locals: self.max_locals };
     self.functions.insert(self.function_name, function);
   }
 
@@ -217,11 +227,9 @@ fn compile_function_call(function_name: RefStr, args: &[Expr], env : &mut Enviro
   }
   env.functions.get(&function_name)
     .ok_or_else(||format!("Found no function called '{}'", function_name))?;
-  if push_answer {
-    env.emit_always(BC::CallReturn(function_name));
-  }
-  else {
-    env.emit_always(BC::CallVoid(function_name));
+  env.emit_always(BC::CallFunction(function_name));
+  if !push_answer {
+    env.emit_always(BC::Pop);
   }
   Ok(())
 }
@@ -415,17 +423,16 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_a
       let name = match &exprs[0] { Expr::Symbol(s) => s, _ => { return Err(format!("expected a symbol")); }};
       let args_exprs = match &exprs[1] { Expr::Expr{ args, .. } => args, _ => { return Err(format!("expected an expression")); }};
       let function_body = &exprs[2];
-      let mut new_env = Environment::new(name.clone(), &mut env.functions, &mut env.structs, &mut env.symbol_cache);
-      let mut vs = VarScope { base_index: 0, vars: vec!() };
+      let mut params = vec![];
       for e in args_exprs {
         if let Expr::Symbol(s) = e {
-          vs.vars.push(s.clone());
+         params.push(s.clone());
         }
         else {
           return Err(format!("expected a symbol"));
         }
       }
-      new_env.locals.push(vs);
+      let mut new_env = Environment::new(name.clone(), params, &mut env.functions, &mut env.structs, &mut env.symbol_cache);
       compile(function_body, &mut new_env, true)?;
       new_env.complete();
     }
@@ -488,7 +495,7 @@ fn compile_bytecode(ast : &Expr, entry_function_name : RefStr, symbol_cache : &m
   let mut functions = HashMap::new();
   let mut structs = HashMap::new();
   {
-    let mut env = Environment::new(entry_function_name, &mut functions, &mut structs, symbol_cache);
+    let mut env = Environment::new(entry_function_name, vec![], &mut functions, &mut structs, symbol_cache);
     compile(ast, &mut env, true)?;
     env.complete();
   }
@@ -534,134 +541,162 @@ fn array_index(array : &Vec<Value>, index : f32) -> Result<usize, String> {
   }
 }
 
+struct Call {
+  function_name : RefStr,
+  var_base : usize,
+  program_counter : usize,
+  started : bool,
+}
+
 fn interpret_bytecode(program : &BytecodeProgram, entry_function : RefStr) -> Result<Value, String> {
-  let function =
-    program.functions.get(&entry_function).ok_or_else(|| format!("No function found"))?;
-  let mut stack : Vec<Value> = vec![Value::Unit; function.locals];
-  let mut var_base = 0;
-  let locals = function.locals;
-  let mut program_counter = 0;
+  let mut stack : Vec<Value> = vec![];
+  let mut callstack : Vec<Call> = vec![];
+  let mut c = Call {
+    function_name: entry_function,
+    var_base: 0,
+    program_counter: 0,
+    started : false,
+  };
   loop {
-    if program_counter >= function.instructions.len() {
-      println!("stack: {:?}", stack);
-      return Err(format!("program counter out of bounds"));
+    let function =
+        program.functions.get(&c.function_name).ok_or_else(|| format!("No function found"))?;
+    if !c.started {
+      let args = function.arguments.len();
+      for _ in 0..(function.locals - args) {
+        stack.push(Value::Unit);
+      }
+      c.started = true;
+      c.var_base = stack.len() - function.locals;
     }
-    println!("stack: {:?}", stack);
-    println!("PC: {}, instruction: {:?}", program_counter, &function.instructions[program_counter]);    
-    match &function.instructions[program_counter] {
-      BC::Push(value) => {
-        stack.push(value.clone());
-      }
-      BC::Pop => {
-        stack.pop();
-      }
-      BC::PushVar(var_slot) => {
-        let v = stack[var_base + *var_slot].clone();
-        stack.push(v);
-      }
-      BC::Dup => {
-        let v = stack.last().unwrap().clone();
-        stack.push(v);
-      }
-      BC::NewArray(elements) => {
-        let mut a = vec!(Value::Unit ; *elements);
-        for i in (0..*elements).rev() {
-          a[i] = stack.pop().unwrap();
+    loop {
+      if c.program_counter >= function.instructions.len() {
+        // Return (lol)
+        let return_value = stack.pop().unwrap();
+        if c.var_base == 0 {
+          return Ok(return_value);
         }
-        let array = Rc::new(RefCell::new(a));
-        stack.push(Value::Array(array));
+        stack.truncate(c.var_base);
+        stack.push(return_value);
+        c = callstack.pop().unwrap();
+        c.program_counter += 1;
+        break;
       }
-      BC::ArrayIndex => {
-        let float_index = to_f(stack.pop().unwrap())?;
-        let a = to_array(stack.pop().unwrap())?;
-        let a = a.borrow();
-        let i = array_index(&a, float_index)?;
-        stack.push(a[i].clone());
-      }
-      BC::SetArrayIndex => {
-        let v = stack.pop().unwrap();
-        let f_index = to_f(stack.pop().unwrap())?;
-        let a = to_array(stack.pop().unwrap())?;
-        let mut array = a.borrow_mut();
-        let i = array_index(&array, f_index)?;
-        array[i] = v;
-      }
-      BC::NewStruct(def) => {
-        let fields = vec![Value::Unit ; def.fields.len()];
-        let s = Rc::new(RefCell::new(Struct { def: def.clone(), fields }));
-        stack.push(Value::Struct(s));
-      }
-      BC::StructFieldInit(index) => {
-        let v = stack.pop().unwrap();
-        let s = to_struct(stack.last().unwrap())?;
-        s.borrow_mut().fields[*index] = v;
-      }
-      BC::PushStructField(name) => {
-        let s = stack.pop().unwrap();
-        let s = to_struct(&s)?;
-        let index = struct_field_index(&s.borrow().def, name)?;
-        let v = s.borrow().fields[index].clone();
-        stack.push(v);
-      }
-      BC::SetStructField(name) => {
-        let v = stack.pop().unwrap();
-        let s = stack.pop().unwrap();
-        let s = to_struct(&s)?;
-        let index = struct_field_index(&s.borrow().def, name)?;
-        s.borrow_mut().fields[index] = v;
-      }
-      BC::SetVar(var_slot) => {
-        let v = stack.pop().unwrap();
-        stack[var_base + *var_slot] = v;
-      }
-      BC::CallReturn(name) => {
-        return Err(format!("CallReturn not yet implemented."));
-      }
-      BC::CallVoid(name) => {
-        return Err(format!("CallVoid not yet implemented."));
-      }
-      BC::JumpIfFalse(location) => {
-        if !to_b(stack.pop().unwrap())? {
-          program_counter = *location;
+      println!("stack: {:?}", stack);
+      println!("PC: {}, instruction: {:?}", c.program_counter, &function.instructions[c.program_counter]);    
+      match &function.instructions[c.program_counter] {
+        BC::Push(value) => {
+          stack.push(value.clone());
+        }
+        BC::Pop => {
+          stack.pop();
+        }
+        BC::PushVar(var_slot) => {
+          let v = stack[c.var_base + *var_slot].clone();
+          stack.push(v);
+        }
+        BC::NewArray(elements) => {
+          let mut a = vec!(Value::Unit ; *elements);
+          for i in (0..*elements).rev() {
+            a[i] = stack.pop().unwrap();
+          }
+          let array = Rc::new(RefCell::new(a));
+          stack.push(Value::Array(array));
+        }
+        BC::ArrayIndex => {
+          let float_index = to_f(stack.pop().unwrap())?;
+          let a = to_array(stack.pop().unwrap())?;
+          let a = a.borrow();
+          let i = array_index(&a, float_index)?;
+          stack.push(a[i].clone());
+        }
+        BC::SetArrayIndex => {
+          let v = stack.pop().unwrap();
+          let f_index = to_f(stack.pop().unwrap())?;
+          let a = to_array(stack.pop().unwrap())?;
+          let mut array = a.borrow_mut();
+          let i = array_index(&array, f_index)?;
+          array[i] = v;
+        }
+        BC::NewStruct(def) => {
+          let fields = vec![Value::Unit ; def.fields.len()];
+          let s = Rc::new(RefCell::new(Struct { def: def.clone(), fields }));
+          stack.push(Value::Struct(s));
+        }
+        BC::StructFieldInit(index) => {
+          let v = stack.pop().unwrap();
+          let s = to_struct(stack.last().unwrap())?;
+          s.borrow_mut().fields[*index] = v;
+        }
+        BC::PushStructField(name) => {
+          let s = stack.pop().unwrap();
+          let s = to_struct(&s)?;
+          let index = struct_field_index(&s.borrow().def, name)?;
+          let v = s.borrow().fields[index].clone();
+          stack.push(v);
+        }
+        BC::SetStructField(name) => {
+          let v = stack.pop().unwrap();
+          let s = stack.pop().unwrap();
+          let s = to_struct(&s)?;
+          let index = struct_field_index(&s.borrow().def, name)?;
+          s.borrow_mut().fields[index] = v;
+        }
+        BC::SetVar(var_slot) => {
+          let v = stack.pop().unwrap();
+          stack[c.var_base + *var_slot] = v;
+        }
+        BC::CallFunction(name) => {
+          callstack.push(c);
+          c = Call {
+            function_name: name.clone(),
+            var_base: 0,
+            program_counter: 0,
+            started : false,
+          };
+          break;
+        }
+        BC::JumpIfFalse(location) => {
+          if !to_b(stack.pop().unwrap())? {
+            c.program_counter = *location;
+            continue;
+          }
+        }
+        BC::Jump(location) => {
+          c.program_counter = *location;
           continue;
         }
+        BC::BinaryOperator(operator) => {
+          let b = stack.pop().unwrap();
+          let a = stack.pop().unwrap();
+          let v = match operator.as_ref() {
+            "+" => Value::Float(to_f(a)? + to_f(b)?),
+            "-" => Value::Float(to_f(a)? - to_f(b)?),
+            "*" => Value::Float(to_f(a)? * to_f(b)?),
+            "/" => Value::Float(to_f(a)? / to_f(b)?),
+            ">" => Value::Bool(to_f(a)? > to_f(b)?),
+            "<" => Value::Bool(to_f(a)? < to_f(b)?),
+            "<=" => Value::Bool(to_f(a)? <= to_f(b)?),
+            ">=" => Value::Bool(to_f(a)? >= to_f(b)?),
+            "==" => Value::Bool(a == b),
+            "&&" => Value::Bool(to_b(a)? && to_b(b)?),
+            "||" => Value::Bool(to_b(a)? || to_b(b)?),
+            op => return Err(format!("unsupported binary operator {}", op)),
+          };
+          stack.push(v);
+        }
+        BC::UnaryOperator(operator) => {
+          let a = stack.pop().unwrap();
+          let v = match operator.as_ref() {
+            "-" => Value::Float(-to_f(a)?),
+            op => return Err(format!("unsupported unary operator {}", op)),
+          };
+          stack.push(v);
+        }
+        // TODO remove: i => return Err(format!("instruction '{:?}' not yet implemented.", i)),
       }
-      BC::Jump(location) => {
-        program_counter = *location;
-        continue;
-      }
-      BC::BinaryOperator(operator) => {
-        let b = stack.pop().unwrap();
-        let a = stack.pop().unwrap();
-        let v = match operator.as_ref() {
-          "+" => Value::Float(to_f(a)? + to_f(b)?),
-          "-" => Value::Float(to_f(a)? - to_f(b)?),
-          "*" => Value::Float(to_f(a)? * to_f(b)?),
-          "/" => Value::Float(to_f(a)? / to_f(b)?),
-          ">" => Value::Bool(to_f(a)? > to_f(b)?),
-          "<" => Value::Bool(to_f(a)? < to_f(b)?),
-          "<=" => Value::Bool(to_f(a)? <= to_f(b)?),
-          ">=" => Value::Bool(to_f(a)? >= to_f(b)?),
-          "==" => Value::Bool(a == b),
-          "&&" => Value::Bool(to_b(a)? && to_b(b)?),
-          "||" => Value::Bool(to_b(a)? || to_b(b)?),
-          op => return Err(format!("unsupported binary operator {}", op)),
-        };
-        stack.push(v);
-      }
-      BC::UnaryOperator(operator) => {
-        let a = stack.pop().unwrap();
-        let v = match operator.as_ref() {
-          "-" => Value::Float(-to_f(a)?),
-          op => return Err(format!("unsupported unary operator {}", op)),
-        };
-        stack.push(v);
-      }
-      i => return Err(format!("instruction '{:?}' not yet implemented.", i)),
+      c.program_counter += 1;
     }
-    program_counter += 1;
   }
-  return Ok(Value::Unit);
 }
 
 pub fn interpret(ast : &Expr) -> Result<Value, String> {
@@ -678,6 +713,5 @@ pub fn interpret(ast : &Expr) -> Result<Value, String> {
     println!("Max local variables: {}", f.locals);
     println!();
   }
-  interpret_bytecode(&program, entry_function_name)?;
-  Err(format!("interpreter doesn't work"))
+  interpret_bytecode(&program, entry_function_name)
 }

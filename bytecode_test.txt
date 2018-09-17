@@ -18,15 +18,15 @@ while a < 30 {
   a = a + 1;
 }
 
-if true {
+if false {
   b[0]
 }
 else {
   b[1]
 }
 
-mult(100, 5);
+mult(mult(100, 5), 2);
 
-//t.b[0] = mult(100, 5);
+t.b[0] = mult(100, 5);
 
-//t
+t
