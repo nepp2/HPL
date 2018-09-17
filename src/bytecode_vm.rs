@@ -54,28 +54,6 @@ struct BytecodeProgram {
   functions : HashMap<RefStr, BytecodeFunction>,
 }
 
-// /// Insert the value in the last hashmap in the vector, which represents the local scope.
-// fn scoped_insert<T>(stack : &mut Vec<HashMap<RefStr, T>>, s : RefStr, t : T) {
-//   let i = stack.len()-1;
-//   stack[i].insert(s, t);
-// }
-
-// /// Retrieve the value closest to the end of the vector of hashmaps (the most local scope)
-// /// in the environment
-// fn scoped_get<'l, T>(stack : &'l mut Vec<HashMap<RefStr, T>>, s : &str) -> Option<&'l mut T> {
-//   for map in stack.iter_mut().rev() {
-//     if map.contains_key(s) {
-//       return Some(map.get_mut(s).unwrap());
-//     }
-//   }
-//   return None;
-// }
-
-// struct FunctionDef {
-//   args : Vec<RefStr>,
-//   expr : Rc<Expr>,
-// }
-
 struct VarScope {
   base_index : usize,
   vars : Vec<RefStr>,
