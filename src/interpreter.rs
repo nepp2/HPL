@@ -1,66 +1,12 @@
 
 use parser;
 use lexer;
-use lexer::{RefStr, AsStr};
+use value::{Value, Struct, Array, StructVal, StructDef, RefStr};
 use parser::Expr;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::fmt;
-
-#[derive(Debug, PartialEq)]
-pub struct StructDef {
-  pub name : RefStr,
-  pub fields : Vec<RefStr>,
-}
-
-#[derive(Debug, PartialEq)]
-pub struct Struct {
-  pub def : Rc<StructDef>,
-  pub fields : Vec<Value>,
-}
-
-pub type StructVal = Rc<RefCell<Struct>>;
-
-pub type Array = Rc<RefCell<Vec<Value>>>;
-
-/// Represents a value in the interpreted language.
-/// Currently uses 16 bytes. I think this is because there are 8 byte
-/// RC pointers in the union, and the discriminating value is being
-/// padded to word size (also 8 bytes). Could probably be optimised
-/// down to 8 bytes total, with some ugly pointer hacks.
-#[derive(Clone, PartialEq)]
-pub enum Value {
-  Float(f32),
-  Array(Array),
-  Bool(bool),
-  Struct(StructVal),
-  Unit,
-}
-
-
-impl fmt::Debug for Value {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    match self {
-      Value::Float(x) => write!(f, "{}", x),
-      Value::Array(a) => write!(f, "{:?}", &*a.borrow()),
-      Value::Bool(b) => write!(f, "{}", b),
-      Value::Struct(s) => {
-        let Struct { def, fields } = &*s.borrow();
-        let name = &def.name;
-        write!(f, "{} {{ ", name)?;
-        let end = fields.len() - 1;
-        for (i, (n, v)) in def.fields.iter().zip(fields.iter()).enumerate() {
-          let sep = if i == end {""} else {","};
-          write!(f, "{}: {:?}{} ", n, v, sep)?;
-        }
-        write!(f, "}}")
-      }
-      Value::Unit => write!(f, "Unit"),
-    }
-  }
-}
 
 /// Insert the value in the last hashmap in the vector, which represents the local scope.
 fn scoped_insert<T>(stack : &mut Vec<HashMap<RefStr, T>>, s : RefStr, t : T) {
@@ -205,7 +151,7 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
         _ => return Err(format!("expected symbol")),
       };
       let params = &exprs[1..];
-      match (symbol.as_str(), params) {
+      match (symbol.as_ref(), params) {
         ("+", [a, b]) => f_to_val(to_f(a, env)? + to_f(b, env)?),
         ("-", [a, b]) => f_to_val(to_f(a, env)? - to_f(b, env)?),
         ("*", [a, b]) => f_to_val(to_f(a, env)? * to_f(b, env)?),
@@ -253,7 +199,7 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
       }
     }
     ("=", [Expr::Expr { symbol, args }, value_expr]) => {
-      match (symbol.as_str(), args.as_slice()) {
+      match (symbol.as_ref(), args.as_slice()) {
         ("index", [array_expr, index_expr]) => {
           let v = interpret_with_env(&value_expr, env)?;
           let array_rc = to_array(array_expr, env)?;
@@ -312,7 +258,7 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
       }
       let name = symbol_to_refstr(&exprs[0])?;
       let def =
-        env.structs.get(name.as_str())
+        env.structs.get(name.as_ref())
         .ok_or_else(|| format!("struct {} does not exist", name))?.clone();
       let mut fields = vec![Value::Unit ; def.fields.len()];
       {
@@ -322,7 +268,7 @@ fn interpret_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
         for i in (1..exprs.len()).step_by(2) {
           let field_name = symbol_to_refstr(&exprs[i])?;
           let field_value = interpret_with_env(&exprs[i+1], env)?;
-          let index = field_index_map.remove(field_name.as_str())
+          let index = field_index_map.remove(field_name.as_ref())
             .ok_or_else(|| format!("field {} does not exist", name))?;
           fields[index] = field_value;
         }
@@ -403,7 +349,7 @@ fn interpret_with_env(ast : &Expr, env : &mut Environment) -> Result<Value, Stri
       interpret_instr(symbol, args, env)
     }
     Expr::Symbol(s) => {
-      if s.as_str() == "break" {
+      if s.as_ref() == "break" {
         if env.loop_depth > 0 {
           env.break_state = BreakState::Breaking;
           Ok(Value::Unit)

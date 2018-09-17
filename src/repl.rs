@@ -5,7 +5,7 @@ use rustyline::Editor;
 use lexer;
 use parser;
 use interpreter;
-use interpreter::Value;
+use value::Value;
 
 fn interpret(text : &str) -> Result<Value, String> {
   match lexer::lex(text) {

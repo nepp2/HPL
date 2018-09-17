@@ -1,6 +1,6 @@
 
-let a = 0;
-let b = [0, 6];
+let a = 0
+let b = [0, 6]
 
 fun mult(a, b) {
   a * b
@@ -14,12 +14,12 @@ struct test {
   a, b
 }
 
-let t = test { a: 4, b: b };
+let t = test { a: 4, b: b }
 
 while a < 30 {
-  let b = 40;
-  10;
-  a = a + 1;
+  let b = 40
+  10
+  a = a + 1
 }
 
 if false {
@@ -29,8 +29,8 @@ else {
   b[1]
 }
 
-let boop = mult(mult(100, 5), 2);
+let boop = mult(mult(100, 5), 2)
 
-t.b[0] = subtract(boop, 5);
+t.b[0] = subtract(boop, 5)
 
 t

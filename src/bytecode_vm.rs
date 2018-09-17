@@ -1,7 +1,6 @@
 
 use parser::Expr;
-use lexer::{RefStr, AsStr, SymbolCache};
-use interpreter::{Value, Struct, Array, StructVal, StructDef};
+use value::{Value, Struct, Array, StructVal, StructDef, RefStr, SymbolCache};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -313,7 +312,7 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_a
     }
     ("=", [Expr::Expr { symbol, args }, value_expr]) => {
       does_not_push(instr, push_answer)?;
-      match (symbol.as_str(), args.as_slice()) {
+      match (symbol.as_ref(), args.as_slice()) {
         ("index", [array_expr, index_expr]) => {
           compile(array_expr, env, true)?;
           compile(index_expr, env, true)?;
@@ -376,7 +375,7 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_a
       }
       let name = symbol_to_refstr(&exprs[0])?;
       let def =
-        env.structs.get(name.as_str())
+        env.structs.get(name.as_ref())
         .ok_or_else(|| format!("struct {} does not exist", name))?.clone();
       env.emit(BC::NewStruct(def.clone()), push_answer);
       {
@@ -386,7 +385,7 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_a
         for i in (1..exprs.len()).step_by(2) {
           let field_name = symbol_to_refstr(&exprs[i])?;
           compile(&exprs[i+1], env, push_answer)?;
-          let index = field_index_map.remove(field_name.as_str())
+          let index = field_index_map.remove(field_name.as_ref())
             .ok_or_else(|| format!("field {} does not exist", name))?;
           env.emit(BC::StructFieldInit(index), push_answer);
         }
@@ -463,9 +462,9 @@ fn compile(ast : &Expr, env : &mut Environment, push_answer : bool) -> Result<()
       compile_instr(symbol, args, env, push_answer)?;
     }
     Expr::Symbol(s) => {
-      if s.as_str() == "break" {
+      if s.as_ref() == "break" {
         if let Some(l) = env.loop_break_labels.last().map(|s| s.clone()) {
-          env.emit_jump(l.as_str());
+          env.emit_jump(l.as_ref());
         }
         else {
           return Err(format!("can't break outside a loop"));

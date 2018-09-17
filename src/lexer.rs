@@ -1,6 +1,6 @@
 
 use std::collections::HashSet;
-use std::rc::Rc;
+use value::{RefStr, SymbolCache};
 
 lazy_static! {
   static ref KEYWORDS : HashSet<&'static str> =
@@ -20,19 +20,6 @@ pub struct TextLocation {
   length : u32,
 }
 
-/// An immutable, reference counted string
-pub type RefStr = Rc<str>;
-
-pub trait AsStr {
-  fn as_str(&self) -> &str;
-}
-
-impl AsStr for RefStr {
-  fn as_str(&self) -> &str {
-    self
-  }
-}
-
 #[derive(Debug)]
 pub struct Token {
   pub string : RefStr,
@@ -44,27 +31,6 @@ pub struct Token {
 pub struct LexError {
   message : String,
   loc : TextLocation,
-}
-
-pub struct SymbolCache {
-  symbols : HashSet<RefStr>
-}
-
-impl SymbolCache {
-  pub fn new() -> SymbolCache {
-    SymbolCache{ symbols: HashSet::new() }
-  }
-
-  pub fn symbol<T : AsRef<str> + Into<RefStr>>(&mut self, s : T) -> RefStr {
-    if self.symbols.contains(s.as_ref()) {
-      self.symbols.get(s.as_ref()).unwrap().clone()
-    }
-    else {
-      let s : RefStr = s.into();
-      self.symbols.insert(s.clone());
-      s
-    }
-  }
 }
 
 struct CStream {

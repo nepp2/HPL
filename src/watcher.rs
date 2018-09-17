@@ -7,8 +7,7 @@ use std::path::PathBuf;
 
 use parser;
 use lexer;
-use interpreter;
-use interpreter::Value;
+use value::{Value};
 use bytecode_vm;
 
 fn stringify_error<A, B>(r : Result<A, B>, s : &str) -> Result<A, String> {
