@@ -9,6 +9,7 @@ use parser;
 use lexer;
 use value::{Value};
 use bytecode_vm;
+use typecheck;
 
 fn stringify_error<A, B>(r : Result<A, B>, s : &str) -> Result<A, String> {
   match r {
@@ -20,7 +21,9 @@ fn stringify_error<A, B>(r : Result<A, B>, s : &str) -> Result<A, String> {
 fn interpret(code: &str) -> Result<Value, String> {
   let tokens = stringify_error(lexer::lex(&code), "Lexer Error")?;
   let ast = parser::parse(tokens)?;
-  bytecode_vm::interpret(&ast)
+  let value = bytecode_vm::interpret(&ast);
+  println!("Type check result: {:?}", typecheck::typecheck(&ast));
+  value
 }
 
 fn load_and_run(path : &PathBuf){

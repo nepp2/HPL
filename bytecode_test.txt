@@ -1,11 +1,13 @@
 
 let a = 0
+
 let b = [0, 6]
 
 fun mult(a, b) {
   a * b
 }
 
+/*
 fun subtract(a, b) {
   a - b
 }
@@ -32,5 +34,6 @@ else {
 let boop = mult(mult(100, 5), 2)
 
 t.b[0] = subtract(boop, 5)
+*/
 
-t
+mult(100, a)

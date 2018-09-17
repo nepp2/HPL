@@ -164,9 +164,10 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
         "-" => 4,
         "*" => 5,
         "/" => 5,
-        "(" => 6,
-        "[" => 6,
-        "." => 7,
+        "!" => 6,
+        "(" => 7,
+        "[" => 7,
+        "." => 8,
         _ => return Err(format!("Unexpected operator '{}'", s)),
       };
     Ok(p)

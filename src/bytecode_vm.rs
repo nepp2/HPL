@@ -1,6 +1,8 @@
 
 use parser::Expr;
 use value::{Value, Struct, Array, StructVal, StructDef, RefStr, SymbolCache};
+use typecheck::typecheck;
+use utils::{symbol_unwrap, symbol_to_refstr};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -31,7 +33,7 @@ use bytecode_vm::BytecodeInstruction as BC;
 lazy_static! {
   static ref BYTECODE_OPERATORS : HashSet<&'static str> =
     vec!["+", "-", "*", "/", ">", "<", "<=", ">=",
-    "==", "&&", "||", "-"].into_iter().collect();
+    "==", "&&", "||", "-", "!"].into_iter().collect();
 }
 
 type FunctionBytecode = Vec<BytecodeInstruction>;
@@ -232,18 +234,6 @@ fn compile_function_call(function_name: RefStr, args: &[Expr], env : &mut Enviro
 
 fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_answer : bool) -> Result<(), String> {
 
-  fn symbol_unwrap(e : &Expr) -> Result<&RefStr, String> {
-    if let Expr::Symbol(s) = e {
-      Ok(s)
-    }
-    else {
-      Err(format!("expected a symbol, found {:?}", e))
-    }
-  }
-  fn symbol_to_refstr(e : &Expr) -> Result<RefStr, String> {
-    symbol_unwrap(e).map(|s| s.clone())
-  }
-
   fn does_not_push(instr : &str, push_answer : bool) -> Result<(), String> {
     if push_answer {
       Err(format!("instruction '{}' is void, where a result is expected", instr))
@@ -421,12 +411,7 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_a
       let function_body = &exprs[2];
       let mut params = vec![];
       for e in args_exprs {
-        if let Expr::Symbol(s) = e {
-         params.push(s.clone());
-        }
-        else {
-          return Err(format!("expected a symbol"));
-        }
+        params.push(symbol_unwrap(e)?.clone());
       }
       let mut new_env = Environment::new(name.clone(), params, &mut env.functions, &mut env.structs, &mut env.symbol_cache);
       compile(function_body, &mut new_env, true)?;
@@ -684,6 +669,7 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : usize) -> Res
           let a = stack.pop().unwrap();
           let v = match operator.as_ref() {
             "-" => Value::Float(-to_f(a)?),
+            "!" => Value::Bool(!to_b(a)?),
             op => return Err(format!("unsupported unary operator {}", op)),
           };
           stack.push(v);
