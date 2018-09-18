@@ -12,7 +12,9 @@ extern crate notify;
 #[macro_use]
 extern crate lazy_static;
 
+#[macro_use]
 mod error;
+
 mod lexer;
 mod parser;
 mod value;

@@ -1,13 +1,17 @@
 
 #[macro_export]
 macro_rules! error(
-  ( $fmt:expr, $($args:tt)* ) => (
+  ( $($args:tt)* ) => (
     Error {
-      message: format!($fmt, $($args)*),
+      message: format!($($args)*),
       location: TextLocation { line: 0, start: 0, length: 0 },
     }
-    //vec!( $($args)* )
   )
+);
+
+#[macro_export]
+macro_rules! error_result(
+  ( $($args:tt)* ) => ( Err(error!($($args)*)) )
 );
 
 #[derive(Debug)]
@@ -24,6 +28,6 @@ pub struct Error {
 }
 
 fn error(){
-  let e = error!("blah blah {} {}", 4, 5);
+  let e = error!("blah blah {} {}", 3, 6);
   let a = error!("blah blah {} {}", 4, 5);
 }

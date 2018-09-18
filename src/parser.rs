@@ -1,6 +1,7 @@
 use lexer;
 use lexer::{Token, TokenType};
 use value::{RefStr, SymbolCache};
+use error::{Error, TextLocation};
 use std::collections::HashSet;
 use std::f32;
 use std::str::FromStr;
@@ -63,26 +64,26 @@ impl TokenStream {
     self.pos < self.tokens.len()
   }
 
-  fn peek(&self) -> Result<&Token, String> {
+  fn peek(&self) -> Result<&Token, Error> {
     if self.has_tokens() {
       Ok(&self.tokens[self.pos])
     }
     else {
-      Err("Expected token. Found nothing.".to_string())
+      error_result!("Expected token. Found nothing.")
     }
   }
 
-  fn peek_ahead(&self, offset : usize) -> Result<&Token, String> {
+  fn peek_ahead(&self, offset : usize) -> Result<&Token, Error> {
     let i = self.pos + offset;
     if i < self.tokens.len() {
       Ok(&self.tokens[i])
     }
     else {
-      Err(format!("Expected token {} steps ahead. Found nothing.", offset))
+      error_result!("Expected token {} steps ahead. Found nothing.", offset)
     }
   }
 
-  fn pop_type(&mut self, token_type : TokenType) -> Result<&Token, String> {
+  fn pop_type(&mut self, token_type : TokenType) -> Result<&Token, Error> {
     self.expect_type(token_type)?;
     Ok(&self.tokens[self.pos-1])
   }
@@ -102,32 +103,32 @@ impl TokenStream {
     accept
   }
 
-  fn expect_string(&mut self, string : &str) -> Result<(), String> {
+  fn expect_string(&mut self, string : &str) -> Result<(), Error> {
     {
       let t = self.peek();
       if let Ok(t) = t {
         if t.string.as_ref() != string {
-          return Err(format!("Expected token '{}', found token '{}'", string, t.string));
+          return error_result!("Expected token '{}', found token '{}'", string, t.string);
         }
       }
       else {
-        return Err(format!("Expected token '{}', found nothing.", string));
+        return error_result!("Expected token '{}', found nothing.", string);
       }
     }
     self.skip();
     Ok(())
   }
 
-  fn expect_type(&mut self, token_type : TokenType) -> Result<(), String> {
+  fn expect_type(&mut self, token_type : TokenType) -> Result<(), Error> {
     {
       let t = self.peek();
       if let Ok(t) = t {
         if t.token_type != token_type {
-          return Err(format!("Expected token of type '{:?}', found token '{:?}'", token_type, t.token_type));
+          return error_result!("Expected token of type '{:?}', found token '{:?}'", token_type, t.token_type);
         }
       }
       else {
-        return Err(format!("Expected token of type '{:?}', found nothing.", token_type));
+        return error_result!("Expected token of type '{:?}', found nothing.", token_type);
       }
     }
     self.skip();
@@ -147,9 +148,9 @@ lazy_static! {
     vec!["=", ".", "+="].into_iter().collect();
 }
 
-fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
+fn parse_expression(ts : &mut TokenStream) -> Result<Expr, Error> {
   
-  fn operator_precedence(s : &str) -> Result<i32, String> {
+  fn operator_precedence(s : &str) -> Result<i32, Error> {
     let p =
       match s {
         "=" => 1,
@@ -169,13 +170,13 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
         "(" => 7,
         "[" => 7,
         "." => 8,
-        _ => return Err(format!("Unexpected operator '{}'", s)),
+        _ => return error_result!("Unexpected operator '{}'", s),
       };
     Ok(p)
   }
 
   /// This expression parser is vaguely based on some blogs about pratt parsing.
-  fn pratt_parse(ts : &mut TokenStream, precedence : i32) -> Result<Expr, String> {
+  fn pratt_parse(ts : &mut TokenStream, precedence : i32) -> Result<Expr, Error> {
     // TODO: this is currently implemented with an enum in a dumb way to handle limitation of Rust's
     // lifetime inference. Once these limitations are fixed (non-lexical lifetimes) I can fix this.
     enum Action { FunctionCall, IndexExpression, Infix(i32) }
@@ -225,7 +226,7 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
     Ok(expr)
   }
 
-  fn parse_index_expression(ts : &mut TokenStream, indexee_expr : Expr) -> Result<Expr, String> {
+  fn parse_index_expression(ts : &mut TokenStream, indexee_expr : Expr) -> Result<Expr, Error> {
     ts.expect_string("[")?;
     let indexing_expr = parse_expression(ts)?;
     ts.expect_string("]")?;
@@ -233,7 +234,7 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
     Ok(Expr::Expr { symbol: ts.symbol(INDEX), args } )
   }
 
-  fn parse_function_call(ts : &mut TokenStream, function_expr : Expr) -> Result<Expr, String> {
+  fn parse_function_call(ts : &mut TokenStream, function_expr : Expr) -> Result<Expr, Error> {
     ts.expect_string("(")?;
     let mut exprs = vec!(function_expr);
     loop {
@@ -246,7 +247,7 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
     Ok(Expr::Expr { symbol: ts.symbol(CALL), args: exprs } )
   }
 
-  fn parse_prefix(ts : &mut TokenStream) -> Result<Expr, String> {
+  fn parse_prefix(ts : &mut TokenStream) -> Result<Expr, Error> {
     // TODO: fix this with non-lexical lifetimes at some point
     let prefix_operator = {
       let t = ts.peek()?;
@@ -265,7 +266,7 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
     }
   }
 
-  fn parse_infix(ts : &mut TokenStream, left_expr : Expr, precedence : i32) -> Result<Expr, String> {
+  fn parse_infix(ts : &mut TokenStream, left_expr : Expr, precedence : i32) -> Result<Expr, Error> {
     let operator = ts.pop_type(TokenType::Syntax)?.string.clone();
     let right_expr = pratt_parse(ts, precedence)?;
     if SPECIAL_OPERATORS.contains(operator.as_ref()) {
@@ -281,17 +282,17 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, String> {
   pratt_parse(ts, 0)
 }
 
-fn parse_float(ts : &mut TokenStream) -> Result<f32, String> {
+fn parse_float(ts : &mut TokenStream) -> Result<f32, Error> {
   let t = ts.pop_type(TokenType::FloatLiteral)?;
   if let Ok(f) = f32::from_str(&t.string) {
     Ok(f)
   }
   else {
-    Err(format!("Failed to parse float from '{}'", t.string))
+    error_result!("Failed to parse float from '{}'", t.string)
   }
 }
 
-fn parse_syntax(ts : &mut TokenStream) -> Result<Expr, String> {
+fn parse_syntax(ts : &mut TokenStream) -> Result<Expr, Error> {
   match ts.peek()?.string.as_ref() {
     "[" => {
       ts.expect_string("[")?;
@@ -317,11 +318,11 @@ fn parse_syntax(ts : &mut TokenStream) -> Result<Expr, String> {
       ts.expect_string(")")?;
       Ok(a)
     }
-    _ => Err(format!("Unexpected syntax '{}' at position '{:?}'", ts.peek()?.string, ts.peek()?.loc)),
+    _ => error_result!("Unexpected syntax '{}' at position '{:?}'", ts.peek()?.string, ts.peek()?.loc),
   }
 }
 
-fn parse_fun(ts : &mut TokenStream) -> Result<Expr, String> {
+fn parse_fun(ts : &mut TokenStream) -> Result<Expr, Error> {
   ts.expect_string("fun")?;
   let fun_name = ts.pop_type(TokenType::Symbol)?.string.clone();
   let mut arguments = vec!();
@@ -361,7 +362,7 @@ fn parse_fun(ts : &mut TokenStream) -> Result<Expr, String> {
   Ok(fun_expr)
 }
 
-fn parse_let(ts : &mut TokenStream) -> Result<Expr, String> {
+fn parse_let(ts : &mut TokenStream) -> Result<Expr, Error> {
   ts.expect_string("let")?;
   let var_name = ts.pop_type(TokenType::Symbol)?.string.clone();
   ts.expect_string("=")?;
@@ -370,7 +371,7 @@ fn parse_let(ts : &mut TokenStream) -> Result<Expr, String> {
   Ok(Expr::Expr{ symbol: ts.symbol(LET), args: vec!(var_symbol, initialiser)})
 }
 
-fn parse_if(ts : &mut TokenStream) -> Result<Expr, String> {
+fn parse_if(ts : &mut TokenStream) -> Result<Expr, Error> {
   ts.expect_string("if")?;
   let conditional = parse_expression(ts)?;
   ts.expect_string("{")?;
@@ -386,7 +387,7 @@ fn parse_if(ts : &mut TokenStream) -> Result<Expr, String> {
   Ok(Expr::Expr{ symbol: ts.symbol(IF), args })
 }
 
-fn parse_while(ts : &mut TokenStream) -> Result<Expr, String> {
+fn parse_while(ts : &mut TokenStream) -> Result<Expr, Error> {
   ts.expect_string("while")?;
   let conditional = parse_expression(ts)?;
   ts.expect_string("{")?;
@@ -396,7 +397,7 @@ fn parse_while(ts : &mut TokenStream) -> Result<Expr, String> {
   Ok(Expr::Expr{ symbol: ts.symbol(WHILE), args })
 }
 
-fn parse_struct_definition(ts : &mut TokenStream) -> Result<Expr, String> {
+fn parse_struct_definition(ts : &mut TokenStream) -> Result<Expr, Error> {
   ts.expect_string("struct")?;
   let struct_name = ts.pop_type(TokenType::Symbol)?.string.clone();
   ts.expect_string("{")?;
@@ -424,7 +425,7 @@ fn parse_struct_definition(ts : &mut TokenStream) -> Result<Expr, String> {
   Ok(Expr::Expr { symbol: ts.symbol(STRUCT_DEFINE), args })
 }
 
-fn parse_struct_instantiate(ts : &mut TokenStream) -> Result<Expr, String> {
+fn parse_struct_instantiate(ts : &mut TokenStream) -> Result<Expr, Error> {
   let struct_name = ts.pop_type(TokenType::Symbol)?.string.clone();
   ts.expect_string("{")?;
   let mut args = vec!(Expr::Symbol(struct_name));
@@ -449,7 +450,7 @@ fn parse_struct_instantiate(ts : &mut TokenStream) -> Result<Expr, String> {
   Ok(Expr::Expr { symbol: ts.symbol(STRUCT_INSTANTIATE), args })
 }
 
-fn parse_keyword_term(ts : &mut TokenStream) -> Result<Expr, String> {
+fn parse_keyword_term(ts : &mut TokenStream) -> Result<Expr, Error> {
   match ts.peek()?.string.as_ref() {
     "let" => parse_let(ts),
     "fun" => parse_fun(ts),
@@ -468,16 +469,16 @@ fn parse_keyword_term(ts : &mut TokenStream) -> Result<Expr, String> {
       ts.expect_string("false")?;
       Ok(Expr::LiteralBool(false))
     }
-    _ => Err(format!("Encountered unexpected keyword '{}'. This keyword is not supported here.", ts.peek()?.string)),
+    _ => error_result!("Encountered unexpected keyword '{}'. This keyword is not supported here.", ts.peek()?.string),
   }
 }
 
-fn parse_symbol_reference(ts : &mut TokenStream) -> Result<Expr, String> {
+fn parse_symbol_reference(ts : &mut TokenStream) -> Result<Expr, Error> {
   let symbol = Expr::Symbol(ts.pop_type(TokenType::Symbol)?.string.clone());
   return Ok(symbol);
 }
 
-fn parse_symbol_term(ts : &mut TokenStream) -> Result<Expr, String> {
+fn parse_symbol_term(ts : &mut TokenStream) -> Result<Expr, Error> {
   let is_struct =
     if let Ok(t) = ts.peek_ahead(1) { t.string.as_ref() == "{" } else { false };
   if is_struct {
@@ -488,7 +489,7 @@ fn parse_symbol_term(ts : &mut TokenStream) -> Result<Expr, String> {
   }
 }
 
-fn parse_expression_term(ts : &mut TokenStream) -> Result<Expr, String> {
+fn parse_expression_term(ts : &mut TokenStream) -> Result<Expr, Error> {
   match ts.peek()?.token_type {
     TokenType::Symbol => parse_symbol_term(ts),
     TokenType::Keyword => parse_keyword_term(ts),
@@ -497,7 +498,7 @@ fn parse_expression_term(ts : &mut TokenStream) -> Result<Expr, String> {
   }
 }
 
-fn parse_block(ts : &mut TokenStream) -> Result<Expr, String> {
+fn parse_block(ts : &mut TokenStream) -> Result<Expr, Error> {
   let mut exprs = vec!();
   'outer: loop {
     exprs.push(parse_expression(ts)?);
@@ -516,12 +517,12 @@ fn parse_block(ts : &mut TokenStream) -> Result<Expr, String> {
   Ok(Expr::Expr { symbol: ts.symbol(BLOCK), args: exprs })
 }
 
-pub fn parse(tokens : Vec<Token>) -> Result<Expr, String> {
+pub fn parse(tokens : Vec<Token>) -> Result<Expr, Error> {
   let mut ts = TokenStream::new(tokens);
   let e = parse_block(&mut ts)?;
   if ts.has_tokens() {
     let t = ts.peek()?;
-    return Err(format!("Unexpected token '{}' of type '{:?}'", t.string, t.token_type));
+    return error_result!("Unexpected token '{}' of type '{:?}'", t.string, t.token_type);
   }
   return Ok(e);
 }

@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
 
+use error::Error;
 use parser;
 use lexer;
 use value::{Value};
@@ -18,8 +19,8 @@ fn stringify_error<A, B>(r : Result<A, B>, s : &str) -> Result<A, String> {
   }
 }
 
-fn interpret(code: &str) -> Result<Value, String> {
-  let tokens = stringify_error(lexer::lex(&code), "Lexer Error")?;
+fn interpret(code: &str) -> Result<Value, Error> {
+  let tokens = lexer::lex(&code).map_err(|es| es[0])?;
   let ast = parser::parse(tokens)?;
   let value = bytecode_vm::interpret(&ast);
   println!("Type check result: {:?}", typecheck::typecheck(&ast));
