@@ -12,15 +12,8 @@ use value::{Value};
 use bytecode_vm;
 use typecheck;
 
-fn stringify_error<A, B>(r : Result<A, B>, s : &str) -> Result<A, String> {
-  match r {
-    Ok(a) => Ok(a),
-    Err(_) => Err(s.to_string()),
-  }
-}
-
 fn interpret(code: &str) -> Result<Value, Error> {
-  let tokens = lexer::lex(&code).map_err(|es| es[0])?;
+  let tokens = lexer::lex(&code).map_err(|mut es| es.remove(0))?;
   let ast = parser::parse(tokens)?;
   let value = bytecode_vm::interpret(&ast);
   println!("Type check result: {:?}", typecheck::typecheck(&ast));
@@ -34,7 +27,7 @@ fn load_and_run(path : &PathBuf){
   let result = interpret(&code);
   match result {
     Ok(f) => println!("Output: '{:?}'", f),
-    Err(s) => println!("Error: {}", s),
+    Err(s) => println!("Error: {:?}", s),
   }
 }
 

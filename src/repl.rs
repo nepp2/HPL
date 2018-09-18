@@ -2,20 +2,21 @@
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 
+use error::{Error, TextLocation};
 use lexer;
 use parser;
-use interpreter;
+use bytecode_vm;
 use value::Value;
 
-fn interpret(text : &str) -> Result<Value, String> {
+fn interpret(text : &str) -> Result<Value, Error> {
   match lexer::lex(text) {
     Ok(tokens) => {
       let ast = parser::parse(tokens)?;
-      let value = interpreter::interpret(&ast)?;
+      let value = bytecode_vm::interpret(&ast)?;
       Ok(value)
     }
     Err(errors) => {
-      Err(format!("{:?}", errors))
+      error_result!("{:?}", errors)
     }
   }
 }
@@ -41,7 +42,7 @@ pub fn repl() {
               println!("{:?}", v);
             }
             Err(s) => {
-              println!("{}", s);
+              println!("{:?}", s);
             }
           }
         }
