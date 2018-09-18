@@ -353,11 +353,13 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_a
         return Err(format!("A struct called {} has already been defined.", name));
       }
       // TODO: check for duplicates?
-      let struct_def =
-        exprs[1..].iter().map(symbol_to_refstr)
-        .collect::<Result<Vec<RefStr>, String>>()
-        .map(|fields| Rc::new(StructDef { name: name.clone(), fields}))?;
-      env.structs.insert(name, struct_def);
+      let field_exprs = &exprs[1..];
+      let mut fields = vec![];
+      for i in (0..(field_exprs.len()-1)).step_by(2) {
+        fields.push(symbol_to_refstr(&field_exprs[i])?);
+      }
+      let def = Rc::new(StructDef { name: name.clone(), fields });
+      env.structs.insert(name, def);
     }
     ("struct_instantiate", exprs) => {
       if exprs.len() < 1 || exprs.len() % 2 == 0 {
@@ -410,7 +412,8 @@ fn compile_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment, push_a
       let args_exprs = match &exprs[1] { Expr::Expr{ args, .. } => args, _ => { return Err(format!("expected an expression")); }};
       let function_body = &exprs[2];
       let mut params = vec![];
-      for e in args_exprs {
+      for i in (0..(args_exprs.len()-1)).step_by(2) {
+        let e = &args_exprs[i];
         params.push(symbol_unwrap(e)?.clone());
       }
       let mut new_env = Environment::new(name.clone(), params, &mut env.functions, &mut env.structs, &mut env.symbol_cache);

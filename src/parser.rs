@@ -32,6 +32,7 @@ static STRUCT_DEFINE : &str = "struct_define";
 static STRUCT_INSTANTIATE : &str = "struct_instantiate";
 static BREAK : &str = "break";
 static BLOCK : &str = "block";
+static NO_TYPE : &str = "[NO_TYPE]";
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum Expr {
@@ -323,18 +324,22 @@ fn parse_syntax(ts : &mut TokenStream) -> Result<Expr, String> {
 fn parse_fun(ts : &mut TokenStream) -> Result<Expr, String> {
   ts.expect_string("fun")?;
   let fun_name = ts.pop_type(TokenType::Symbol)?.string.clone();
-  let mut arg_names = vec!();
+  let mut arguments = vec!();
   ts.expect_string("(")?;
   loop {
     if ts.peek()?.token_type != TokenType::Symbol {
       break;
     }
     let arg_name = ts.pop_type(TokenType::Symbol)?.string.clone();
-    arg_names.push(Expr::Symbol(arg_name));
-    if ts.peek()?.string.as_ref() == "," {
-      ts.skip();
+    arguments.push(Expr::Symbol(arg_name));
+    if ts.accept_string(":") {
+      let type_name = ts.pop_type(TokenType::Symbol)?.string.clone();
+      arguments.push(Expr::Symbol(type_name));
     }
     else {
+      arguments.push(Expr::Symbol(ts.symbol(NO_TYPE)));
+    }
+    if !ts.accept_string(",") {
       break;
     }
   }
@@ -346,7 +351,7 @@ fn parse_fun(ts : &mut TokenStream) -> Result<Expr, String> {
   let args_expr =
     Expr::Expr {
       symbol: ts.symbol(ARGS),
-      args: arg_names,
+      args: arguments,
     };
   let fun_expr =
     Expr::Expr{
@@ -395,24 +400,28 @@ fn parse_struct_definition(ts : &mut TokenStream) -> Result<Expr, String> {
   ts.expect_string("struct")?;
   let struct_name = ts.pop_type(TokenType::Symbol)?.string.clone();
   ts.expect_string("{")?;
-  let mut field_names = vec!(Expr::Symbol(struct_name));
+  let mut args = vec!(Expr::Symbol(struct_name));
   'outer: loop {
     'inner: loop {
       if !ts.has_tokens() || ts.peek()?.string.as_ref() == "}" {
         break 'outer;
       }
-      if ts.peek()?.string.as_ref() == "," {
-        ts.skip();
-      }
-      else {
+      if !ts.accept_string(",") {
         break 'inner;
       }
     }
     let symbol = Expr::Symbol(ts.pop_type(TokenType::Symbol)?.string.clone());
-    field_names.push(symbol);
+    args.push(symbol);
+    if ts.accept_string(":") {
+      let type_name = ts.pop_type(TokenType::Symbol)?.string.clone();
+      args.push(Expr::Symbol(type_name));
+    }
+    else {
+      args.push(Expr::Symbol(ts.symbol(NO_TYPE)));
+    }
   }
   ts.expect_string("}")?;
-  Ok(Expr::Expr { symbol: ts.symbol(STRUCT_DEFINE), args: field_names })
+  Ok(Expr::Expr { symbol: ts.symbol(STRUCT_DEFINE), args })
 }
 
 fn parse_struct_instantiate(ts : &mut TokenStream) -> Result<Expr, String> {

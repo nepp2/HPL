@@ -1,7 +1,7 @@
 
 use parser::Expr;
 use value::RefStr;
-use utils::symbol_unwrap;
+use utils::{symbol_unwrap, symbol_to_refstr};
 use std::collections::HashMap;
 
 #[derive(Clone, PartialEq, Debug)]
@@ -14,18 +14,26 @@ struct FunctionSignature {
   args : Vec<Type>,
 }
 
+struct StructType {
+  name : RefStr,
+  fields : Vec<(RefStr, Type)>,
+}
+
+
 struct Environment<'l> {
   functions : &'l mut HashMap<RefStr, FunctionSignature>,
+  structs : &'l mut HashMap<RefStr, StructType>,
   locals : Vec<Vec<(RefStr, Type)>>,
 }
 
 impl <'l> Environment <'l> {
   fn new(
     functions : &'l mut HashMap<RefStr, FunctionSignature>,
+    structs : &'l mut HashMap<RefStr, StructType>,
     arguments : Vec<(RefStr, Type)>) -> Environment<'l>
   {
     let locals = vec![arguments];
-    Environment { functions, locals }
+    Environment { functions, structs, locals }
   }
 
   fn find_var_type(&self, v : &str) -> Result<Type, String> {
@@ -62,6 +70,16 @@ fn struct_name(t : Type) -> Result<RefStr, String> {
   match t {
     Type::Struct(s) => Ok(s),
     _ => Err(format!("Expected a struct but found type {:?}.", t)),
+  }
+}
+
+fn string_to_type(s : &str) -> Result<Type, String> {
+  match s {
+    "float" => Ok(Type::Float),
+    "unit" => Ok(Type::Unit),
+    "bool" => Ok(Type::Bool),
+    "array" => Ok(Type::Array),
+    _ => Err(format!("{:?} is not a valid type", s)),
   }
 }
 
@@ -158,31 +176,21 @@ fn typecheck_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
         _ => Err(format!("can't assign to {:?}", (symbol, args))),
       }
     }
-    /*
     ("if", exprs) => {
       let arg_count = exprs.len();
       if arg_count < 2 || arg_count > 3 {
         return Err(format!("malformed if expression"));
       }
-      let false_label = env.label("if_false_label");
+      let condition_type = typecheck_env(&exprs[0], env)?;
+      assert_expected_found(&Type::Bool, &condition_type)?;
+      let then_type = typecheck_env(&exprs[1], env)?;
       if arg_count == 3 {
-        // has else branch
-        let else_end_label = env.label("else_end_label");
-        compile(&exprs[0], env, true)?;
-        env.emit_jump_if_false(&false_label);
-        compile(&exprs[1], env, push_answer)?;
-        env.emit_jump(&else_end_label);
-        env.emit_label(false_label);
-        compile(&exprs[2], env, push_answer)?;
-        env.emit_label(else_end_label);
+        let else_type = typecheck_env(&exprs[2], env)?;
+        assert_match(&then_type, &else_type)?;
+        Ok(else_type)
       }
       else {
-        // has no else branch
-        does_not_push(instr, push_answer)?;
-        compile(&exprs[0], env, true)?;
-        env.emit_jump_if_false(&false_label);
-        compile(&exprs[1], env, false)?;
-        env.emit_label(false_label);
+        Ok(Type::Unit)
       }
     }
     ("struct_define", exprs) => {
@@ -194,67 +202,71 @@ fn typecheck_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
         return Err(format!("A struct called {} has already been defined.", name));
       }
       // TODO: check for duplicates?
-      let struct_def =
-        exprs[1..].iter().map(symbol_to_refstr)
-        .collect::<Result<Vec<RefStr>, String>>()
-        .map(|fields| Rc::new(StructDef { name: name.clone(), fields}))?;
-      env.structs.insert(name, struct_def);
+      let field_exprs = &exprs[1..];
+      let mut fields = vec![];
+      for i in (0..(field_exprs.len()-1)).step_by(2) {
+        let name = symbol_to_refstr(&field_exprs[i])?;
+        let field_type = string_to_type(symbol_unwrap(&field_exprs[i+1])?)?;
+        fields.push((name, field_type));
+      }
+      let def = StructType { name: name.clone(), fields };
+      env.structs.insert(name, def);
+      Ok(Type::Unit)
     }
     ("struct_instantiate", exprs) => {
       if exprs.len() < 1 || exprs.len() % 2 == 0 {
         return Err(format!("malformed struct instantiation {:?}", exprs));
       }
       let name = symbol_to_refstr(&exprs[0])?;
-      let def =
-        env.structs.get(name.as_ref())
-        .ok_or_else(|| format!("struct {} does not exist", name))?.clone();
-      env.emit(BC::NewStruct(def.clone()), push_answer);
-      {
-        let mut field_index_map =
-          def.fields.iter().enumerate()
-          .map(|(i, s)| (s.as_ref(), i)).collect::<HashMap<&str, usize>>();
-        for i in (1..exprs.len()).step_by(2) {
-          let field_name = symbol_to_refstr(&exprs[i])?;
-          compile(&exprs[i+1], env, push_answer)?;
-          let index = field_index_map.remove(field_name.as_ref())
-            .ok_or_else(|| format!("field {} does not exist", name))?;
-          env.emit(BC::StructFieldInit(index), push_answer);
-        }
-        if field_index_map.len() > 0 {
-          return Err(format!("Some fields not initialised"));
-        }
+      let mut field_type_map = {
+        let def =
+          env.structs.get(name.as_ref())
+          .ok_or_else(|| format!("struct {} does not exist", name))?.clone();
+        def.fields.iter()
+        .map(|(s, t)| (s.clone(), t.clone()))
+        .collect::<HashMap<RefStr, Type>>()
+      };
+      for i in (1..exprs.len()).step_by(2) {
+        let field_name = symbol_to_refstr(&exprs[i])?;
+        let type_name = typecheck_env(&exprs[i+1], env)?;
+        let expected_type = field_type_map.remove(field_name.as_ref())
+          .ok_or_else(|| format!("field {} does not exist", name))?;
+        assert_expected_found(&expected_type, &type_name)?;
       }
+      if field_type_map.len() > 0 {
+        return Err(format!("Some fields not initialised: {:?}", field_type_map));
+      }
+      Ok(Type::Struct(name))
     }
     (".", [expr, field_name]) => {
-      compile(expr, env, push_answer)?;
-      let name = symbol_unwrap(field_name)?;
-      env.emit(BC::PushStructField(name.clone()), push_answer);
+      let struct_name = struct_name(typecheck_env(expr, env)?)?;
+      let field_name = symbol_unwrap(field_name)?;
+      let def =
+        env.structs.get(struct_name.as_ref())
+        .ok_or_else(|| format!("struct {} does not exist", struct_name))?.clone();
+      let (_, field_type) =
+        def.fields.iter().find(|(n, _)| n == field_name)
+        .ok_or_else(|| format!("field {} does not exist on struct {}", field_name, struct_name))?;
+      Ok(field_type.clone())
     }
     ("while", exprs) => {
-      does_not_push(instr, push_answer)?;
       if exprs.len() != 2 {
         return Err(format!("malformed while block"));
       }
-      let condition_label = env.label("loop_condition");
-      let end_label = env.label("loop_end");
-      env.loop_break_labels.push(end_label.clone());
-      env.emit_label(condition_label.clone());
-      compile(&exprs[0], env, true)?; // emit condition
-      env.emit_jump_if_false(&end_label); // exit loop if condition fails
-      compile(&exprs[1], env, false)?; // emit loop body
-      env.emit_jump(&condition_label); // jump back to the condition
-      env.emit_label(end_label);
-      env.loop_break_labels.pop();
+      let condition_type = typecheck_env(&exprs[0], env)?;
+      assert_expected_found(&Type::Bool, &condition_type)?;
+      let _body_type = typecheck_env(&exprs[1], env)?;
+      Ok(Type::Unit)
     }
-    */
     ("fun", [Expr::Symbol(name), Expr::Expr{ args, .. }, function_body ]) => {
       let mut params = vec![];
-      for e in args {
-        // TODO: assumes paramaters are always floats!
-        params.push((symbol_unwrap(e)?.clone(), Type::Float));
+      for i in (0..(args.len()-1)).step_by(2) {
+        let name = symbol_unwrap(&args[i])?.clone();
+        let arg_type = string_to_type(symbol_unwrap(&args[i+1])?)?;
+        params.push((name, arg_type));
       }
       let args = params.iter().map(|(_, t)| t.clone()).collect();
-      let mut new_env = Environment::new(&mut env.functions, params);
+      let mut new_env = Environment::new(&mut env.functions, &mut env.structs, params);
       let return_type = typecheck_env(function_body, &mut new_env)?;
       let signature = FunctionSignature { return_type, args };
       new_env.functions.insert(name.clone(), signature);
@@ -266,18 +278,18 @@ fn typecheck_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
       }
       Ok(Type::Array)
     }
-    /*
     ("index", exprs) => {
       if let [array_expr, index_expr] = exprs {
-        compile(array_expr, env, push_answer)?;
-        compile(index_expr, env, push_answer)?;
-        env.emit(BC::ArrayIndex, push_answer);
+        let array_type = typecheck_env(array_expr, env)?;
+        assert_expected_found(&Type::Array, &array_type)?;
+        let index_type = typecheck_env(index_expr, env)?;
+        assert_expected_found(&Type::Float, &index_type)?;
+        Ok(Type::Unit)
       }
       else {
         return Err(format!("index instruction expected 2 arguments. Found {}.", exprs.len()));
       }
     }
-    */
     _ => {
       Err(format!("instruction '{}' with args {:?} is not supported by the type checker.", instr, args))
     }
@@ -308,6 +320,7 @@ fn typecheck_env(ast : &Expr, env : &mut Environment) -> Result<Type, String> {
 
 pub fn typecheck(ast : &Expr) -> Result<Type, String> {
   let mut functions = HashMap::new();
-  let mut env = Environment::new(&mut functions, vec![]);
+  let mut structs = HashMap::new();
+  let mut env = Environment::new(&mut functions, &mut structs, vec![]);
   typecheck_env(ast, &mut env)
 }

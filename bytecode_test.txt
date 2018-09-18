@@ -1,19 +1,18 @@
 
-let a = 0
+let a = 2
 
 let b = [0, 6]
 
-fun mult(a, b) {
+fun mult(a : float, b : float) {
   a * b
 }
 
-/*
-fun subtract(a, b) {
+fun subtract(a : float, b : float) {
   a - b
 }
 
 struct test {
-  a, b
+  a : float, b : array
 }
 
 let t = test { a: 4, b: b }
@@ -34,6 +33,5 @@ else {
 let boop = mult(mult(100, 5), 2)
 
 t.b[0] = subtract(boop, 5)
-*/
 
 mult(100, a)
