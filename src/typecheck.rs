@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Type {
-  Unit, Float, Bool, Array, Struct(RefStr)
+  Unit, Float, Bool, Array, Struct(RefStr), Any
 }
 
 struct FunctionSignature {
@@ -47,21 +47,39 @@ impl <'l> Environment <'l> {
     Err(format!("no variable called '{}' found in scope", v))
   }
 
-  fn find_field_type(&self, struct_name : &str, field : &str) -> Result<Type, String> {
-    Err(format!("can't find field type"))
+  fn find_field_type(&self, struct_name : &str, field_name : &str) -> Result<Type, String> {
+    let def = 
+      self.structs.get(struct_name)
+      .ok_or_else(|| format!("struct {} does not exist", struct_name))?.clone();
+    let (_, field_type) =
+      def.fields.iter().find(|(n, _)| n.as_ref() == field_name)
+      .ok_or_else(|| format!("field {} does not exist on struct {}", field_name, struct_name))?;
+    Ok(field_type.clone())
   }
+}
+
+fn type_unify(a : &Type, b : &Type) -> Result<Type, String> {
+  if a == &Type::Any {
+    Ok(b.clone())
+  }
+  else if b == &Type::Any {
+    Ok(a.clone())
+  }
+  else if a == b {
+    Ok(a.clone())
+  }
+  else {
+    Err(format!("Expected types {:?} and {:?} to match.", a, b))
+  }
+}
+
+fn types_compatible(a : &Type, b : &Type) -> bool {
+  type_unify(a, b).is_ok()
 }
 
 fn assert_expected_found(expected : &Type, found : &Type) -> Result<(), String> {
-  if expected != found {
+  if !types_compatible(expected, found) {
     return Err(format!("Expected type {:?}, but found type {:?}.", expected, found));
-  }
-  return Ok(());
-}
-
-fn assert_match(a : &Type, b : &Type) -> Result<(), String> {
-  if a != b {
-    return Err(format!("Expected types {:?} and {:?} to match.", a, b));
   }
   return Ok(());
 }
@@ -79,6 +97,7 @@ fn string_to_type(s : &str) -> Result<Type, String> {
     "unit" => Ok(Type::Unit),
     "bool" => Ok(Type::Bool),
     "array" => Ok(Type::Array),
+    "any" | "[NO_TYPE]" => Ok(Type::Any),
     _ => Err(format!("{:?} is not a valid type", s)),
   }
 }
@@ -110,7 +129,7 @@ fn typecheck_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
           match symbol.as_ref() {
             "+" | "-" | "*" | "/" => return binary(&Type::Float, a, &Type::Float, b, Type::Float),
             ">" | "<" | "<=" | ">=" => return binary(&Type::Float, a, &Type::Float, b, Type::Bool),
-            "==" => { assert_match(a, b)?; return Ok(Type::Bool); }
+            "==" => { type_unify(a, b)?; return Ok(Type::Bool); }
             "&&" | "||" => return binary(&Type::Bool, a, &Type::Bool, b, Type::Bool),
             _ => {}
           }
@@ -146,7 +165,7 @@ fn typecheck_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
     ("=", [Expr::Symbol(var_symbol), value_expr]) => {
       let var_type = env.find_var_type(var_symbol)?;
       let value_type = typecheck_env(&value_expr, env)?;
-      if value_type != var_type {
+      if !types_compatible(&value_type, &var_type) {
         return Err(format!("can't assign value of type {:?} to variable of type {:?}", value_type, var_type));
       }
       Ok(Type::Unit)
@@ -168,7 +187,7 @@ fn typecheck_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
           let value_type = typecheck_env(&value_expr, env)?;
           let field_name = symbol_unwrap(field_expr)?;
           let field_type = env.find_field_type(&struct_name, &field_name)?;
-          if value_type != field_type {
+          if !types_compatible(&value_type, &field_type) {
             return Err(format!("can't assign value of type {:?} to field of type {:?}", value_type, field_type));
           }
           Ok(Type::Unit)
@@ -186,8 +205,7 @@ fn typecheck_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
       let then_type = typecheck_env(&exprs[1], env)?;
       if arg_count == 3 {
         let else_type = typecheck_env(&exprs[2], env)?;
-        assert_match(&then_type, &else_type)?;
-        Ok(else_type)
+        type_unify(&then_type, &else_type)
       }
       else {
         Ok(Type::Unit)
@@ -241,13 +259,8 @@ fn typecheck_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
     (".", [expr, field_name]) => {
       let struct_name = struct_name(typecheck_env(expr, env)?)?;
       let field_name = symbol_unwrap(field_name)?;
-      let def =
-        env.structs.get(struct_name.as_ref())
-        .ok_or_else(|| format!("struct {} does not exist", struct_name))?.clone();
-      let (_, field_type) =
-        def.fields.iter().find(|(n, _)| n == field_name)
-        .ok_or_else(|| format!("field {} does not exist on struct {}", field_name, struct_name))?;
-      Ok(field_type.clone())
+      let field_type = env.find_field_type(&struct_name, field_name)?;
+      Ok(field_type)
     }
     ("while", exprs) => {
       if exprs.len() != 2 {
@@ -284,7 +297,7 @@ fn typecheck_instr(instr : &str, args : &Vec<Expr>, env : &mut Environment) -> R
         assert_expected_found(&Type::Array, &array_type)?;
         let index_type = typecheck_env(index_expr, env)?;
         assert_expected_found(&Type::Float, &index_type)?;
-        Ok(Type::Unit)
+        Ok(Type::Any)
       }
       else {
         return Err(format!("index instruction expected 2 arguments. Found {}.", exprs.len()));

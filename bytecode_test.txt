@@ -3,16 +3,17 @@ let a = 2
 
 let b = [0, 6]
 
-fun mult(a : float, b : float) {
+fun mult(a, b) {
   a * b
 }
 
-fun subtract(a : float, b : float) {
+fun subtract(a, b) {
   a - b
 }
 
 struct test {
-  a : float, b : array
+  a : float,
+  b : array,
 }
 
 let t = test { a: 4, b: b }
@@ -24,7 +25,7 @@ while a < 30 {
 }
 
 if false {
-  b[0]
+  a = b[0]
 }
 else {
   b[1]
