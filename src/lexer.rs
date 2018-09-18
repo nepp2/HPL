@@ -1,6 +1,7 @@
 
 use std::collections::HashSet;
 use value::{RefStr, SymbolCache};
+use error::{Error, TextLocation};
 
 lazy_static! {
   static ref KEYWORDS : HashSet<&'static str> =
@@ -14,30 +15,17 @@ pub enum TokenType {
 }
 
 #[derive(Debug)]
-pub struct TextLocation {
-  line : u32,
-  start : u32,
-  length : u32,
-}
-
-#[derive(Debug)]
 pub struct Token {
   pub string : RefStr,
   pub token_type : TokenType,
   pub loc : TextLocation,
 }
 
-#[derive(Debug)]
-pub struct LexError {
-  message : String,
-  loc : TextLocation,
-}
-
 struct CStream {
   chars : Vec<char>,
   loc : StreamLocation,
   tokens : Vec<Token>,
-  errors : Vec<LexError>,
+  errors : Vec<Error>,
   symbol_cache : SymbolCache,
   current_token : String,
 }
@@ -101,8 +89,8 @@ impl CStream {
   }
 
   fn error(&mut self, start_loc : StreamLocation, message : String) {
-    let loc = self.get_text_location(start_loc);
-    self.errors.push(LexError{ message, loc });
+    let location = self.get_text_location(start_loc);
+    self.errors.push(Error{ message, location });
   }
 
   fn advance_line(&mut self) {
@@ -287,7 +275,7 @@ impl CStream {
   }
 }
 
-pub fn lex(code : &str) -> Result<Vec<Token>, Vec<LexError>> {
+pub fn lex(code : &str) -> Result<Vec<Token>, Vec<Error>> {
   let mut cs = CStream::new(code.chars().collect());
   while cs.has_chars() {
     if cs.handle_newline() {}

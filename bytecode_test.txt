@@ -25,7 +25,7 @@ while a < 30 {
 }
 
 if false {
-  a = b[0]
+  b[0]
 }
 else {
   b[1]
@@ -35,4 +35,4 @@ let boop = mult(mult(100, 5), 2)
 
 t.b[0] = subtract(boop, 5)
 
-mult(100, a)
+mult(100, t.a)
