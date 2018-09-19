@@ -1,10 +1,23 @@
 
 #[macro_export]
+macro_rules! error_expr(
+  ( $expr:expr, $($args:tt)* ) => (
+    {
+      let loc = ($expr).loc;
+      Err(Error {
+        message: format!($($args)*),
+        location: loc,
+      })
+    }
+  )
+);
+
+#[macro_export]
 macro_rules! error(
   ( $($args:tt)* ) => (
     Error {
       message: format!($($args)*),
-      location: TextLocation { line: 0, start: 0, length: 0 },
+      location: TextLocation::new((0, 0), (0, 0)),
     }
   )
 );
@@ -14,11 +27,31 @@ macro_rules! error_result(
   ( $($args:tt)* ) => ( Err(error!($($args)*)) )
 );
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
+pub struct TextMarker {
+  pub line : usize,
+  pub col : usize,
+}
+
+impl From<(usize, usize)> for TextMarker {
+  fn from(v : (usize, usize)) -> TextMarker {
+    TextMarker { line : v.0, col: v.1 }
+  }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct TextLocation {
-  pub line : u32,
-  pub start : u32,
-  pub length : u32,
+  pub start : TextMarker,
+  pub end : TextMarker,
+}
+
+impl TextLocation {
+  pub fn new<T : Into<TextMarker>>(start : T, end : T) -> TextLocation {
+    TextLocation {
+      start: start.into(),
+      end: end.into(),
+    }
+  }
 }
 
 #[derive(Debug)]

@@ -1,7 +1,7 @@
 use lexer;
 use lexer::{Token, TokenType};
 use value::{RefStr, SymbolCache};
-use error::{Error, TextLocation};
+use error::{Error, TextLocation, TextMarker};
 use std::collections::HashSet;
 use std::f32;
 use std::str::FromStr;
@@ -33,31 +33,119 @@ static STRUCT_DEFINE : &str = "struct_define";
 static STRUCT_INSTANTIATE : &str = "struct_instantiate";
 static BREAK : &str = "break";
 static BLOCK : &str = "block";
-static NO_TYPE : &str = "[NO_TYPE]";
+pub static NO_TYPE : &str = "[NO_TYPE]";
 
 #[derive(PartialEq, Debug, Clone)]
-pub enum Expr {
-  Expr { symbol : RefStr, args : Vec<Expr> },
+pub enum ExprTag {
+  Tree(RefStr),
   Symbol(RefStr),
   LiteralFloat(f32),
   LiteralBool(bool),
 }
 
+/*
+impl ExprTag {
+  pub fn tree_symbol_unwrap(&self) -> Result<&RefStr, Error> {
+    if let ExprTag::Tree(s) = self {
+      Ok(s)
+    }
+    else {
+      error_result!("expected a tree, found {:?}", self)
+    }
+  }
+
+  pub fn symbol_unwrap(&self) -> Result<&RefStr, Error> {
+    if let ExprTag::Symbol(s) = self {
+      Ok(s)
+    }
+    else {
+      error_result!("expected a symbol, found {:?}", self)
+    }
+  }
+
+  pub fn symbol_to_refstr(&self) -> Result<RefStr, Error> {
+    self.symbol_unwrap().map(|s| s.clone())
+  }
+}
+*/
+
+/// Used to look up expressions in the abstract syntax tree
+pub type ExprId = usize;
+
+/// Expression
+#[derive(Debug)]
+pub struct Expr {
+  pub tag : ExprTag,
+  pub children : Vec<ExprId>,
+  pub loc : TextLocation,
+}
+
+impl Expr {
+  pub fn tree_symbol_unwrap(&self) -> Result<&RefStr, Error> {
+    if let ExprTag::Tree(s) = &self.tag {
+      Ok(&s)
+    }
+    else {
+      error_expr!(self, "expected a tree, found {:?}", self)
+    }
+  }
+
+  pub fn symbol_unwrap(&self) -> Result<&RefStr, Error> {
+    if let ExprTag::Symbol(s) = &self.tag {
+      Ok(&s)
+    }
+    else {
+      error_expr!(self, "expected a symbol, found {:?}", self)
+    }
+  }
+
+  pub fn symbol_to_refstr(&self) -> Result<RefStr, Error> {
+    self.symbol_unwrap().map(|s| s.clone())
+  }
+}
+
+/// Abstract syntax tree
+#[derive(Debug)]
+pub struct Ast {
+  pub root_id : ExprId,
+  pub exprs : Vec<Expr>,
+}
+
+impl Ast {
+  pub fn expr(&self, id : ExprId) -> &Expr {
+    &self.exprs[id]
+  }
+
+  pub fn tag(&self, id : ExprId) -> &ExprTag {
+    &self.exprs[id].tag
+  }
+
+  pub fn children(&self, id : ExprId) -> Result<&[ExprId], Error> {
+    let e = &self.exprs[id];
+    match e.tag {
+      ExprTag::Tree(_) => Ok(&self.exprs[id].children),
+      _ => error_result!("expected tree, found {:?}", e)
+    }
+    
+  }
+
+  pub fn loc(&self, id : ExprId) -> &TextLocation {
+    &self.exprs[id].loc
+  }
+}
+
 // TODO: this might be better implemented with a ring buffer (or just a backwards vec)
-struct TokenStream {
+struct ParseState {
   tokens : Vec<Token>,
   pos : usize,
   symbol_cache : SymbolCache,
+  exprs : Vec<Expr>,
 }
 
-impl TokenStream {
+impl ParseState {
 
-  fn new(tokens : Vec<Token>) -> TokenStream {
-    TokenStream { tokens, pos: 0, symbol_cache: SymbolCache::new() }
-  }
-
-  fn symbol(&mut self, s : &str) -> RefStr {
-    self.symbol_cache.symbol(s)
+  fn new(tokens : Vec<Token>) -> ParseState {
+    ParseState { tokens, pos: 0, symbol_cache: SymbolCache::new(), exprs: vec!() }
   }
 
   fn has_tokens(&self) -> bool {
@@ -71,6 +159,19 @@ impl TokenStream {
     else {
       error_result!("Expected token. Found nothing.")
     }
+  }
+
+  fn peek_marker(&self) -> TextMarker {
+    if self.has_tokens() {
+      self.tokens[self.pos].loc.start
+    }
+    else {
+      self.tokens[self.pos-1].loc.end
+    }
+  }
+
+  fn loc(&self, start : TextMarker) -> TextLocation {
+    TextLocation::new(start, self.peek_marker())
   }
 
   fn peek_ahead(&self, offset : usize) -> Result<&Token, Error> {
@@ -119,7 +220,9 @@ impl TokenStream {
     Ok(())
   }
 
-  fn expect_type(&mut self, token_type : TokenType) -> Result<(), Error> {
+  /// Returns marker for start of the token if successful
+  fn expect_type(&mut self, token_type : TokenType) -> Result<TextMarker, Error> {
+    let start = self.peek_marker();
     {
       let t = self.peek();
       if let Ok(t) = t {
@@ -132,7 +235,38 @@ impl TokenStream {
       }
     }
     self.skip();
-    Ok(())
+    Ok(start)
+  }
+
+  fn add_expr(&mut self, e : Expr) -> ExprId {
+    let id = self.exprs.len();
+    self.exprs.push(e);
+    id
+  }
+
+  fn add_leaf(&mut self, tag : ExprTag, start : TextMarker) -> ExprId {
+    let loc = self.loc(start);
+    self.add_expr(Expr { tag, children: vec!(), loc })
+  }
+
+  fn add_tree<T : AsRef<str> + Into<RefStr>>
+    (&mut self, s : T, children : Vec<ExprId>, start : TextMarker) -> ExprId
+  {
+    let loc = self.loc(start);
+    let tag = ExprTag::Tree(self.symbol_cache.symbol(s));
+    self.add_expr(Expr { tag, children, loc })
+  }
+
+  fn add_symbol<T : AsRef<str> + Into<RefStr>>
+    (&mut self, s : T, start : TextMarker) -> ExprId
+  {
+    let loc = self.loc(start);
+    let tag = ExprTag::Symbol(self.symbol_cache.symbol(s));
+    self.add_expr(Expr { tag, children: vec!(), loc })
+  }
+
+  pub fn get_loc(&self, id : ExprId) -> &TextLocation {
+    &self.exprs[id].loc
   }
 }
 
@@ -148,7 +282,7 @@ lazy_static! {
     vec!["=", ".", "+="].into_iter().collect();
 }
 
-fn parse_expression(ts : &mut TokenStream) -> Result<Expr, Error> {
+fn parse_expression(ps : &mut ParseState) -> Result<ExprId, Error> {
   
   fn operator_precedence(s : &str) -> Result<i32, Error> {
     let p =
@@ -176,15 +310,15 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, Error> {
   }
 
   /// This expression parser is vaguely based on some blogs about pratt parsing.
-  fn pratt_parse(ts : &mut TokenStream, precedence : i32) -> Result<Expr, Error> {
+  fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<ExprId, Error> {
     // TODO: this is currently implemented with an enum in a dumb way to handle limitation of Rust's
     // lifetime inference. Once these limitations are fixed (non-lexical lifetimes) I can fix this.
     enum Action { FunctionCall, IndexExpression, Infix(i32) }
-    let mut expr = parse_prefix(ts)?;
-    while ts.has_tokens() {
+    let mut expr = parse_prefix(ps)?;
+    while ps.has_tokens() {
       let action;
       { // open scope to scope-limit lifetime of token
-        let t = ts.peek()?;
+        let t = ps.peek()?;
         if t.token_type == TokenType::Syntax && TERMINATING_SYNTAX.contains(t.string.as_ref()) {
           break;
         }
@@ -218,72 +352,81 @@ fn parse_expression(ts : &mut TokenStream) -> Result<Expr, Error> {
         }
       };
       match action {
-        Action::FunctionCall => expr = parse_function_call(ts, expr)?,
-        Action::IndexExpression => expr = parse_index_expression(ts, expr)?,
-        Action::Infix(next_precedence) => expr = parse_infix(ts, expr, next_precedence)?,
+        Action::FunctionCall => expr = parse_function_call(ps, expr)?,
+        Action::IndexExpression => expr = parse_index_expression(ps, expr)?,
+        Action::Infix(next_precedence) => expr = parse_infix(ps, expr, next_precedence)?,
       }
     }
     Ok(expr)
   }
 
-  fn parse_index_expression(ts : &mut TokenStream, indexee_expr : Expr) -> Result<Expr, Error> {
-    ts.expect_string("[")?;
-    let indexing_expr = parse_expression(ts)?;
-    ts.expect_string("]")?;
+  fn parse_index_expression(ps : &mut ParseState, indexee_expr : ExprId) -> Result<ExprId, Error> {
+    let start = ps.get_loc(indexee_expr).start;
+    ps.expect_string("[")?;
+    let indexing_expr = parse_expression(ps)?;
+    ps.expect_string("]")?;
     let args = vec!(indexee_expr, indexing_expr);
-    Ok(Expr::Expr { symbol: ts.symbol(INDEX), args } )
+    Ok(ps.add_tree(INDEX, args, start))
   }
 
-  fn parse_function_call(ts : &mut TokenStream, function_expr : Expr) -> Result<Expr, Error> {
-    ts.expect_string("(")?;
+  fn parse_function_call(ps : &mut ParseState, function_expr : ExprId) -> Result<ExprId, Error> {
+    let start = ps.get_loc(function_expr).start;
+    ps.expect_string("(")?;
     let mut exprs = vec!(function_expr);
     loop {
-      exprs.push(parse_expression(ts)?);
-      if !ts.accept_string(",") {
+      exprs.push(parse_expression(ps)?);
+      if !ps.accept_string(",") {
         break;
       }
     }
-    ts.expect_string(")")?;
-    Ok(Expr::Expr { symbol: ts.symbol(CALL), args: exprs } )
+    ps.expect_string(")")?;
+    Ok(ps.add_tree(CALL, exprs, start))
   }
 
-  fn parse_prefix(ts : &mut TokenStream) -> Result<Expr, Error> {
-    // TODO: fix this with non-lexical lifetimes at some point
+  fn parse_prefix(ps : &mut ParseState) -> Result<ExprId, Error> {
+    let start = ps.peek_marker();
+    // if the next token is a prefix operator
     let prefix_operator = {
-      let t = ts.peek()?;
+      // TODO: fix this with non-lexical lifetimes at some point
+      let t = ps.peek()?;
       if t.token_type == TokenType::Syntax && PREFIX_OPERATORS.contains(t.string.as_ref()) {
         Some(t.string.clone())
       }
       else { None }
     };
+    // then parse a prefix pattern
     if let Some(operator) = prefix_operator {
-      ts.expect_type(TokenType::Syntax)?;
-      let expr = parse_expression_term(ts)?;
-      Ok(Expr::Expr{ symbol: ts.symbol(CALL), args: vec!(Expr::Symbol(operator), expr) })
+      ps.expect_type(TokenType::Syntax)?;
+      let expr = parse_expression_term(ps)?;
+      let args = vec![ps.add_symbol(operator, start), expr];
+      Ok(ps.add_tree(CALL, args, start))
     }
+    // else assume it's an expression term
     else {
-      parse_expression_term(ts)
+      parse_expression_term(ps)
     }
   }
 
-  fn parse_infix(ts : &mut TokenStream, left_expr : Expr, precedence : i32) -> Result<Expr, Error> {
-    let operator = ts.pop_type(TokenType::Syntax)?.string.clone();
-    let right_expr = pratt_parse(ts, precedence)?;
-    if SPECIAL_OPERATORS.contains(operator.as_ref()) {
-      let args = vec!(left_expr, right_expr);
-      Ok(Expr::Expr { symbol: operator, args })
+  fn parse_infix(ps : &mut ParseState, left_expr : ExprId, precedence : i32) -> Result<ExprId, Error> {
+    let infix_start = ps.get_loc(left_expr).start;
+    let operator_start = ps.peek_marker();
+    let operator_str = ps.pop_type(TokenType::Syntax)?.string.clone();
+    let operator = ps.add_symbol(operator_str.clone(), operator_start);
+    let right_expr = pratt_parse(ps, precedence)?;
+    let args = vec!(operator, left_expr, right_expr);
+    if SPECIAL_OPERATORS.contains(operator_str.as_ref()) {
+      Ok(ps.add_tree(operator_str, args, infix_start))
     }
     else {
-      let args = vec!(Expr::Symbol(operator), left_expr, right_expr);
-      Ok(Expr::Expr { symbol: ts.symbol(CALL), args })
+      Ok(ps.add_tree(CALL, args, infix_start))
     }
   }
 
-  pratt_parse(ts, 0)
+  pratt_parse(ps, 0)
 }
 
-fn parse_float(ts : &mut TokenStream) -> Result<f32, Error> {
-  let t = ts.pop_type(TokenType::FloatLiteral)?;
+fn parse_float(ps : &mut ParseState) -> Result<f32, Error> {
+  let t = ps.pop_type(TokenType::FloatLiteral)?;
   if let Ok(f) = f32::from_str(&t.string) {
     Ok(f)
   }
@@ -292,239 +435,254 @@ fn parse_float(ts : &mut TokenStream) -> Result<f32, Error> {
   }
 }
 
-fn parse_syntax(ts : &mut TokenStream) -> Result<Expr, Error> {
-  match ts.peek()?.string.as_ref() {
+fn parse_syntax(ps : &mut ParseState) -> Result<ExprId, Error> {
+  let start = ps.peek_marker();
+  match ps.peek()?.string.as_ref() {
     "[" => {
-      ts.expect_string("[")?;
+      ps.expect_string("[")?;
       let mut exprs = vec!();
       loop {
-        if ts.peek()?.string.as_ref() == "]" {
+        if ps.peek()?.string.as_ref() == "]" {
           break;
         }
-        exprs.push(parse_expression(ts)?);
-        if ts.peek()?.string.as_ref() == "," {
-          ts.skip()
+        exprs.push(parse_expression(ps)?);
+        if ps.peek()?.string.as_ref() == "," {
+          ps.skip()
         }
         else {
           break;
         }
       }
-      ts.expect_string("]")?;
-      Ok(Expr::Expr { symbol: ts.symbol(LITERAL_ARRAY), args: exprs })
+      ps.expect_string("]")?;
+      Ok(ps.add_tree(LITERAL_ARRAY, exprs, start))
     }
     "(" => {
-      ts.expect_string("(")?;
-      let a = parse_expression(ts)?;
-      ts.expect_string(")")?;
+      ps.expect_string("(")?;
+      let a = parse_expression(ps)?;
+      ps.expect_string(")")?;
       Ok(a)
     }
-    _ => error_result!("Unexpected syntax '{}' at position '{:?}'", ts.peek()?.string, ts.peek()?.loc),
+    _ => error_result!("Unexpected syntax '{}' at position '{:?}'", ps.peek()?.string, ps.peek()?.loc),
   }
 }
 
-fn parse_fun(ts : &mut TokenStream) -> Result<Expr, Error> {
-  ts.expect_string("fun")?;
-  let fun_name = ts.pop_type(TokenType::Symbol)?.string.clone();
+fn parse_simple_string(ps : &mut ParseState, t : TokenType) -> Result<ExprId, Error> {
+  let start = ps.peek_marker();
+  let s = ps.pop_type(t)?.string.clone();
+  Ok(ps.add_symbol(s, start))
+}
+
+fn parse_simple_symbol(ps : &mut ParseState) -> Result<ExprId, Error> {
+  parse_simple_string(ps, TokenType::Symbol)
+}
+
+fn parse_type(ps : &mut ParseState) -> Result<ExprId, Error> {
+  parse_simple_symbol(ps)
+}
+
+fn parse_fun(ps : &mut ParseState) -> Result<ExprId, Error> {
+  let start = ps.peek_marker();
+  ps.expect_string("fun")?;
+  let fun_name = parse_simple_symbol(ps)?;
   let mut arguments = vec!();
-  ts.expect_string("(")?;
+  let args_start = ps.peek_marker();
+  ps.expect_string("(")?;
   loop {
-    if ts.peek()?.token_type != TokenType::Symbol {
+    if ps.peek()?.token_type != TokenType::Symbol {
       break;
     }
-    let arg_name = ts.pop_type(TokenType::Symbol)?.string.clone();
-    arguments.push(Expr::Symbol(arg_name));
-    if ts.accept_string(":") {
-      let type_name = ts.pop_type(TokenType::Symbol)?.string.clone();
-      arguments.push(Expr::Symbol(type_name));
+    arguments.push(parse_simple_symbol(ps)?);
+    if ps.accept_string(":") {
+      arguments.push(parse_type(ps)?);
     }
     else {
-      arguments.push(Expr::Symbol(ts.symbol(NO_TYPE)));
+      let start = ps.peek_marker();
+      arguments.push(ps.add_symbol(NO_TYPE, start));
     }
-    if !ts.accept_string(",") {
+    if !ps.accept_string(",") {
       break;
     }
   }
-  ts.expect_string(")")?;
-  ts.expect_string("{")?;
-  let function_block = parse_block(ts)?;
-  ts.expect_string("}")?;
-  let fun_symbol = Expr::Symbol(fun_name);
-  let args_expr =
-    Expr::Expr {
-      symbol: ts.symbol(ARGS),
-      args: arguments,
-    };
-  let fun_expr =
-    Expr::Expr{
-      symbol: ts.symbol(FUN),
-      args: vec!(fun_symbol, args_expr, function_block),
-    };
+  ps.expect_string(")")?;
+  let args_expr = ps.add_tree(ARGS, arguments, args_start);
+  ps.expect_string("{")?;
+  let function_block = parse_block(ps)?;
+  ps.expect_string("}")?;
+  let fun_expr = ps.add_tree(FUN, vec![fun_name, args_expr, function_block], start);
   Ok(fun_expr)
 }
 
-fn parse_let(ts : &mut TokenStream) -> Result<Expr, Error> {
-  ts.expect_string("let")?;
-  let var_name = ts.pop_type(TokenType::Symbol)?.string.clone();
-  ts.expect_string("=")?;
-  let initialiser = parse_expression(ts)?;
-  let var_symbol = Expr::Symbol(var_name);
-  Ok(Expr::Expr{ symbol: ts.symbol(LET), args: vec!(var_symbol, initialiser)})
+fn parse_let(ps : &mut ParseState) -> Result<ExprId, Error> {
+  let start = ps.peek_marker();
+  ps.expect_string("let")?;
+  let var_name = parse_simple_symbol(ps)?;
+  ps.expect_string("=")?;
+  let initialiser = parse_expression(ps)?;
+  Ok(ps.add_tree(LET, vec!(var_name, initialiser), start))
 }
 
-fn parse_if(ts : &mut TokenStream) -> Result<Expr, Error> {
-  ts.expect_string("if")?;
-  let conditional = parse_expression(ts)?;
-  ts.expect_string("{")?;
-  let then_block = parse_block(ts)?;
-  ts.expect_string("}")?;
+fn parse_if(ps : &mut ParseState) -> Result<ExprId, Error> {
+  let start = ps.peek_marker();
+  ps.expect_string("if")?;
+  let conditional = parse_expression(ps)?;
+  ps.expect_string("{")?;
+  let then_block = parse_block(ps)?;
+  ps.expect_string("}")?;
   let mut args = vec!(conditional, then_block);
-  if ts.accept_string("else") {
-    ts.expect_string("{")?;
-    let else_block = parse_block(ts)?;
-    ts.expect_string("}")?;
+  if ps.accept_string("else") {
+    ps.expect_string("{")?;
+    let else_block = parse_block(ps)?;
+    ps.expect_string("}")?;
     args.push(else_block);
   }
-  Ok(Expr::Expr{ symbol: ts.symbol(IF), args })
+  Ok(ps.add_tree(IF, args, start))
 }
 
-fn parse_while(ts : &mut TokenStream) -> Result<Expr, Error> {
-  ts.expect_string("while")?;
-  let conditional = parse_expression(ts)?;
-  ts.expect_string("{")?;
-  let loop_block = parse_block(ts)?;
-  ts.expect_string("}")?;
+fn parse_while(ps : &mut ParseState) -> Result<ExprId, Error> {
+  let start = ps.peek_marker();
+  ps.expect_string("while")?;
+  let conditional = parse_expression(ps)?;
+  ps.expect_string("{")?;
+  let loop_block = parse_block(ps)?;
+  ps.expect_string("}")?;
   let args = vec!(conditional, loop_block);
-  Ok(Expr::Expr{ symbol: ts.symbol(WHILE), args })
+  Ok(ps.add_tree(WHILE, args, start))
 }
 
-fn parse_struct_definition(ts : &mut TokenStream) -> Result<Expr, Error> {
-  ts.expect_string("struct")?;
-  let struct_name = ts.pop_type(TokenType::Symbol)?.string.clone();
-  ts.expect_string("{")?;
-  let mut args = vec!(Expr::Symbol(struct_name));
+fn parse_struct_definition(ps : &mut ParseState) -> Result<ExprId, Error> {
+  let start = ps.peek_marker();
+  ps.expect_string("struct")?;
+  let struct_name = parse_simple_symbol(ps)?;
+  ps.expect_string("{")?;
+  let mut args = vec!(struct_name);
   'outer: loop {
     'inner: loop {
-      if !ts.has_tokens() || ts.peek()?.string.as_ref() == "}" {
+      if !ps.has_tokens() || ps.peek()?.string.as_ref() == "}" {
         break 'outer;
       }
-      if !ts.accept_string(",") {
+      if !ps.accept_string(",") {
         break 'inner;
       }
     }
-    let symbol = Expr::Symbol(ts.pop_type(TokenType::Symbol)?.string.clone());
-    args.push(symbol);
-    if ts.accept_string(":") {
-      let type_name = ts.pop_type(TokenType::Symbol)?.string.clone();
-      args.push(Expr::Symbol(type_name));
+    let arg_name = parse_simple_symbol(ps)?;
+    args.push(arg_name);
+    if ps.accept_string(":") {
+      let type_name = parse_simple_symbol(ps)?;
+      args.push(type_name);
     }
     else {
-      args.push(Expr::Symbol(ts.symbol(NO_TYPE)));
+      let start = ps.peek_marker();
+      args.push(ps.add_symbol(NO_TYPE, start));
     }
   }
-  ts.expect_string("}")?;
-  Ok(Expr::Expr { symbol: ts.symbol(STRUCT_DEFINE), args })
+  ps.expect_string("}")?;
+  Ok(ps.add_tree(STRUCT_DEFINE, args, start))
 }
 
-fn parse_struct_instantiate(ts : &mut TokenStream) -> Result<Expr, Error> {
-  let struct_name = ts.pop_type(TokenType::Symbol)?.string.clone();
-  ts.expect_string("{")?;
-  let mut args = vec!(Expr::Symbol(struct_name));
+fn parse_struct_instantiate(ps : &mut ParseState) -> Result<ExprId, Error> {
+  let start = ps.peek_marker();
+  let struct_name = parse_simple_symbol(ps)?;
+  ps.expect_string("{")?;
+  let mut args = vec!(struct_name);
   'outer: loop {
     'inner: loop {
-      if !ts.has_tokens() || ts.peek()?.string.as_ref() == "}" {
+      if !ps.has_tokens() || ps.peek()?.string.as_ref() == "}" {
         break 'outer;
       }
-      if ts.peek()?.string.as_ref() == "," {
-        ts.skip();
+      if ps.peek()?.string.as_ref() == "," {
+        ps.skip();
       }
       else {
         break 'inner;
       }
     }
-    let symbol = ts.pop_type(TokenType::Symbol)?.string.clone();
-    args.push(Expr::Symbol(symbol));
-    ts.expect_string(":")?;
-    args.push(parse_expression(ts)?);
+    let arg_name = parse_simple_symbol(ps)?;
+    args.push(arg_name);
+    ps.expect_string(":")?;
+    args.push(parse_expression(ps)?);
   }
-  ts.expect_string("}")?;
-  Ok(Expr::Expr { symbol: ts.symbol(STRUCT_INSTANTIATE), args })
+  ps.expect_string("}")?;
+  Ok(ps.add_tree(STRUCT_INSTANTIATE, args, start))
 }
 
-fn parse_keyword_term(ts : &mut TokenStream) -> Result<Expr, Error> {
-  match ts.peek()?.string.as_ref() {
-    "let" => parse_let(ts),
-    "fun" => parse_fun(ts),
-    "if" => parse_if(ts),
+fn parse_keyword_term(ps : &mut ParseState) -> Result<ExprId, Error> {
+  match ps.peek()?.string.as_ref() {
+    "let" => parse_let(ps),
+    "fun" => parse_fun(ps),
+    "if" => parse_if(ps),
     "break" => {
-      ts.expect_string("break")?;
-      Ok(Expr::Symbol(ts.symbol(BREAK)))
+      Ok(parse_simple_string(ps, TokenType::Keyword)?)
     }
-    "while" => parse_while(ts),
-    "struct" => parse_struct_definition(ts),
+    "while" => parse_while(ps),
+    "struct" => parse_struct_definition(ps),
     "true" => {
-      ts.expect_string("true")?;
-      Ok(Expr::LiteralBool(true))
+      let start = ps.peek_marker();
+      ps.expect_string("true")?;
+      Ok(ps.add_leaf(ExprTag::LiteralBool(true), start))
     }
     "false" => {
-      ts.expect_string("false")?;
-      Ok(Expr::LiteralBool(false))
+      let start = ps.peek_marker();
+      ps.expect_string("false")?;
+      Ok(ps.add_leaf(ExprTag::LiteralBool(false), start))
     }
-    _ => error_result!("Encountered unexpected keyword '{}'. This keyword is not supported here.", ts.peek()?.string),
+    _ => error_result!("Encountered unexpected keyword '{}'. This keyword is not supported here.", ps.peek()?.string),
   }
 }
 
-fn parse_symbol_reference(ts : &mut TokenStream) -> Result<Expr, Error> {
-  let symbol = Expr::Symbol(ts.pop_type(TokenType::Symbol)?.string.clone());
-  return Ok(symbol);
-}
-
-fn parse_symbol_term(ts : &mut TokenStream) -> Result<Expr, Error> {
+fn parse_symbol_term(ps : &mut ParseState) -> Result<ExprId, Error> {
   let is_struct =
-    if let Ok(t) = ts.peek_ahead(1) { t.string.as_ref() == "{" } else { false };
+    if let Ok(t) = ps.peek_ahead(1) { t.string.as_ref() == "{" } else { false };
   if is_struct {
-    parse_struct_instantiate(ts)
+    parse_struct_instantiate(ps)
   }
   else{
-    parse_symbol_reference(ts)
+    // else assume it's just a symbol reference
+    parse_simple_symbol(ps)
   }
 }
 
-fn parse_expression_term(ts : &mut TokenStream) -> Result<Expr, Error> {
-  match ts.peek()?.token_type {
-    TokenType::Symbol => parse_symbol_term(ts),
-    TokenType::Keyword => parse_keyword_term(ts),
-    TokenType::Syntax => parse_syntax(ts),
-    TokenType::FloatLiteral => Ok(Expr::LiteralFloat(parse_float(ts)?)),
+fn parse_expression_term(ps : &mut ParseState) -> Result<ExprId, Error> {
+  match ps.peek()?.token_type {
+    TokenType::Symbol => parse_symbol_term(ps),
+    TokenType::Keyword => parse_keyword_term(ps),
+    TokenType::Syntax => parse_syntax(ps),
+    TokenType::FloatLiteral => {
+      let start = ps.peek_marker();
+      let f = ExprTag::LiteralFloat(parse_float(ps)?);
+      Ok(ps.add_leaf(f, start))
+    }
   }
 }
 
-fn parse_block(ts : &mut TokenStream) -> Result<Expr, Error> {
+fn parse_block(ps : &mut ParseState) -> Result<ExprId, Error> {
+  let start = ps.peek_marker();
   let mut exprs = vec!();
   'outer: loop {
-    exprs.push(parse_expression(ts)?);
+    exprs.push(parse_expression(ps)?);
     'inner: loop {
-      if !ts.has_tokens() || ts.peek()?.string.as_ref() == "}" {
+      if !ps.has_tokens() || ps.peek()?.string.as_ref() == "}" {
         break 'outer;
       }
-      if ts.peek()?.string.as_ref() == ";" {
-        ts.skip();
+      if ps.peek()?.string.as_ref() == ";" {
+        ps.skip();
       }
       else {
         break 'inner;
       }
     }
   }
-  Ok(Expr::Expr { symbol: ts.symbol(BLOCK), args: exprs })
+  Ok(ps.add_tree(BLOCK, exprs, start))
 }
 
-pub fn parse(tokens : Vec<Token>) -> Result<Expr, Error> {
-  let mut ts = TokenStream::new(tokens);
-  let e = parse_block(&mut ts)?;
-  if ts.has_tokens() {
-    let t = ts.peek()?;
+pub fn parse(tokens : Vec<Token>) -> Result<Ast, Error> {
+  let mut ps = ParseState::new(tokens);
+  let e = parse_block(&mut ps)?;
+  if ps.has_tokens() {
+    let t = ps.peek()?;
     return error_result!("Unexpected token '{}' of type '{:?}'", t.string, t.token_type);
   }
-  return Ok(e);
+  let ast = Ast { root_id: e, exprs: ps.exprs };
+  return Ok(ast);
 }
 
 #[test]

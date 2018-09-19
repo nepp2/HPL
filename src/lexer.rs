@@ -1,7 +1,7 @@
 
 use std::collections::HashSet;
 use value::{RefStr, SymbolCache};
-use error::{Error, TextLocation};
+use error::{Error, TextLocation, TextMarker};
 
 lazy_static! {
   static ref KEYWORDS : HashSet<&'static str> =
@@ -37,6 +37,13 @@ struct StreamLocation {
   line_start : usize,
 }
 
+impl From<StreamLocation> for TextMarker {
+  fn from(v : StreamLocation) -> TextMarker {
+    TextMarker { line : v.line, col: v.pos - v.line_start }
+  }
+}
+
+
 impl CStream {
 
   fn new(chars : Vec<char>) -> CStream {
@@ -67,13 +74,7 @@ impl CStream {
   }
 
   fn get_text_location(&mut self, start_loc : StreamLocation) -> TextLocation {
-    let len = self.loc.pos - start_loc.pos;
-    let start = start_loc.pos - start_loc.line_start;
-    TextLocation {
-      start: start as u32,
-      length: len as u32,
-      line: start_loc.line as u32,
-    }
+    TextLocation::new(start_loc, self.loc)
   }
 
   fn complete_token(&mut self, start_loc : StreamLocation, token_type : TokenType) {
