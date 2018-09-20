@@ -1,31 +1,17 @@
 
-#[macro_export]
-macro_rules! error(
-  ( $loc:expr, $($args:tt)* ) => (
-    {
-      let loc = $loc;
-      Err(Error {
-        message: format!($($args)*),
-        location: loc,
-      })
-    }
-  )
-);
+/// Returns an error that isn't wrapped in Result::Err
+pub fn error_raw<L : Into<TextLocation>, S : Into<String>>(loc : L, message : S) -> Error {
+  Error { message: message.into(), location: loc.into() }
+}
 
-#[macro_export]
-macro_rules! error_expr(
-  ( $expr:expr, $($args:tt)* ) => (
-    {
-      let loc = ($expr).loc;
-      Err(error!(($expr).loc, $($args)*))
-    }
-  )
-);
+/// Returns an error wrapped in Result::Err
+pub fn error<T, L : Into<TextLocation>, S : Into<String>>(loc : L, message : S) -> Result<T, Error> {
+  Err(Error { message: message.into(), location: loc.into() })
+}
 
-#[macro_export]
-macro_rules! error_result(
-  ( $($args:tt)* ) => ( Err(error!($($args)*)) )
-);
+pub fn error_no_loc<S : Into<String>>(message : S) -> Error {
+  Error { message: message.into(), location: TextLocation::new((0,0), (0,0)) }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct TextMarker {
@@ -36,6 +22,12 @@ pub struct TextMarker {
 impl From<(usize, usize)> for TextMarker {
   fn from(v : (usize, usize)) -> TextMarker {
     TextMarker { line : v.0, col: v.1 }
+  }
+}
+
+impl <'l> Into<TextLocation> for &'l TextLocation {
+  fn into(self) -> TextLocation {
+    *self
   }
 }
 

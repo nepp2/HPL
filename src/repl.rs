@@ -2,7 +2,7 @@
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 
-use error::{Error, TextLocation};
+use error::{Error, TextLocation, error};
 use lexer;
 use parser;
 use bytecode_vm;
@@ -16,7 +16,7 @@ fn interpret(text : &str) -> Result<Value, Error> {
       Ok(value)
     }
     Err(errors) => {
-      error!(errors[0].loc, "{:?}", errors)
+      error(errors[0].location, format!("{:?}", errors))
     }
   }
 }
