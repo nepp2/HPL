@@ -206,7 +206,7 @@ impl <'l> Environment<'l> {
     }
   }
 
-  fn find_var_offset(&self, v : &str) -> Result<usize, Error> {
+  fn find_var_offset(&self, v : &str, loc : &TextLocation) -> Result<usize, Error> {
     for vs in self.locals.iter().rev() {
       for i in (0..vs.vars.len()).rev() {
         if vs.vars[i].as_ref() == v {
@@ -214,18 +214,21 @@ impl <'l> Environment<'l> {
         }
       }
     }
-    error_result!("no variable called '{}' found in scope", v)
+    error!(!loc, "no variable called '{}' found in scope", v)
   }
 }
 
-fn compile_function_call(function_name: RefStr, args: &[ExprId], ast : &Ast, env : &mut Environment, push_answer : bool)
+fn compile_function_call(function_name: ExprId, args: &[ExprId], ast : &Ast, env : &mut Environment, push_answer : bool)
   -> Result<(), Error>
 {
+  let function_name = ast.expr(function_name);
   for i in 0..args.len() {
     compile(args[i], ast, env, true)?;
   }
   let handle = env.functions.get(&function_name)
-    .ok_or_else(||error!("Found no function called '{}'", function_name))?.handle;
+    .ok_or_else(
+      ||error_expr!(function_name, "Found no function called '{}'", function_name.symbol_unwrap()?))?
+    .handle;
   env.emit_always(BC::CallFunction(handle));
   if !push_answer {
     env.emit_always(BC::Pop);
@@ -235,16 +238,18 @@ fn compile_function_call(function_name: RefStr, args: &[ExprId], ast : &Ast, env
 
 fn compile_tree(id : ExprId, ast : &Ast, env : &mut Environment, push_answer : bool) -> Result<(), Error> {
 
-  fn does_not_push(instr : &str, push_answer : bool) -> Result<(), Error> {
+  fn does_not_push(expr : &Expr, push_answer : bool) -> Result<(), Error> {
     if push_answer {
-      error_result!("instruction '{}' is void, where a result is expected", instr)
+      let instr = expr.tree_symbol_unwrap()?.as_ref();
+      error_expr!(expr, "instruction '{}' is void, where a result is expected", instr)
     }
     else {
       Ok(())
     }
   }
+
   let expr = ast.expr(id);
-  let instr = expr.symbol_unwrap()?.as_ref();
+  let instr = expr.tree_symbol_unwrap()?.as_ref();
   let children = expr.children.as_slice();
   match (instr, children) {
     ("call", exprs) => {
@@ -262,12 +267,12 @@ fn compile_tree(id : ExprId, ast : &Ast, env : &mut Environment, push_answer : b
             env.emit(BC::UnaryOperator(symbol.clone()), push_answer);
           }
           _ => {
-            return error_result!("wrong number of arguments for operator");
+            return error_expr!(expr, "wrong number of arguments for operator");
           }
         }
       }
       else {
-        compile_function_call(symbol.clone(), params, ast, env, push_answer)?;
+        compile_function_call(exprs[0], params, ast, env, push_answer)?;
       }
     }
     ("block", exprs) => {
@@ -326,12 +331,12 @@ fn compile_tree(id : ExprId, ast : &Ast, env : &mut Environment, push_answer : b
         }
         _ => (),
       }
-      return error_result!("can't assign to {:?}", assign_expr);
+      return error_expr!(assign_expr, "can't assign to {:?}", assign_expr);
     }
     ("if", exprs) => {
       let arg_count = exprs.len();
       if arg_count < 2 || arg_count > 3 {
-        return error_result!("malformed if expression");
+        return error_expr!(expr, "malformed if expression");
       }
       let false_label = env.label("if_false_label");
       if arg_count == 3 {
@@ -356,11 +361,12 @@ fn compile_tree(id : ExprId, ast : &Ast, env : &mut Environment, push_answer : b
     }
     ("struct_define", exprs) => {
       if exprs.len() < 1 {
-        return error_result!("malformed struct definition");
+        return error_expr!(expr, "malformed struct definition");
       }
-      let name = ast.expr(exprs[0]).symbol_to_refstr()?;
+      let name_id = exprs[0];
+      let name = ast.expr(name_id).symbol_to_refstr()?;
       if env.structs.contains_key(&name) {
-        return error_result!("A struct called {} has already been defined.", name);
+        return error_expr!(ast.expr(name_id), "A struct called {} has already been defined.", name);
       }
       // TODO: check for duplicates?
       let field_exprs = &exprs[1..];
@@ -373,12 +379,13 @@ fn compile_tree(id : ExprId, ast : &Ast, env : &mut Environment, push_answer : b
     }
     ("struct_instantiate", exprs) => {
       if exprs.len() < 1 || exprs.len() % 2 == 0 {
-        return error_result!("malformed struct instantiation {:?}", exprs);
+        return error_expr!(expr, "malformed struct instantiation {:?}", exprs);
       }
-      let name = ast.expr(exprs[0]).symbol_to_refstr()?;
+      let name_id = exprs[0];
+      let name = ast.expr(name_id).symbol_to_refstr()?;
       let def =
         env.structs.get(name.as_ref())
-        .ok_or_else(|| error!("struct {} does not exist", name))?.clone();
+        .ok_or_else(|| error!(ast.loc(name_id), "struct {} does not exist", name))?.clone();
       env.emit(BC::NewStruct(def.clone()), push_answer);
       {
         let mut field_index_map =
@@ -388,11 +395,11 @@ fn compile_tree(id : ExprId, ast : &Ast, env : &mut Environment, push_answer : b
           let field_name = ast.expr(exprs[i]).symbol_to_refstr()?;
           compile(exprs[i+1], ast, env, push_answer)?;
           let index = field_index_map.remove(field_name.as_ref())
-            .ok_or_else(|| error!("field {} does not exist", name))?;
+            .ok_or_else(|| error!(ast.loc(exprs[i]), "field {} does not exist", name))?;
           env.emit(BC::StructFieldInit(index), push_answer);
         }
         if field_index_map.len() > 0 {
-          return error_result!("Some fields not initialised");
+          return error_expr!(expr, "Some fields not initialised");
         }
       }
     }
@@ -404,7 +411,7 @@ fn compile_tree(id : ExprId, ast : &Ast, env : &mut Environment, push_answer : b
     ("while", exprs) => {
       does_not_push(instr, push_answer)?;
       if exprs.len() != 2 {
-        return error_result!("malformed while block");
+        return error_expr!(expr, "malformed while block");
       }
       let condition_label = env.label("loop_condition");
       let end_label = env.label("loop_end");
@@ -443,11 +450,11 @@ fn compile_tree(id : ExprId, ast : &Ast, env : &mut Environment, push_answer : b
         env.emit(BC::ArrayIndex, push_answer);
       }
       else {
-        return error_result!("index instruction expected 2 arguments. Found {}.", exprs.len());
+        return error_expr!(expr, "index instruction expected 2 arguments. Found {}.", exprs.len());
       }
     }
     _ => {
-      return error_result!("instruction '{}' with {} args is not supported by the interpreter.", instr, children.len());
+      return error_expr!(expr, "instruction '{}' with {} args is not supported by the interpreter.", instr, children.len());
     }
   }
   Ok(())
@@ -465,7 +472,7 @@ fn compile(e : ExprId, ast : &Ast, env : &mut Environment, push_answer : bool) -
           env.emit_jump(l.as_ref());
         }
         else {
-          return error_result!("can't break outside a loop");
+          return error!(ast.loc(e), "can't break outside a loop");
         }
       }
       else {
@@ -503,33 +510,36 @@ fn compile_bytecode(ast : &Ast, entry_function_name : RefStr, symbol_cache : &mu
   Ok(bp)
 }
 
+/// TODO: this is a hack, because there's no map from bytecode to souce code location
+const NO_LOC : TextLocation = TextLocation::new((0,0), (0,0));
+
 fn to_f(v : Value) -> Result<f32, Error> {
   match v {
     Value::Float(f) => Ok(f),
-    x => error_result!("Expected float, found {:?}.", x)
+    x => error!(NO_LOC, "Expected float, found {:?}.", x)
   }
 }
 fn to_b(v : Value) -> Result<bool, Error> {
   match v {
     Value::Bool(b) => Ok(b),
-    x => error_result!("Expected boolean, found {:?}.", x)
+    x => error!(NO_LOC, "Expected boolean, found {:?}.", x)
   }
 }
 fn to_array(v : Value) -> Result<Array, Error> {
   match v {
     Value::Array(a) => Ok(a),
-    x => error_result!("Expected array, found {:?}.", x)
+    x => error!(NO_LOC, "Expected array, found {:?}.", x)
   }
 }
 fn to_struct(v : &Value) -> Result<&StructVal, Error> {
   match v {
     Value::Struct(s) => Ok(s),
-    x => error_result!("Expected struct, found {:?}.", x)
+    x => error!(NO_LOC, "Expected struct, found {:?}.", x)
   }
 }
 fn struct_field_index(def : &StructDef, field_name : &str) -> Result<usize, Error> {
   def.fields.iter().position(|s| s.as_ref() == field_name)
-  .ok_or_else(||error!("field {} does not exist on struct '{:?}'.", field_name, def))
+  .ok_or_else(||error!(NO_LOC, "field {} does not exist on struct '{:?}'.", field_name, def))
 }
 
 fn array_index(array : &Vec<Value>, index : f32) -> Result<usize, Error> {
@@ -538,7 +548,7 @@ fn array_index(array : &Vec<Value>, index : f32) -> Result<usize, Error> {
     Ok(i)
   }
   else {
-    error_result!("Index out of bounds error. Array of {} elements given index {}.", array.len(), index)
+    error!(NO_LOC, "Index out of bounds error. Array of {} elements given index {}.", array.len(), index)
   }
 }
 
@@ -674,7 +684,7 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : usize) -> Res
             "==" => Value::Bool(a == b),
             "&&" => Value::Bool(to_b(a)? && to_b(b)?),
             "||" => Value::Bool(to_b(a)? || to_b(b)?),
-            op => return error_result!("unsupported binary operator {}", op),
+            op => return error!(NO_LOC, "unsupported binary operator {}", op),
           };
           stack.push(v);
         }
@@ -683,11 +693,11 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : usize) -> Res
           let v = match operator.as_ref() {
             "-" => Value::Float(-to_f(a)?),
             "!" => Value::Bool(!to_b(a)?),
-            op => return error_result!("unsupported unary operator {}", op),
+            op => return error!(NO_LOC, "unsupported unary operator {}", op),
           };
           stack.push(v);
         }
-        // TODO remove: i => return error_result!("instruction '{:?}' not yet implemented.", i)),
+        // TODO remove: i => return error_expr!("instruction '{:?}' not yet implemented.", i)),
       }
       c.program_counter += 1;
     }

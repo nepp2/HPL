@@ -17,6 +17,9 @@ fn interpret(code: &str) -> Result<Value, Error> {
   let ast = parser::parse(tokens)?;
   let value = bytecode_vm::interpret(&ast);
   println!("Type check result: {:?}", typecheck::typecheck(&ast));
+  for (i, e) in ast.exprs.iter().enumerate() {
+    println!("{}: {:?}, line: {}, {:?}", i, e.tag, e.loc.start.line, e.children);
+  }
   value
 }
 

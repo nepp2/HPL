@@ -36,7 +36,7 @@ impl <'l> Environment <'l> {
     Environment { functions, structs, locals }
   }
 
-  fn find_var_type(&self, v : &str) -> Result<Type, Error> {
+  fn find_var_type(&self, v : &str, loc : &TextLocation) -> Result<Type, Error> {
     for vs in self.locals.iter().rev() {
       for (name, t) in vs.iter().rev() {
         if name.as_ref() == v {
@@ -44,21 +44,21 @@ impl <'l> Environment <'l> {
         }
       }
     }
-    error_result!("no variable called '{}' found in scope", v)
+    error!(loc, "no variable called '{}' found in scope", v)
   }
 
-  fn find_field_type(&self, struct_name : &str, field_name : &str) -> Result<Type, Error> {
+  fn find_field_type(&self, struct_name : &str, field_name : &str, loc : &TextLocation) -> Result<Type, Error> {
     let def = 
       self.structs.get(struct_name)
-      .ok_or_else(|| error!("struct {} does not exist", struct_name))?.clone();
+      .ok_or_else(|| error!(loc, "struct {} does not exist", struct_name))?.clone();
     let (_, field_type) =
       def.fields.iter().find(|(n, _)| n.as_ref() == field_name)
-      .ok_or_else(|| error!("field {} does not exist on struct {}", field_name, struct_name))?;
+      .ok_or_else(|| error!(loc, "field {} does not exist on struct {}", field_name, struct_name))?;
     Ok(field_type.clone())
   }
 }
 
-fn type_unify(a : &Type, b : &Type) -> Result<Type, Error> {
+fn type_unify(a : &Type, b : &Type, loc : &TextLocation) -> Result<Type, Error> {
   if a == &Type::Any {
     Ok(b.clone())
   }
@@ -69,42 +69,44 @@ fn type_unify(a : &Type, b : &Type) -> Result<Type, Error> {
     Ok(a.clone())
   }
   else {
-    error_result!("Expected types {:?} and {:?} to match.", a, b)
+    error!(loc, "Expected types {:?} and {:?} to match.", a, b)
   }
 }
 
-fn types_compatible(a : &Type, b : &Type) -> bool {
-  type_unify(a, b).is_ok()
+fn types_compatible(a : &Type, b : &Type, loc : &TextLocation) -> bool {
+  type_unify(a, b, loc).is_ok()
 }
 
-fn assert_expected_found(expected : &Type, found : &Type) -> Result<(), Error> {
+fn assert_expected_found(expected : &Type, found : &Type, e : &Expr) -> Result<(), Error> {
   if !types_compatible(expected, found) {
-    return error_result!("Expected type {:?}, but found type {:?}.", expected, found);
+    return error_expr!(e, "Expected type {:?}, but found type {:?}.", expected, found);
   }
   return Ok(());
 }
 
-fn struct_name(t : Type) -> Result<RefStr, Error> {
+fn struct_name(t : Type, loc : &TextLocation) -> Result<RefStr, Error> {
   match t {
     Type::Struct(s) => Ok(s),
-    _ => error_result!("Expected a struct but found type {:?}.", t),
+    _ => error!(loc, "Expected a struct but found type {:?}.", t),
   }
 }
 
-fn string_to_type(s : &str) -> Result<Type, Error> {
+fn string_to_type(s : &str, loc : &TextLocation) -> Result<Type, Error> {
   match s {
     "float" => Ok(Type::Float),
     "unit" => Ok(Type::Unit),
     "bool" => Ok(Type::Bool),
     "array" => Ok(Type::Array),
     "any" | "[NO_TYPE]" => Ok(Type::Any),
-    _ => error_result!("{:?} is not a valid type", s),
+    _ => error!(loc, "{:?} is not a valid type", s),
   }
 }
 
-fn typecheck_function_call(function_name: RefStr, args: &[Type], env : &mut Environment) -> Result<Type, Error> {
+fn typecheck_function_call(function_name_id: ExprId, args: &[Type], env : &mut Environment) -> Result<Type, Error> {
+  let symbol = ast.expr(function_name_id);
+  let function_name = symbol.symbol_unwrap()?;
   let def = env.functions.get(&function_name)
-    .ok_or_else(|| error!("Found no function called '{}'", function_name))?;
+    .ok_or_else(|| error!(symbol.loc, "Found no function called '{}'", function_name))?;
   for (e_t, f_t) in def.args.iter().zip(args) {
     assert_expected_found(e_t, f_t)?;
   }
@@ -112,9 +114,9 @@ fn typecheck_function_call(function_name: RefStr, args: &[Type], env : &mut Envi
 }
 
 fn typecheck_tree(id : ExprId, ast : &Ast, env : &mut Environment) -> Result<Type, Error> {
-  let e = ast.expr(id);
-  let instr = e.symbol_unwrap()?.as_ref();
-  let args = e.children.as_slice();
+  let expr = ast.expr(id);
+  let instr = expr.tree_symbol_unwrap()?.as_ref();
+  let args = expr.children.as_slice();
   match (instr, args) {
     ("call", exprs) => {
       fn binary(expected_a : &Type, a : &Type, expected_b : &Type, b : &Type, returns : Type) -> Result<Type, Error> {
@@ -122,7 +124,8 @@ fn typecheck_tree(id : ExprId, ast : &Ast, env : &mut Environment) -> Result<Typ
         assert_expected_found(expected_b, b)?;
         Ok(returns)
       }
-      let symbol = ast.expr(exprs[0]).symbol_unwrap()?;
+      let function_name_id = exprs[0];
+      let symbol = ast.expr(function_name_id).symbol_unwrap()?;
       let params = exprs[1..].iter().map(|arg_id| typecheck_env(*arg_id, ast, env)).collect::<Result<Vec<Type>, Error>>()?;
       match params.as_slice() {
         [a, b] => {
@@ -143,7 +146,7 @@ fn typecheck_tree(id : ExprId, ast : &Ast, env : &mut Environment) -> Result<Typ
         }
         _ => (),
       }
-      return typecheck_function_call(symbol.clone(), &params, env);
+      return typecheck_function_call(function_name_id, &params, env);
     }
     ("block", exprs) => {
       env.locals.push(vec![]);
@@ -170,7 +173,7 @@ fn typecheck_tree(id : ExprId, ast : &Ast, env : &mut Environment) -> Result<Typ
           let var_type = env.find_var_type(&var_symbol)?;
           let value_type = typecheck_env(*value_expr, ast, env)?;
           if !types_compatible(&value_type, &var_type) {
-            return error_result!("can't assign value of type {:?} to variable of type {:?}", value_type, var_type);
+            return error_expr!(expr, "can't assign value of type {:?} to variable of type {:?}", value_type, var_type);
           }
           return Ok(Type::Unit);
         }
@@ -192,7 +195,7 @@ fn typecheck_tree(id : ExprId, ast : &Ast, env : &mut Environment) -> Result<Typ
               let field_name = ast.expr(*field_expr).symbol_unwrap()?;
               let field_type = env.find_field_type(&struct_name, &field_name)?;
               if !types_compatible(&value_type, &field_type) {
-                return error_result!("can't assign value of type {:?} to field of type {:?}", value_type, field_type);
+                return error_expr!(expr, "can't assign value of type {:?} to field of type {:?}", value_type, field_type);
               }
               return Ok(Type::Unit);
             }
@@ -201,12 +204,12 @@ fn typecheck_tree(id : ExprId, ast : &Ast, env : &mut Environment) -> Result<Typ
         }
         _ => (),
       }
-      error_result!("can't assign to {:?}", (assign_expr, args))
+      error_expr!(assign_expr, "can't assign to {:?}", (assign_expr, args))
     }
     ("if", exprs) => {
       let arg_count = exprs.len();
       if arg_count < 2 || arg_count > 3 {
-        return error_result!("malformed if expression");
+        return error_expr!(expr, "malformed if expression");
       }
       let condition_type = typecheck_env(exprs[0], ast, env)?;
       assert_expected_found(&Type::Bool, &condition_type)?;
@@ -221,11 +224,12 @@ fn typecheck_tree(id : ExprId, ast : &Ast, env : &mut Environment) -> Result<Typ
     }
     ("struct_define", exprs) => {
       if exprs.len() < 1 {
-        return error_result!("malformed struct definition");
+        return error_expr!(expr, "malformed struct definition");
       }
-      let name = ast.expr(exprs[0]).symbol_to_refstr()?;
+      let name_expr = ast.expr(exprs[0]);
+      let name = name_expr.symbol_to_refstr()?;
       if env.structs.contains_key(&name) {
-        return error_result!("A struct called {} has already been defined.", name);
+        return error_expr!(name_expr, "A struct called {} has already been defined.", name);
       }
       // TODO: check for duplicates?
       let field_exprs = &exprs[1..];
@@ -241,26 +245,28 @@ fn typecheck_tree(id : ExprId, ast : &Ast, env : &mut Environment) -> Result<Typ
     }
     ("struct_instantiate", exprs) => {
       if exprs.len() < 1 || exprs.len() % 2 == 0 {
-        return error_result!("malformed struct instantiation {:?}", exprs);
+        return error_expr!(expr, "malformed struct instantiation {:?}", exprs);
       }
-      let name = ast.expr(exprs[0]).symbol_to_refstr()?;
+      let name_expr = ast.expr(exprs[0]);
+      let name = name_expr.symbol_to_refstr()?;
       let mut field_type_map = {
         let def =
           env.structs.get(name.as_ref())
-          .ok_or_else(|| error!("struct {} does not exist", name))?.clone();
+          .ok_or_else(|| error!(name_expr.loc, "struct {} does not exist", name))?.clone();
         def.fields.iter()
         .map(|(s, t)| (s.clone(), t.clone()))
         .collect::<HashMap<RefStr, Type>>()
       };
       for i in (1..exprs.len()).step_by(2) {
-        let field_name = ast.expr(exprs[i]).symbol_to_refstr()?;
+        let field_name_expr = ast.expr(exprs[i]);
+        let field_name = field_name_expr.symbol_to_refstr()?;
         let type_name = typecheck_env(exprs[i+1], ast, env)?;
         let expected_type = field_type_map.remove(field_name.as_ref())
-          .ok_or_else(|| error!("field {} does not exist", name))?;
+          .ok_or_else(|| error!(field_name_expr.loc, "field {} does not exist", field_name))?;
         assert_expected_found(&expected_type, &type_name)?;
       }
       if field_type_map.len() > 0 {
-        return error_result!("Some fields not initialised: {:?}", field_type_map);
+        return error_expr!(expr, "Some fields not initialised: {:?}", field_type_map);
       }
       Ok(Type::Struct(name))
     }
@@ -272,7 +278,7 @@ fn typecheck_tree(id : ExprId, ast : &Ast, env : &mut Environment) -> Result<Typ
     }
     ("while", exprs) => {
       if exprs.len() != 2 {
-        return error_result!("malformed while block");
+        return error_expr!(expr, "malformed while block");
       }
       let condition_type = typecheck_env(exprs[0], ast, env)?;
       assert_expected_found(&Type::Bool, &condition_type)?;
@@ -310,11 +316,11 @@ fn typecheck_tree(id : ExprId, ast : &Ast, env : &mut Environment) -> Result<Typ
         Ok(Type::Any)
       }
       else {
-        return error_result!("index instruction expected 2 arguments. Found {}.", exprs.len());
+        return error_expr!(expr, "index instruction expected 2 arguments. Found {}.", exprs.len());
       }
     }
     _ => {
-      error_result!("instruction '{}' with args {:?} is not supported by the type checker.", instr, args)
+      error_expr!(expr, "instruction '{}' with args {:?} is not supported by the type checker.", instr, args)
     }
   }
 }

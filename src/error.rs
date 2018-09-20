@@ -1,9 +1,9 @@
 
 #[macro_export]
-macro_rules! error_expr(
-  ( $expr:expr, $($args:tt)* ) => (
+macro_rules! error(
+  ( $loc:expr, $($args:tt)* ) => (
     {
-      let loc = ($expr).loc;
+      let loc = $loc;
       Err(Error {
         message: format!($($args)*),
         location: loc,
@@ -13,11 +13,11 @@ macro_rules! error_expr(
 );
 
 #[macro_export]
-macro_rules! error(
-  ( $($args:tt)* ) => (
-    Error {
-      message: format!($($args)*),
-      location: TextLocation::new((0, 0), (0, 0)),
+macro_rules! error_expr(
+  ( $expr:expr, $($args:tt)* ) => (
+    {
+      let loc = ($expr).loc;
+      Err(error!(($expr).loc, $($args)*))
     }
   )
 );
@@ -58,9 +58,4 @@ impl TextLocation {
 pub struct Error {
   pub message : String,
   pub location : TextLocation,
-}
-
-fn error(){
-  let e = error!("blah blah {} {}", 3, 6);
-  let a = error!("blah blah {} {}", 4, 5);
 }

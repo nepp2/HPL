@@ -43,32 +43,6 @@ pub enum ExprTag {
   LiteralBool(bool),
 }
 
-/*
-impl ExprTag {
-  pub fn tree_symbol_unwrap(&self) -> Result<&RefStr, Error> {
-    if let ExprTag::Tree(s) = self {
-      Ok(s)
-    }
-    else {
-      error_result!("expected a tree, found {:?}", self)
-    }
-  }
-
-  pub fn symbol_unwrap(&self) -> Result<&RefStr, Error> {
-    if let ExprTag::Symbol(s) = self {
-      Ok(s)
-    }
-    else {
-      error_result!("expected a symbol, found {:?}", self)
-    }
-  }
-
-  pub fn symbol_to_refstr(&self) -> Result<RefStr, Error> {
-    self.symbol_unwrap().map(|s| s.clone())
-  }
-}
-*/
-
 /// Used to look up expressions in the abstract syntax tree
 pub type ExprId = usize;
 
@@ -124,7 +98,7 @@ impl Ast {
     let e = &self.exprs[id];
     match e.tag {
       ExprTag::Tree(_) => Ok(&self.exprs[id].children),
-      _ => error_result!("expected tree, found {:?}", e)
+      _ => error_result!(e, "expected tree, found {:?}", e)
     }
     
   }
@@ -157,7 +131,8 @@ impl ParseState {
       Ok(&self.tokens[self.pos])
     }
     else {
-      error_result!("Expected token. Found nothing.")
+      let m = self.tokens[self.pos-1].loc.end;
+      error!(TextLocation::new(m, m), "Expected token. Found nothing.")
     }
   }
 
@@ -174,13 +149,13 @@ impl ParseState {
     TextLocation::new(start, self.peek_marker())
   }
 
-  fn peek_ahead(&self, offset : usize) -> Result<&Token, Error> {
+  fn peek_ahead(&self, offset : usize) -> Option<&Token> {
     let i = self.pos + offset;
     if i < self.tokens.len() {
-      Ok(&self.tokens[i])
+      Some(&self.tokens[i])
     }
     else {
-      error_result!("Expected token {} steps ahead. Found nothing.", offset)
+      None
     }
   }
 
@@ -206,14 +181,9 @@ impl ParseState {
 
   fn expect_string(&mut self, string : &str) -> Result<(), Error> {
     {
-      let t = self.peek();
-      if let Ok(t) = t {
-        if t.string.as_ref() != string {
-          return error_result!("Expected token '{}', found token '{}'", string, t.string);
-        }
-      }
-      else {
-        return error_result!("Expected token '{}', found nothing.", string);
+      let t = self.peek()?;
+      if t.string.as_ref() != string {
+        return error!(t.loc, "Expected token '{}', found token '{}'", string, t.string);
       }
     }
     self.skip();
@@ -221,21 +191,15 @@ impl ParseState {
   }
 
   /// Returns marker for start of the token if successful
-  fn expect_type(&mut self, token_type : TokenType) -> Result<TextMarker, Error> {
-    let start = self.peek_marker();
+  fn expect_type(&mut self, token_type : TokenType) -> Result<(), Error> {
     {
-      let t = self.peek();
-      if let Ok(t) = t {
-        if t.token_type != token_type {
-          return error_result!("Expected token of type '{:?}', found token '{:?}'", token_type, t.token_type);
-        }
-      }
-      else {
-        return error_result!("Expected token of type '{:?}', found nothing.", token_type);
+      let t = self.peek()?;
+      if t.token_type != token_type {
+        return error!(t.loc, "Expected token of type '{:?}', found token '{:?}'", token_type, t.token_type);
       }
     }
     self.skip();
-    Ok(start)
+    Ok(())
   }
 
   fn add_expr(&mut self, e : Expr) -> ExprId {
@@ -284,9 +248,9 @@ lazy_static! {
 
 fn parse_expression(ps : &mut ParseState) -> Result<ExprId, Error> {
   
-  fn operator_precedence(s : &str) -> Result<i32, Error> {
+  fn operator_precedence(t : &Token) -> Result<i32, Error> {
     let p =
-      match s {
+      match t.string.as_ref() {
         "=" => 1,
         "+=" => 1,
         ">" => 2,
@@ -304,7 +268,7 @@ fn parse_expression(ps : &mut ParseState) -> Result<ExprId, Error> {
         "(" => 7,
         "[" => 7,
         "." => 8,
-        _ => return error_result!("Unexpected operator '{}'", s),
+        _ => return error!(t.loc, "Unexpected operator '{}'", s),
       };
     Ok(p)
   }
@@ -431,7 +395,7 @@ fn parse_float(ps : &mut ParseState) -> Result<f32, Error> {
     Ok(f)
   }
   else {
-    error_result!("Failed to parse float from '{}'", t.string)
+    error!(t.loc, "Failed to parse float from '{}'", t.string)
   }
 }
 
@@ -462,7 +426,7 @@ fn parse_syntax(ps : &mut ParseState) -> Result<ExprId, Error> {
       ps.expect_string(")")?;
       Ok(a)
     }
-    _ => error_result!("Unexpected syntax '{}' at position '{:?}'", ps.peek()?.string, ps.peek()?.loc),
+    _ => error!(ps.peek()?.loc, "Unexpected syntax '{}'", ps.peek()?.string),
   }
 }
 
@@ -625,7 +589,10 @@ fn parse_keyword_term(ps : &mut ParseState) -> Result<ExprId, Error> {
       ps.expect_string("false")?;
       Ok(ps.add_leaf(ExprTag::LiteralBool(false), start))
     }
-    _ => error_result!("Encountered unexpected keyword '{}'. This keyword is not supported here.", ps.peek()?.string),
+    _ => {
+      let t = ps.peek()?;
+      error!(t.loc, "Encountered unexpected keyword '{}'. This keyword is not supported here.", t.string)
+    }
   }
 }
 
@@ -679,7 +646,7 @@ pub fn parse(tokens : Vec<Token>) -> Result<Ast, Error> {
   let e = parse_block(&mut ps)?;
   if ps.has_tokens() {
     let t = ps.peek()?;
-    return error_result!("Unexpected token '{}' of type '{:?}'", t.string, t.token_type);
+    return error!(t.loc, "Unexpected token '{}' of type '{:?}'", t.string, t.token_type);
   }
   let ast = Ast { root_id: e, exprs: ps.exprs };
   return Ok(ast);

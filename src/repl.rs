@@ -16,7 +16,7 @@ fn interpret(text : &str) -> Result<Value, Error> {
       Ok(value)
     }
     Err(errors) => {
-      error_result!("{:?}", errors)
+      error!(errors[0].loc, "{:?}", errors)
     }
   }
 }
