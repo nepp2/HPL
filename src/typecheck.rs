@@ -190,7 +190,7 @@ fn typecheck_tree(id : ExprId, ast : &Ast, env : &mut Environment) -> Result<Typ
           return Ok(Type::Unit);
         }
         ExprTag::Tree(var_symbol) => {
-          match (var_symbol.as_ref(), args) {
+          match (var_symbol.as_ref(), assign_expr.children.as_slice()) {
             ("index", [array_expr, index_expr]) => {
               let array_type = typecheck_env(*array_expr, ast, env)?;
               assert_expected_found(&Type::Array, &array_type, &ast.loc(*array_expr))?;
@@ -216,7 +216,7 @@ fn typecheck_tree(id : ExprId, ast : &Ast, env : &mut Environment) -> Result<Typ
         }
         _ => (),
       }
-      error(assign_expr, format!("can't assign to {:?}", (assign_expr, args)))
+      error(assign_expr, format!("can't assign to {:?}", assign_expr))
     }
     ("if", exprs) => {
       let arg_count = exprs.len();

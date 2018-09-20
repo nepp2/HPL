@@ -13,7 +13,7 @@ fun subtract(a, b) {
 
 struct test {
   a : float,
-  b : array,
+  b : arrady,
 }
 
 let t = test { a: 4, b: b }
@@ -36,3 +36,4 @@ let boop = mult(mult(100, 5), 2)
 t.b[0] = subtract(boop, 5)
 
 mult(100, t.a)
+

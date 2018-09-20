@@ -11,15 +11,24 @@ use lexer;
 use value::{Value};
 use bytecode_vm;
 use typecheck;
+use typecheck::Type;
+
+fn print_type(r : Result<Type, Error>){
+  match r {
+    Ok(t) => println!("{:?}", t),
+    Err(e) => {
+      println!(
+        "line: {}, column: {}, message: {}",
+        e.location.start.line, e.location.start.col, e.message);
+    }
+  }
+}
 
 fn interpret(code: &str) -> Result<Value, Error> {
   let tokens = lexer::lex(&code).map_err(|mut es| es.remove(0))?;
   let ast = parser::parse(tokens)?;
+  print_type(typecheck::typecheck(&ast));
   let value = bytecode_vm::interpret(&ast);
-  println!("Type check result: {:?}", typecheck::typecheck(&ast));
-  for (i, e) in ast.exprs.iter().enumerate() {
-    println!("{}: {:?}, line: {}, {:?}", i, e.tag, e.loc.start.line, e.children);
-  }
   value
 }
 

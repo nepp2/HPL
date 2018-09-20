@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use std::usize;
 
 #[derive(Debug)]
-enum BytecodeInstruction {
+pub enum BytecodeInstruction {
   Push(Value),
   PushVar(usize),
   Pop,
@@ -37,10 +37,10 @@ lazy_static! {
     "==", "&&", "||", "-", "!"].into_iter().collect();
 }
 
-type FunctionBytecode = Vec<BytecodeInstruction>;
+pub type FunctionBytecode = Vec<BytecodeInstruction>;
 
 #[derive(Debug)]
-struct FunctionInfo {
+pub struct FunctionInfo {
   name : RefStr,
 
   /// Number of arguments the function accepts
@@ -51,9 +51,9 @@ struct FunctionInfo {
 }
 
 #[derive(Debug)]
-struct BytecodeProgram {
-  bytecode : Vec<FunctionBytecode>,
-  info : Vec<FunctionInfo>,
+pub struct BytecodeProgram {
+  pub bytecode : Vec<FunctionBytecode>,
+  pub info : Vec<FunctionInfo>,
 }
 
 impl BytecodeProgram {
@@ -702,10 +702,7 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : usize) -> Res
   }
 }
 
-pub fn interpret(ast : &Ast) -> Result<Value, Error> {
-  let mut symbol_cache = SymbolCache::new();
-  let entry_function_name = symbol_cache.symbol("main");
-  let program = compile_bytecode(ast, entry_function_name.clone(), &mut symbol_cache)?;
+pub fn print_program(program : &BytecodeProgram) {
   for (info, bytecode) in program.info.iter().zip(program.bytecode.iter()) {
     println!("--------------------------------");
     println!("Function '{}':", info.name);
@@ -716,6 +713,13 @@ pub fn interpret(ast : &Ast) -> Result<Value, Error> {
     println!("Max local variables: {}", info.locals);
     println!();
   }
+}
+
+pub fn interpret(ast : &Ast) -> Result<Value, Error> {
+  let mut symbol_cache = SymbolCache::new();
+  let entry_function_name = symbol_cache.symbol("main");
+  let program = compile_bytecode(ast, entry_function_name.clone(), &mut symbol_cache)?;
+  // TODO print_program(&program);
   let entry_function_handle = program.info.iter().position(|i| i.name == entry_function_name).unwrap();
   interpret_bytecode(&program, entry_function_handle)
 }
