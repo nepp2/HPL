@@ -47,10 +47,6 @@ impl <'l> Environment <'l> {
     error(loc, format!("no variable called '{}' found in scope", v))
   }
 
-  fn option_error(){
-
-  }
-
   fn find_field_type(&self, struct_name : &str, field_name : &str, loc : &TextLocation) -> Result<Type, Error> {
     let def =
       self.structs.get(struct_name)

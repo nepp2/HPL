@@ -13,7 +13,7 @@ fun subtract(a, b) {
 
 struct test {
   a : float,
-  b : arrady,
+  b : array,
 }
 
 let t = test { a: 4, b: b }
