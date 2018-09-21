@@ -9,6 +9,10 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::usize;
 
+/*
+//TODO: I think maybe this compile phase
+*/
+
 #[derive(Debug)]
 pub enum BytecodeInstruction {
   Push(Value),
@@ -254,18 +258,18 @@ fn compile_tree(id : ExprId, ast : &Ast, env : &mut Environment, push_answer : b
   let children = expr.children.as_slice();
   match (instr, children) {
     ("call", exprs) => {
-      let symbol = ast.expr(exprs[0]).symbol_unwrap()?;
+      let symbol = ast.expr(exprs[0]).symbol_to_refstr()?;
       let params = &exprs[1..];
       if BYTECODE_OPERATORS.contains(symbol.as_ref()) {
         match params {
           [a, b] => {
             compile(*a, ast, env, push_answer)?;
             compile(*b, ast, env, push_answer)?;
-            env.emit(BC::BinaryOperator(symbol.clone()), push_answer);
+            env.emit(BC::BinaryOperator(symbol), push_answer);
           }
           [v] => {
             compile(*v, ast, env, push_answer)?;
-            env.emit(BC::UnaryOperator(symbol.clone()), push_answer);
+            env.emit(BC::UnaryOperator(symbol), push_answer);
           }
           _ => {
             return error(expr, format!("wrong number of arguments for operator"));

@@ -3,7 +3,7 @@ let a = 2
 
 let b = [0, 6]
 
-fun mult(a, b) {
+fun mult(a : float, b : float) {
   a * b
 }
 

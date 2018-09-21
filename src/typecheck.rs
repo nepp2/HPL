@@ -1,6 +1,6 @@
 
 use error::{Error, TextLocation, error, error_raw};
-use parser::{Expr, ExprTag, ExprId, Ast};
+use parser::{Expr, ExprTag, ExprId, Ast, NO_TYPE};
 use value::RefStr;
 use std::collections::HashMap;
 
@@ -92,12 +92,15 @@ fn struct_name(t : Type, loc : &TextLocation) -> Result<RefStr, Error> {
 }
 
 fn string_to_type(s : &str, loc : &TextLocation) -> Result<Type, Error> {
+  if s == NO_TYPE {
+    return Ok(Type::Any);
+  }
   match s {
     "float" => Ok(Type::Float),
     "unit" => Ok(Type::Unit),
     "bool" => Ok(Type::Bool),
     "array" => Ok(Type::Array),
-    "any" | "[NO_TYPE]" => Ok(Type::Any),
+    "any" => Ok(Type::Any),
     _ => error(loc, format!("{:?} is not a valid type", s)),
   }
 }
