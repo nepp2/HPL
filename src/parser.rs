@@ -49,8 +49,9 @@ pub type ExprId = usize;
 /// Expression
 #[derive(Debug)]
 pub struct Expr {
+  pub id : ExprId,
   pub tag : ExprTag,
-  pub children : Vec<ExprId>,
+  pub children : Vec<Expr>,
   pub loc : TextLocation,
 }
 
@@ -84,48 +85,18 @@ impl <'l> Into<TextLocation> for &'l Expr {
   }
 }
 
-/// Abstract syntax tree
-#[derive(Debug)]
-pub struct Ast {
-  pub root_id : ExprId,
-  pub exprs : Vec<Expr>,
-}
-
-impl Ast {
-  pub fn expr(&self, id : ExprId) -> &Expr {
-    &self.exprs[id]
-  }
-
-  pub fn tag(&self, id : ExprId) -> &ExprTag {
-    &self.exprs[id].tag
-  }
-
-  pub fn children(&self, id : ExprId) -> Result<&[ExprId], Error> {
-    let e = &self.exprs[id];
-    match e.tag {
-      ExprTag::Tree(_) => Ok(&self.exprs[id].children),
-      _ => error(e, format!("expected tree, found {:?}", e))
-    }
-    
-  }
-
-  pub fn loc(&self, id : ExprId) -> &TextLocation {
-    &self.exprs[id].loc
-  }
-}
-
 // TODO: this might be better implemented with a ring buffer (or just a backwards vec)
 struct ParseState {
   tokens : Vec<Token>,
   pos : usize,
   symbol_cache : SymbolCache,
-  exprs : Vec<Expr>,
+  expr_id_gen : ExprId,
 }
 
 impl ParseState {
 
   fn new(tokens : Vec<Token>) -> ParseState {
-    ParseState { tokens, pos: 0, symbol_cache: SymbolCache::new(), exprs: vec!() }
+    ParseState { tokens, pos: 0, symbol_cache: SymbolCache::new(), expr_id_gen: 0 }
   }
 
   fn has_tokens(&self) -> bool {
@@ -208,35 +179,31 @@ impl ParseState {
     Ok(())
   }
 
-  fn add_expr(&mut self, e : Expr) -> ExprId {
-    let id = self.exprs.len();
-    self.exprs.push(e);
-    id
+  fn add_expr(&mut self, tag : ExprTag, children : Vec<Expr>, loc : TextLocation) -> Expr {
+    let id = self.expr_id_gen;
+    self.expr_id_gen += 1;
+    Expr { id, tag, children, loc }
   }
 
-  fn add_leaf(&mut self, tag : ExprTag, start : TextMarker) -> ExprId {
+  fn add_leaf(&mut self, tag : ExprTag, start : TextMarker) -> Expr {
     let loc = self.loc(start);
-    self.add_expr(Expr { tag, children: vec!(), loc })
+    self.add_expr(tag, vec!(), loc)
   }
 
   fn add_tree<T : AsRef<str> + Into<RefStr>>
-    (&mut self, s : T, children : Vec<ExprId>, start : TextMarker) -> ExprId
+    (&mut self, s : T, children : Vec<Expr>, start : TextMarker) -> Expr
   {
     let loc = self.loc(start);
     let tag = ExprTag::Tree(self.symbol_cache.symbol(s));
-    self.add_expr(Expr { tag, children, loc })
+    self.add_expr(tag, children, loc)
   }
 
   fn add_symbol<T : AsRef<str> + Into<RefStr>>
-    (&mut self, s : T, start : TextMarker) -> ExprId
+    (&mut self, s : T, start : TextMarker) -> Expr
   {
     let loc = self.loc(start);
     let tag = ExprTag::Symbol(self.symbol_cache.symbol(s));
-    self.add_expr(Expr { tag, children: vec!(), loc })
-  }
-
-  pub fn get_loc(&self, id : ExprId) -> &TextLocation {
-    &self.exprs[id].loc
+    self.add_expr(tag, vec!(), loc)
   }
 }
 
@@ -252,7 +219,7 @@ lazy_static! {
     vec!["=", ".", "+="].into_iter().collect();
 }
 
-fn parse_expression(ps : &mut ParseState) -> Result<ExprId, Error> {
+fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
   
   fn operator_precedence(t : &Token) -> Result<i32, Error> {
     let p =
@@ -280,7 +247,7 @@ fn parse_expression(ps : &mut ParseState) -> Result<ExprId, Error> {
   }
 
   /// This expression parser is vaguely based on some blogs about pratt parsing.
-  fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<ExprId, Error> {
+  fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
     // TODO: this is currently implemented with an enum in a dumb way to handle limitation of Rust's
     // lifetime inference. Once these limitations are fixed (non-lexical lifetimes) I can fix this.
     enum Action { FunctionCall, IndexExpression, Infix(i32) }
@@ -330,8 +297,8 @@ fn parse_expression(ps : &mut ParseState) -> Result<ExprId, Error> {
     Ok(expr)
   }
 
-  fn parse_index_expression(ps : &mut ParseState, indexee_expr : ExprId) -> Result<ExprId, Error> {
-    let start = ps.get_loc(indexee_expr).start;
+  fn parse_index_expression(ps : &mut ParseState, indexee_expr : Expr) -> Result<Expr, Error> {
+    let start = indexee_expr.loc.start;
     ps.expect_string("[")?;
     let indexing_expr = parse_expression(ps)?;
     ps.expect_string("]")?;
@@ -339,8 +306,8 @@ fn parse_expression(ps : &mut ParseState) -> Result<ExprId, Error> {
     Ok(ps.add_tree(INDEX, args, start))
   }
 
-  fn parse_function_call(ps : &mut ParseState, function_expr : ExprId) -> Result<ExprId, Error> {
-    let start = ps.get_loc(function_expr).start;
+  fn parse_function_call(ps : &mut ParseState, function_expr : Expr) -> Result<Expr, Error> {
+    let start = function_expr.loc.start;
     ps.expect_string("(")?;
     let mut exprs = vec!(function_expr);
     loop {
@@ -353,7 +320,7 @@ fn parse_expression(ps : &mut ParseState) -> Result<ExprId, Error> {
     Ok(ps.add_tree(CALL, exprs, start))
   }
 
-  fn parse_prefix(ps : &mut ParseState) -> Result<ExprId, Error> {
+  fn parse_prefix(ps : &mut ParseState) -> Result<Expr, Error> {
     let start = ps.peek_marker();
     // if the next token is a prefix operator
     let prefix_operator = {
@@ -377,8 +344,8 @@ fn parse_expression(ps : &mut ParseState) -> Result<ExprId, Error> {
     }
   }
 
-  fn parse_infix(ps : &mut ParseState, left_expr : ExprId, precedence : i32) -> Result<ExprId, Error> {
-    let infix_start = ps.get_loc(left_expr).start;
+  fn parse_infix(ps : &mut ParseState, left_expr : Expr, precedence : i32) -> Result<Expr, Error> {
+    let infix_start = left_expr.loc.start;
     let operator_start = ps.peek_marker();
     let operator_str = ps.pop_type(TokenType::Syntax)?.string.clone();
     let operator = ps.add_symbol(operator_str.clone(), operator_start);
@@ -405,7 +372,7 @@ fn parse_float(ps : &mut ParseState) -> Result<f32, Error> {
   }
 }
 
-fn parse_syntax(ps : &mut ParseState) -> Result<ExprId, Error> {
+fn parse_syntax(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
   match ps.peek()?.string.as_ref() {
     "[" => {
@@ -436,21 +403,21 @@ fn parse_syntax(ps : &mut ParseState) -> Result<ExprId, Error> {
   }
 }
 
-fn parse_simple_string(ps : &mut ParseState, t : TokenType) -> Result<ExprId, Error> {
+fn parse_simple_string(ps : &mut ParseState, t : TokenType) -> Result<Expr, Error> {
   let start = ps.peek_marker();
   let s = ps.pop_type(t)?.string.clone();
   Ok(ps.add_symbol(s, start))
 }
 
-fn parse_simple_symbol(ps : &mut ParseState) -> Result<ExprId, Error> {
+fn parse_simple_symbol(ps : &mut ParseState) -> Result<Expr, Error> {
   parse_simple_string(ps, TokenType::Symbol)
 }
 
-fn parse_type(ps : &mut ParseState) -> Result<ExprId, Error> {
+fn parse_type(ps : &mut ParseState) -> Result<Expr, Error> {
   parse_simple_symbol(ps)
 }
 
-fn parse_fun(ps : &mut ParseState) -> Result<ExprId, Error> {
+fn parse_fun(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
   ps.expect_string("fun")?;
   let fun_name = parse_simple_symbol(ps)?;
@@ -482,7 +449,7 @@ fn parse_fun(ps : &mut ParseState) -> Result<ExprId, Error> {
   Ok(fun_expr)
 }
 
-fn parse_let(ps : &mut ParseState) -> Result<ExprId, Error> {
+fn parse_let(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
   ps.expect_string("let")?;
   let var_name = parse_simple_symbol(ps)?;
@@ -491,7 +458,7 @@ fn parse_let(ps : &mut ParseState) -> Result<ExprId, Error> {
   Ok(ps.add_tree(LET, vec!(var_name, initialiser), start))
 }
 
-fn parse_if(ps : &mut ParseState) -> Result<ExprId, Error> {
+fn parse_if(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
   ps.expect_string("if")?;
   let conditional = parse_expression(ps)?;
@@ -508,7 +475,7 @@ fn parse_if(ps : &mut ParseState) -> Result<ExprId, Error> {
   Ok(ps.add_tree(IF, args, start))
 }
 
-fn parse_while(ps : &mut ParseState) -> Result<ExprId, Error> {
+fn parse_while(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
   ps.expect_string("while")?;
   let conditional = parse_expression(ps)?;
@@ -519,7 +486,7 @@ fn parse_while(ps : &mut ParseState) -> Result<ExprId, Error> {
   Ok(ps.add_tree(WHILE, args, start))
 }
 
-fn parse_struct_definition(ps : &mut ParseState) -> Result<ExprId, Error> {
+fn parse_struct_definition(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
   ps.expect_string("struct")?;
   let struct_name = parse_simple_symbol(ps)?;
@@ -549,7 +516,7 @@ fn parse_struct_definition(ps : &mut ParseState) -> Result<ExprId, Error> {
   Ok(ps.add_tree(STRUCT_DEFINE, args, start))
 }
 
-fn parse_struct_instantiate(ps : &mut ParseState) -> Result<ExprId, Error> {
+fn parse_struct_instantiate(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
   let struct_name = parse_simple_symbol(ps)?;
   ps.expect_string("{")?;
@@ -575,7 +542,7 @@ fn parse_struct_instantiate(ps : &mut ParseState) -> Result<ExprId, Error> {
   Ok(ps.add_tree(STRUCT_INSTANTIATE, args, start))
 }
 
-fn parse_keyword_term(ps : &mut ParseState) -> Result<ExprId, Error> {
+fn parse_keyword_term(ps : &mut ParseState) -> Result<Expr, Error> {
   match ps.peek()?.string.as_ref() {
     "let" => parse_let(ps),
     "fun" => parse_fun(ps),
@@ -602,7 +569,7 @@ fn parse_keyword_term(ps : &mut ParseState) -> Result<ExprId, Error> {
   }
 }
 
-fn parse_symbol_term(ps : &mut ParseState) -> Result<ExprId, Error> {
+fn parse_symbol_term(ps : &mut ParseState) -> Result<Expr, Error> {
   let is_struct =
     if let Some(t) = ps.peek_ahead(1) { t.string.as_ref() == "{" } else { false };
   if is_struct {
@@ -614,7 +581,7 @@ fn parse_symbol_term(ps : &mut ParseState) -> Result<ExprId, Error> {
   }
 }
 
-fn parse_expression_term(ps : &mut ParseState) -> Result<ExprId, Error> {
+fn parse_expression_term(ps : &mut ParseState) -> Result<Expr, Error> {
   match ps.peek()?.token_type {
     TokenType::Symbol => parse_symbol_term(ps),
     TokenType::Keyword => parse_keyword_term(ps),
@@ -627,7 +594,7 @@ fn parse_expression_term(ps : &mut ParseState) -> Result<ExprId, Error> {
   }
 }
 
-fn parse_block(ps : &mut ParseState) -> Result<ExprId, Error> {
+fn parse_block(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
   let mut exprs = vec!();
   'outer: loop {
@@ -647,15 +614,14 @@ fn parse_block(ps : &mut ParseState) -> Result<ExprId, Error> {
   Ok(ps.add_tree(BLOCK, exprs, start))
 }
 
-pub fn parse(tokens : Vec<Token>) -> Result<Ast, Error> {
+pub fn parse(tokens : Vec<Token>) -> Result<Expr, Error> {
   let mut ps = ParseState::new(tokens);
   let e = parse_block(&mut ps)?;
   if ps.has_tokens() {
     let t = ps.peek()?;
     return error(t.loc, format!("Unexpected token '{}' of type '{:?}'", t.string, t.token_type));
   }
-  let ast = Ast { root_id: e, exprs: ps.exprs };
-  return Ok(ast);
+  return Ok(e);
 }
 
 #[test]

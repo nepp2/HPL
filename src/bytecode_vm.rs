@@ -1,6 +1,6 @@
 
 use error::{Error, TextLocation, error, error_raw, error_no_loc};
-use parser::{Expr, Ast, ExprTag, ExprId};
+use parser::{Expr, ExprTag, ExprId};
 use value::{Value, Struct, Array, StructVal, StructDef, RefStr, SymbolCache};
 use typecheck::typecheck;
 
@@ -222,17 +222,16 @@ impl <'l> Environment<'l> {
   }
 }
 
-fn compile_function_call(function_name_id: ExprId, args: &[ExprId], ast : &Ast, env : &mut Environment, push_answer : bool)
+fn compile_function_call(symbol: &Expr, args: &[Expr], env : &mut Environment, push_answer : bool)
   -> Result<(), Error>
 {
-  let expr = ast.expr(function_name_id);
-  let function_name = expr.symbol_unwrap()?;
+  let function_name = symbol.symbol_unwrap()?;
   for i in 0..args.len() {
-    compile(args[i], ast, env, true)?;
+    compile(&args[i], env, true)?;
   }
   let handle = env.functions.get(function_name)
     .ok_or_else(
-      ||error_raw(expr, format!("Found no function called '{}'", function_name)))?
+      ||error_raw(symbol, format!("Found no function called '{}'", function_name)))?
     .handle;
   env.emit_always(BC::CallFunction(handle));
   if !push_answer {
@@ -241,7 +240,7 @@ fn compile_function_call(function_name_id: ExprId, args: &[ExprId], ast : &Ast, 
   Ok(())
 }
 
-fn compile_tree(id : ExprId, ast : &Ast, env : &mut Environment, push_answer : bool) -> Result<(), Error> {
+fn compile_tree(expr : &Expr, env : &mut Environment, push_answer : bool) -> Result<(), Error> {
 
   fn does_not_push(expr : &Expr, push_answer : bool) -> Result<(), Error> {
     if push_answer {
@@ -253,22 +252,21 @@ fn compile_tree(id : ExprId, ast : &Ast, env : &mut Environment, push_answer : b
     }
   }
 
-  let expr = ast.expr(id);
   let instr = expr.tree_symbol_unwrap()?.as_ref();
   let children = expr.children.as_slice();
   match (instr, children) {
     ("call", exprs) => {
-      let symbol = ast.expr(exprs[0]).symbol_to_refstr()?;
+      let symbol = exprs[0].symbol_to_refstr()?;
       let params = &exprs[1..];
       if BYTECODE_OPERATORS.contains(symbol.as_ref()) {
         match params {
           [a, b] => {
-            compile(*a, ast, env, push_answer)?;
-            compile(*b, ast, env, push_answer)?;
+            compile(a, env, push_answer)?;
+            compile(b, env, push_answer)?;
             env.emit(BC::BinaryOperator(symbol), push_answer);
           }
           [v] => {
-            compile(*v, ast, env, push_answer)?;
+            compile(v, env, push_answer)?;
             env.emit(BC::UnaryOperator(symbol), push_answer);
           }
           _ => {
@@ -277,7 +275,7 @@ fn compile_tree(id : ExprId, ast : &Ast, env : &mut Environment, push_answer : b
         }
       }
       else {
-        compile_function_call(exprs[0], params, ast, env, push_answer)?;
+        compile_function_call(&exprs[0], params, env, push_answer)?;
       }
     }
     ("block", exprs) => {
@@ -286,10 +284,10 @@ fn compile_tree(id : ExprId, ast : &Ast, env : &mut Environment, push_answer : b
       let num_exprs = exprs.len();
       if num_exprs > 1 {
         for i in 0..(num_exprs-1) {
-          compile(exprs[i], ast, env, false)?;
+          compile(&exprs[i], env, false)?;
         }
       }
-      compile(exprs[num_exprs-1], ast, env, push_answer)?;
+      compile(&exprs[num_exprs-1], env, push_answer)?;
       let new_local_count = env.count_locals();
       if new_local_count > env.max_locals {
         env.max_locals = new_local_count;
@@ -298,18 +296,17 @@ fn compile_tree(id : ExprId, ast : &Ast, env : &mut Environment, push_answer : b
     }
     ("let", exprs) => {
       does_not_push(expr, push_answer)?;
-      let name = ast.expr(exprs[0]).symbol_unwrap()?;
-      compile(exprs[1], ast, env, true)?;
+      let name = exprs[0].symbol_unwrap()?;
+      compile(&exprs[1], env, true)?;
       let offset = env.count_locals();
       env.locals.last_mut().unwrap().vars.push(name.clone());
       env.emit_always(BC::SetVar(offset));
     }
     ("=", [_, assign_expr, value_expr]) => {
-      let assign_expr = ast.expr(*assign_expr);
       match &assign_expr.tag {
         ExprTag::Symbol(var_symbol) => {
           does_not_push(expr, push_answer)?;
-          compile(*value_expr, ast, env, true)?; // emit value
+          compile(value_expr, env, true)?; // emit value
           let offset = env.find_var_offset(&var_symbol, &assign_expr.loc)?;
           env.emit_always(BC::SetVar(offset));
           return Ok(());
@@ -318,16 +315,16 @@ fn compile_tree(id : ExprId, ast : &Ast, env : &mut Environment, push_answer : b
           does_not_push(expr, push_answer)?;
           match (symbol.as_ref(), assign_expr.children.as_slice()) {
             ("index", [array_expr, index_expr]) => {
-              compile(*array_expr, ast, env, true)?;
-              compile(*index_expr, ast, env, true)?;
-              compile(*value_expr, ast, env, true)?;
+              compile(array_expr, env, true)?;
+              compile(index_expr, env, true)?;
+              compile(value_expr, env, true)?;
               env.emit_always(BC::SetArrayIndex);
               return Ok(());
             }
             (".", [struct_expr, field_expr]) => {
-              compile(*struct_expr, ast, env, true)?;
-              compile(*value_expr, ast, env, true)?;
-              let field_name = ast.expr(*field_expr).symbol_unwrap()?;
+              compile(struct_expr, env, true)?;
+              compile(value_expr, env, true)?;
+              let field_name = field_expr.symbol_unwrap()?;
               env.emit_always(BC::SetStructField(field_name.clone()));
               return Ok(());
             }
@@ -347,20 +344,20 @@ fn compile_tree(id : ExprId, ast : &Ast, env : &mut Environment, push_answer : b
       if arg_count == 3 {
         // has else branch
         let else_end_label = env.label("else_end_label");
-        compile(exprs[0], ast, env, true)?;
+        compile(&exprs[0], env, true)?;
         env.emit_jump_if_false(&false_label);
-        compile(exprs[1], ast, env, push_answer)?;
+        compile(&exprs[1], env, push_answer)?;
         env.emit_jump(&else_end_label);
         env.emit_label(false_label);
-        compile(exprs[2], ast, env, push_answer)?;
+        compile(&exprs[2], env, push_answer)?;
         env.emit_label(else_end_label);
       }
       else {
         // has no else branch
         does_not_push(expr, push_answer)?;
-        compile(exprs[0], ast, env, true)?;
+        compile(&exprs[0], env, true)?;
         env.emit_jump_if_false(&false_label);
-        compile(exprs[1], ast, env, false)?;
+        compile(&exprs[1], env, false)?;
         env.emit_label(false_label);
       }
     }
@@ -368,16 +365,16 @@ fn compile_tree(id : ExprId, ast : &Ast, env : &mut Environment, push_answer : b
       if exprs.len() < 1 {
         return error(expr, "malformed struct definition");
       }
-      let name_id = exprs[0];
-      let name = ast.expr(name_id).symbol_to_refstr()?;
+      let name_expr = &exprs[0];
+      let name = name_expr.symbol_to_refstr()?;
       if env.structs.contains_key(&name) {
-        return error(ast.expr(name_id), format!("A struct called {} has already been defined.", name));
+        return error(name_expr, format!("A struct called {} has already been defined.", name));
       }
       // TODO: check for duplicates?
       let field_exprs = &exprs[1..];
       let mut fields = vec![];
       for i in (0..(field_exprs.len()-1)).step_by(2) {
-        fields.push(ast.expr(field_exprs[i]).symbol_to_refstr()?);
+        fields.push(field_exprs[i].symbol_to_refstr()?);
       }
       let def = Rc::new(StructDef { name: name.clone(), fields });
       env.structs.insert(name, def);
@@ -386,21 +383,21 @@ fn compile_tree(id : ExprId, ast : &Ast, env : &mut Environment, push_answer : b
       if exprs.len() < 1 || exprs.len() % 2 == 0 {
         return error(expr, format!("malformed struct instantiation {:?}", exprs));
       }
-      let name_id = exprs[0];
-      let name = ast.expr(name_id).symbol_to_refstr()?;
+      let name_expr = &exprs[0];
+      let name = name_expr.symbol_to_refstr()?;
       let def =
         env.structs.get(name.as_ref())
-        .ok_or_else(|| error_raw(*ast.loc(name_id), format!("struct {} does not exist", name)))?.clone();
+        .ok_or_else(|| error_raw(name_expr, format!("struct {} does not exist", name)))?.clone();
       env.emit(BC::NewStruct(def.clone()), push_answer);
       {
         let mut field_index_map =
           def.fields.iter().enumerate()
           .map(|(i, s)| (s.as_ref(), i)).collect::<HashMap<&str, usize>>();
         for i in (1..exprs.len()).step_by(2) {
-          let field_name = ast.expr(exprs[i]).symbol_to_refstr()?;
-          compile(exprs[i+1], ast, env, push_answer)?;
+          let field_name = exprs[i].symbol_to_refstr()?;
+          compile(&exprs[i+1], env, push_answer)?;
           let index = field_index_map.remove(field_name.as_ref())
-            .ok_or_else(|| error_raw(*ast.loc(exprs[i]), format!("field {} does not exist", name)))?;
+            .ok_or_else(|| error_raw(&exprs[i], format!("field {} does not exist", name)))?;
           env.emit(BC::StructFieldInit(index), push_answer);
         }
         if field_index_map.len() > 0 {
@@ -409,8 +406,8 @@ fn compile_tree(id : ExprId, ast : &Ast, env : &mut Environment, push_answer : b
       }
     }
     (".", [_, expr, field_name]) => {
-      compile(*expr, ast, env, push_answer)?;
-      let name = ast.expr(*field_name).symbol_unwrap()?;
+      compile(expr, env, push_answer)?;
+      let name = field_name.symbol_unwrap()?;
       env.emit(BC::PushStructField(name.clone()), push_answer);
     }
     ("while", exprs) => {
@@ -422,36 +419,35 @@ fn compile_tree(id : ExprId, ast : &Ast, env : &mut Environment, push_answer : b
       let end_label = env.label("loop_end");
       env.loop_break_labels.push(end_label.clone());
       env.emit_label(condition_label.clone());
-      compile(exprs[0], ast, env, true)?; // emit condition
+      compile(&exprs[0], env, true)?; // emit condition
       env.emit_jump_if_false(&end_label); // exit loop if condition fails
-      compile(exprs[1], ast, env, false)?; // emit loop body
+      compile(&exprs[1], env, false)?; // emit loop body
       env.emit_jump(&condition_label); // jump back to the condition
       env.emit_label(end_label);
       env.loop_break_labels.pop();
     }
     ("fun", exprs) => {
-      let name = ast.expr(exprs[0]).symbol_unwrap()?;
-      let args_exprs = ast.children(exprs[1])?;
-      let function_body = exprs[2];
+      let name = exprs[0].symbol_unwrap()?;
+      let args_exprs = exprs[1].children.as_slice();
+      let function_body = &exprs[2];
       let mut params = vec![];
       for i in (0..(args_exprs.len()-1)).step_by(2) {
-        let e = ast.expr(args_exprs[i]);
-        params.push(e.symbol_to_refstr()?);
+        params.push(args_exprs[i].symbol_to_refstr()?);
       }
       let mut new_env = Environment::new(name.clone(), params, &mut env.functions, &mut env.structs, &mut env.symbol_cache);
-      compile(function_body, ast, &mut new_env, true)?;
+      compile(function_body, &mut new_env, true)?;
       new_env.complete();
     }
     ("literal_array", exprs) => {
       for e in exprs {
-        compile(*e, ast, env, push_answer)?;
+        compile(e, env, push_answer)?;
       }
       env.emit(BC::NewArray(exprs.len()), push_answer);
     }
     ("index", exprs) => {
       if let [array_expr, index_expr] = exprs {
-        compile(*array_expr, ast, env, push_answer)?;
-        compile(*index_expr, ast, env, push_answer)?;
+        compile(array_expr, env, push_answer)?;
+        compile(index_expr, env, push_answer)?;
         env.emit(BC::ArrayIndex, push_answer);
       }
       else {
@@ -466,10 +462,10 @@ fn compile_tree(id : ExprId, ast : &Ast, env : &mut Environment, push_answer : b
 }
 
 
-fn compile(e : ExprId, ast : &Ast, env : &mut Environment, push_answer : bool) -> Result<(), Error> {
-  match ast.tag(e) {
+fn compile(expr : &Expr, env : &mut Environment, push_answer : bool) -> Result<(), Error> {
+  match &expr.tag {
     ExprTag::Tree(_) => {
-      compile_tree(e, ast, env, push_answer)?;
+      compile_tree(expr, env, push_answer)?;
     }
     ExprTag::Symbol(s) => {
       if s.as_ref() == "break" {
@@ -477,11 +473,11 @@ fn compile(e : ExprId, ast : &Ast, env : &mut Environment, push_answer : bool) -
           env.emit_jump(l.as_ref());
         }
         else {
-          return error(*ast.loc(e), "can't break outside a loop");
+          return error(expr.loc, "can't break outside a loop");
         }
       }
       else {
-        let offset = env.find_var_offset(&s, &ast.loc(e))?;
+        let offset = env.find_var_offset(&s, &expr.loc)?;
         env.emit(BC::PushVar(offset), push_answer);
       }
     }
@@ -497,12 +493,12 @@ fn compile(e : ExprId, ast : &Ast, env : &mut Environment, push_answer : bool) -
   Ok(())
 }
 
-fn compile_bytecode(ast : &Ast, entry_function_name : RefStr, symbol_cache : &mut SymbolCache) -> Result<BytecodeProgram, Error> {
+fn compile_bytecode(expr : &Expr, entry_function_name : RefStr, symbol_cache : &mut SymbolCache) -> Result<BytecodeProgram, Error> {
   let mut functions = HashMap::new();
   let mut structs = HashMap::new();
   {
     let mut env = Environment::new(entry_function_name, vec![], &mut functions, &mut structs, symbol_cache);
-    compile(ast.root_id, ast, &mut env, true)?;
+    compile(expr, &mut env, true)?;
     env.complete();
   }
   let mut bp = BytecodeProgram::new();
@@ -719,10 +715,10 @@ pub fn print_program(program : &BytecodeProgram) {
   }
 }
 
-pub fn interpret(ast : &Ast) -> Result<Value, Error> {
+pub fn interpret(expr : &Expr) -> Result<Value, Error> {
   let mut symbol_cache = SymbolCache::new();
   let entry_function_name = symbol_cache.symbol("main");
-  let program = compile_bytecode(ast, entry_function_name.clone(), &mut symbol_cache)?;
+  let program = compile_bytecode(expr, entry_function_name.clone(), &mut symbol_cache)?;
   // TODO print_program(&program);
   let entry_function_handle = program.info.iter().position(|i| i.name == entry_function_name).unwrap();
   interpret_bytecode(&program, entry_function_handle)
