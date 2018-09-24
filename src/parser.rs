@@ -535,6 +535,7 @@ fn parse_struct_instantiate(ps : &mut ParseState) -> Result<Expr, Error> {
     }
     let arg_name = parse_simple_symbol(ps)?;
     args.push(arg_name);
+    println!("args: {:?}", args);
     ps.expect_string(":")?;
     args.push(parse_expression(ps)?);
   }

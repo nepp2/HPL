@@ -11,6 +11,23 @@ fun subtract(a, b) {
   a - b
 }
 
+fun for(from, to, f) {
+  let i = from
+  // TODO: broke the parser! this is interpreted as a struct instantiation
+  while i < to {
+    f(i)
+    i = i + 1
+  }
+}
+
+for i in 0..10 {
+
+}
+
+for(0, 10, |i| {
+  do_something(i)
+})
+
 struct test {
   a : float,
   b : array,

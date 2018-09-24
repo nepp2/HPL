@@ -54,6 +54,7 @@ pub enum Value {
   Float(f32),
   Array(Array),
   Bool(bool),
+  Function(usize),
   Struct(StructVal),
   Unit,
 }
@@ -65,6 +66,7 @@ impl fmt::Debug for Value {
       Value::Float(x) => write!(f, "{}", x),
       Value::Array(a) => write!(f, "{:?}", &*a.borrow()),
       Value::Bool(b) => write!(f, "{}", b),
+      Value::Function(id) => write!(f, "function[{}]", id),
       Value::Struct(s) => {
         let Struct { def, fields } = &*s.borrow();
         let name = &def.name;
