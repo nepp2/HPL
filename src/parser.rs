@@ -1,6 +1,6 @@
 use lexer;
 use lexer::{Token, TokenType};
-use value::{RefStr, SymbolCache};
+use value::{RefStr, SymbolCache, Expr, ExprTag, ExprId, Type};
 use error::{Error, TextLocation, TextMarker, error};
 use std::collections::HashSet;
 use std::f32;
@@ -34,56 +34,6 @@ static STRUCT_INSTANTIATE : &str = "struct_instantiate";
 static BREAK : &str = "break";
 static BLOCK : &str = "block";
 pub static NO_TYPE : &str = "[NO_TYPE]";
-
-#[derive(PartialEq, Debug, Clone)]
-pub enum ExprTag {
-  Tree(RefStr),
-  Symbol(RefStr),
-  LiteralFloat(f32),
-  LiteralBool(bool),
-}
-
-/// Used to look up expressions in the abstract syntax tree
-pub type ExprId = usize;
-
-/// Expression
-#[derive(Debug)]
-pub struct Expr {
-  pub id : ExprId,
-  pub tag : ExprTag,
-  pub children : Vec<Expr>,
-  pub loc : TextLocation,
-}
-
-impl Expr {
-  pub fn tree_symbol_unwrap(&self) -> Result<&RefStr, Error> {
-    if let ExprTag::Tree(s) = &self.tag {
-      Ok(&s)
-    }
-    else {
-      error(self, format!("expected a tree, found {:?}", self))
-    }
-  }
-
-  pub fn symbol_unwrap(&self) -> Result<&RefStr, Error> {
-    if let ExprTag::Symbol(s) = &self.tag {
-      Ok(&s)
-    }
-    else {
-      error(self, format!("expected a symbol, found {:?}", self))
-    }
-  }
-
-  pub fn symbol_to_refstr(&self) -> Result<RefStr, Error> {
-    self.symbol_unwrap().map(|s| s.clone())
-  }
-}
-
-impl <'l> Into<TextLocation> for &'l Expr {
-  fn into(self) -> TextLocation {
-    self.loc
-  }
-}
 
 // TODO: this might be better implemented with a ring buffer (or just a backwards vec)
 struct ParseState {
@@ -182,7 +132,7 @@ impl ParseState {
   fn add_expr(&mut self, tag : ExprTag, children : Vec<Expr>, loc : TextLocation) -> Expr {
     let id = self.expr_id_gen;
     self.expr_id_gen += 1;
-    Expr { id, tag, children, loc }
+    Expr { id, tag, children, loc, type_info: Type::Unresolved }
   }
 
   fn add_leaf(&mut self, tag : ExprTag, start : TextMarker) -> Expr {
@@ -519,11 +469,11 @@ fn parse_struct_definition(ps : &mut ParseState) -> Result<Expr, Error> {
 fn parse_struct_instantiate(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
   let struct_name = parse_simple_symbol(ps)?;
-  ps.expect_string("{")?;
+  ps.expect_string("(")?;
   let mut args = vec!(struct_name);
   'outer: loop {
     'inner: loop {
-      if !ps.has_tokens() || ps.peek()?.string.as_ref() == "}" {
+      if !ps.has_tokens() || ps.peek()?.string.as_ref() == ")" {
         break 'outer;
       }
       if ps.peek()?.string.as_ref() == "," {
@@ -535,11 +485,10 @@ fn parse_struct_instantiate(ps : &mut ParseState) -> Result<Expr, Error> {
     }
     let arg_name = parse_simple_symbol(ps)?;
     args.push(arg_name);
-    println!("args: {:?}", args);
     ps.expect_string(":")?;
     args.push(parse_expression(ps)?);
   }
-  ps.expect_string("}")?;
+  ps.expect_string(")")?;
   Ok(ps.add_tree(STRUCT_INSTANTIATE, args, start))
 }
 
@@ -572,7 +521,9 @@ fn parse_keyword_term(ps : &mut ParseState) -> Result<Expr, Error> {
 
 fn parse_symbol_term(ps : &mut ParseState) -> Result<Expr, Error> {
   let is_struct =
-    if let Some(t) = ps.peek_ahead(1) { t.string.as_ref() == "{" } else { false };
+    ps.peek_ahead(1).map_or(false, |t| t.string.as_ref() == "(")
+    && ps.peek_ahead(2).map_or(false, |t| t.token_type == TokenType::Symbol)
+    && ps.peek_ahead(3).map_or(false, |t| t.string.as_ref() == ":");
   if is_struct {
     parse_struct_instantiate(ps)
   }

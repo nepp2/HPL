@@ -8,10 +8,9 @@ use std::path::PathBuf;
 use error::Error;
 use parser;
 use lexer;
-use value::{Value};
+use value::{Value, Type};
 use bytecode_vm;
 use typecheck;
-use typecheck::Type;
 
 fn print_type(r : Result<Type, Error>){
   match r {
@@ -26,9 +25,10 @@ fn print_type(r : Result<Type, Error>){
 
 fn interpret(code: &str) -> Result<Value, Error> {
   let tokens = lexer::lex(&code).map_err(|mut es| es.remove(0))?;
-  let ast = parser::parse(tokens)?;
-  print_type(typecheck::typecheck(&ast));
-  let value = bytecode_vm::interpret(&ast);
+  let mut expr = parser::parse(tokens)?;
+  let r = typecheck::typecheck(&mut expr);
+  print_type(r.map(|_| expr.type_info.clone()));
+  let value = bytecode_vm::interpret(&expr);
   value
 }
 

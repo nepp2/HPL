@@ -18,7 +18,6 @@ mod error;
 mod lexer;
 mod parser;
 mod value;
-mod utils;
 mod typecheck;
 mod bytecode_vm;
 mod repl;

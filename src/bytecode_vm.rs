@@ -1,7 +1,8 @@
 
 use error::{Error, TextLocation, error, error_raw, error_no_loc};
-use parser::{Expr, ExprTag, ExprId};
-use value::{Value, Struct, Array, StructVal, StructDef, RefStr, SymbolCache};
+use value::{
+  Value, Struct, Array, StructVal, StructDef, RefStr,
+  SymbolCache, Expr, ExprTag, ExprId, Type};
 use typecheck::typecheck;
 
 use std::collections::{HashMap, HashSet};
@@ -435,7 +436,8 @@ fn compile_tree(expr : &Expr, env : &mut Environment, push_answer : bool) -> Res
         params.push(args_exprs[i].symbol_to_refstr()?);
       }
       let mut new_env = Environment::new(name.clone(), params, &mut env.functions, &mut env.structs, &mut env.symbol_cache);
-      compile(function_body, &mut new_env, true)?;
+      let expect_return_value = function_body.type_info != Type::Unit;
+      compile(function_body, &mut new_env, expect_return_value)?;
       new_env.complete();
     }
     ("literal_array", exprs) => {

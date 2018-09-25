@@ -4,8 +4,66 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashSet;
 
+use error::{Error, TextLocation, error};
+
 /// An immutable, reference counted string
 pub type RefStr = Rc<str>;
+
+#[derive(Clone, PartialEq, Debug)]
+pub enum Type {
+  Unit, Float, Bool, Array, Struct(RefStr), Any, Unresolved
+}
+
+#[derive(PartialEq, Debug, Clone)]
+pub enum ExprTag {
+  Tree(RefStr),
+  Symbol(RefStr),
+  LiteralFloat(f32),
+  LiteralBool(bool),
+}
+
+/// Used to look up expressions in the abstract syntax tree
+pub type ExprId = usize;
+
+/// Expression
+#[derive(Debug)]
+pub struct Expr {
+  pub id : ExprId,
+  pub tag : ExprTag,
+  pub children : Vec<Expr>,
+  pub loc : TextLocation,
+  pub type_info : Type,
+}
+
+impl Expr {
+  pub fn tree_symbol_unwrap(&self) -> Result<&RefStr, Error> {
+    if let ExprTag::Tree(s) = &self.tag {
+      Ok(&s)
+    }
+    else {
+      error(self, format!("expected a tree, found {:?}", self))
+    }
+  }
+
+  pub fn symbol_unwrap(&self) -> Result<&RefStr, Error> {
+    if let ExprTag::Symbol(s) = &self.tag {
+      Ok(&s)
+    }
+    else {
+      error(self, format!("expected a symbol, found {:?}", self))
+    }
+  }
+
+  pub fn symbol_to_refstr(&self) -> Result<RefStr, Error> {
+    self.symbol_unwrap().map(|s| s.clone())
+  }
+}
+
+impl <'l> Into<TextLocation> for &'l Expr {
+  fn into(self) -> TextLocation {
+    self.loc
+  }
+}
 
 pub struct SymbolCache {
   symbols : HashSet<RefStr>
