@@ -1,57 +1,30 @@
 
-let a = 2
-
-let b = [0, 6]
-
-fun mult(a : float, b : float) {
-  a * b
-}
-
-fun subtract(a, b) {
-  a - b
-}
-
-fun for(from, to, f) {
+fun for(from, to, a, f) {
   let i = from
-  // TODO: broke the parser! this is interpreted as a struct instantiation
   while i < to {
-    f(i)
+    f(a, i)
     i = i + 1
   }
+  500
 }
 
-/*
-for i in 0..10 {
+let my_array = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
+fun set_i(a, i) {
+  a[i] = i
 }
 
-for(0, 10, |i| {
-  do_something(i)
-})
-*/
+for(0, 10, my_array, set_i)
+
+my_array[0] = 40
 
 struct test {
   a : float,
-  b : array,
+  b : float,
 }
 
-let t = test(a: 4, b: b)
+let t = test(a: 4, b: 5)
 
-while a < 30 {
-  let b = 40
-  10
-  a = a + 1
-}
+my_array[9] = t
 
-if false {
-  b[0]
-}
-else {
-  b[1]
-}
-
-let boop = mult(mult(100, 5), 2)
-
-t.b[0] = subtract(boop, 5)
-
-mult(100, t.a)
+my_array

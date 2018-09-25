@@ -10,8 +10,21 @@ use error::{Error, TextLocation, error};
 pub type RefStr = Rc<str>;
 
 #[derive(Clone, PartialEq, Debug)]
+pub struct FunctionSignature {
+  pub return_type : Type,
+  pub args : Vec<Type>,
+}
+
+#[derive(Clone, PartialEq, Debug)]
 pub enum Type {
-  Unit, Float, Bool, Array, Struct(RefStr), Any, Unresolved
+  Unit,
+  Float,
+  Bool,
+  Array,
+  Function(Rc<FunctionSignature>),
+  Struct(RefStr),
+  Any,
+  Unresolved
 }
 
 #[derive(PartialEq, Debug, Clone)]

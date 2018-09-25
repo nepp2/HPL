@@ -1,13 +1,9 @@
 
 use error::{Error, TextLocation, error, error_raw};
 use parser::NO_TYPE;
-use value::{RefStr, Expr, ExprTag, ExprId, Type};
+use value::{RefStr, Expr, ExprTag, ExprId, Type, FunctionSignature};
 use std::collections::HashMap;
-
-struct FunctionSignature {
-  return_type : Type,
-  args : Vec<Type>,
-}
+use std::rc::Rc;
 
 struct StructType {
   name : RefStr,
@@ -15,7 +11,7 @@ struct StructType {
 }
 
 struct Environment<'l> {
-  functions : &'l mut HashMap<RefStr, FunctionSignature>,
+  functions : &'l mut HashMap<RefStr, Rc<FunctionSignature>>,
   structs : &'l mut HashMap<RefStr, StructType>,
   types : &'l mut HashMap<ExprId, Type>,
   locals : Vec<Vec<(RefStr, Type)>>,
@@ -23,7 +19,7 @@ struct Environment<'l> {
 
 impl <'l> Environment <'l> {
   fn new(
-    functions : &'l mut HashMap<RefStr, FunctionSignature>,
+    functions : &'l mut HashMap<RefStr, Rc<FunctionSignature>>,
     structs : &'l mut HashMap<RefStr, StructType>,
     types : &'l mut HashMap<ExprId, Type>,
     arguments : Vec<(RefStr, Type)>) -> Environment<'l>
@@ -32,15 +28,24 @@ impl <'l> Environment <'l> {
     Environment { functions, structs, types, locals }
   }
 
-  fn find_var_type(&self, v : &str, loc : &TextLocation) -> Result<Type, Error> {
+  fn find_var_type(&self, v : &str) -> Option<Type> {
     for vs in self.locals.iter().rev() {
       for (name, t) in vs.iter().rev() {
         if name.as_ref() == v {
-          return Ok(t.clone());
+          return Some(t.clone());
         }
       }
     }
-    error(loc, format!("no variable called '{}' found in scope", v))
+    None
+  }
+
+  fn find_symbol_type(&self, v : &str, loc : &TextLocation) -> Result<Type, Error> {
+    if let Some(t) = self.find_var_type(v) {
+      return Ok(t);
+    }
+    self.functions.get(v)
+    .map(|def| Type::Function(def.clone()))
+    .ok_or_else(|| error_raw(loc, format!("no symbol called '{}' found in scope", v)))
   }
 
   fn find_field_type(&self, struct_name : &str, field_name : &str, loc : &TextLocation) -> Result<Type, Error> {
@@ -55,7 +60,15 @@ impl <'l> Environment <'l> {
 }
 
 fn type_unify(a : &Type, b : &Type) -> Option<Type> {
-  if a == &Type::Any {
+  if a == &Type::Unit || b == &Type::Unit {
+    if a == b {
+      Some(a.clone())
+    }
+    else {
+      None
+    }
+  }
+  else if a == &Type::Any {
     Some(b.clone())
   }
   else if b == &Type::Any {
@@ -101,14 +114,21 @@ fn string_to_type(s : &str, loc : &TextLocation) -> Result<Type, Error> {
   }
 }
 
-fn typecheck_function_call(symbol: &Expr, args: &[(Type, TextLocation)], env : &mut Environment) -> Result<Type, Error> {
-  let function_name = symbol.symbol_unwrap()?;
-  let def = env.functions.get(function_name)
-    .ok_or_else(|| error_raw(symbol, format!("Found no function called '{}'", function_name)))?;
-  for (expected_type, (found_type, loc)) in def.args.iter().zip(args) {
-    assert_expected_found(expected_type, found_type, &loc)?;
+fn typecheck_function_call(function_expr: &Expr, args: &[(Type, TextLocation)], env : &mut Environment) -> Result<Type, Error> {
+  let function_expr_type = typecheck_env(function_expr, env)?;
+  match function_expr_type {
+    Type::Function(def) => {
+      for (expected_type, (found_type, loc)) in def.args.iter().zip(args) {
+        assert_expected_found(expected_type, found_type, &loc)?;
+      }
+      println!("Function def: {:?}", def);
+      Ok(def.return_type.clone())
+    }
+    Type::Any => Ok(Type::Any),
+    t => {
+      error(function_expr, format!("Expected function. Found {:?}.", t))
+    }
   }
-  Ok(def.return_type.clone())
 }
 
 fn typecheck_tree(expr : &Expr, env : &mut Environment) -> Result<Type, Error> {
@@ -117,42 +137,43 @@ fn typecheck_tree(expr : &Expr, env : &mut Environment) -> Result<Type, Error> {
     let args = expr.children.as_slice();
     match (instr, args) {
       ("call", exprs) => {
-        let function_name_expr = &exprs[0];
-        let function_name = function_name_expr.symbol_unwrap()?;
+        let function_expr = &exprs[0];
         let params =
           exprs[1..].iter().map(
             |arg| Ok((typecheck_env(arg, env)?, arg.loc)))
           .collect::<Result<Vec<(Type, TextLocation)>, Error>>()?;
-        match params.as_slice() {
-          [(a, a_loc), (b, b_loc)] => {
-            if function_name.as_ref() == "==" {
-              if !types_compatible(a, b) {
-                return error(expr.loc, format!("Expected types {:?} and {:?} to match.", a, b));
+        if let Ok(function_name) = function_expr.symbol_unwrap() {
+          match params.as_slice() {
+            [(a, a_loc), (b, b_loc)] => {
+              if function_name.as_ref() == "==" {
+                if !types_compatible(a, b) {
+                  return error(expr.loc, format!("Expected types {:?} and {:?} to match.", a, b));
+                }
+                return Ok(Type::Bool);
               }
-              return Ok(Type::Bool);
+              let types = match function_name.as_ref() {
+                "+" | "-" | "*" | "/" => Some((Type::Float, Type::Float, Type::Float)),
+                ">" | "<" | "<=" | ">=" => Some((Type::Float, Type::Float, Type::Bool)),
+                "&&" | "||" => Some((Type::Bool, Type::Bool, Type::Bool)),
+                _ => None
+              };
+              if let Some((expected_a, expected_b, t_return)) = types {
+                assert_expected_found(&expected_a, a, a_loc)?;
+                assert_expected_found(&expected_b, b, b_loc)?;
+                return Ok(t_return);
+              }
             }
-            let types = match function_name.as_ref() {
-              "+" | "-" | "*" | "/" => Some((Type::Float, Type::Float, Type::Float)),
-              ">" | "<" | "<=" | ">=" => Some((Type::Float, Type::Float, Type::Bool)),
-              "&&" | "||" => Some((Type::Bool, Type::Bool, Type::Bool)),
-              _ => None
-            };
-            if let Some((expected_a, expected_b, t_return)) = types {
-              assert_expected_found(&expected_a, a, a_loc)?;
-              assert_expected_found(&expected_b, b, b_loc)?;
-              return Ok(t_return);
+            [(v, v_loc)] => {
+              match function_name.as_ref() {
+                "-" => { assert_expected_found(&Type::Float, v, v_loc)?; return Ok(Type::Float); }
+                "!" => { assert_expected_found(&Type::Bool, v, v_loc)?; return Ok(Type::Bool); }
+                _ => {}
+              }
             }
+            _ => (),
           }
-          [(v, v_loc)] => {
-            match function_name.as_ref() {
-              "-" => { assert_expected_found(&Type::Float, v, v_loc)?; return Ok(Type::Float); }
-              "!" => { assert_expected_found(&Type::Bool, v, v_loc)?; return Ok(Type::Bool); }
-              _ => {}
-            }
-          }
-          _ => (),
         }
-        return typecheck_function_call(function_name_expr, params.as_slice(), env);
+        return typecheck_function_call(function_expr, params.as_slice(), env);
       }
       ("block", exprs) => {
         env.locals.push(vec![]);
@@ -175,7 +196,9 @@ fn typecheck_tree(expr : &Expr, env : &mut Environment) -> Result<Type, Error> {
       ("=", [_, assign_expr, value_expr]) => {
         match &assign_expr.tag {
           ExprTag::Symbol(var_symbol) => {
-            let var_type = env.find_var_type(&var_symbol, &assign_expr.loc)?;
+            let var_type =
+              env.find_var_type(&var_symbol)
+              .ok_or_else(|| error_raw(assign_expr, format!("no var called '{}' found in scope", var_symbol)))?;
             let value_type = typecheck_env(&value_expr, env)?;
             if !types_compatible(&value_type, &var_type) {
               return error(expr, format!("can't assign value of type {:?} to variable of type {:?}", value_type, var_type));
@@ -189,8 +212,11 @@ fn typecheck_tree(expr : &Expr, env : &mut Environment) -> Result<Type, Error> {
                 assert_expected_found(&Type::Array, &array_type, &array_expr.loc)?;
                 let index_type = typecheck_env(index_expr, env)?;
                 assert_expected_found(&Type::Float, &index_type, &index_expr.loc)?;
-                let _value_type = typecheck_env(value_expr, env)?;
-                // TODO: array types aren't generic, so we can't check the value being assigned yet
+                let value_type = typecheck_env(value_expr, env)?;
+                // TODO: array types aren't generic, so we can't check the value being assigned properly yet
+                if !types_compatible(&value_type, &Type::Any) {
+                  return error(expr, format!("can't assign value of type {:?} to an array", value_type));
+                }
                 return Ok(Type::Unit);
               }
               (".", [struct_expr, field_expr]) => {
@@ -306,7 +332,7 @@ fn typecheck_tree(expr : &Expr, env : &mut Environment) -> Result<Type, Error> {
         let args = params.iter().map(|(_, t)| t.clone()).collect();
         let mut new_env = Environment::new(&mut env.functions, &mut env.structs, &mut env.types, params);
         let return_type = typecheck_env(function_body, &mut new_env)?;
-        let signature = FunctionSignature { return_type, args };
+        let signature = Rc::new(FunctionSignature { return_type, args });
         new_env.functions.insert(name.clone(), signature);
         Ok(Type::Unit)
       }
@@ -349,7 +375,7 @@ fn typecheck_env(expr : &Expr, env : &mut Environment) -> Result<Type, Error> {
           Type::Unit
         }
         else {
-          env.find_var_type(&s, &expr.loc)?
+          env.find_symbol_type(&s, &expr.loc)?
         }
       }
       ExprTag::LiteralFloat(_) => {

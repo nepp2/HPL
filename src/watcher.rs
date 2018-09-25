@@ -27,7 +27,7 @@ fn interpret(code: &str) -> Result<Value, Error> {
   let tokens = lexer::lex(&code).map_err(|mut es| es.remove(0))?;
   let mut expr = parser::parse(tokens)?;
   let t = typecheck::typecheck(&mut expr)?;
-  println!("Type: {:?}", t);
+  println!("Type: {:?}", expr.type_info);
   let value = bytecode_vm::interpret(&expr);
   value
 }

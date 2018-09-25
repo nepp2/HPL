@@ -28,6 +28,7 @@ pub enum BytecodeInstruction {
   SetArrayIndex,
   SetVar(usize),
   CallFunction(usize),
+  CallFirstClassFunction,
   JumpIfFalse(usize),
   Jump(usize),
   BinaryOperator(RefStr),
@@ -201,6 +202,24 @@ impl <'l> Environment<'l> {
     label
   }
 
+  fn push_scope(&mut self, v : VarScope) {
+    self.locals.push(v);
+  }
+
+  fn pop_scope(&mut self) {
+    let new_local_count = self.count_locals();
+    if new_local_count > self.max_locals {
+      self.max_locals = new_local_count;
+    }
+    self.locals.pop();
+  }
+
+  fn allocate_var_offset(&mut self, name : RefStr) -> usize {
+    let offset = self.count_locals();
+    self.locals.last_mut().unwrap().vars.push(name);
+    offset
+  }
+
   fn count_locals(&self) -> usize {
     if self.locals.len() == 0 {
       0
@@ -211,31 +230,62 @@ impl <'l> Environment<'l> {
     }
   }
 
-  fn find_var_offset(&self, v : &str, loc : &TextLocation) -> Result<usize, Error> {
+  fn get_var_offset(&self, v : &str) -> Option<usize> {
     for vs in self.locals.iter().rev() {
       for i in (0..vs.vars.len()).rev() {
         if vs.vars[i].as_ref() == v {
-          return Ok(vs.base_index + i);
+          return Some(vs.base_index + i);
         }
       }
     }
-    error(*loc, format!("no variable called '{}' found in scope", v))
+    None
+  }
+
+  fn find_var_offset(&self, v : &str, loc : &TextLocation) -> Result<usize, Error> {
+    self.get_var_offset(v)
+      .ok_or_else(|| error_raw(*loc, format!("no variable called '{}' found in scope", v)))
+  }
+
+  fn get_function_handle(&self, f : &str) -> Option<usize> {
+    self.functions.get(f).map(|h| h.handle)
   }
 }
 
-fn compile_function_call(symbol: &Expr, args: &[Expr], env : &mut Environment, push_answer : bool)
+fn compile_function_call(function_expr: &Expr, args: &[Expr], return_type : &Type, env : &mut Environment, push_answer : bool)
   -> Result<(), Error>
 {
-  let function_name = symbol.symbol_unwrap()?;
-  for i in 0..args.len() {
-    compile(&args[i], env, true)?;
+  let handle =
+    function_expr.symbol_unwrap().ok()
+    .and_then(|f| {
+      if env.get_var_offset(f) == None {
+        env.get_function_handle(f)
+      }
+      else { None }
+    });
+  if let Some(handle) = handle {
+    for i in 0..args.len() {
+      compile(&args[i], env, true)?;
+    }
+    env.emit_always(BC::CallFunction(handle));
   }
-  let handle = env.functions.get(function_name)
-    .ok_or_else(
-      ||error_raw(symbol, format!("Found no function called '{}'", function_name)))?
-    .handle;
-  env.emit_always(BC::CallFunction(handle));
-  if !push_answer {
+  else {
+    compile(function_expr, env, true)?;
+    if args.len() > 0 {
+      let v = VarScope { base_index: env.count_locals(), vars: vec!() };
+      env.push_scope(v);
+      let function_var = env.symbol_cache.symbol("[function_var]");
+      let offset = env.allocate_var_offset(function_var);
+      env.emit_always(BC::SetVar(offset));
+      for i in 0..args.len() {
+        compile(&args[i], env, true)?;
+      }
+      env.emit_always(BC::PushVar(offset));
+      env.pop_scope();
+    }
+    env.emit_always(BC::CallFirstClassFunction);
+  }
+  if !push_answer && return_type != &Type::Unit {
+    // only pop if the function actually returns something?
     env.emit_always(BC::Pop);
   }
   Ok(())
@@ -257,31 +307,32 @@ fn compile_tree(expr : &Expr, env : &mut Environment, push_answer : bool) -> Res
   let children = expr.children.as_slice();
   match (instr, children) {
     ("call", exprs) => {
-      let symbol = exprs[0].symbol_to_refstr()?;
+      let function_expr = &exprs[0];
       let params = &exprs[1..];
-      if BYTECODE_OPERATORS.contains(symbol.as_ref()) {
-        match params {
-          [a, b] => {
-            compile(a, env, push_answer)?;
-            compile(b, env, push_answer)?;
-            env.emit(BC::BinaryOperator(symbol), push_answer);
+      if let Ok(symbol) = function_expr.symbol_to_refstr() {
+        if BYTECODE_OPERATORS.contains(symbol.as_ref()) {
+          match params {
+            [a, b] => {
+              compile(a, env, push_answer)?;
+              compile(b, env, push_answer)?;
+              env.emit(BC::BinaryOperator(symbol), push_answer);
+            }
+            [v] => {
+              compile(v, env, push_answer)?;
+              env.emit(BC::UnaryOperator(symbol), push_answer);
+            }
+            _ => {
+              return error(expr, format!("wrong number of arguments for operator"));
+            }
           }
-          [v] => {
-            compile(v, env, push_answer)?;
-            env.emit(BC::UnaryOperator(symbol), push_answer);
-          }
-          _ => {
-            return error(expr, format!("wrong number of arguments for operator"));
-          }
+          return Ok(());
         }
       }
-      else {
-        compile_function_call(&exprs[0], params, env, push_answer)?;
-      }
+      compile_function_call(function_expr, params, &expr.type_info, env, push_answer)?;
     }
     ("block", exprs) => {
       let v = VarScope { base_index: env.count_locals(), vars: vec!() };
-      env.locals.push(v);
+      env.push_scope(v);
       let num_exprs = exprs.len();
       if num_exprs > 1 {
         for i in 0..(num_exprs-1) {
@@ -289,18 +340,13 @@ fn compile_tree(expr : &Expr, env : &mut Environment, push_answer : bool) -> Res
         }
       }
       compile(&exprs[num_exprs-1], env, push_answer)?;
-      let new_local_count = env.count_locals();
-      if new_local_count > env.max_locals {
-        env.max_locals = new_local_count;
-      }
-      env.locals.pop();
+      env.pop_scope();
     }
     ("let", exprs) => {
       does_not_push(expr, push_answer)?;
       let name = exprs[0].symbol_unwrap()?;
       compile(&exprs[1], env, true)?;
-      let offset = env.count_locals();
-      env.locals.last_mut().unwrap().vars.push(name.clone());
+      let offset = env.allocate_var_offset(name.clone());
       env.emit_always(BC::SetVar(offset));
     }
     ("=", [_, assign_expr, value_expr]) => {
@@ -479,8 +525,16 @@ fn compile(expr : &Expr, env : &mut Environment, push_answer : bool) -> Result<(
         }
       }
       else {
-        let offset = env.find_var_offset(&s, &expr.loc)?;
-        env.emit(BC::PushVar(offset), push_answer);
+        if let Some(offset) = env.get_var_offset(&s) {
+          env.emit(BC::PushVar(offset), push_answer);
+        }
+        else if let Some(handle) = env.get_function_handle(&s) {
+          let v = Value::Function(handle);
+          env.emit(BC::Push(v), push_answer);
+        }
+        else {
+          return error(expr, format!("no variable or function in scope called '{}'", s));
+        }
       }
     }
     ExprTag::LiteralFloat(f) => {
@@ -525,6 +579,12 @@ fn to_b(v : Value) -> Result<bool, Error> {
     x => Err(error_no_loc(format!("Expected boolean, found {:?}.", x)))
   }
 }
+fn to_function(v : Value) -> Result<usize, Error> {
+  match v {
+    Value::Function(h) => Ok(h),
+    x => Err(error_no_loc(format!("Expected function, found {:?}.", x)))
+  }
+}
 fn to_array(v : Value) -> Result<Array, Error> {
   match v {
     Value::Array(a) => Ok(a),
@@ -559,6 +619,7 @@ struct Call {
 }
 
 fn new_function_call(function_handle : usize, stack : &mut Vec<Value>, info : &Vec<FunctionInfo>) -> Call{
+  // It's assumed at this point that any arguments passed to the function are neatly lined up on the stack
   let info = &info[function_handle];
   let args = info.arguments.len();
   for _ in 0..(info.locals - args) {
@@ -659,6 +720,12 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : usize) -> Res
           c = new_function_call(*handle, &mut stack, &program.info);
           break;
         }
+        BC::CallFirstClassFunction => {
+          callstack.push(c);
+          let handle = to_function(stack.pop().unwrap())?;
+          c = new_function_call(handle, &mut stack, &program.info);
+          break;
+        }
         BC::JumpIfFalse(location) => {
           if !to_b(stack.pop().unwrap())? {
             c.program_counter = *location;
@@ -721,7 +788,7 @@ pub fn interpret(expr : &Expr) -> Result<Value, Error> {
   let mut symbol_cache = SymbolCache::new();
   let entry_function_name = symbol_cache.symbol("main");
   let program = compile_bytecode(expr, entry_function_name.clone(), &mut symbol_cache)?;
-  // TODO print_program(&program);
+  // print_program(&program);
   let entry_function_handle = program.info.iter().position(|i| i.name == entry_function_name).unwrap();
   interpret_bytecode(&program, entry_function_handle)
 }
