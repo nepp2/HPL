@@ -102,7 +102,7 @@ fn struct_name(t : Type, loc : &TextLocation) -> Result<RefStr, Error> {
 
 fn string_to_type(s : &str, loc : &TextLocation) -> Result<Type, Error> {
   if s == NO_TYPE {
-    return Ok(Type::Any);
+    return Ok(Type::Unresolved);
   }
   match s {
     "float" => Ok(Type::Float),

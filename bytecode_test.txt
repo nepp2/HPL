@@ -1,5 +1,5 @@
 
-fun for(from, to, a, f) {
+fun for_do(from, to, a, f) {
   let i = from
   while i < to {
     f(a, i)
@@ -14,7 +14,7 @@ fun set_i(a, i) {
   a[i] = i
 }
 
-for(0, 10, my_array, set_i)
+for_do(0, 10, my_array, set_i)
 
 my_array[0] = 40
 
