@@ -12,9 +12,9 @@ use value::{Value, Type};
 use bytecode_vm;
 use typecheck;
 
-fn print_type(r : Result<Type, Error>){
+fn print(r : Result<Value, Error>){
   match r {
-    Ok(t) => println!("{:?}", t),
+    Ok(v) => println!("{:?}", v),
     Err(e) => {
       println!(
         "line: {}, column: {}, message: {}",
@@ -26,8 +26,8 @@ fn print_type(r : Result<Type, Error>){
 fn interpret(code: &str) -> Result<Value, Error> {
   let tokens = lexer::lex(&code).map_err(|mut es| es.remove(0))?;
   let mut expr = parser::parse(tokens)?;
-  let r = typecheck::typecheck(&mut expr);
-  print_type(r.map(|_| expr.type_info.clone()));
+  let t = typecheck::typecheck(&mut expr)?;
+  println!("Type: {:?}", t);
   let value = bytecode_vm::interpret(&expr);
   value
 }
@@ -37,10 +37,7 @@ fn load_and_run(path : &PathBuf){
   let mut code = String::new();
   f.read_to_string(&mut code).unwrap();
   let result = interpret(&code);
-  match result {
-    Ok(f) => println!("Output: '{:?}'", f),
-    Err(s) => println!("Error: {:?}", s),
-  }
+  print(result);
 }
 
 pub fn watch(path : &str) {

@@ -15,7 +15,7 @@ fun for(from, to, f) {
   let i = from
   // TODO: broke the parser! this is interpreted as a struct instantiation
   while i < to {
-    //f(i)
+    f(i)
     i = i + 1
   }
 }
