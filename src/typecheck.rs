@@ -57,6 +57,27 @@ impl <'l> Environment <'l> {
       .ok_or_else(|| error_raw(*loc, format!("field {} does not exist on struct {}", field_name, struct_name)))?;
     Ok(field_type.clone())
   }
+
+  fn string_to_type(&self, s : &RefStr, loc : &TextLocation) -> Result<Type, Error> {
+    if s.as_ref() == NO_TYPE {
+      return Ok(Type::Unresolved);
+    }
+    match s.as_ref() {
+      "float" => Ok(Type::Float),
+      "unit" => Ok(Type::Unit),
+      "bool" => Ok(Type::Bool),
+      "array" => Ok(Type::Array),
+      "any" => Ok(Type::Any),
+      _ => {
+        if self.structs.contains_key(s) {
+          Ok(Type::Struct(s.clone()))
+        }
+        else {
+          error(loc, format!("{:?} is not a valid type", s))
+        }
+      }
+    }
+  }
 }
 
 fn type_unify(a : &Type, b : &Type) -> Option<Type> {
@@ -97,20 +118,6 @@ fn struct_name(t : Type, loc : &TextLocation) -> Result<RefStr, Error> {
   match t {
     Type::Struct(s) => Ok(s),
     _ => error(loc, format!("Expected a struct but found type {:?}.", t)),
-  }
-}
-
-fn string_to_type(s : &str, loc : &TextLocation) -> Result<Type, Error> {
-  if s == NO_TYPE {
-    return Ok(Type::Unresolved);
-  }
-  match s {
-    "float" => Ok(Type::Float),
-    "unit" => Ok(Type::Unit),
-    "bool" => Ok(Type::Bool),
-    "array" => Ok(Type::Array),
-    "any" => Ok(Type::Any),
-    _ => error(loc, format!("{:?} is not a valid type", s)),
   }
 }
 
@@ -269,7 +276,7 @@ fn typecheck_tree(expr : &Expr, env : &mut Environment) -> Result<Type, Error> {
         for i in (0..(field_exprs.len()-1)).step_by(2) {
           let name = field_exprs[i].symbol_to_refstr()?;
           let type_expr = &field_exprs[i+1];
-          let field_type = string_to_type(type_expr.symbol_unwrap()?, &type_expr.loc)?;
+          let field_type = env.string_to_type(type_expr.symbol_unwrap()?, &type_expr.loc)?;
           fields.push((name, field_type));
         }
         let def = StructType { name: name.clone(), fields };
@@ -326,7 +333,7 @@ fn typecheck_tree(expr : &Expr, env : &mut Environment) -> Result<Type, Error> {
         for i in (0..(args.len()-1)).step_by(2) {
           let name = args[i].symbol_to_refstr()?;
           let type_expr = &args[i+1];
-          let arg_type = string_to_type(type_expr.symbol_unwrap()?, &type_expr.loc)?;
+          let arg_type = env.string_to_type(type_expr.symbol_unwrap()?, &type_expr.loc)?;
           params.push((name, arg_type));
         }
         let args = params.iter().map(|(_, t)| t.clone()).collect();

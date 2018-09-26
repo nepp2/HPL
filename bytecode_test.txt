@@ -1,5 +1,16 @@
 
-fun for_do(from, to, a, f) {
+fun add(a : float, b : float) {
+  a + b
+}
+
+struct test {
+  a : float,
+  b : float,
+}
+
+let t = test(a: 4, b: 5)
+
+fun for_do(from : float, to : float, a : array, f : any) {
   let i = from
   while i < to {
     f(a, i)
@@ -10,7 +21,7 @@ fun for_do(from, to, a, f) {
 
 let my_array = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
-fun set_i(a, i) {
+fun set_i(a : array, i : float) {
   a[i] = i
 }
 
@@ -18,12 +29,6 @@ for_do(0, 10, my_array, set_i)
 
 my_array[0] = 40
 
-struct test {
-  a : float,
-  b : float,
-}
-
-let t = test(a: 4, b: 5)
 
 my_array[9] = t
 
