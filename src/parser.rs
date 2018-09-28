@@ -33,6 +33,7 @@ static STRUCT_DEFINE : &str = "struct_define";
 static STRUCT_INSTANTIATE : &str = "struct_instantiate";
 static BREAK : &str = "break";
 static BLOCK : &str = "block";
+static REGION : &str = "region";
 pub static NO_TYPE : &str = "[NO_TYPE]";
 
 // TODO: this might be better implemented with a ring buffer (or just a backwards vec)
@@ -492,8 +493,18 @@ fn parse_struct_instantiate(ps : &mut ParseState) -> Result<Expr, Error> {
   Ok(ps.add_tree(STRUCT_INSTANTIATE, args, start))
 }
 
+fn parse_region(ps : &mut ParseState) -> Result<Expr, Error> {
+  let start = ps.peek_marker();
+  ps.expect_string("region")?;
+  ps.expect_string("{")?;
+  let exprs = parse_block_exprs(ps)?;
+  ps.expect_string("}")?;
+  Ok(ps.add_tree(BLOCK, exprs, start))
+}
+
 fn parse_keyword_term(ps : &mut ParseState) -> Result<Expr, Error> {
   match ps.peek()?.string.as_ref() {
+    "region" => parse_region(ps),
     "let" => parse_let(ps),
     "fun" => parse_fun(ps),
     "if" => parse_if(ps),
@@ -546,8 +557,7 @@ fn parse_expression_term(ps : &mut ParseState) -> Result<Expr, Error> {
   }
 }
 
-fn parse_block(ps : &mut ParseState) -> Result<Expr, Error> {
-  let start = ps.peek_marker();
+fn parse_block_exprs(ps : &mut ParseState) -> Result<Vec<Expr>, Error> {
   let mut exprs = vec!();
   'outer: loop {
     exprs.push(parse_expression(ps)?);
@@ -563,6 +573,12 @@ fn parse_block(ps : &mut ParseState) -> Result<Expr, Error> {
       }
     }
   }
+  Ok(exprs)
+}
+
+fn parse_block(ps : &mut ParseState) -> Result<Expr, Error> {
+  let start = ps.peek_marker();
+  let exprs = parse_block_exprs(ps)?;
   Ok(ps.add_tree(BLOCK, exprs, start))
 }
 

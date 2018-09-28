@@ -128,7 +128,6 @@ fn typecheck_function_call(function_expr: &Expr, args: &[(Type, TextLocation)], 
       for (expected_type, (found_type, loc)) in def.args.iter().zip(args) {
         assert_expected_found(expected_type, found_type, &loc)?;
       }
-      println!("Function def: {:?}", def);
       Ok(def.return_type.clone())
     }
     Type::Any => Ok(Type::Any),

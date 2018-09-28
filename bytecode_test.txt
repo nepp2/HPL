@@ -27,9 +27,13 @@ fun set_i(a : array, i : float) {
 
 for_do(0, 10, my_array, set_i)
 
-my_array[0] = 40
+region {
+
+  my_array[0] = 40
 
 
-my_array[9] = t
+  my_array[9] = t
+
+}
 
 my_array

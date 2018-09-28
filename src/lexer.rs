@@ -6,7 +6,7 @@ use error::{Error, TextLocation, TextMarker};
 lazy_static! {
   static ref KEYWORDS : HashSet<&'static str> =
     vec!["fun", "if", "else", "type", "while", "struct",
-    "break", "return", "let", "true", "false"].into_iter().collect();
+    "break", "return", "let", "true", "false", "region"].into_iter().collect();
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
