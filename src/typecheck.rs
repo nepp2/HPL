@@ -189,7 +189,12 @@ fn typecheck_tree(expr : &Expr, env : &mut Environment) -> Result<Type, Error> {
             typecheck_env(&exprs[i], env)?;
           }
         }
-        let block_type = typecheck_env(&exprs[num_exprs-1], env)?;
+        let block_type = if num_exprs > 0 {
+          typecheck_env(&exprs[num_exprs-1], env)?
+        }
+        else {
+          Type::Unit
+        };
         env.locals.pop();
         Ok(block_type)
       }
@@ -329,11 +334,13 @@ fn typecheck_tree(expr : &Expr, env : &mut Environment) -> Result<Type, Error> {
         let name = name.symbol_unwrap()?;
         let args = args.children.as_slice();
         let mut params = vec![];
-        for i in (0..(args.len()-1)).step_by(2) {
-          let name = args[i].symbol_to_refstr()?;
-          let type_expr = &args[i+1];
-          let arg_type = env.string_to_type(type_expr.symbol_unwrap()?, &type_expr.loc)?;
-          params.push((name, arg_type));
+        if args.len() > 0 {
+          for i in (0..(args.len()-1)).step_by(2) {
+            let name = args[i].symbol_to_refstr()?;
+            let type_expr = &args[i+1];
+            let arg_type = env.string_to_type(type_expr.symbol_unwrap()?, &type_expr.loc)?;
+            params.push((name, arg_type));
+          }
         }
         let args = params.iter().map(|(_, t)| t.clone()).collect();
         let mut new_env = Environment::new(&mut env.functions, &mut env.structs, &mut env.types, params);

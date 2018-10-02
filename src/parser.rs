@@ -261,13 +261,15 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
     let start = function_expr.loc.start;
     ps.expect_string("(")?;
     let mut exprs = vec!(function_expr);
-    loop {
-      exprs.push(parse_expression(ps)?);
-      if !ps.accept_string(",") {
-        break;
+    if !ps.accept_string(")") {
+      loop {
+        exprs.push(parse_expression(ps)?);
+        if !ps.accept_string(",") {
+          break;
+        }
       }
+      ps.expect_string(")")?;
     }
-    ps.expect_string(")")?;
     Ok(ps.add_tree(CALL, exprs, start))
   }
 
@@ -560,7 +562,6 @@ fn parse_expression_term(ps : &mut ParseState) -> Result<Expr, Error> {
 fn parse_block_exprs(ps : &mut ParseState) -> Result<Vec<Expr>, Error> {
   let mut exprs = vec!();
   'outer: loop {
-    exprs.push(parse_expression(ps)?);
     'inner: loop {
       if !ps.has_tokens() || ps.peek()?.string.as_ref() == "}" {
         break 'outer;
@@ -572,6 +573,7 @@ fn parse_block_exprs(ps : &mut ParseState) -> Result<Vec<Expr>, Error> {
         break 'inner;
       }
     }
+    exprs.push(parse_expression(ps)?);
   }
   Ok(exprs)
 }

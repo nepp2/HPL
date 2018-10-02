@@ -190,9 +190,10 @@ impl CStream {
     else { false }
   }
 
+  /// returns true for a single space or tab (not for newline characters)
   fn is_space_char(&self) -> bool {
     let c = self.peek();
-    c.is_whitespace()
+    c == '\t' || c == ' '
   }
 
   fn skip_space(&mut self) -> bool {
@@ -280,9 +281,9 @@ pub fn lex(code : &str) -> Result<Vec<Token>, Vec<Error>> {
   let mut cs = CStream::new(code.chars().collect());
   while cs.has_chars() {
     if cs.handle_newline() {}
+    else if cs.skip_space() {}
     else if cs.parse_symbol_or_keyword() {}
     else if cs.parse_number() {}
-    else if cs.skip_space() {}
     else if cs.parse_comment() {}
     else if cs.parse_syntax() {}
     else {

@@ -292,7 +292,6 @@ fn compile_function_call(function_expr: &Expr, args: &[Expr], return_type : &Typ
 }
 
 fn compile_tree(expr : &Expr, env : &mut Environment, push_answer : bool) -> Result<(), Error> {
-
   fn does_not_push(expr : &Expr, push_answer : bool) -> Result<(), Error> {
     if push_answer {
       let instr = expr.tree_symbol_unwrap()?.as_ref();
@@ -328,7 +327,11 @@ fn compile_tree(expr : &Expr, env : &mut Environment, push_answer : bool) -> Res
           return Ok(());
         }
       }
-      compile_function_call(function_expr, params, &expr.type_info, env, push_answer)?;
+      let return_type = &expr.type_info;
+      if return_type == &Type::Unit {
+        does_not_push(expr, push_answer)?;
+      }
+      compile_function_call(function_expr, params, return_type, env, push_answer)?;
     }
     ("block", exprs) => {
       let v = VarScope { base_index: env.count_locals(), vars: vec!() };
@@ -339,7 +342,12 @@ fn compile_tree(expr : &Expr, env : &mut Environment, push_answer : bool) -> Res
           compile(&exprs[i], env, false)?;
         }
       }
-      compile(&exprs[num_exprs-1], env, push_answer)?;
+      if num_exprs > 0 {
+        compile(&exprs[num_exprs-1], env, push_answer)?;
+      }
+      else {
+        does_not_push(expr, push_answer)?;
+      }
       env.pop_scope();
     }
     ("let", exprs) => {
@@ -478,8 +486,10 @@ fn compile_tree(expr : &Expr, env : &mut Environment, push_answer : bool) -> Res
       let args_exprs = exprs[1].children.as_slice();
       let function_body = &exprs[2];
       let mut params = vec![];
-      for i in (0..(args_exprs.len()-1)).step_by(2) {
-        params.push(args_exprs[i].symbol_to_refstr()?);
+      if args_exprs.len() > 0 {
+        for i in (0..(args_exprs.len()-1)).step_by(2) {
+          params.push(args_exprs[i].symbol_to_refstr()?);
+        }
       }
       let mut new_env = Environment::new(name.clone(), params, &mut env.functions, &mut env.structs, &mut env.symbol_cache);
       let expect_return_value = function_body.type_info != Type::Unit;
@@ -651,8 +661,8 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : usize) -> Res
         c.program_counter += 1;
         break;
       }
-      // println!("stack: {:?}", stack);
-      // println!("PC: {}, instruction: {:?}", c.program_counter, &instructions[c.program_counter]);    
+      //println!("stack: {:?}", stack);
+      //println!("PC: {}, instruction: {:?}", c.program_counter, &instructions[c.program_counter]);
       match &instructions[c.program_counter] {
         BC::Push(value) => {
           stack.push(value.clone());
@@ -788,7 +798,7 @@ pub fn interpret(expr : &Expr) -> Result<Value, Error> {
   let mut symbol_cache = SymbolCache::new();
   let entry_function_name = symbol_cache.symbol("main");
   let program = compile_bytecode(expr, entry_function_name.clone(), &mut symbol_cache)?;
-  // print_program(&program);
+  print_program(&program);
   let entry_function_handle = program.info.iter().position(|i| i.name == entry_function_name).unwrap();
   interpret_bytecode(&program, entry_function_handle)
 }
