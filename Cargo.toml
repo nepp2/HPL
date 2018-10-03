@@ -12,6 +12,7 @@ rand = "0.5.3"
 rustyline = "1.0.0"
 notify = "4.0.4"
 lazy_static = "1.1.0"
+itertools = "0.7.3"
 
 [dependencies.rusttype]
 version = "0.5.2"

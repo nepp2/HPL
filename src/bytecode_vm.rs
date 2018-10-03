@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::usize;
+use itertools::Itertools;
 
 /*
 //TODO: I think maybe this compile phase
@@ -428,8 +429,8 @@ fn compile_tree(expr : &Expr, env : &mut Environment, push_answer : bool) -> Res
       // TODO: check for duplicates?
       let field_exprs = &exprs[1..];
       let mut fields = vec![];
-      for i in (0..(field_exprs.len()-1)).step_by(2) {
-        fields.push(field_exprs[i].symbol_to_refstr()?);
+      for (e, _) in field_exprs.iter().tuples() {
+        fields.push(e.symbol_to_refstr()?);
       }
       let def = Rc::new(StructDef { name: name.clone(), fields });
       env.structs.insert(name, def);
@@ -448,11 +449,11 @@ fn compile_tree(expr : &Expr, env : &mut Environment, push_answer : bool) -> Res
         let mut field_index_map =
           def.fields.iter().enumerate()
           .map(|(i, s)| (s.as_ref(), i)).collect::<HashMap<&str, usize>>();
-        for i in (1..exprs.len()).step_by(2) {
-          let field_name = exprs[i].symbol_to_refstr()?;
-          compile(&exprs[i+1], env, push_answer)?;
+        for (field, value) in exprs[1..].iter().tuples() {
+          let field_name = field.symbol_to_refstr()?;
+          compile(value, env, push_answer)?;
           let index = field_index_map.remove(field_name.as_ref())
-            .ok_or_else(|| error_raw(&exprs[i], format!("field {} does not exist", name)))?;
+            .ok_or_else(|| error_raw(field, format!("field {} does not exist", name)))?;
           env.emit(BC::StructFieldInit(index), push_answer);
         }
         if field_index_map.len() > 0 {
@@ -486,10 +487,8 @@ fn compile_tree(expr : &Expr, env : &mut Environment, push_answer : bool) -> Res
       let args_exprs = exprs[1].children.as_slice();
       let function_body = &exprs[2];
       let mut params = vec![];
-      if args_exprs.len() > 0 {
-        for i in (0..(args_exprs.len()-1)).step_by(2) {
-          params.push(args_exprs[i].symbol_to_refstr()?);
-        }
+      for (arg, _) in args_exprs.iter().tuples() {
+        params.push(arg.symbol_to_refstr()?);
       }
       let mut new_env = Environment::new(name.clone(), params, &mut env.functions, &mut env.structs, &mut env.symbol_cache);
       let expect_return_value = function_body.type_info != Type::Unit;

@@ -1,4 +1,9 @@
 
+struct Component {
+  update : any
+
+}
+
 struct vec2 {
   x : float,
   y : float,
@@ -20,6 +25,5 @@ fun blah() {
   
 }
 
-let b = blah()
 
-b
+// this crashes because top level function that doesn't return isn't supported

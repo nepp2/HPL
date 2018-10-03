@@ -8,13 +8,12 @@ extern crate clipboard;
 extern crate rand;
 extern crate rustyline;
 extern crate notify;
+extern crate itertools;
 
 #[macro_use]
 extern crate lazy_static;
 
-#[macro_use]
 mod error;
-
 mod lexer;
 mod parser;
 mod value;

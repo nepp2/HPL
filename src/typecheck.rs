@@ -4,6 +4,7 @@ use parser::NO_TYPE;
 use value::{RefStr, Expr, ExprTag, ExprId, Type, FunctionSignature};
 use std::collections::HashMap;
 use std::rc::Rc;
+use itertools::Itertools;
 
 struct StructType {
   name : RefStr,
@@ -275,11 +276,9 @@ fn typecheck_tree(expr : &Expr, env : &mut Environment) -> Result<Type, Error> {
           return error(name_expr, format!("A struct called {} has already been defined", name));
         }
         // TODO: check for duplicates?
-        let field_exprs = &exprs[1..];
         let mut fields = vec![];
-        for i in (0..(field_exprs.len()-1)).step_by(2) {
-          let name = field_exprs[i].symbol_to_refstr()?;
-          let type_expr = &field_exprs[i+1];
+        for (name, type_expr) in exprs[1..].iter().tuples() {
+          let name = name.symbol_to_refstr()?;
           let field_type = env.string_to_type(type_expr.symbol_unwrap()?, &type_expr.loc)?;
           fields.push((name, field_type));
         }
@@ -301,14 +300,12 @@ fn typecheck_tree(expr : &Expr, env : &mut Environment) -> Result<Type, Error> {
           .map(|(s, t)| (s.clone(), t.clone()))
           .collect::<HashMap<RefStr, Type>>()
         };
-        for i in (1..exprs.len()).step_by(2) {
-          let field_name_expr = &exprs[i];
-          let field_name = field_name_expr.symbol_to_refstr()?;
-          let type_expr = &exprs[i+1];
-          let type_name = typecheck_env(type_expr, env)?;
+        for (field, value) in exprs[1..].iter().tuples() {
+          let field_name = field.symbol_to_refstr()?;
+          let value_type = typecheck_env(value, env)?;
           let expected_type = field_type_map.remove(field_name.as_ref())
-            .ok_or_else(|| error_raw(field_name_expr.loc, format!("field {} does not exist", field_name)))?;
-          assert_expected_found(&expected_type, &type_name, &type_expr.loc)?;
+            .ok_or_else(|| error_raw(field, format!("field {} does not exist", field_name)))?;
+          assert_expected_found(&expected_type, &value_type, &value.loc)?;
         }
         if field_type_map.len() > 0 {
           return error(expr, format!("Some fields not initialised: {:?}", field_type_map));
@@ -334,13 +331,10 @@ fn typecheck_tree(expr : &Expr, env : &mut Environment) -> Result<Type, Error> {
         let name = name.symbol_unwrap()?;
         let args = args.children.as_slice();
         let mut params = vec![];
-        if args.len() > 0 {
-          for i in (0..(args.len()-1)).step_by(2) {
-            let name = args[i].symbol_to_refstr()?;
-            let type_expr = &args[i+1];
-            let arg_type = env.string_to_type(type_expr.symbol_unwrap()?, &type_expr.loc)?;
-            params.push((name, arg_type));
-          }
+        for (name, type_expr) in args.iter().tuples() {
+          let name = name.symbol_to_refstr()?;
+          let arg_type = env.string_to_type(type_expr.symbol_unwrap()?, &type_expr.loc)?;
+          params.push((name, arg_type));
         }
         let args = params.iter().map(|(_, t)| t.clone()).collect();
         let mut new_env = Environment::new(&mut env.functions, &mut env.structs, &mut env.types, params);
