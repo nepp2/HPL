@@ -34,6 +34,8 @@ pub enum BytecodeInstruction {
   Jump(usize),
   BinaryOperator(RefStr),
   UnaryOperator(RefStr),
+  Return,
+  ReturnVoid,
 }
 
 use bytecode_vm::BytecodeInstruction as BC;
@@ -490,10 +492,7 @@ fn compile_tree(expr : &Expr, env : &mut Environment, push_answer : bool) -> Res
       for (arg, _) in args_exprs.iter().tuples() {
         params.push(arg.symbol_to_refstr()?);
       }
-      let mut new_env = Environment::new(name.clone(), params, &mut env.functions, &mut env.structs, &mut env.symbol_cache);
-      let expect_return_value = function_body.type_info != Type::Unit;
-      compile(function_body, &mut new_env, expect_return_value)?;
-      new_env.complete();
+      compile_function(function_body, name.clone(), params, &mut env.functions, &mut env.structs, &mut env.symbol_cache)?;
     }
     ("literal_array", exprs) => {
       for e in exprs {
@@ -558,14 +557,32 @@ fn compile(expr : &Expr, env : &mut Environment, push_answer : bool) -> Result<(
   Ok(())
 }
 
+fn compile_function(
+  function_body : &Expr,
+  name : RefStr,
+  arguments : Vec<RefStr>,
+  functions : &mut HashMap<RefStr, FunctionDef>,
+  structs : &mut HashMap<RefStr, Rc<StructDef>>,
+  symbol_cache : &mut SymbolCache)
+  -> Result<(), Error>
+{
+  let mut new_env = Environment::new(name, arguments, functions, structs, symbol_cache);
+  let expect_return_value = function_body.type_info != Type::Unit;
+  compile(function_body, &mut new_env, expect_return_value)?;
+  if expect_return_value {
+    new_env.emit_always(BC::Return);
+  }
+  else {
+    new_env.emit_always(BC::ReturnVoid);
+  }
+  new_env.complete();
+  Ok(())
+}
+
 fn compile_bytecode(expr : &Expr, entry_function_name : RefStr, symbol_cache : &mut SymbolCache) -> Result<BytecodeProgram, Error> {
   let mut functions = HashMap::new();
   let mut structs = HashMap::new();
-  {
-    let mut env = Environment::new(entry_function_name, vec![], &mut functions, &mut structs, symbol_cache);
-    compile(expr, &mut env, true)?;
-    env.complete();
-  }
+  compile_function(expr, entry_function_name, vec![], &mut functions, &mut structs, symbol_cache)?;
   let mut bp = BytecodeProgram::new();
   let mut defs = functions.into_iter().map(|x| x.1).collect::<Vec<FunctionDef>>();
   defs.sort_unstable_by_key(|d| d.handle);
@@ -648,21 +665,29 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : usize) -> Res
   loop {
     let instructions = &program.bytecode[c.function_handle];
     loop {
-      if c.program_counter >= instructions.len() {
-        // Return (lol)
-        let return_value = stack.pop().unwrap();
-        if c.var_base == 0 {
-          return Ok(return_value);
-        }
-        stack.truncate(c.var_base);
-        stack.push(return_value);
-        c = callstack.pop().unwrap();
-        c.program_counter += 1;
-        break;
-      }
       //println!("stack: {:?}", stack);
       //println!("PC: {}, instruction: {:?}", c.program_counter, &instructions[c.program_counter]);
       match &instructions[c.program_counter] {
+        BC::Return => {
+          let return_value = stack.pop().unwrap();
+          if c.var_base == 0 {
+            return Ok(return_value);
+          }
+          stack.truncate(c.var_base);
+          stack.push(return_value);
+          c = callstack.pop().unwrap();
+          c.program_counter += 1;
+          break;
+        }
+        BC::ReturnVoid => {
+          if c.var_base == 0 {
+            return Ok(Value::Unit);
+          }
+          stack.truncate(c.var_base);
+          c = callstack.pop().unwrap();
+          c.program_counter += 1;
+          break;
+        }
         BC::Push(value) => {
           stack.push(value.clone());
         }

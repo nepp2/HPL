@@ -25,5 +25,4 @@ fun blah() {
   
 }
 
-
 // this crashes because top level function that doesn't return isn't supported
