@@ -11,7 +11,7 @@ lazy_static! {
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum TokenType {
-  Symbol, Syntax, FloatLiteral, Keyword
+  Symbol, Syntax, FloatLiteral, Keyword, StringLiteral
 }
 
 #[derive(Debug)]
@@ -91,6 +91,7 @@ impl CStream {
 
   fn error(&mut self, start_loc : StreamLocation, message : String) {
     let location = self.get_text_location(start_loc);
+    self.current_token.clear();
     self.errors.push(Error{ message, location });
   }
 
@@ -275,6 +276,27 @@ impl CStream {
     }
     return false;
   }
+
+  fn parse_string_literal(&mut self) -> bool {
+    if self.peek() != '"' {
+      return false;
+    }
+    self.skip_char();
+    let start_loc = self.loc;
+    self.append_char_while(&|cs : &CStream| {
+      let c = cs.peek();
+      c != '\n' && c != '"'
+    });
+    if self.peek() == '"' {
+      self.skip_char();
+      self.complete_token(start_loc, TokenType::StringLiteral);
+      return true;
+    }
+    else {
+      self.error(start_loc, "malformed string literal".to_string());
+      return false;
+    }
+  }
 }
 
 pub fn lex(code : &str) -> Result<Vec<Token>, Vec<Error>> {
@@ -283,6 +305,7 @@ pub fn lex(code : &str) -> Result<Vec<Token>, Vec<Error>> {
     if cs.handle_newline() {}
     else if cs.skip_space() {}
     else if cs.parse_symbol_or_keyword() {}
+    else if cs.parse_string_literal() {}
     else if cs.parse_number() {}
     else if cs.parse_comment() {}
     else if cs.parse_syntax() {}

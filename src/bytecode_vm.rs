@@ -545,6 +545,10 @@ fn compile(expr : &Expr, env : &mut Environment, push_answer : bool) -> Result<(
         }
       }
     }
+    ExprTag::LiteralString(s) => {
+      let v = Value::String(s.clone());
+      env.emit(BC::Push(v), push_answer);
+    }
     ExprTag::LiteralFloat(f) => {
       let v = Value::Float(*f);
       env.emit(BC::Push(v), push_answer);
@@ -822,7 +826,7 @@ pub fn interpret(expr : &Expr) -> Result<Value, Error> {
   let mut symbol_cache = SymbolCache::new();
   let entry_function_name = symbol_cache.symbol("main");
   let program = compile_bytecode(expr, entry_function_name.clone(), &mut symbol_cache)?;
-  print_program(&program);
+  //print_program(&program);
   let entry_function_handle = program.info.iter().position(|i| i.name == entry_function_name).unwrap();
   interpret_bytecode(&program, entry_function_handle)
 }

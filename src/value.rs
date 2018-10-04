@@ -19,6 +19,7 @@ pub struct FunctionSignature {
 pub enum Type {
   Unit,
   Float,
+  String,
   Bool,
   Array,
   Function(Rc<FunctionSignature>),
@@ -31,6 +32,7 @@ pub enum Type {
 pub enum ExprTag {
   Tree(RefStr),
   Symbol(RefStr),
+  LiteralString(RefStr),
   LiteralFloat(f32),
   LiteralBool(bool),
 }
@@ -125,6 +127,7 @@ pub enum Value {
   Float(f32),
   Array(Array),
   Bool(bool),
+  String(RefStr),
   Function(usize),
   Struct(StructVal),
   Unit,
@@ -137,6 +140,7 @@ impl fmt::Debug for Value {
       Value::Float(x) => write!(f, "{}", x),
       Value::Array(a) => write!(f, "{:?}", &*a.borrow()),
       Value::Bool(b) => write!(f, "{}", b),
+      Value::String(s) => write!(f, "{}", s),
       Value::Function(id) => write!(f, "function[{}]", id),
       Value::Struct(s) => {
         let Struct { def, fields } = &*s.borrow();

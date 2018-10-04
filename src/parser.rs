@@ -551,6 +551,14 @@ fn parse_expression_term(ps : &mut ParseState) -> Result<Expr, Error> {
     TokenType::Symbol => parse_symbol_term(ps),
     TokenType::Keyword => parse_keyword_term(ps),
     TokenType::Syntax => parse_syntax(ps),
+    TokenType::StringLiteral => {
+      let start = ps.peek_marker();
+      let s = {
+        let t = ps.pop_type(TokenType::StringLiteral)?;
+        ExprTag::LiteralString(t.string.clone())
+      };
+      Ok(ps.add_leaf(s, start))
+    }
     TokenType::FloatLiteral => {
       let start = ps.peek_marker();
       let f = ExprTag::LiteralFloat(parse_float(ps)?);

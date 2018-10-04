@@ -1,28 +1,39 @@
 
-struct Component {
+struct component {
+  init : any
   update : any
-
+  draw : any
 }
 
 struct vec2 {
-  x : float,
-  y : float,
+  x : float
+  y : float
 }
 
 struct colour {
-  r : float,
-  g : float,
-  b : float,
+  r : float
+  g : float
+  b : float
 }
 
 struct tetronimo {
-  shape : array,
-  colour : colour,
-  pivot : vec2,
+  shape : array
+  colour : colour
+  pivot : vec2
 }
 
-fun blah() {
-  
+fun init() {
+  0
 }
 
-// this crashes because top level function that doesn't return isn't supported
+fun update(state : float, event : string) {
+  if event == "tick" {
+    state = state + 1
+  }
+}
+
+fun draw(g, state) {
+  print(g, state)
+}
+
+component(init: init, update: update, draw: draw)

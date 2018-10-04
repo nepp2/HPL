@@ -65,6 +65,7 @@ impl <'l> Environment <'l> {
     }
     match s.as_ref() {
       "float" => Ok(Type::Float),
+      "string" => Ok(Type::String),
       "unit" => Ok(Type::Unit),
       "bool" => Ok(Type::Bool),
       "array" => Ok(Type::Array),
@@ -384,6 +385,9 @@ fn typecheck_env(expr : &Expr, env : &mut Environment) -> Result<Type, Error> {
         else {
           env.find_symbol_type(&s, &expr.loc)?
         }
+      }
+      ExprTag::LiteralString(_) => {
+        Type::String
       }
       ExprTag::LiteralFloat(_) => {
         Type::Float
