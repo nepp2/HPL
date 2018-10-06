@@ -3,6 +3,7 @@ use error::{Error, TextLocation, error, error_raw, error_no_loc};
 use value::{
   Value, Struct, Array, StructVal, StructDef, RefStr,
   SymbolCache, Expr, ExprTag, ExprId, Type};
+use intrinsics::IntrinsicInfo;
 use typecheck::typecheck;
 
 use std::collections::{HashMap, HashSet};
@@ -30,6 +31,7 @@ pub enum BytecodeInstruction {
   SetVar(usize),
   CallFunction(usize),
   CallFirstClassFunction,
+  CallIntrinsic(usize),
   JumpIfFalse(usize),
   Jump(usize),
   BinaryOperator(RefStr),
@@ -59,17 +61,18 @@ pub struct FunctionInfo {
   locals : usize,
 }
 
-#[derive(Debug)]
 pub struct BytecodeProgram {
   pub bytecode : Vec<FunctionBytecode>,
-  pub info : Vec<FunctionInfo>,
+  pub function_info : Vec<FunctionInfo>,
+  pub intrinsic_info : Vec<IntrinsicInfo>,
 }
 
 impl BytecodeProgram {
   fn new() -> BytecodeProgram {
     BytecodeProgram {
       bytecode: vec![],
-      info: vec![],
+      function_info: vec![],
+      intrinsic_info: vec![],
     }
   }
 }
@@ -592,7 +595,7 @@ fn compile_bytecode(expr : &Expr, entry_function_name : RefStr, symbol_cache : &
   defs.sort_unstable_by_key(|d| d.handle);
   for def in defs {
     bp.bytecode.push(def.bytecode);
-    bp.info.push(def.info);
+    bp.function_info.push(def.info);
   }
   Ok(bp)
 }
@@ -649,7 +652,13 @@ struct Call {
 }
 
 fn new_function_call(function_handle : usize, stack : &mut Vec<Value>, info : &Vec<FunctionInfo>) -> Call{
-  // It's assumed at this point that any arguments passed to the function are neatly lined up on the stack
+  /*
+    It's assumed at this point that any arguments passed to the function are neatly
+    lined up on the stack. They will become the lower part of the new call's local
+    variable space. This means that the remaining local variable space must be padded
+    out so that it can be assigned to safely. It would be more efficient to just
+    bump a pointer, but this will do for now.
+  */
   let info = &info[function_handle];
   let args = info.arguments.len();
   for _ in 0..(info.locals - args) {
@@ -662,10 +671,23 @@ fn new_function_call(function_handle : usize, stack : &mut Vec<Value>, info : &V
   }
 }
 
+fn intrinsic_call(stack : &mut Vec<Value>, info : &IntrinsicInfo) {
+  // It's assumed at this point that any arguments passed to the function are neatly lined up on the stack
+  let args = info.arguments.len();
+  let len = stack.len();
+  let result = {
+    let arg_slice = &stack[(len-args)..];
+    (info.fn_ref)(arg_slice)
+  };
+  if let Some(v) = result {
+    stack.push(v);
+  }
+}
+
 fn interpret_bytecode(program : &BytecodeProgram, entry_function : usize) -> Result<Value, Error> {
   let mut stack : Vec<Value> = vec![];
   let mut callstack : Vec<Call> = vec![];
-  let mut c = new_function_call(entry_function, &mut stack, &program.info);
+  let mut c = new_function_call(entry_function, &mut stack, &program.function_info);
   loop {
     let instructions = &program.bytecode[c.function_handle];
     loop {
@@ -755,13 +777,18 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : usize) -> Res
         }
         BC::CallFunction(handle) => {
           callstack.push(c);
-          c = new_function_call(*handle, &mut stack, &program.info);
+          c = new_function_call(*handle, &mut stack, &program.function_info);
           break;
+        }
+        BC::CallIntrinsic(handle) => {
+          // TODO
+          let info = &program.intrinsic_info[*handle];
+          intrinsic_call(&mut stack, info);
         }
         BC::CallFirstClassFunction => {
           callstack.push(c);
           let handle = to_function(stack.pop().unwrap())?;
-          c = new_function_call(handle, &mut stack, &program.info);
+          c = new_function_call(handle, &mut stack, &program.function_info);
           break;
         }
         BC::JumpIfFalse(location) => {
@@ -810,7 +837,7 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : usize) -> Res
 }
 
 pub fn print_program(program : &BytecodeProgram) {
-  for (info, bytecode) in program.info.iter().zip(program.bytecode.iter()) {
+  for (info, bytecode) in program.function_info.iter().zip(program.bytecode.iter()) {
     println!("--------------------------------");
     println!("Function '{}':", info.name);
     for (i, instr) in bytecode.iter().enumerate() {
@@ -827,6 +854,6 @@ pub fn interpret(expr : &Expr) -> Result<Value, Error> {
   let entry_function_name = symbol_cache.symbol("main");
   let program = compile_bytecode(expr, entry_function_name.clone(), &mut symbol_cache)?;
   //print_program(&program);
-  let entry_function_handle = program.info.iter().position(|i| i.name == entry_function_name).unwrap();
+  let entry_function_handle = program.function_info.iter().position(|i| i.name == entry_function_name).unwrap();
   interpret_bytecode(&program, entry_function_handle)
 }
