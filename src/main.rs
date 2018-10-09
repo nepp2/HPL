@@ -24,7 +24,7 @@ mod repl;
 mod watcher;
 
 fn main(){
-  watcher::watch("bytecode_test.txt");
-  //watcher::watch("tetris.wic");
+  //watcher::watch("bytecode_test.txt");
+  watcher::watch("tetris.wic");
   //repl::repl();
 }

@@ -1,27 +1,25 @@
 
 let a = [0, [1, 2, 3], 6];
 
-fun mult(a, b) {
+fun mult(a : float, b : float) {
   a * b
 }
 
-fun add(a, b) {
+fun add(a : float, b : float) {
   a + mult(b, 2)
 }
 
-fun blah(a) {
+fun blah(a : unit) {
   4
 }
 
 struct test {
-  a, b
+  a : any, b : any
 }
 
-let t = test { a: [40, 50, 60], b: true };
-let q = test { a: 5, b: t };
+let t = test(a: [40, 50, 60], b: true);
+let q = test(a: 5, b: t);
 
-3 + blah(let asd = 32);
-6 + 5 + asd;
 let asd = 100;
 let value = 3 + 3.3453 + 6 + asd;
 add(10 + 10, value);
