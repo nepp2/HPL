@@ -10,6 +10,8 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::usize;
+use std::iter;
+use std::fmt;
 use itertools::Itertools;
 
 /*
@@ -647,11 +649,12 @@ fn array_index(array : &Vec<Value>, index : f32) -> Result<usize, Error> {
 
 struct Call {
   function_handle : usize,
-  var_base : usize,
+  stack_base : usize,
+  stack_head : usize,
   program_counter : usize,
 }
 
-fn new_function_call(function_handle : usize, stack : &mut Vec<Value>, info : &Vec<FunctionInfo>) -> Call{
+fn new_function_call(function_handle : usize, stack_size : usize, info : &Vec<FunctionInfo>) -> Call{
   /*
     It's assumed at this point that any arguments passed to the function are neatly
     lined up on the stack. They will become the lower part of the new call's local
@@ -660,23 +663,20 @@ fn new_function_call(function_handle : usize, stack : &mut Vec<Value>, info : &V
     bump a pointer, but this will do for now.
   */
   let info = &info[function_handle];
-  let args = info.arguments.len();
-  for _ in 0..(info.locals - args) {
-    stack.push(Value::Unit);
-  }
   Call {
     function_handle,
-    var_base: stack.len() - info.locals,
+    stack_base: stack_size - info.arguments.len(),
+    stack_head: 0,
     program_counter: 0,
   }
 }
 
-fn intrinsic_call(stack : &mut Vec<Value>, info : &IntrinsicInfo) {
+fn intrinsic_call(stack : &mut StackSlice, info : &IntrinsicInfo) {
   // It's assumed at this point that any arguments passed to the function are neatly lined up on the stack
   let args = info.arguments.len();
-  let len = stack.len();
+  let len = stack.pos;
   let result = {
-    let arg_slice = &stack[(len-args)..];
+    let arg_slice = &stack.stack[(len-args)..len];
     (info.fn_ref)(arg_slice)
   };
   if let Some(v) = result {
@@ -684,32 +684,84 @@ fn intrinsic_call(stack : &mut Vec<Value>, info : &IntrinsicInfo) {
   }
 }
 
+struct StackSlice<'l> {
+  stack : &'l mut [Value],
+  base : usize,
+  pos : usize,
+}
+
+impl <'l> fmt::Debug for StackSlice<'l> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(
+      f, "StackSlice {{ base: {}, pos: {}, stack: {:?} }}",
+      self.base, self.pos, &self.stack[..self.pos])
+  }
+}
+
+
+impl <'l> StackSlice<'l> {
+  fn pop(&mut self) -> Value {
+    self.pos -= 1;
+    self.stack[self.pos].clone()
+  }
+
+  fn push(&mut self, v : Value) {
+    self.stack[self.pos] = v;
+    self.pos += 1;
+  }
+
+  fn last(&mut self) -> &Value {
+    &self.stack[self.pos-1]
+  }
+
+  fn set_return_value(&mut self, v : Value) {
+    self.stack[0] = v;
+  }
+}
+
 fn interpret_bytecode(program : &BytecodeProgram, entry_function : usize) -> Result<Value, Error> {
-  let mut stack : Vec<Value> = vec![];
+  // TODO: refcounted pointer bug with uncleared stack entries
+  let mut expandable_stack : Vec<Value> = vec![];
   let mut callstack : Vec<Call> = vec![];
-  let mut c = new_function_call(entry_function, &mut stack, &program.function_info);
+  let mut c = new_function_call(entry_function, expandable_stack.len(), &program.function_info);
   loop {
     let instructions = &program.bytecode[c.function_handle];
+    let (vars, mut stack) = {
+      let locals = program.function_info[c.function_handle].locals;
+      let min_stack = c.stack_base + locals + 100;
+      // expand the stack if needed
+      if expandable_stack.len() < min_stack {
+        let extend_size = (min_stack - expandable_stack.len()) + 200;
+        let it = iter::repeat(Value::Unit).take(extend_size);
+        expandable_stack.extend(it);
+      }
+      let (vars, stack) = expandable_stack[c.stack_base..].split_at_mut(locals);
+      let ss = StackSlice { stack, base: c.stack_base + locals, pos: c.stack_head };
+      (vars, ss)
+    };
     loop {
-      //println!("stack: {:?}", stack);
-      //println!("PC: {}, instruction: {:?}", c.program_counter, &instructions[c.program_counter]);
+      println!("vars: {:?}", vars);
+      println!("stack: {:?}", stack);
+      println!();
+      println!(
+        "Function: {}, PC: {}, instruction: {:?}", program.function_info[c.function_handle].name,
+        c.program_counter, &instructions[c.program_counter]);
       match &instructions[c.program_counter] {
         BC::Return => {
-          let return_value = stack.pop().unwrap();
-          if c.var_base == 0 {
+          let return_value = stack.pop();
+          if callstack.len() == 0 {
             return Ok(return_value);
           }
-          stack.truncate(c.var_base);
-          stack.push(return_value);
+          stack.set_return_value(return_value);
           c = callstack.pop().unwrap();
-          c.program_counter += 1;
+          c.stack_head += 1; // accommodate newly return value
+          c.program_counter += 1; // move past the call instruction
           break;
         }
         BC::ReturnVoid => {
-          if c.var_base == 0 {
+          if callstack.len() == 0 {
             return Ok(Value::Unit);
           }
-          stack.truncate(c.var_base);
           c = callstack.pop().unwrap();
           c.program_counter += 1;
           break;
@@ -721,28 +773,28 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : usize) -> Res
           stack.pop();
         }
         BC::PushVar(var_slot) => {
-          let v = stack[c.var_base + *var_slot].clone();
+          let v = vars[*var_slot].clone();
           stack.push(v);
         }
         BC::NewArray(elements) => {
           let mut a = vec!(Value::Unit ; *elements);
           for i in (0..*elements).rev() {
-            a[i] = stack.pop().unwrap();
+            a[i] = stack.pop();
           }
           let array = Rc::new(RefCell::new(a));
           stack.push(Value::Array(array));
         }
         BC::ArrayIndex => {
-          let float_index = to_f(stack.pop().unwrap())?;
-          let a = to_array(stack.pop().unwrap())?;
+          let float_index = to_f(stack.pop())?;
+          let a = to_array(stack.pop())?;
           let a = a.borrow();
           let i = array_index(&a, float_index)?;
           stack.push(a[i].clone());
         }
         BC::SetArrayIndex => {
-          let v = stack.pop().unwrap();
-          let f_index = to_f(stack.pop().unwrap())?;
-          let a = to_array(stack.pop().unwrap())?;
+          let v = stack.pop();
+          let f_index = to_f(stack.pop())?;
+          let a = to_array(stack.pop())?;
           let mut array = a.borrow_mut();
           let i = array_index(&array, f_index)?;
           array[i] = v;
@@ -753,31 +805,32 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : usize) -> Res
           stack.push(Value::Struct(s));
         }
         BC::StructFieldInit(index) => {
-          let v = stack.pop().unwrap();
-          let s = to_struct(stack.last().unwrap())?;
+          let v = stack.pop();
+          let s = to_struct(stack.last())?;
           s.borrow_mut().fields[*index] = v;
         }
         BC::PushStructField(name) => {
-          let s = stack.pop().unwrap();
+          let s = stack.pop();
           let s = to_struct(&s)?;
           let index = struct_field_index(&s.borrow().def, name)?;
           let v = s.borrow().fields[index].clone();
           stack.push(v);
         }
         BC::SetStructField(name) => {
-          let v = stack.pop().unwrap();
-          let s = stack.pop().unwrap();
+          let v = stack.pop();
+          let s = stack.pop();
           let s = to_struct(&s)?;
           let index = struct_field_index(&s.borrow().def, name)?;
           s.borrow_mut().fields[index] = v;
         }
         BC::SetVar(var_slot) => {
-          let v = stack.pop().unwrap();
-          stack[c.var_base + *var_slot] = v;
+          let v = stack.pop();
+          vars[*var_slot] = v;
         }
         BC::CallFunction(handle) => {
           callstack.push(c);
-          c = new_function_call(*handle, &mut stack, &program.function_info);
+          let stack_size = stack.base + stack.pos;
+          c = new_function_call(*handle, stack_size, &program.function_info);
           break;
         }
         BC::CallIntrinsic(handle) => {
@@ -787,12 +840,13 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : usize) -> Res
         }
         BC::CallFirstClassFunction => {
           callstack.push(c);
-          let handle = to_function(stack.pop().unwrap())?;
-          c = new_function_call(handle, &mut stack, &program.function_info);
+          let handle = to_function(stack.pop())?;
+          let stack_size = stack.base + stack.pos;
+          c = new_function_call(handle, stack_size, &program.function_info);
           break;
         }
         BC::JumpIfFalse(location) => {
-          if !to_b(stack.pop().unwrap())? {
+          if !to_b(stack.pop())? {
             c.program_counter = *location;
             continue;
           }
@@ -802,8 +856,8 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : usize) -> Res
           continue;
         }
         BC::BinaryOperator(operator) => {
-          let b = stack.pop().unwrap();
-          let a = stack.pop().unwrap();
+          let b = stack.pop();
+          let a = stack.pop();
           let v = match operator.as_ref() {
             "+" => Value::Float(to_f(a)? + to_f(b)?),
             "-" => Value::Float(to_f(a)? - to_f(b)?),
@@ -821,7 +875,7 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : usize) -> Res
           stack.push(v);
         }
         BC::UnaryOperator(operator) => {
-          let a = stack.pop().unwrap();
+          let a = stack.pop();
           let v = match operator.as_ref() {
             "-" => Value::Float(-to_f(a)?),
             "!" => Value::Bool(!to_b(a)?),
@@ -853,7 +907,7 @@ pub fn interpret(expr : &Expr) -> Result<Value, Error> {
   let mut symbol_cache = SymbolCache::new();
   let entry_function_name = symbol_cache.symbol("main");
   let program = compile_bytecode(expr, entry_function_name.clone(), &mut symbol_cache)?;
-  //print_program(&program);
+  print_program(&program);
   let entry_function_handle = program.function_info.iter().position(|i| i.name == entry_function_name).unwrap();
   interpret_bytecode(&program, entry_function_handle)
 }

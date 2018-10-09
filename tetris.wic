@@ -33,7 +33,7 @@ fun update(state : float, event : string) {
 }
 
 fun draw(g, state) {
-  print(g, state)
+  //print(g, state)
 }
 
 component(init: init, update: update, draw: draw)

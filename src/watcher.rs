@@ -41,6 +41,9 @@ fn load_and_run(path : &PathBuf){
 }
 
 pub fn watch(path : &str) {
+
+  load_and_run(&PathBuf::from(path));
+
   // Create a channel to receive the events.
   let (tx, rx) = channel();
 
