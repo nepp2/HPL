@@ -21,12 +21,12 @@ pub struct Token {
   pub loc : TextLocation,
 }
 
-struct CStream {
+struct CStream<'l> {
   chars : Vec<char>,
   loc : StreamLocation,
   tokens : Vec<Token>,
   errors : Vec<Error>,
-  symbol_cache : SymbolCache,
+  symbol_cache : &'l mut SymbolCache,
   current_token : String,
 }
 
@@ -44,15 +44,15 @@ impl From<StreamLocation> for TextMarker {
 }
 
 
-impl CStream {
+impl <'l> CStream<'l> {
 
-  fn new(chars : Vec<char>) -> CStream {
+  fn new(chars : Vec<char>, symbol_cache : &mut SymbolCache) -> CStream {
     CStream {
       chars,
       loc : StreamLocation { pos: 0, line: 1, line_start: 0 },
       tokens: vec!(),
       errors: vec!(),
-      symbol_cache: SymbolCache::new(),
+      symbol_cache,
       current_token: String::new(),
     }
   }
@@ -299,8 +299,8 @@ impl CStream {
   }
 }
 
-pub fn lex(code : &str) -> Result<Vec<Token>, Vec<Error>> {
-  let mut cs = CStream::new(code.chars().collect());
+pub fn lex(code : &str, symbol_cache : &mut SymbolCache) -> Result<Vec<Token>, Vec<Error>> {
+  let mut cs = CStream::new(code.chars().collect(), symbol_cache);
   while cs.has_chars() {
     if cs.handle_newline() {}
     else if cs.skip_space() {}

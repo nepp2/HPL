@@ -37,17 +37,17 @@ static REGION : &str = "region";
 pub static NO_TYPE : &str = "[NO_TYPE]";
 
 // TODO: this might be better implemented with a ring buffer (or just a backwards vec)
-struct ParseState {
+struct ParseState<'l> {
   tokens : Vec<Token>,
   pos : usize,
-  symbol_cache : SymbolCache,
+  symbol_cache : &'l mut SymbolCache,
   expr_id_gen : ExprId,
 }
 
-impl ParseState {
+impl <'l> ParseState<'l> {
 
-  fn new(tokens : Vec<Token>) -> ParseState {
-    ParseState { tokens, pos: 0, symbol_cache: SymbolCache::new(), expr_id_gen: 0 }
+  fn new(tokens : Vec<Token>, symbol_cache : &mut SymbolCache,) -> ParseState {
+    ParseState { tokens, pos: 0, symbol_cache, expr_id_gen: 0 }
   }
 
   fn has_tokens(&self) -> bool {
@@ -592,14 +592,18 @@ fn parse_block(ps : &mut ParseState) -> Result<Expr, Error> {
   Ok(ps.add_tree(BLOCK, exprs, start))
 }
 
-pub fn parse(tokens : Vec<Token>) -> Result<Expr, Error> {
-  let mut ps = ParseState::new(tokens);
+pub fn parse_with_cache(tokens : Vec<Token>, symbol_cache : &mut SymbolCache,) -> Result<Expr, Error> {
+  let mut ps = ParseState::new(tokens, symbol_cache);
   let e = parse_block(&mut ps)?;
   if ps.has_tokens() {
     let t = ps.peek()?;
     return error(t.loc, format!("Unexpected token '{}' of type '{:?}'", t.string, t.token_type));
   }
   return Ok(e);
+}
+
+pub fn parse(tokens : Vec<Token>) -> Result<Expr, Error> {
+  parse_with_cache(tokens, &mut SymbolCache::new())
 }
 
 #[test]

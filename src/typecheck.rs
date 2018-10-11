@@ -41,11 +41,10 @@ impl <'l> Environment <'l> {
   }
 
   fn find_symbol_type(&self, v : &str, loc : &TextLocation) -> Result<Type, Error> {
-    if let Some(t) = self.find_var_type(v) {
-      return Ok(t);
-    }
-    self.functions.get(v)
-    .map(|def| Type::Function(def.clone()))
+    self.find_var_type(v)
+    .or_else(||{
+      self.functions.get(v).map(|def| Type::Function(def.clone()))
+    })
     .ok_or_else(|| error_raw(loc, format!("no symbol called '{}' found in scope", v)))
   }
 
