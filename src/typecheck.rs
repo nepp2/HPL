@@ -2,6 +2,7 @@
 use error::{Error, TextLocation, error, error_raw};
 use parser::NO_TYPE;
 use value::{RefStr, Expr, ExprTag, ExprId, Type, FunctionSignature};
+use intrinsics::IntrinsicDef;
 use std::collections::HashMap;
 use std::rc::Rc;
 use itertools::Itertools;
@@ -408,8 +409,11 @@ pub fn set_types(expr : &mut Expr, types : &mut HashMap<ExprId, Type>) {
   }
 }
 
-pub fn typecheck(expr : &mut Expr) -> Result<(), Error> {
+pub fn typecheck(expr : &mut Expr, intrinsics : &HashMap<RefStr, IntrinsicDef>) -> Result<(), Error> {
   let mut functions = HashMap::new();
+  for (k, v) in intrinsics.iter() {
+    functions.insert(k.clone(), v.signature.clone());
+  }
   let mut structs = HashMap::new();
   let mut types = HashMap::new();
   {

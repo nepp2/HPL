@@ -118,7 +118,7 @@ impl <'l> CStream<'l> {
     c >= '0' && c <= '9'
   }
 
-  fn iter_char_while(&mut self, condition : &Fn(&CStream) -> bool, operation : &mut FnMut(&mut CStream)) {
+  fn iter_char_while(&mut self, condition : &Fn(&CStream<'l>) -> bool, operation : &mut FnMut(&mut CStream<'l>)) {
     while self.loc.pos < self.chars.len() {
       if condition(self) {
         operation(self);
@@ -129,7 +129,7 @@ impl <'l> CStream<'l> {
     }
   }
 
-  fn skip_char_while (&mut self, condition : &Fn(&CStream) -> bool) {
+  fn skip_char_while (&mut self, condition : &Fn(&CStream<'l>) -> bool) {
     self.iter_char_while(condition, &mut CStream::skip_char);
   }
 
@@ -139,7 +139,7 @@ impl <'l> CStream<'l> {
     self.skip_char();
   }
 
-  fn append_char_while(&mut self, condition : &Fn(&CStream) -> bool) {
+  fn append_char_while(&mut self, condition : &Fn(&CStream<'l>) -> bool) {
     self.iter_char_while(condition, &mut |cs : &mut CStream| { cs.append_char() });
   }
 
@@ -299,7 +299,7 @@ impl <'l> CStream<'l> {
   }
 }
 
-pub fn lex(code : &str, symbol_cache : &mut SymbolCache) -> Result<Vec<Token>, Vec<Error>> {
+pub fn lex_with_cache(code : &str, symbol_cache : &mut SymbolCache) -> Result<Vec<Token>, Vec<Error>> {
   let mut cs = CStream::new(code.chars().collect(), symbol_cache);
   while cs.has_chars() {
     if cs.handle_newline() {}
@@ -319,6 +319,10 @@ pub fn lex(code : &str, symbol_cache : &mut SymbolCache) -> Result<Vec<Token>, V
   else {
     Err(cs.errors)
   }
+}
+
+pub fn lex(code : &str) -> Result<Vec<Token>, Vec<Error>> {
+  lex_with_cache(code, &mut SymbolCache::new())
 }
 
 #[test]

@@ -3,25 +3,34 @@ use value::{RefStr, Value, Type, FunctionSignature, SymbolCache};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-pub struct IntrinsicInfo {
+pub struct IntrinsicDef {
   pub name : RefStr,
 
-  /// Number of arguments the function accepts
-  pub arguments : Vec<(RefStr, Type)>,
-
-  pub return_type : Type,
+  pub signature : Rc<FunctionSignature>,
 
   /// Reference to the intrinsic function
-  pub fn_ref : fn(&[Value]) -> Option<Value>,
+  pub fn_ref : fn(&[Value]) -> Value,
 }
 
-pub fn get_intrinsics(symbol_cache : &mut SymbolCache) -> HashMap<RefStr, Rc<FunctionSignature>> {
-  let print = FunctionSignature {
-    return_type: Type::Unit,
-    args: vec![Type::Any],
-  };
+fn intrinsic(sc : &mut SymbolCache, name : &str, args : Vec<Type>, return_type : Type, fn_ref : fn(&[Value]) -> Value) -> IntrinsicDef {
+  IntrinsicDef {
+    name: sc.symbol(name),
+    signature: Rc::new(FunctionSignature { args, return_type }),
+    fn_ref,
+  }
+}
+
+pub fn get_intrinsics(sc : &mut SymbolCache) -> HashMap<RefStr, IntrinsicDef> {
+  let intrinsics = vec![
+    intrinsic(sc, "print", vec![Type::Any], Type::Unit, |vs| {
+      println!("{:?}", vs[0]);
+      Value::Unit
+    }),
+  ];
   let mut m = HashMap::new();
-  m.insert(symbol_cache.symbol("print"), Rc::new(print));
+  for i in intrinsics {
+    m.insert(i.name.clone(), i);
+  }
   m
 }
 

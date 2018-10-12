@@ -2,8 +2,8 @@
 use error::{Error, TextLocation, error, error_raw, error_no_loc};
 use value::{
   Value, Struct, Array, StructVal, StructDef, RefStr,
-  SymbolCache, Expr, ExprTag, ExprId, Type};
-use intrinsics::IntrinsicInfo;
+  SymbolCache, Expr, ExprTag, ExprId, Type, FunctionSignature};
+use intrinsics::IntrinsicDef;
 use typecheck::typecheck;
 
 use std::collections::{HashMap, HashSet};
@@ -65,7 +65,7 @@ pub struct FunctionInfo {
 pub struct BytecodeProgram {
   pub bytecode : Vec<FunctionBytecode>,
   pub function_info : Vec<FunctionInfo>,
-  pub intrinsic_info : Vec<IntrinsicInfo>,
+  pub intrinsic_info : Vec<IntrinsicDef>,
 }
 
 impl BytecodeProgram {
@@ -76,6 +76,11 @@ impl BytecodeProgram {
       intrinsic_info: vec![],
     }
   }
+}
+
+enum Callable {
+  FunctionDef(FunctionDef),
+  Intrinsic(IntrinsicDef),
 }
 
 struct FunctionDef {
@@ -95,8 +100,7 @@ struct LabelState {
 }
 
 struct Environment<'l> {
-  /// the "usize" represents the function handle
-  functions : &'l mut HashMap<RefStr, FunctionDef>,
+  functions : &'l mut HashMap<RefStr, Callable>,
 
   structs : &'l mut HashMap<RefStr, Rc<StructDef>>,
   symbol_cache : &'l mut SymbolCache,
@@ -126,7 +130,7 @@ impl <'l> Environment<'l> {
   fn new(
     function_name : RefStr,
     arguments : Vec<RefStr>,
-    functions : &'l mut HashMap<RefStr, FunctionDef>,
+    functions : &'l mut HashMap<RefStr, Callable>,
     structs : &'l mut HashMap<RefStr, Rc<StructDef>>,
     symbol_cache : &'l mut SymbolCache,
   ) -> Environment<'l> {
@@ -159,7 +163,7 @@ impl <'l> Environment<'l> {
       bytecode: self.instructions,
       info: FunctionInfo { name: self.function_name.clone(), arguments: self.arguments, locals: self.max_locals },
     };
-    self.functions.insert(self.function_name, function);
+    self.functions.insert(self.function_name, Callable::FunctionDef(function));
   }
 
   fn emit(&mut self, instruction : BytecodeInstruction, do_emit : bool) {
@@ -564,7 +568,7 @@ fn compile_function(
   function_body : &Expr,
   name : RefStr,
   arguments : Vec<RefStr>,
-  functions : &mut HashMap<RefStr, FunctionDef>,
+  functions : &mut HashMap<RefStr, Callable>,
   structs : &mut HashMap<RefStr, Rc<StructDef>>,
   symbol_cache : &mut SymbolCache)
   -> Result<(), Error>
@@ -580,7 +584,13 @@ fn compile_function(
   Ok(())
 }
 
-fn compile_bytecode(expr : &Expr, entry_function_name : RefStr, symbol_cache : &mut SymbolCache) -> Result<BytecodeProgram, Error> {
+fn compile_bytecode(
+    expr : &Expr,
+    entry_function_name : RefStr,
+    symbol_cache : &mut SymbolCache,
+    intrinsics : &HashMap<RefStr, IntrinsicDef>)
+  -> Result<BytecodeProgram, Error>
+{
   let mut functions = HashMap::new();
   let mut structs = HashMap::new();
   compile_function(expr, entry_function_name, vec![], &mut functions, &mut structs, symbol_cache)?;
@@ -677,17 +687,15 @@ fn new_function_call(function_handle : usize, stack_size : usize, info : &Vec<Fu
   }
 }
 
-fn intrinsic_call(stack : &mut [Value], c : &mut Call, info : &IntrinsicInfo) {
+fn intrinsic_call(stack : &mut [Value], c : &mut Call, info : &IntrinsicDef) {
   // It's assumed at this point that any arguments passed to the function are neatly lined up on the stack
-  let args = info.arguments.len();
+  let args = info.signature.args.len();
   let len = c.stack_head;
   let result = {
     let arg_slice = &stack[(len-args)..len];
     (info.fn_ref)(arg_slice)
   };
-  if let Some(v) = result {
-    push(stack, c, v);
-  }
+  push(stack, c, result);
 }
 
 fn pop(stack : &mut [Value], c : &mut Call) -> Value {
@@ -738,7 +746,7 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : usize) -> Res
           }
           set_return_value(stack, return_value);
           c = callstack.pop().unwrap();
-          c.stack_head += 1; // accommodate newly return value
+          c.stack_head += 1; // accommodate newly returned value
           c.program_counter += 1; // move past the call instruction
           break;
         }
@@ -879,10 +887,9 @@ pub fn print_program(program : &BytecodeProgram) {
   }
 }
 
-pub fn interpret(expr : &Expr) -> Result<Value, Error> {
-  let mut symbol_cache = SymbolCache::new();
+pub fn interpret(expr : &Expr, symbol_cache : &mut SymbolCache, intrinsics : &HashMap<RefStr, IntrinsicDef>) -> Result<Value, Error> {
   let entry_function_name = symbol_cache.symbol("main");
-  let program = compile_bytecode(expr, entry_function_name.clone(), &mut symbol_cache)?;
+  let program = compile_bytecode(expr, entry_function_name.clone(), symbol_cache, intrinsics)?;
   print_program(&program);
   let entry_function_handle = program.function_info.iter().position(|i| i.name == entry_function_name).unwrap();
   interpret_bytecode(&program, entry_function_handle)

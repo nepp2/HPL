@@ -8,9 +8,10 @@ use std::path::PathBuf;
 use error::Error;
 use parser;
 use lexer;
-use value::{Value, Type};
+use value::{Value, Type, SymbolCache};
 use bytecode_vm;
 use typecheck;
+use intrinsics;
 
 fn print(r : Result<Value, Error>){
   match r {
@@ -24,11 +25,13 @@ fn print(r : Result<Value, Error>){
 }
 
 fn interpret(code: &str) -> Result<Value, Error> {
-  let tokens = lexer::lex(&code).map_err(|mut es| es.remove(0))?;
-  let mut expr = parser::parse(tokens)?;
-  typecheck::typecheck(&mut expr)?;
+  let mut sc = SymbolCache::new();
+  let tokens = lexer::lex_with_cache(&code, &mut sc).map_err(|mut es| es.remove(0))?;
+  let mut expr = parser::parse_with_cache(tokens, &mut sc)?;
+  let intrinsics = intrinsics::get_intrinsics(&mut sc);
+  typecheck::typecheck(&mut expr, &intrinsics)?;
   println!("Type: {:?}", expr.type_info);
-  let value = bytecode_vm::interpret(&expr);
+  let value = bytecode_vm::interpret(&expr, &mut sc, &intrinsics);
   value
 }
 
