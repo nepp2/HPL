@@ -117,6 +117,9 @@ pub type StructVal = Rc<RefCell<Struct>>;
 
 pub type Array = Rc<RefCell<Vec<Value>>>;
 
+#[derive(Clone, PartialEq, Debug)]
+pub enum FunctionType { Function, Intrinsic }
+
 /// Represents a value in the interpreted language.
 /// Currently uses 16 bytes. I think this is because there are 8 byte
 /// RC pointers in the union, and the discriminating value is being
@@ -128,7 +131,7 @@ pub enum Value {
   Array(Array),
   Bool(bool),
   String(RefStr),
-  Function(usize),
+  Function(FunctionType, usize),
   Struct(StructVal),
   Unit,
 }
@@ -141,7 +144,7 @@ impl fmt::Debug for Value {
       Value::Array(a) => write!(f, "{:?}", &*a.borrow()),
       Value::Bool(b) => write!(f, "{}", b),
       Value::String(s) => write!(f, "{}", s),
-      Value::Function(id) => write!(f, "function[{}]", id),
+      Value::Function(t, id) => write!(f, "{:?}[{}]", t, id),
       Value::Struct(s) => {
         let Struct { def, fields } = &*s.borrow();
         let name = &def.name;

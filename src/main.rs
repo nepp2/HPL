@@ -20,7 +20,6 @@ mod value;
 mod intrinsics;
 mod typecheck;
 mod bytecode_vm;
-mod repl;
 mod watcher;
 
 fn main(){

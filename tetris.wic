@@ -36,4 +36,6 @@ fun draw(g, state) {
   print(g, state)
 }
 
-component(init: init, update: update, draw: draw)
+let c = component(init: init, update: update, draw: draw)
+
+print(size_of_thing())

@@ -1,8 +1,6 @@
 
 use error::{Error, TextLocation, error, error_raw, error_no_loc};
-use value::{
-  Value, Struct, Array, StructVal, StructDef, RefStr,
-  SymbolCache, Expr, ExprTag, ExprId, Type, FunctionSignature};
+use value::*;
 use intrinsics::IntrinsicDef;
 use typecheck::typecheck;
 
@@ -31,9 +29,8 @@ pub enum BytecodeInstruction {
   ArrayIndex,
   SetArrayIndex,
   SetVar(usize),
-  CallFunction(usize),
+  CallFunction(FunctionType, usize),
   CallFirstClassFunction,
-  CallIntrinsic(usize),
   JumpIfFalse(usize),
   Jump(usize),
   BinaryOperator(RefStr),
@@ -69,18 +66,18 @@ pub struct BytecodeProgram {
 }
 
 impl BytecodeProgram {
-  fn new() -> BytecodeProgram {
+  fn new(intrinsic_info : Vec<IntrinsicDef>) -> BytecodeProgram {
     BytecodeProgram {
       bytecode: vec![],
       function_info: vec![],
-      intrinsic_info: vec![],
+      intrinsic_info,
     }
   }
 }
 
-enum Callable {
-  FunctionDef(FunctionDef),
-  Intrinsic(IntrinsicDef),
+struct Callable {
+  t : FunctionType,
+  handle : usize,
 }
 
 struct FunctionDef {
@@ -100,7 +97,9 @@ struct LabelState {
 }
 
 struct Environment<'l> {
-  functions : &'l mut HashMap<RefStr, Callable>,
+  functions : &'l mut HashMap<RefStr, FunctionDef>,
+
+  intrinsics : &'l HashMap<RefStr, IntrinsicDef>,
 
   structs : &'l mut HashMap<RefStr, Rc<StructDef>>,
   symbol_cache : &'l mut SymbolCache,
@@ -130,14 +129,16 @@ impl <'l> Environment<'l> {
   fn new(
     function_name : RefStr,
     arguments : Vec<RefStr>,
-    functions : &'l mut HashMap<RefStr, Callable>,
+    functions : &'l mut HashMap<RefStr, FunctionDef>,
+    intrinsics : &'l HashMap<RefStr, IntrinsicDef>,
     structs : &'l mut HashMap<RefStr, Rc<StructDef>>,
     symbol_cache : &'l mut SymbolCache,
   ) -> Environment<'l> {
     let vs = VarScope { base_index: 0, vars: arguments.clone() };
     let locals = vec![vs];
     Environment{
-      function_name, arguments, functions,
+      function_name, arguments,
+      functions, intrinsics,
       structs, symbol_cache, locals,
       labels: HashMap::new(),
       max_locals: 0,
@@ -163,7 +164,7 @@ impl <'l> Environment<'l> {
       bytecode: self.instructions,
       info: FunctionInfo { name: self.function_name.clone(), arguments: self.arguments, locals: self.max_locals },
     };
-    self.functions.insert(self.function_name, Callable::FunctionDef(function));
+    self.functions.insert(self.function_name, function);
   }
 
   fn emit(&mut self, instruction : BytecodeInstruction, do_emit : bool) {
@@ -257,8 +258,14 @@ impl <'l> Environment<'l> {
       .ok_or_else(|| error_raw(*loc, format!("no variable called '{}' found in scope", v)))
   }
 
-  fn get_function_handle(&self, f : &str) -> Option<usize> {
-    self.functions.get(f).map(|h| h.handle)
+  fn get_callable(&self, name : &str) -> Option<Callable> {
+    self.functions.get(name)
+      .map(|f| (f.handle, FunctionType::Function))
+      .or_else(|| {
+        self.intrinsics.get(name)
+        .map(|i| (i.handle, FunctionType::Intrinsic))
+      })
+      .map(|(handle, t)| Callable { handle, t} )
   }
 }
 
@@ -269,15 +276,15 @@ fn compile_function_call(function_expr: &Expr, args: &[Expr], env : &mut Environ
     function_expr.symbol_unwrap().ok()
     .and_then(|f| {
       if env.get_var_offset(f) == None {
-        env.get_function_handle(f)
+        env.get_callable(f)
       }
       else { None }
     });
-  if let Some(handle) = handle {
+  if let Some(h) = handle {
     for i in 0..args.len() {
       compile(&args[i], env, true)?;
     }
-    env.emit_always(BC::CallFunction(handle));
+    env.emit_always(BC::CallFunction(h.t, h.handle));
   }
   else {
     compile(function_expr, env, true)?;
@@ -495,7 +502,7 @@ fn compile_tree(expr : &Expr, env : &mut Environment, push_answer : bool) -> Res
       for (arg, _) in args_exprs.iter().tuples() {
         params.push(arg.symbol_to_refstr()?);
       }
-      compile_function(function_body, name.clone(), params, &mut env.functions, &mut env.structs, &mut env.symbol_cache)?;
+      compile_function(function_body, name.clone(), params, env.functions, env.intrinsics, env.structs, env.symbol_cache)?;
     }
     ("literal_array", exprs) => {
       for e in exprs {
@@ -539,8 +546,8 @@ fn compile(expr : &Expr, env : &mut Environment, push_answer : bool) -> Result<(
         if let Some(offset) = env.get_var_offset(&s) {
           env.emit(BC::PushVar(offset), push_answer);
         }
-        else if let Some(handle) = env.get_function_handle(&s) {
-          let v = Value::Function(handle);
+        else if let Some(callable) = env.get_callable(&s) {
+          let v = Value::Function(callable.t, callable.handle);
           env.emit(BC::Push(v), push_answer);
         }
         else {
@@ -568,12 +575,13 @@ fn compile_function(
   function_body : &Expr,
   name : RefStr,
   arguments : Vec<RefStr>,
-  functions : &mut HashMap<RefStr, Callable>,
+  functions : &mut HashMap<RefStr, FunctionDef>,
+  intrinsics : &HashMap<RefStr, IntrinsicDef>,
   structs : &mut HashMap<RefStr, Rc<StructDef>>,
-  symbol_cache : &mut SymbolCache)
+  symbol_cache : &mut SymbolCache,)
   -> Result<(), Error>
 {
-  let mut new_env = Environment::new(name, arguments, functions, structs, symbol_cache);
+  let mut new_env = Environment::new(name, arguments, functions, intrinsics, structs, symbol_cache);
   let expect_return_value = function_body.type_info != Type::Unit;
   compile(function_body, &mut new_env, expect_return_value)?;
   if !expect_return_value {
@@ -593,8 +601,10 @@ fn compile_bytecode(
 {
   let mut functions = HashMap::new();
   let mut structs = HashMap::new();
-  compile_function(expr, entry_function_name, vec![], &mut functions, &mut structs, symbol_cache)?;
-  let mut bp = BytecodeProgram::new();
+  compile_function(expr, entry_function_name, vec![], &mut functions, intrinsics, &mut structs, symbol_cache)?;
+  let mut intrinsics = intrinsics.iter().map(|(_, i)| i.clone()).collect::<Vec<IntrinsicDef>>();
+  intrinsics.sort_unstable_by_key(|i| i.handle);
+  let mut bp = BytecodeProgram::new(intrinsics);
   let mut defs = functions.into_iter().map(|x| x.1).collect::<Vec<FunctionDef>>();
   defs.sort_unstable_by_key(|d| d.handle);
   for def in defs {
@@ -616,9 +626,9 @@ fn to_b(v : Value) -> Result<bool, Error> {
     x => Err(error_no_loc(format!("Expected boolean, found {:?}.", x)))
   }
 }
-fn to_function(v : Value) -> Result<usize, Error> {
+fn to_function(v : Value) -> Result<(FunctionType, usize), Error> {
   match v {
-    Value::Function(h) => Ok(h),
+    Value::Function(t, h) => Ok((t, h)),
     x => Err(error_no_loc(format!("Expected function, found {:?}.", x)))
   }
 }
@@ -811,23 +821,36 @@ fn interpret_bytecode(program : &BytecodeProgram, entry_function : usize) -> Res
           let v = pop(stack, &mut c);
           vars[*var_slot] = v;
         }
-        BC::CallFunction(handle) => {
-          let stack_size = c.absolute_stack_size();
-          callstack.push(c);
-          c = new_function_call(*handle, stack_size, &program.function_info);
-          break;
-        }
-        BC::CallIntrinsic(handle) => {
-          // TODO
-          let info = &program.intrinsic_info[*handle];
-          intrinsic_call(stack, &mut c, info);
+        BC::CallFunction(function_type, handle) => {
+          // TODO: code duplicated in CallFirstClassFunction
+          match function_type {
+            FunctionType::Function => {
+              let stack_size = c.absolute_stack_size();
+              callstack.push(c);
+              c = new_function_call(*handle, stack_size, &program.function_info);
+              break;
+            }
+            FunctionType::Intrinsic => {
+              let info = &program.intrinsic_info[*handle];
+              intrinsic_call(stack, &mut c, info);
+            }
+          }
         }
         BC::CallFirstClassFunction => {
-          let handle = to_function(pop(stack, &mut c))?;
-          let stack_size = c.absolute_stack_size();
-          callstack.push(c);
-          c = new_function_call(handle, stack_size, &program.function_info);
-          break;
+          let (function_type, handle) = to_function(pop(stack, &mut c))?;
+          // TODO: code duplicated in CallFunction
+          match function_type {
+            FunctionType::Function => {
+              let stack_size = c.absolute_stack_size();
+              callstack.push(c);
+              c = new_function_call(handle, stack_size, &program.function_info);
+              break;
+            }
+            FunctionType::Intrinsic => {
+              let info = &program.intrinsic_info[handle];
+              intrinsic_call(stack, &mut c, info);
+            }
+          }
         }
         BC::JumpIfFalse(location) => {
           if !to_b(pop(stack, &mut c))? {
