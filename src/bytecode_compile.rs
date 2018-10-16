@@ -584,16 +584,16 @@ fn compile_function(
   Ok(())
 }
 
-pub fn compile_bytecode(
+pub fn compile_to_bytecode(
     expr : &Expr,
-    entry_function_name : RefStr,
-    symbol_cache : &mut SymbolCache,
+    entry_function_name : &str,
+    sc : &mut SymbolCache,
     intrinsics : &HashMap<RefStr, IntrinsicDef>)
   -> Result<BytecodeProgram, Error>
 {
   let mut functions = HashMap::new();
   let mut structs = HashMap::new();
-  compile_function(expr, entry_function_name, vec![], &mut functions, intrinsics, &mut structs, symbol_cache)?;
+  compile_function(expr, sc.symbol(entry_function_name), vec![], &mut functions, intrinsics, &mut structs, sc)?;
   let mut intrinsics = intrinsics.iter().map(|(_, i)| i.clone()).collect::<Vec<IntrinsicDef>>();
   intrinsics.sort_unstable_by_key(|i| i.handle);
   let mut bp = BytecodeProgram::new(intrinsics);

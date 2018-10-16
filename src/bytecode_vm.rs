@@ -120,7 +120,8 @@ fn set_return_value(stack : &mut [Value], v : Value) {
   stack[0] = v;
 }
 
-fn interpret_bytecode(program : &BytecodeProgram, entry_function : usize) -> Result<Value, Error> {
+pub fn interpret_bytecode(program : &BytecodeProgram, entry_function_name : &str) -> Result<Value, Error> {
+  let entry_function = program.function_info.iter().position(|i| i.name.as_ref() == entry_function_name).unwrap();
   // TODO: refcounted pointer bug with uncleared stack entries
   let mut expandable_stack : Vec<Value> = vec![];
   let mut callstack : Vec<Call> = vec![];
@@ -309,9 +310,8 @@ pub fn print_program(program : &BytecodeProgram) {
 }
 
 pub fn interpret(expr : &Expr, symbol_cache : &mut SymbolCache, intrinsics : &HashMap<RefStr, IntrinsicDef>) -> Result<Value, Error> {
-  let entry_function_name = symbol_cache.symbol("main");
-  let program = compile_bytecode(expr, entry_function_name.clone(), symbol_cache, intrinsics)?;
+  let entry_function_name = "main";
+  let program = compile_to_bytecode(expr, entry_function_name, symbol_cache, intrinsics)?;
   print_program(&program);
-  let entry_function_handle = program.function_info.iter().position(|i| i.name == entry_function_name).unwrap();
-  interpret_bytecode(&program, entry_function_handle)
+  interpret_bytecode(&program, entry_function_name)
 }

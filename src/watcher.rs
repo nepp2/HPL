@@ -8,7 +8,8 @@ use std::path::PathBuf;
 use error::Error;
 use parser;
 use lexer;
-use value::{Value, Type, SymbolCache};
+use value::{Value, SymbolCache};
+use bytecode_compile;
 use bytecode_vm;
 use typecheck;
 use intrinsics;
@@ -31,7 +32,9 @@ fn interpret(code: &str) -> Result<Value, Error> {
   let intrinsics = intrinsics::get_intrinsics(&mut sc);
   typecheck::typecheck(&mut expr, &intrinsics)?;
   println!("Type: {:?}", expr.type_info);
-  let value = bytecode_vm::interpret(&expr, &mut sc, &intrinsics);
+  let entry_function = "top_level";
+  let program = bytecode_compile::compile_to_bytecode(&expr, entry_function, &mut sc, &intrinsics)?;
+  let value = bytecode_vm::interpret_bytecode(&program, entry_function);
   value
 }
 
