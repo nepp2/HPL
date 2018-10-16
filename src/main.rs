@@ -19,6 +19,7 @@ mod parser;
 mod value;
 mod intrinsics;
 mod typecheck;
+mod bytecode_compile;
 mod bytecode_vm;
 mod watcher;
 
