@@ -21,6 +21,7 @@ mod intrinsics;
 mod typecheck;
 mod bytecode_compile;
 mod bytecode_vm;
+mod sdl_live;
 mod watcher;
 
 fn main(){
