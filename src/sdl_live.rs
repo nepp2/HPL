@@ -42,16 +42,6 @@ pub fn run_sdl2_app() {
   
   'mainloop: loop {
 
-    let (shift_down, ctrl_down) = {
-      fn is_pressed(keyboard : &KeyboardState, key : Keycode) -> bool {
-        keyboard.is_scancode_pressed(Scancode::from_keycode(key).unwrap())
-      }
-      let keyboard = events.keyboard_state();
-      let sd = is_pressed(&keyboard, Keycode::LShift) || is_pressed(&keyboard, Keycode::RShift);
-      let cd = is_pressed(&keyboard, Keycode::LCtrl) || is_pressed(&keyboard, Keycode::RCtrl);
-      (sd, cd)
-    };
-
     for event in events.poll_iter() {
       // handle event
     }
