@@ -15,31 +15,30 @@ lazy_static! {
 }
 
 
+fn intrinsic_functions<'l>() -> Vec<FunctionDef<'l>> {
+  let fs = vec![];
+  
+  let def = FunctionDef {
+    info: FunctionInfo { name: "+", arguments: ["a", "b"] },
+    handle: FunctionHandle::Intrinsic,
+  };
+  fs.push(def);
+
+  fs
+}
+
 #[derive(Debug)]
 pub struct FunctionInfo {
   pub name : RefStr,
 
   /// Number of arguments the function accepts
   pub arguments : Vec<RefStr>,
-
-  /// Number of local variables which may be used. Arguments count towards this number.
-  pub locals : usize,
 }
 
-pub struct BytecodeProgram {
-  pub bytecode : Vec<FunctionBytecode>,
-  pub function_info : Vec<FunctionInfo>,
-  pub intrinsic_info : Vec<IntrinsicDef>,
-}
-
-impl BytecodeProgram {
-  fn new(intrinsic_info : Vec<IntrinsicDef>) -> BytecodeProgram {
-    BytecodeProgram {
-      bytecode: vec![],
-      function_info: vec![],
-      intrinsic_info,
-    }
-  }
+#[derive(PartialEq)]
+enum BreakState {
+  Breaking,
+  NotBreaking,
 }
 
 struct Callable {
@@ -47,10 +46,14 @@ struct Callable {
   handle : usize,
 }
 
-struct FunctionDef {
-  handle : usize,
-  bytecode : FunctionBytecode,
+struct FunctionDef<'l> {
   info : FunctionInfo,
+  handle : FunctionHandle<'l>,
+}
+
+enum FunctionHandle<'l> {
+  Ast(&'l Expr),
+  Intrinsic(fn(&[Value]) -> Value),
 }
 
 struct VarScope {
@@ -90,6 +93,8 @@ struct Environment<'l> {
 
   /// indicates how many nested loops we are inside in the currently-executing function
   loop_break_labels : Vec<RefStr>,
+
+  break_state : BreakState,
 }
 
 impl <'l> Environment<'l> {
@@ -220,6 +225,10 @@ impl <'l> Environment<'l> {
     None
   }
 
+  fn read_var(&self, v : &str) -> Option<Value> {
+    panic!()
+  }
+
   fn find_var_offset(&self, v : &str, loc : &TextLocation) -> Result<usize, Error> {
     self.get_var_offset(v)
       .ok_or_else(|| error_raw(*loc, format!("no variable called '{}' found in scope", v)))
@@ -275,17 +284,7 @@ fn compile_function_call(function_expr: &Expr, args: &[Expr], env : &mut Environ
   Ok(())
 }
 
-fn compile_tree(expr : &Expr, env : &mut Environment, push_answer : bool) -> Result<(), Error> {
-  fn does_not_push(expr : &Expr, push_answer : bool) -> Result<(), Error> {
-    if push_answer {
-      let instr = expr.tree_symbol_unwrap()?.as_ref();
-      error(expr, format!("instruction '{}' is void, where a result is expected", instr))
-    }
-    else {
-      Ok(())
-    }
-  }
-
+fn interpret_instr(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
   let instr = expr.tree_symbol_unwrap()?.as_ref();
   let children = expr.children.as_slice();
   match (instr, children) {
@@ -494,28 +493,33 @@ fn compile_tree(expr : &Expr, env : &mut Environment, push_answer : bool) -> Res
   Ok(())
 }
 
-
-fn compile(expr : &Expr, env : &mut Environment, push_answer : bool) -> Result<(), Error> {
+fn interpret(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
+  if env.break_state == BreakState::Breaking {
+    // this basically skips all evaluations until we backtrack to the loop,
+    // which will spot the break state and stop iterating.
+    return Ok(Value::Unit);
+  }
   match &expr.tag {
     ExprTag::Tree(_) => {
-      compile_tree(expr, env, push_answer)?;
+      interpret_instr(expr, env)
     }
     ExprTag::Symbol(s) => {
       if s.as_ref() == "break" {
-        if let Some(l) = env.loop_break_labels.last().map(|s| s.clone()) {
-          env.emit_jump(l.as_ref());
+        if env.loop_break_labels.len() > 0 {
+          env.break_state = BreakState::Breaking;
+          Ok(Value::Unit)
         }
         else {
-          return error(expr.loc, "can't break outside a loop");
+          error(expr, "can't break outside a loop")
         }
       }
       else {
-        if let Some(offset) = env.get_var_offset(&s) {
-          env.emit(BC::PushVar(offset), push_answer);
+        if let Some(v) = env.read_var(&s) {
+          Ok(v)
         }
         else if let Some(callable) = env.get_callable(&s) {
           let v = Value::Function(callable.t, callable.handle);
-          env.emit(BC::Push(v), push_answer);
+          Ok(v)
         }
         else {
           return error(expr, format!("no variable or function in scope called '{}'", s));
@@ -523,22 +527,18 @@ fn compile(expr : &Expr, env : &mut Environment, push_answer : bool) -> Result<(
       }
     }
     ExprTag::LiteralString(s) => {
-      let v = Value::String(s.clone());
-      env.emit(BC::Push(v), push_answer);
+      Ok(Value::String(s.clone()))
     }
     ExprTag::LiteralFloat(f) => {
-      let v = Value::Float(*f);
-      env.emit(BC::Push(v), push_answer);
+      Ok(Value::Float(*f))
     }
     ExprTag::LiteralBool(b) => {
-      let v = Value::Bool(*b);
-      env.emit(BC::Push(v), push_answer);
+      Ok(Value::Bool(*b))
     }
   }
-  Ok(())
 }
 
-fn compile_function(
+fn interpret_function(
   function_body : &Expr,
   name : RefStr,
   arguments : Vec<RefStr>,
@@ -546,28 +546,13 @@ fn compile_function(
   intrinsics : &HashMap<RefStr, IntrinsicDef>,
   structs : &mut HashMap<RefStr, Rc<StructDef>>,
   symbol_cache : &mut SymbolCache,)
-  -> Result<(), Error>
+  -> Result<Value, Error>
 {
   let mut new_env = Environment::new(name, arguments, functions, intrinsics, structs, symbol_cache);
-  let expect_return_value = function_body.type_info != Type::Unit;
-  compile(function_body, &mut new_env, expect_return_value)?;
-  if !expect_return_value {
-    new_env.emit_always(BC::Push(Value::Unit));
-  }
-  new_env.emit_always(BC::Return);
-  new_env.complete();
-  Ok(())
+  interpret(function_body, &mut new_env)
 }
 
-fn interpret_with_env(ast : &Expr, env : &mut Environment) -> Result<Value, Error> {
-
-}
-
-pub fn interpret(ast : &Expr) -> Result<Value, Error> {
-  
-}
-
-pub fn interpret(
+pub fn interpret_program(
     expr : &Expr,
     sc : &mut SymbolCache,
     intrinsics : &HashMap<RefStr, IntrinsicDef>)
@@ -575,15 +560,5 @@ pub fn interpret(
 {
   let mut functions = HashMap::new();
   let mut structs = HashMap::new();
-  compile_function(expr, sc.symbol(entry_function_name), vec![], &mut functions, intrinsics, &mut structs, sc)?;
-  let mut intrinsics = intrinsics.iter().map(|(_, i)| i.clone()).collect::<Vec<IntrinsicDef>>();
-  intrinsics.sort_unstable_by_key(|i| i.handle);
-  let mut bp = BytecodeProgram::new(intrinsics);
-  let mut defs = functions.into_iter().map(|x| x.1).collect::<Vec<FunctionDef>>();
-  defs.sort_unstable_by_key(|d| d.handle);
-  for def in defs {
-    bp.bytecode.push(def.bytecode);
-    bp.function_info.push(def.info);
-  }
-  Ok(bp)
+  interpret_function(expr, sc.symbol("__program_main__"), vec![], &mut functions, intrinsics, &mut structs, sc)
 }
