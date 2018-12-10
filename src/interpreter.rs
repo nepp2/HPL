@@ -1,5 +1,5 @@
 
-use error::{Error, TextLocation, error, error_raw};
+use error::{Error, TextLocation, error, error_raw, error_no_loc};
 use value::*;
 use intrinsics::IntrinsicDef;
 
@@ -15,16 +15,51 @@ lazy_static! {
 }
 
 
-fn intrinsic_functions<'l>() -> Vec<FunctionDef<'l>> {
-  let fs = vec![];
-  
-  let def = FunctionDef {
-    info: FunctionInfo { name: "+", arguments: ["a", "b"] },
-    handle: FunctionHandle::Intrinsic,
-  };
-  fs.push(def);
+fn to_f(v : Value) -> Result<f32, Error> {
+  match v {
+    Value::Float(f) => Ok(f),
+    x => Err(error_no_loc(format!("Expected float, found {:?}.", x)))
+  }
+}
+fn to_b(v : Value) -> Result<bool, Error> {
+  match v {
+    Value::Bool(b) => Ok(b),
+    x => Err(error_no_loc(format!("Expected boolean, found {:?}.", x)))
+  }
+}
+fn to_function(v : Value) -> Result<(FunctionType, usize), Error> {
+  match v {
+    Value::Function(t, h) => Ok((t, h)),
+    x => Err(error_no_loc(format!("Expected function, found {:?}.", x)))
+  }
+}
+fn to_array(v : Value) -> Result<Array, Error> {
+  match v {
+    Value::Array(a) => Ok(a),
+    x => Err(error_no_loc(format!("Expected array, found {:?}.", x)))
+  }
+}
+fn to_struct(v : &Value) -> Result<&StructVal, Error> {
+  match v {
+    Value::Struct(s) => Ok(s),
+    x => Err(error_no_loc(format!("Expected struct, found {:?}.", x)))
+  }
+}
 
-  fs
+fn intrinsic_functions<'l>(sc : &mut SymbolCache) -> Vec<FunctionDef<'l>> {
+  
+  fn intrinsic<'l>(sc : &mut SymbolCache, name: &str, args: &[&str], f: fn(&[Value]) -> Result<Value, Error>) -> FunctionDef<'l> {
+    FunctionDef {
+      info: FunctionInfo { name: sc.symbol(name), arguments: args.iter().map(|s| sc.symbol(*s)).collect() },
+      handle: FunctionHandle::Intrinsic(f),
+    }
+  }
+
+  vec![
+    intrinsic(sc, "+", &["a", "b"], |&[a, b]| Ok(Value::Float(to_f(a)? + to_f(b)?))),
+    intrinsic(sc, "-", &["a", "b"], |&[a, b]| Ok(Value::Float(to_f(a)? - to_f(b)?))),
+    intrinsic(sc, "*", &["a", "b"], |&[a, b]| Ok(Value::Float(to_f(a)? * to_f(b)?))),
+  ]
 }
 
 #[derive(Debug)]
@@ -53,7 +88,7 @@ struct FunctionDef<'l> {
 
 enum FunctionHandle<'l> {
   Ast(&'l Expr),
-  Intrinsic(fn(&[Value]) -> Value),
+  Intrinsic(fn(&[Value]) -> Result<Value, Error>),
 }
 
 struct VarScope {
