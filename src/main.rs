@@ -16,6 +16,7 @@ extern crate lazy_static;
 mod error;
 mod lexer;
 mod parser;
+mod interpreter;
 mod value;
 mod intrinsics;
 mod typecheck;
