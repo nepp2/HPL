@@ -8,8 +8,8 @@ byteorder = "1.2.2"
 unicode-normalization = "0.1.5"
 ropey = "0.6.3"
 clipboard = "0.4.6"
-rand = "0.5.3"
-rustyline = "1.0.0"
+rand = "0.6.1"
+rustyline = "3.0.0"
 notify = "4.0.4"
 lazy_static = "1.1.0"
 itertools = "0.7.3"
@@ -20,6 +20,6 @@ default-features = false
 features = ["gpu_cache"]
 
 [dependencies.sdl2]
-version = "0.31"
+version = "0.32"
 default-features = false
 features = ["bundled"]
