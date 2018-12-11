@@ -45,6 +45,15 @@ fn to_struct(v : &Value) -> Result<&StructVal, Error> {
     x => Err(error_no_loc(format!("Expected struct, found {:?}.", x)))
   }
 }
+fn array_index(array : &Vec<Value>, index : f32) -> Result<usize, Error> {
+  let i = index as usize;
+  if index >= 0.0 && i < array.len() {
+    Ok(i)
+  }
+  else {
+    Err(error_no_loc(format!("Index out of bounds error. Array of {} elements given index {}.", array.len(), index)))
+  }
+}
 
 fn intrinsic_functions<'l>(sc : &mut SymbolCache) -> Vec<FunctionDef<'l>> {
   
@@ -102,9 +111,7 @@ struct LabelState {
 }
 
 struct Environment<'l> {
-  functions : &'l mut HashMap<RefStr, FunctionDef>,
-
-  intrinsics : &'l HashMap<RefStr, IntrinsicDef>,
+  functions : &'l mut HashMap<RefStr, FunctionDef<'l>>,
 
   structs : &'l mut HashMap<RefStr, Rc<StructDef>>,
   symbol_cache : &'l mut SymbolCache,
@@ -121,11 +128,6 @@ struct Environment<'l> {
   /// keeps track of labels
   labels : HashMap<RefStr, LabelState>,
 
-  /// the maximum number of locals visible in any scope of the function
-  max_locals : usize,
-
-  instructions : Vec<BytecodeInstruction>,
-
   /// indicates how many nested loops we are inside in the currently-executing function
   loop_break_labels : Vec<RefStr>,
 
@@ -136,8 +138,7 @@ impl <'l> Environment<'l> {
   fn new(
     function_name : RefStr,
     arguments : Vec<RefStr>,
-    functions : &'l mut HashMap<RefStr, FunctionDef>,
-    intrinsics : &'l HashMap<RefStr, IntrinsicDef>,
+    functions : &'l mut HashMap<RefStr, FunctionDef<'l>>,
     structs : &'l mut HashMap<RefStr, Rc<StructDef>>,
     symbol_cache : &'l mut SymbolCache,
   ) -> Environment<'l> {
@@ -145,64 +146,12 @@ impl <'l> Environment<'l> {
     let locals = vec![vs];
     Environment{
       function_name, arguments,
-      functions, intrinsics,
+      functions,
       structs, symbol_cache, locals,
       labels: HashMap::new(),
-      max_locals: 0,
-      instructions: vec!(),
       loop_break_labels: vec!(),
+      break_state : BreakState::NotBreaking,
     }
-  }
-
-  fn complete(mut self) {
-    // Fix the jump locations
-    for (_, label) in self.labels {
-      for r in label.references {
-        let instr = match &self.instructions[r] {
-          BC::Jump(_) => BC::Jump(label.location),
-          BC::JumpIfFalse(_) => BC::JumpIfFalse(label.location),
-          i => panic!("expected label and found {:?}", i),
-        };
-        self.instructions[r] = instr;
-      }
-    }
-    let function = FunctionDef {
-      handle: self.functions.len(),
-      bytecode: self.instructions,
-      info: FunctionInfo { name: self.function_name.clone(), arguments: self.arguments, locals: self.max_locals },
-    };
-    self.functions.insert(self.function_name, function);
-  }
-
-  fn emit(&mut self, instruction : BytecodeInstruction, do_emit : bool) {
-    if do_emit {
-      self.instructions.push(instruction);
-    }
-  }
-
-  fn emit_always(&mut self, instruction : BytecodeInstruction) {
-    self.instructions.push(instruction);
-  }
-
-  fn emit_label(&mut self, label : RefStr) {
-    let location = self.instructions.len();
-    let current_location = &mut self.labels.get_mut(&label).unwrap().location;
-    if *current_location != usize::MAX {
-      panic!("label used twice in compiler");
-    }
-    *current_location = location;
-  }
-
-  fn emit_jump(&mut self, label : &str) {
-    let location = self.instructions.len();
-    self.labels.get_mut(label).unwrap().references.push(location);
-    self.emit_always(BC::Jump(usize::MAX))
-  }
-
-  fn emit_jump_if_false(&mut self, label : &str) {
-    let location = self.instructions.len();
-    self.labels.get_mut(label).unwrap().references.push(location);
-    self.emit_always(BC::JumpIfFalse(usize::MAX))
   }
 
   fn label(&mut self, s : &str) -> RefStr {
@@ -280,8 +229,8 @@ impl <'l> Environment<'l> {
   }
 }
 
-fn compile_function_call(function_expr: &Expr, args: &[Expr], env : &mut Environment, push_answer : bool)
-  -> Result<(), Error>
+fn function_call(function_expr: &Expr, args: &[Expr], env : &mut Environment)
+  -> Result<Value, Error>
 {
   let handle =
     function_expr.symbol_unwrap().ok()
@@ -326,26 +275,7 @@ fn interpret_instr(expr : &Expr, env : &mut Environment) -> Result<Value, Error>
     ("call", exprs) => {
       let function_expr = &exprs[0];
       let params = &exprs[1..];
-      if let Ok(symbol) = function_expr.symbol_to_refstr() {
-        if BYTECODE_OPERATORS.contains(symbol.as_ref()) {
-          match params {
-            [a, b] => {
-              compile(a, env, push_answer)?;
-              compile(b, env, push_answer)?;
-              env.emit(BC::BinaryOperator(symbol), push_answer);
-            }
-            [v] => {
-              compile(v, env, push_answer)?;
-              env.emit(BC::UnaryOperator(symbol), push_answer);
-            }
-            _ => {
-              return error(expr, format!("wrong number of arguments for operator"));
-            }
-          }
-          return Ok(());
-        }
-      }
-      compile_function_call(function_expr, params, env, push_answer)?;
+      function_call(function_expr, params, env)
     }
     ("block", exprs) => {
       let v = VarScope { base_index: env.count_locals(), vars: vec!() };
@@ -353,42 +283,39 @@ fn interpret_instr(expr : &Expr, env : &mut Environment) -> Result<Value, Error>
       let num_exprs = exprs.len();
       if num_exprs > 1 {
         for i in 0..(num_exprs-1) {
-          compile(&exprs[i], env, false)?;
+          interpret(&exprs[i], env)?;
         }
       }
-      if num_exprs > 0 {
-        compile(&exprs[num_exprs-1], env, push_answer)?;
-      }
-      else {
-        does_not_push(expr, push_answer)?;
-      }
+      let value =
+        if num_exprs > 0 {
+          interpret(&exprs[num_exprs-1], env)
+        } else { Ok(Value::Unit) };
       env.pop_scope();
+      value
     }
     ("let", exprs) => {
-      does_not_push(expr, push_answer)?;
       let name = exprs[0].symbol_unwrap()?;
-      compile(&exprs[1], env, true)?;
-      let offset = env.allocate_var_offset(name.clone());
-      env.emit_always(BC::SetVar(offset));
+      let val = interpret(&exprs[1], env)?;
+      env.new_var(name.clone(), val);
+      Ok(Value::Unit)
     }
     ("=", [_, assign_expr, value_expr]) => {
       match &assign_expr.tag {
         ExprTag::Symbol(var_symbol) => {
-          does_not_push(expr, push_answer)?;
-          compile(value_expr, env, true)?; // emit value
-          let offset = env.find_var_offset(&var_symbol, &assign_expr.loc)?;
-          env.emit_always(BC::SetVar(offset));
-          return Ok(());
+          let val = interpret(value_expr, env)?;
+          let offset = env.set_var(&var_symbol, val)?;
+          Ok(Value::Unit);
         }
         ExprTag::Tree(symbol) => {
-          does_not_push(expr, push_answer)?;
           match (symbol.as_ref(), assign_expr.children.as_slice()) {
             ("index", [array_expr, index_expr]) => {
-              compile(array_expr, env, true)?;
-              compile(index_expr, env, true)?;
-              compile(value_expr, env, true)?;
-              env.emit_always(BC::SetArrayIndex);
-              return Ok(());
+              let array = to_array(interpret(array_expr, env)?)?;
+              let index = to_f(interpret(index_expr, env)?)?;
+              let value = interpret(value_expr, env)?;
+              let a = array.borrow_mut();
+              let i = array_index(&a, index)?;
+              a[i] = value;
+              Ok(Value::Unit);
             }
             (".", [struct_expr, field_expr]) => {
               compile(struct_expr, env, true)?;
@@ -409,25 +336,17 @@ fn interpret_instr(expr : &Expr, env : &mut Environment) -> Result<Value, Error>
       if arg_count < 2 || arg_count > 3 {
         return error(expr, "malformed if expression");
       }
-      let false_label = env.label("if_false_label");
-      if arg_count == 3 {
-        // has else branch
-        let else_end_label = env.label("else_end_label");
-        compile(&exprs[0], env, true)?;
-        env.emit_jump_if_false(&false_label);
-        compile(&exprs[1], env, push_answer)?;
-        env.emit_jump(&else_end_label);
-        env.emit_label(false_label);
-        compile(&exprs[2], env, push_answer)?;
-        env.emit_label(else_end_label);
+      let condition_true = to_b(interpret(&exprs[0], env)?)?;
+      if condition_true {
+        interpret(&exprs[1], env)?
       }
       else {
-        // has no else branch
-        does_not_push(expr, push_answer)?;
-        compile(&exprs[0], env, true)?;
-        env.emit_jump_if_false(&false_label);
-        compile(&exprs[1], env, false)?;
-        env.emit_label(false_label);
+        if arg_count == 3 {
+          interpret(&exprs[2], env)?
+        }
+        else {
+          Ok(Value::Unit)
+        }
       }
     }
     ("struct_define", exprs) => {
@@ -525,7 +444,6 @@ fn interpret_instr(expr : &Expr, env : &mut Environment) -> Result<Value, Error>
       return error(expr, format!("instruction '{}' with {} args is not supported by the interpreter.", instr, children.len()));
     }
   }
-  Ok(())
 }
 
 fn interpret(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
@@ -578,12 +496,11 @@ fn interpret_function(
   name : RefStr,
   arguments : Vec<RefStr>,
   functions : &mut HashMap<RefStr, FunctionDef>,
-  intrinsics : &HashMap<RefStr, IntrinsicDef>,
   structs : &mut HashMap<RefStr, Rc<StructDef>>,
   symbol_cache : &mut SymbolCache,)
   -> Result<Value, Error>
 {
-  let mut new_env = Environment::new(name, arguments, functions, intrinsics, structs, symbol_cache);
+  let mut new_env = Environment::new(name, arguments, functions, structs, symbol_cache);
   interpret(function_body, &mut new_env)
 }
 
