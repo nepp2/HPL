@@ -17,7 +17,6 @@ mod error;
 mod lexer;
 mod parser;
 mod interpreter_old;
-mod interpreter;
 mod value;
 mod intrinsics;
 mod typecheck;
