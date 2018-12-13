@@ -160,3 +160,55 @@ impl fmt::Debug for Value {
     }
   }
 }
+
+impl From<bool> for Value {
+  fn from(v : bool) -> Value {
+    Value::Bool(v)
+  }
+}
+impl From<f32> for Value {
+  fn from(v : f32) -> Value {
+    Value::Float(v)
+  }
+}
+
+impl Into<Result<f32, String>> for Value {
+  fn into(self) -> Result<f32, String> {
+    match self {
+      Value::Float(f) => Ok(f), 
+      x => Err(format!("Expected float, found {:?}.", x))
+    }
+  }
+}
+impl Into<Result<bool, String>> for Value {
+  fn into(self) -> Result<bool, String> {
+    match self {
+      Value::Bool(b) => Ok(b),
+      x => Err(format!("Expected bool, found {:?}.", x))
+    }
+  }
+}
+impl Into<Result<(FunctionType, usize), String>> for Value {
+  fn into(self) -> Result<(FunctionType, usize), String> {
+    match self {
+      Value::Function(ft, args) => Ok((ft, args)),
+      x => Err(format!("Expected function, found {:?}.", x))
+    }
+  }
+}
+impl Into<Result<Array, String>> for Value {
+  fn into(self) -> Result<Array, String> {
+    match self {
+      Value::Array(a) => Ok(a),
+      x => Err(format!("Expected array, found {:?}.", x))
+    }
+  }
+}
+impl Into<Result<StructVal, String>> for Value {
+  fn into(self) -> Result<StructVal, String> {
+    match self {
+      Value::Struct(s) => Ok(s),
+      x => Err(format!("Expected struct, found {:?}.", x))
+    }
+  }
+}

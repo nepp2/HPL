@@ -42,13 +42,87 @@ struct FunctionDef<'l> {
   handle : FunctionHandle<'l>,
 }
 
-#[derive(Clone)]
 enum FunctionHandle<'l> {
   Ast(&'l Expr),
-  Intrinsic(fn(&[Value]) -> Result<Value, Error>),
+  Intrinsic(fn(&[Value]) -> Result<Value, String>),
+}
+
+fn intrinsic_functions<'l>(sc : &mut SymbolCache) -> HashMap<RefStr, FunctionDef<'l>> {
+
+  macro_rules! intrinsic {
+    ($n:expr, $a:ident, $b:ident, $c:ident, $f:expr) => {
+      {
+        let f : fn(&[Value]) -> Result<Value, String> =
+          |vals : &[Value]| {
+            let a : Result<$a, String> = vals[0].clone().into();
+            let b : Result<$b, String> = vals[1].clone().into();
+            let c : $c = ($f)(a?, b?);
+            let v : Value = Value::from(c);
+            Ok(v)
+          };
+        ($n, 2, f)
+      }
+    }
+  }
+/*
+  fn intrinsic<'l, A, B, C>(sc : &mut SymbolCache, name: &str, f: fn(A, B) -> C) -> FunctionDef<'l>
+    where Value: Into<Result<A, String>>, Value: Into<Result<B, String>>, Value: From<C>, A: 'static, B: 'static, C: 'static
+  {
+    let wrapped_f : Box<Fn(&[Value]) -> Result<Value, String>> =
+      Box::new(move |vals : &[Value]| {
+        let a : Result<A, String> = vals[0].clone().into();
+        let b : Result<B, String> = vals[1].clone().into();
+        let c : C = f(a?, b?);
+        let v : Value = Value::from(c);
+        Ok(v)
+      });
+    FunctionDef {
+      info: FunctionInfo { name: sc.symbol(name), arguments: ["a", "b"].iter().map(|s| sc.symbol(*s)).collect() },
+      handle: FunctionHandle::Intrinsic(wrapped_f),
+    }
+  }
+  */
+
+  fn def<'l>(sc : &mut SymbolCache, name: &str, num_params : i32, f: fn(&[Value]) -> Result<Value, String>) -> FunctionDef<'l> {
+    let arguments : Vec<RefStr> = (0..num_params).map(|i| ((('a' as i32) + i) as u8 as char).to_string()).map(|s| sc.symbol(s)).collect();
+    FunctionDef {
+      info: FunctionInfo { name: sc.symbol(name), arguments },
+      handle: FunctionHandle::Intrinsic(f),
+    }
+  }
+
+  let instrinsics = vec![
+    intrinsic!("+", f32, f32, f32, |a, b| a + b),
+    intrinsic!("-", f32, f32, f32, |a, b| a - b),
+    intrinsic!("*", f32, f32, f32, |a, b| a * b),
+    intrinsic!("/", f32, f32, f32, |a, b| a / b),
+    intrinsic!(">", f32, f32, bool, |a, b| a > b),
+    intrinsic!("<", f32, f32, bool, |a, b| a < b),
+    intrinsic!("<=", f32, f32, bool, |a, b| a <= b),
+    intrinsic!(">=", f32, f32, bool, |a, b| a >= b),
+    ("==", 2, |vs| {
+      let b = vs[0] == vs[1];
+      Ok(Value::from(b))
+    }),
+    intrinsic!("&&", bool, bool, bool, |a, b| a && b),
+    intrinsic!("||", bool, bool, bool, |a, b| a || b),
+    ("-", 1, |vs| {
+      let f : Result<f32, String> = vs[0].clone().into();
+      Ok(Value::from(-f?))
+    }),
+  ];
+
+  let mut map = HashMap::new();
+  for (n, params, f) in instrinsics {
+    let d = def(sc, n, params, f);
+    map.insert(d.info.name.clone(), d);
+  }
+  map
 }
 
 struct Environment<'l, 'e : 'l> {
+  symbol_cache : &'l mut SymbolCache,
+
   values : &'l mut Vec<HashMap<RefStr, Value>>,
   functions : &'l mut Vec<HashMap<RefStr, FunctionDef<'e>>>,
   structs : &'l mut HashMap<RefStr, Rc<StructDef>>,
@@ -62,19 +136,20 @@ struct Environment<'l, 'e : 'l> {
 
 impl <'l, 'e> Environment<'l, 'e> {
   fn new(
+    symbol_cache : &'l mut SymbolCache,
     values : &'l mut Vec<HashMap<RefStr, Value>>,
     functions : &'l mut Vec<HashMap<RefStr, FunctionDef<'e>>>,
     structs : &'l mut HashMap<RefStr, Rc<StructDef>>,
   ) -> Environment<'l, 'e> {
     Environment{
-      values, functions, structs,
+      symbol_cache, values, functions, structs,
       loop_depth: 0,
       break_state: BreakState::NotBreaking
     }
   }
 }
 
-fn interpret_function_call<'l, 'e>(function_name_expr: &'e Expr, args: &'e [Expr], env : &mut Environment<'l, 'e>)
+fn interpret_function_call<'l, 'e>(expr : &'e Expr, function_name_expr: &'e Expr, args: &'e [Expr], env : &mut Environment<'l, 'e>)
   -> Result<Value, Error>
 {
   let function_name = function_name_expr.symbol_unwrap()?;
@@ -84,89 +159,43 @@ fn interpret_function_call<'l, 'e>(function_name_expr: &'e Expr, args: &'e [Expr
     let v = interpret_with_env(e, env)?;
     arg_values.push(v);
   }
-  let handle = match scoped_get(&mut env.functions, function_name) {
-    Some(fd) => fd.handle.clone(),
-    None => return error(function_name_expr, format!("Found no function called '{}'", function_name)),
+  // TODO: this code is structured in a crazy way using direct returns because the borrow-checker is stupid
+  let (mut vs, expr) = {
+    match scoped_get(&mut env.functions, function_name) {
+      Some(fd) => 
+        match &fd.handle {
+          FunctionHandle::Ast(expr) => {
+            let mut args = HashMap::new();
+            for (v, n) in arg_values.into_iter().zip(&fd.info.arguments) {
+              args.insert(n.clone(), v);
+            }
+            (vec!(args), *expr)
+          }
+          FunctionHandle::Intrinsic(f) => {
+            return f(arg_values.as_slice()).map_err(|s| error_raw(function_name_expr, s))
+          }
+        },
+      None => return error(expr, format!("Found no function called '{}'", function_name)),
+    }
   };
-  match handle {
-    FunctionHandle::Ast(expr) => {
-      let mut vs = {
-        let mut args = HashMap::new();
-        let fun = scoped_get(&mut env.functions, function_name).unwrap();
-        for (v, n) in arg_values.into_iter().zip(&fun.info.arguments) {
-          args.insert(n.clone(), v);
-        }
-        vec!(args)
-      };
-      let mut new_env = Environment::new(&mut vs, env.functions, env.structs);
-      interpret_with_env(&expr, &mut new_env)
-    }
-    FunctionHandle::Intrinsic(f) => {
-      f(arg_values.as_slice())
-    }
-  }
+  let mut new_env = Environment::new(env.symbol_cache, &mut vs, env.functions, env.structs);
+  interpret_with_env(&expr, &mut new_env)
 }
 
-fn to_f<'l, 'e>(v : &'e Expr, env : &mut Environment<'l, 'e>) -> Result<f32, Error> {
-  match interpret_with_env(v, env)? {
-    Value::Float(f) => Ok(f),
-    x => error(v, format!("Expected float, found {:?}.", x))
-  }
+fn to_value<'l, 'e, V>(e : &'e Expr, env : &mut Environment<'l, 'e>) -> Result<V, Error>
+  where Value: Into<Result<V, String>>
+{
+  let v = interpret_with_env(e, env)?;
+  let r : Result<V, String> = v.into();
+  r.map_err(|s| error_raw(e, s))
 }
-fn to_b<'l, 'e>(v : &'e Expr, env : &mut Environment<'l, 'e>) -> Result<bool, Error> {
-  match interpret_with_env(v, env)? {
-    Value::Bool(b) => Ok(b),
-    x => error(v, format!("Expected boolean, found {:?}.", x))
-  }
-}
-fn to_array<'l, 'e>(v : &'e Expr, env : &mut Environment<'l, 'e>) -> Result<Array, Error> {
-  match interpret_with_env(v, env)? {
-    Value::Array(a) => Ok(a),
-    x => error(v, format!("Expected array, found {:?}.", x))
-  }
-}
-fn to_struct<'l, 'e>(v : &'e Expr, env : &mut Environment<'l, 'e>) -> Result<StructVal, Error> {
-  match interpret_with_env(v, env)? {
-    Value::Struct(s) => Ok(s),
-    x => error(v, format!("Expected struct, found {:?}.", x))
-  }
-}
-fn to_function<'l, 'e>(v : &'e Expr, env : &mut Environment<'l, 'e>) -> Result<(FunctionType, usize), Error> {
-  match interpret_with_env(v, env)? {
-    Value::Function(f, s) => Ok((f, s)),
-    x => error(v, format!("Expected function, found {:?}.", x))
-  }
-}
+
 /*
-fn to_f(v : Value) -> Result<f32, Error> {
-  match v {
-    Value::Float(f) => Ok(f),
-    x => Err(error_no_loc(format!("Expected float, found {:?}.", x)))
-  }
+fn f_to_val(f : f32) -> Result<Value, String> {
+  Ok(Value::Float(f))
 }
-fn to_b(v : Value) -> Result<bool, Error> {
-  match v {
-    Value::Bool(b) => Ok(b),
-    x => Err(error_no_loc(format!("Expected boolean, found {:?}.", x)))
-  }
-}
-fn to_function(v : Value) -> Result<(FunctionType, usize), Error> {
-  match v {
-    Value::Function(t, h) => Ok((t, h)),
-    x => Err(error_no_loc(format!("Expected function, found {:?}.", x)))
-  }
-}
-fn to_array(v : Value) -> Result<Array, Error> {
-  match v {
-    Value::Array(a) => Ok(a),
-    x => Err(error_no_loc(format!("Expected array, found {:?}.", x)))
-  }
-}
-fn to_struct(v : &Value) -> Result<&StructVal, Error> {
-  match v {
-    Value::Struct(s) => Ok(s),
-    x => Err(error_no_loc(format!("Expected struct, found {:?}.", x)))
-  }
+fn b_to_val(b : bool) -> Result<Value, String> {
+  Ok(Value::Bool(b))
 }
 */
 
@@ -185,12 +214,6 @@ fn struct_field_index(def : &StructDef, field_expr : &Expr) -> Result<usize, Err
   def.fields.iter().position(|s| s.as_ref() == field_name)
   .ok_or_else(||error_raw(field_expr, format!("field {} does not exist on struct {:?}.", field_name, def)))
 }
-fn f_to_val(f : f32) -> Result<Value, String> {
-  Ok(Value::Float(f))
-}
-fn b_to_val(b : bool) -> Result<Value, String> {
-  Ok(Value::Bool(b))
-}
 
 fn interpret_tree<'l, 'e>(expr : &'e Expr, env : &mut Environment<'l, 'e>) -> Result<Value, Error> {
   let instr = expr.tree_symbol_unwrap()?.as_ref();
@@ -199,7 +222,7 @@ fn interpret_tree<'l, 'e>(expr : &'e Expr, env : &mut Environment<'l, 'e>) -> Re
     ("call", exprs) => {
       let function_name_expr = &exprs[0];
       let params = &exprs[1..];
-      interpret_function_call(function_name_expr, params, env)
+      interpret_function_call(expr, function_name_expr, params, env)
       /*
       match (symbol.as_ref(), params) {
         ("+", [a, b]) => f_to_val(to_f(a, env)? + to_f(b, env)?),
@@ -254,16 +277,16 @@ fn interpret_tree<'l, 'e>(expr : &'e Expr, env : &mut Environment<'l, 'e>) -> Re
           match (symbol.as_ref(), assign_expr.children.as_slice()) {
             ("index", [array_expr, index_expr]) => {
               let v = interpret_with_env(&value_expr, env)?;
-              let array_rc = to_array(array_expr, env)?;
+              let array_rc : Array = to_value(array_expr, env)?;
               let mut array = array_rc.borrow_mut();
-              let f = to_f(index_expr, env)?;
+              let f = to_value(index_expr, env)?;
               let i = array_index(&array, f)?;
               array[i] = v;
               return Ok(Value::Unit)
             }
             (".", [struct_expr, field_expr]) => {
               let v = interpret_with_env(&value_expr, env)?;
-              let structure = to_struct(struct_expr, env)?;
+              let structure : StructVal = to_value(struct_expr, env)?;
               let index = struct_field_index(&structure.borrow().def, field_expr)?;
               structure.borrow_mut().fields[index] = v;
               return Ok(Value::Unit)
@@ -280,7 +303,7 @@ fn interpret_tree<'l, 'e>(expr : &'e Expr, env : &mut Environment<'l, 'e>) -> Re
       if arg_count < 2 || arg_count > 3 {
         return error(expr, format!("malformed if expression"));
       }
-      let condition = to_b(&exprs[0], env)?;
+      let condition = to_value(&exprs[0], env)?;
       if condition {
         interpret_with_env(&exprs[1], env)
       }
@@ -338,7 +361,7 @@ fn interpret_tree<'l, 'e>(expr : &'e Expr, env : &mut Environment<'l, 'e>) -> Re
       Ok(Value::Struct(s))
     }
     (".", [expr, name_expr]) => {
-      let s = to_struct(expr, env)?;
+      let s : StructVal = to_value(expr, env)?;
       let index = struct_field_index(&s.borrow().def, name_expr)?;
       let v = s.borrow().fields[index].clone();
       Ok(v)
@@ -348,7 +371,7 @@ fn interpret_tree<'l, 'e>(expr : &'e Expr, env : &mut Environment<'l, 'e>) -> Re
         return error(expr, format!("malformed while block"));
       }
       env.loop_depth += 1;
-      while env.break_state != BreakState::Breaking && to_b(&exprs[0], env)? {
+      while env.break_state != BreakState::Breaking && to_value(&exprs[0], env)? {
         interpret_with_env(&exprs[1], env)?;
       }
       env.loop_depth -= 1;
@@ -380,9 +403,9 @@ fn interpret_tree<'l, 'e>(expr : &'e Expr, env : &mut Environment<'l, 'e>) -> Re
     }
     ("index", exprs) => {
       if let [array_expr, index_expr] = exprs {
-        let array_rc = to_array(array_expr, env)?;
+        let array_rc = to_value::<Array>(array_expr, env)?;
         let array = array_rc.borrow();
-        let f = to_f(index_expr, env)?;
+        let f = to_value(index_expr, env)?;
         let i = array_index(&array, f)?;
         Ok(array[i].clone())
       }
@@ -401,7 +424,7 @@ fn interpret_with_env<'l, 'e>(expr : &'e Expr, env : &mut Environment<'l, 'e>) -
     return Ok(Value::Unit);
   }
   match &expr.tag {
-    ExprTag::Tree(symbol) => {
+    ExprTag::Tree(_) => {
       interpret_tree(expr, env)
     }
     ExprTag::Symbol(s) => {
@@ -427,20 +450,27 @@ fn interpret_with_env<'l, 'e>(expr : &'e Expr, env : &mut Environment<'l, 'e>) -
   }
 }
 
-pub fn interpret(ast : &Expr) -> Result<Value, Error> {
+pub fn interpret_with_cache(ast : &Expr, sc : &mut SymbolCache) -> Result<Value, Error> {
+  let instrinsics = intrinsic_functions(sc);
   let mut vs = vec!(HashMap::new());
-  let mut fs = vec!(HashMap::new());
+  let mut fs = vec!(instrinsics);
   let mut structs = HashMap::new();
-  let mut env = Environment::new(&mut vs, &mut fs, &mut structs);
+  let mut env = Environment::new(sc, &mut vs, &mut fs, &mut structs);
   interpret_with_env(ast, &mut env)
+}
+
+pub fn interpret(ast : &Expr) -> Result<Value, Error> {
+  let mut sc = SymbolCache::new();
+  interpret_with_cache(ast, &mut sc)
 }
 
 #[test]
 fn test_interpret() {
   let code = "(3 + 4) * 10";
-  let tokens = lexer::lex(code).unwrap();
-  let ast = parser::parse(tokens).unwrap();
-  let result = interpret(&ast);
+  let mut sc = SymbolCache::new();
+  let tokens = lexer::lex_with_cache(code, &mut sc).unwrap();
+  let ast = parser::parse_with_cache(tokens, &mut sc).unwrap();
+  let result = interpret_with_cache(&ast, &mut sc);
   println!("{:?}", result);
 }
 
