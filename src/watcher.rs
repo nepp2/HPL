@@ -13,6 +13,7 @@ use bytecode_compile;
 use bytecode_vm;
 use typecheck;
 use intrinsics;
+use interpreter_old;
 
 fn print(r : Result<Value, Error>){
   match r {
@@ -29,6 +30,8 @@ fn interpret(code: &str) -> Result<Value, Error> {
   let mut sc = SymbolCache::new();
   let tokens = lexer::lex_with_cache(&code, &mut sc).map_err(|mut es| es.remove(0))?;
   let mut expr = parser::parse_with_cache(tokens, &mut sc)?;
+  interpreter_old::interpret(&expr)
+  /*
   let intrinsics = intrinsics::get_intrinsics(&mut sc);
   typecheck::typecheck(&mut expr, &intrinsics)?;
   println!("Type: {:?}", expr.type_info);
@@ -36,6 +39,7 @@ fn interpret(code: &str) -> Result<Value, Error> {
   let program = bytecode_compile::compile_to_bytecode(&expr, entry_function, &mut sc, &intrinsics)?;
   let value = bytecode_vm::interpret_bytecode(&program, entry_function);
   value
+  */
 }
 
 fn load_and_run(path : &PathBuf){

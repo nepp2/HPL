@@ -20,6 +20,6 @@ default-features = false
 features = ["gpu_cache"]
 
 [dependencies.sdl2]
-version = "0.32"
+version = "0.31"
 default-features = false
 features = ["bundled"]
