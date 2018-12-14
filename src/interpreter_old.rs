@@ -91,6 +91,8 @@ fn intrinsic_functions<'l>(sc : &mut SymbolCache) -> HashMap<RefStr, FunctionDef
     }
   }
 
+  // TODO: awful bug - Can't have multiple operators with the same name
+
   let instrinsics = vec![
     intrinsic!("+", f32, f32, f32, |a, b| a + b),
     intrinsic!("-", f32, f32, f32, |a, b| a - b),
@@ -223,23 +225,6 @@ fn interpret_tree<'l, 'e>(expr : &'e Expr, env : &mut Environment<'l, 'e>) -> Re
       let function_name_expr = &exprs[0];
       let params = &exprs[1..];
       interpret_function_call(expr, function_name_expr, params, env)
-      /*
-      match (symbol.as_ref(), params) {
-        ("+", [a, b]) => f_to_val(to_f(a, env)? + to_f(b, env)?),
-        ("-", [a, b]) => f_to_val(to_f(a, env)? - to_f(b, env)?),
-        ("*", [a, b]) => f_to_val(to_f(a, env)? * to_f(b, env)?),
-        ("/", [a, b]) => f_to_val(to_f(a, env)? / to_f(b, env)?),
-        (">", [a, b]) => b_to_val(to_f(a, env)? > to_f(b, env)?),
-        ("<", [a, b]) => b_to_val(to_f(a, env)? < to_f(b, env)?),
-        ("<=", [a, b]) => b_to_val(to_f(a, env)? <= to_f(b, env)?),
-        (">=", [a, b]) => b_to_val(to_f(a, env)? >= to_f(b, env)?),
-        ("==", [a, b]) => b_to_val(interpret_with_env(a, env)? == interpret_with_env(b, env)?),
-        ("&&", [a, b]) => b_to_val(to_b(a, env)? && to_b(b, env)?),
-        ("||", [a, b]) => b_to_val(to_b(a, env)? || to_b(b, env)?),
-        ("-", [v]) => f_to_val(-to_f(v, env)?),
-        _ => interpret_function_call(symbol, params, env),
-      }
-      */
     }
     ("block", exprs) => {
       env.values.push(HashMap::new());
@@ -462,6 +447,13 @@ pub fn interpret_with_cache(ast : &Expr, sc : &mut SymbolCache) -> Result<Value,
 pub fn interpret(ast : &Expr) -> Result<Value, Error> {
   let mut sc = SymbolCache::new();
   interpret_with_cache(ast, &mut sc)
+}
+
+pub fn interpret_string(code : &str) -> Result<Value, Error> {
+  let mut sc = SymbolCache::new();
+  let tokens = lexer::lex_with_cache(code, &mut sc).unwrap();
+  let ast = parser::parse_with_cache(tokens, &mut sc).unwrap();
+  interpret_with_cache(&ast, &mut sc)
 }
 
 #[test]

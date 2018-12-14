@@ -24,6 +24,7 @@ mod bytecode_compile;
 mod bytecode_vm;
 mod sdl_live;
 mod watcher;
+mod tests;
 
 fn main(){
   //watcher::watch("bytecode_test.txt");

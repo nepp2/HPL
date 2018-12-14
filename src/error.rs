@@ -13,7 +13,7 @@ pub fn error_no_loc<S : Into<String>>(message : S) -> Error {
   Error { message: message.into(), location: TextLocation::new((0,0), (0,0)) }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TextMarker {
   pub line : usize,
   pub col : usize,
@@ -31,7 +31,7 @@ impl <'l> Into<TextLocation> for &'l TextLocation {
   }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TextLocation {
   pub start : TextMarker,
   pub end : TextMarker,
@@ -46,7 +46,7 @@ impl TextLocation {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Error {
   pub message : String,
   pub location : TextLocation,
