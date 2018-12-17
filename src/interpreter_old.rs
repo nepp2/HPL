@@ -89,19 +89,25 @@ fn intrinsic_functions<'e>(sc : &mut SymbolCache) -> HashMap<RefStr, MultiMethod
       (0..arg_tags.len()).map(|i| ((('a' as usize) + i) as u8 as char)
       .to_string()).map(|s| sc.symbol(s)).collect();
     let m = Method { arg_names, arg_tags, handle: FunctionHandle::Intrinsic(f) };
-    add_method(n, m, sc, &mut functions);
+    add_method(n, m, sc, &mut functions).unwrap();
   }
   functions
 }
 
-fn add_method<'e>(name : &str, method : Method<'e>, sc : &mut SymbolCache, functions : &mut HashMap<RefStr, MultiMethod<'e>>) {
+fn add_method<'e>(name : &str, method : Method<'e>, sc : &mut SymbolCache, functions : &mut HashMap<RefStr, MultiMethod<'e>>) -> Result<(), String> {
   if let Some(mm) = functions.get_mut(name) {
+    for m in mm.variants.iter() {
+      if m.arg_tags == method.arg_tags {
+        return Err(format!("function {} defined more than once with the same signature.", name))
+      }
+    }
     mm.variants.push(method);
-    return;
+    return Ok(());
   }  
   let name = sc.symbol(name);
   let m = MultiMethod { variants: vec![method] };
   functions.insert(name, m);
+  Ok(())
 }
 
 /*
@@ -157,7 +163,7 @@ impl <'l, 'e> Environment<'l, 'e> {
     }
   }
 
-  fn add_function(&mut self, name : &str, method : Method<'e>) {
+  fn add_function(&mut self, name : &str, method : Method<'e>) -> Result<(), String> {
     add_method(name, method, &mut self.symbol_cache, &mut self.functions)
   }
 
@@ -407,7 +413,7 @@ fn interpret_tree<'l, 'e>(expr : &'e Expr, env : &mut Environment<'l, 'e>) -> Re
         arg_tags: args_exprs.iter().map(|_| 0).collect(), // TODO: need to read the type signatures
         handle: FunctionHandle::Ast(function_body),
       };
-      env.add_function(name, method);
+      env.add_function(name, method).map_err(|s| error_raw(expr, s))?;
       Ok(Value::Unit)
     }
     ("literal_array", exprs) => {
