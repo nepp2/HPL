@@ -136,6 +136,20 @@ pub enum Value {
   Unit,
 }
 
+impl Value {
+  pub fn tag(&self) -> i32 {
+    use self::Value::*;
+    match self {
+      Float(_) => 1,
+      Array(_) => 2,
+      Bool(_) => 3,
+      String(_) => 4,
+      Function(_, _) => 5,
+      Struct(_) => 6,
+      Unit => 7,
+    }
+  }
+}
 
 impl fmt::Debug for Value {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

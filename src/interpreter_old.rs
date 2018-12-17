@@ -64,24 +64,6 @@ fn intrinsic_functions<'l>(sc : &mut SymbolCache) -> HashMap<RefStr, FunctionDef
       }
     }
   }
-/*
-  fn intrinsic<'l, A, B, C>(sc : &mut SymbolCache, name: &str, f: fn(A, B) -> C) -> FunctionDef<'l>
-    where Value: Into<Result<A, String>>, Value: Into<Result<B, String>>, Value: From<C>, A: 'static, B: 'static, C: 'static
-  {
-    let wrapped_f : Box<Fn(&[Value]) -> Result<Value, String>> =
-      Box::new(move |vals : &[Value]| {
-        let a : Result<A, String> = vals[0].clone().into();
-        let b : Result<B, String> = vals[1].clone().into();
-        let c : C = f(a?, b?);
-        let v : Value = Value::from(c);
-        Ok(v)
-      });
-    FunctionDef {
-      info: FunctionInfo { name: sc.symbol(name), arguments: ["a", "b"].iter().map(|s| sc.symbol(*s)).collect() },
-      handle: FunctionHandle::Intrinsic(wrapped_f),
-    }
-  }
-  */
 
   fn def<'l>(sc : &mut SymbolCache, name: &str, num_params : i32, f: fn(&[Value]) -> Result<Value, String>) -> FunctionDef<'l> {
     let arguments : Vec<RefStr> = (0..num_params).map(|i| ((('a' as i32) + i) as u8 as char).to_string()).map(|s| sc.symbol(s)).collect();
@@ -120,6 +102,26 @@ fn intrinsic_functions<'l>(sc : &mut SymbolCache) -> HashMap<RefStr, FunctionDef
     map.insert(d.info.name.clone(), d);
   }
   map
+}
+
+/*
+
+Multimethods
+- look up the name of the function
+- choose implementation that matches the arguments most closely
+
+Things I need:
+- every type needs a numerical tag
+- there needs to be a "more general" relationship between some (maybe)
+
+    can just have a single "any" tag
+- should add an unsafe union of the core types, I guess
+
+*/
+
+struct MultiMethod<'l> {
+  name : RefStr,
+  variants : Vec<(Vec<i32>, FunctionDef<'l>)>
 }
 
 struct Environment<'l, 'e : 'l> {
