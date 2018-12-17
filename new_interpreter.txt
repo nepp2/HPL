@@ -1,2 +1,10 @@
 
-5 - 4
+fun add(a : float, b : float) {
+  a + b
+}
+
+fun add(a : bool, b : bool) {
+  a == b
+}
+
+add(-3, 5)

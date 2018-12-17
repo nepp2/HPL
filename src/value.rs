@@ -28,6 +28,23 @@ pub enum Type {
   Unresolved
 }
 
+impl Type {
+  pub fn tag(&self) -> i32 {
+    use self::Type::*;
+    match self {
+      Unit => UNIT,
+      Float => FLOAT,
+      String => STRING,
+      Bool => BOOL,
+      Array => ARRAY,
+      Function(_) => FUNCTION,
+      Struct(_) => STRUCT,
+      Any => ANY,
+      Unresolved => panic!(),
+    }
+  }
+}
+
 #[derive(PartialEq, Debug, Clone)]
 pub enum ExprTag {
   Tree(RefStr),
@@ -146,17 +163,16 @@ pub const STRUCT: i32 = 6;
 pub const UNIT: i32 = 7;
 
 impl Value {
-
-  pub fn tag(&self) -> i32 {
+  pub fn to_type(&self) -> Type {
     use self::Value::*;
     match self {
-      Float(_) => FLOAT,
-      Array(_) => ARRAY,
-      Bool(_) => BOOL,
-      String(_) => STRING,
-      Function(_, _) => FUNCTION,
-      Struct(_) => STRUCT,
-      Unit => UNIT,
+      Float(_) => Type::Float,
+      Array(_) => Type::Array,
+      Bool(_) => Type::Bool,
+      String(_) => Type::String,
+      Function(_, _) => panic!(),
+      Struct(s) => Type::Struct(s.borrow().def.name.clone()),
+      Unit => Type::Unit,
     }
   }
 }

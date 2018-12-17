@@ -26,12 +26,8 @@ fn print(r : Result<Value, Error>){
   }
 }
 
+/*
 fn interpret(code: &str) -> Result<Value, Error> {
-  let mut sc = SymbolCache::new();
-  let tokens = lexer::lex_with_cache(&code, &mut sc).map_err(|mut es| es.remove(0))?;
-  let mut expr = parser::parse_with_cache(tokens, &mut sc)?;
-  interpreter_old::interpret(&expr)
-  /*
   let intrinsics = intrinsics::get_intrinsics(&mut sc);
   typecheck::typecheck(&mut expr, &intrinsics)?;
   println!("Type: {:?}", expr.type_info);
@@ -39,14 +35,14 @@ fn interpret(code: &str) -> Result<Value, Error> {
   let program = bytecode_compile::compile_to_bytecode(&expr, entry_function, &mut sc, &intrinsics)?;
   let value = bytecode_vm::interpret_bytecode(&program, entry_function);
   value
-  */
 }
+*/
 
 fn load_and_run(path : &PathBuf){
   let mut f = File::open(path).expect("file not found");
   let mut code = String::new();
   f.read_to_string(&mut code).unwrap();
-  let result = interpret(&code);
+  let result = interpreter_old::interpret(&code);
   print(result);
 }
 
