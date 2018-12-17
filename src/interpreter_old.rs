@@ -2,9 +2,8 @@
 use parser;
 use lexer;
 use value::*;
-use error::{Error, TextLocation, error, error_raw, error_no_loc};
+use error::{Error, error, error_raw, error_no_loc};
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::rc::Rc;
 use std::cell::RefCell;
 
@@ -31,23 +30,12 @@ enum BreakState {
   NotBreaking,
 }
 
-#[derive(Debug)]
-pub struct FunctionInfo {
-  pub name : RefStr,
-  pub arguments : Vec<RefStr>,
-}
-
-struct FunctionDef<'l> {
-  info : FunctionInfo,
-  handle : FunctionHandle<'l>,
-}
-
-enum FunctionHandle<'l> {
-  Ast(&'l Expr),
+enum FunctionHandle<'e> {
+  Ast(&'e Expr),
   Intrinsic(fn(&[Value]) -> Result<Value, String>),
 }
 
-fn intrinsic_functions<'l>(sc : &mut SymbolCache) -> HashMap<RefStr, FunctionDef<'l>> {
+fn intrinsic_functions<'e>(sc : &mut SymbolCache) -> HashMap<RefStr, MultiMethod<'e>> {
 
   macro_rules! intrinsic {
     ($n:expr, $a:ident, $b:ident, $c:ident, $f:expr) => {
@@ -60,17 +48,16 @@ fn intrinsic_functions<'l>(sc : &mut SymbolCache) -> HashMap<RefStr, FunctionDef
             let v : Value = Value::from(c);
             Ok(v)
           };
-        ($n, 2, f)
+        ($n, vec![type_tag!($a), type_tag!($b)], f)
       }
     }
   }
 
-  fn def<'l>(sc : &mut SymbolCache, name: &str, num_params : i32, f: fn(&[Value]) -> Result<Value, String>) -> FunctionDef<'l> {
-    let arguments : Vec<RefStr> = (0..num_params).map(|i| ((('a' as i32) + i) as u8 as char).to_string()).map(|s| sc.symbol(s)).collect();
-    FunctionDef {
-      info: FunctionInfo { name: sc.symbol(name), arguments },
-      handle: FunctionHandle::Intrinsic(f),
-    }
+  macro_rules! type_tag {
+    (f32) => { FLOAT };
+    (bool) => { BOOL };
+    (RefStr) => { STRING };
+    (()) => { UNIT };
   }
 
   // TODO: awful bug - Can't have multiple operators with the same name
@@ -84,24 +71,37 @@ fn intrinsic_functions<'l>(sc : &mut SymbolCache) -> HashMap<RefStr, FunctionDef
     intrinsic!("<", f32, f32, bool, |a, b| a < b),
     intrinsic!("<=", f32, f32, bool, |a, b| a <= b),
     intrinsic!(">=", f32, f32, bool, |a, b| a >= b),
-    ("==", 2, |vs| {
+    ("==", vec![ANY, ANY], |vs| {
       let b = vs[0] == vs[1];
       Ok(Value::from(b))
     }),
     intrinsic!("&&", bool, bool, bool, |a, b| a && b),
     intrinsic!("||", bool, bool, bool, |a, b| a || b),
-    ("-", 1, |vs| {
+    ("-", vec![FLOAT], |vs| {
       let f : Result<f32, String> = vs[0].clone().into();
       Ok(Value::from(-f?))
     }),
   ];
 
-  let mut map = HashMap::new();
-  for (n, params, f) in instrinsics {
-    let d = def(sc, n, params, f);
-    map.insert(d.info.name.clone(), d);
+  let mut functions = HashMap::new();
+  for (n, arg_tags, f) in instrinsics {
+    let arg_names : Vec<RefStr> =
+      (0..arg_tags.len()).map(|i| ((('a' as usize) + i) as u8 as char)
+      .to_string()).map(|s| sc.symbol(s)).collect();
+    let m = Method { arg_names, arg_tags, handle: FunctionHandle::Intrinsic(f) };
+    add_method(n, m, sc, &mut functions);
   }
-  map
+  functions
+}
+
+fn add_method<'e>(name : &str, method : Method<'e>, sc : &mut SymbolCache, functions : &mut HashMap<RefStr, MultiMethod<'e>>) {
+  if let Some(mm) = functions.get_mut(name) {
+    mm.variants.push(method);
+    return;
+  }  
+  let name = sc.symbol(name);
+  let m = MultiMethod { variants: vec![method] };
+  functions.insert(name, m);
 }
 
 /*
@@ -119,16 +119,21 @@ Things I need:
 
 */
 
-struct MultiMethod<'l> {
-  name : RefStr,
-  variants : Vec<(Vec<i32>, FunctionDef<'l>)>
+struct Method<'e> {
+  arg_tags : Vec<i32>,
+  arg_names : Vec<RefStr>,
+  handle : FunctionHandle<'e>,
+}
+
+struct MultiMethod<'e> {
+  variants : Vec<Method<'e>>,
 }
 
 struct Environment<'l, 'e : 'l> {
   symbol_cache : &'l mut SymbolCache,
 
   values : &'l mut Vec<HashMap<RefStr, Value>>,
-  functions : &'l mut Vec<HashMap<RefStr, FunctionDef<'e>>>,
+  functions : &'l mut HashMap<RefStr, MultiMethod<'e>>,
   structs : &'l mut HashMap<RefStr, Rc<StructDef>>,
 
   /// indicates how many nested loops we are inside in the currently-executing function
@@ -142,7 +147,7 @@ impl <'l, 'e> Environment<'l, 'e> {
   fn new(
     symbol_cache : &'l mut SymbolCache,
     values : &'l mut Vec<HashMap<RefStr, Value>>,
-    functions : &'l mut Vec<HashMap<RefStr, FunctionDef<'e>>>,
+    functions : &'l mut HashMap<RefStr, MultiMethod<'e>>,
     structs : &'l mut HashMap<RefStr, Rc<StructDef>>,
   ) -> Environment<'l, 'e> {
     Environment{
@@ -151,6 +156,28 @@ impl <'l, 'e> Environment<'l, 'e> {
       break_state: BreakState::NotBreaking
     }
   }
+
+  fn add_function(&mut self, name : &str, method : Method<'e>) {
+    add_method(name, method, &mut self.symbol_cache, &mut self.functions)
+  }
+
+  fn get_method(&self, name : &str, arg_tags : &[i32]) -> Option<&Method<'e>> {
+    self.functions.get(name).and_then(|mm| {
+      'outer: for m in mm.variants.iter() {
+        if m.arg_tags.len() != arg_tags.len(){
+          continue 'outer;
+        }
+        for (a, b) in m.arg_tags.iter().zip(arg_tags) {
+          let (a, b) = (*a, *b);
+          if a != b && a != 0 && b != 0 {
+            continue 'outer;
+          }
+        }
+        return Some(m)
+      }
+      None
+    })
+  }
 }
 
 fn interpret_function_call<'l, 'e>(expr : &'e Expr, function_name_expr: &'e Expr, args: &'e [Expr], env : &mut Environment<'l, 'e>)
@@ -158,19 +185,21 @@ fn interpret_function_call<'l, 'e>(expr : &'e Expr, function_name_expr: &'e Expr
 {
   let function_name = function_name_expr.symbol_unwrap()?;
   let mut arg_values = vec!();
+  let mut arg_tags = vec!();
   for i in 0..args.len() {
     let e = &args[i];
     let v = interpret_with_env(e, env)?;
+    arg_tags.push(v.tag());
     arg_values.push(v);
   }
   // TODO: this code is structured in a crazy way using direct returns because the borrow-checker is stupid
-  let (mut vs, expr) = {
-    match scoped_get(&mut env.functions, function_name) {
-      Some(fd) => 
-        match &fd.handle {
+  let (mut values, expr) = {
+    match env.get_method(function_name, arg_tags.as_slice()) {
+      Some(m) => 
+        match &m.handle {
           FunctionHandle::Ast(expr) => {
             let mut args = HashMap::new();
-            for (v, n) in arg_values.into_iter().zip(&fd.info.arguments) {
+            for (v, n) in arg_values.into_iter().zip(&m.arg_names) {
               args.insert(n.clone(), v);
             }
             (vec!(args), *expr)
@@ -182,7 +211,7 @@ fn interpret_function_call<'l, 'e>(expr : &'e Expr, function_name_expr: &'e Expr
       None => return error(expr, format!("Found no function called '{}'", function_name)),
     }
   };
-  let mut new_env = Environment::new(env.symbol_cache, &mut vs, env.functions, env.structs);
+  let mut new_env = Environment::new(env.symbol_cache, &mut values, env.functions, env.structs);
   interpret_with_env(&expr, &mut new_env)
 }
 
@@ -373,11 +402,12 @@ fn interpret_tree<'l, 'e>(expr : &'e Expr, env : &mut Environment<'l, 'e>) -> Re
       for e in args_exprs {
         args.push(e.symbol_to_refstr()?);
       }
-      let def = FunctionDef {
-        info: FunctionInfo { name: name.clone(), arguments: args },
+      let method = Method {
+        arg_names: args,
+        arg_tags: args_exprs.iter().map(|_| 0).collect(), // TODO: need to read the type signatures
         handle: FunctionHandle::Ast(function_body),
       };
-      scoped_insert(&mut env.functions, name.clone(), def);
+      env.add_function(name, method);
       Ok(Value::Unit)
     }
     ("literal_array", exprs) => {
@@ -438,11 +468,10 @@ fn interpret_with_env<'l, 'e>(expr : &'e Expr, env : &mut Environment<'l, 'e>) -
 }
 
 pub fn interpret_with_cache(ast : &Expr, sc : &mut SymbolCache) -> Result<Value, Error> {
-  let instrinsics = intrinsic_functions(sc);
+  let mut initial_functions = intrinsic_functions(sc);
   let mut vs = vec!(HashMap::new());
-  let mut fs = vec!(instrinsics);
   let mut structs = HashMap::new();
-  let mut env = Environment::new(sc, &mut vs, &mut fs, &mut structs);
+  let mut env = Environment::new(sc, &mut vs, &mut initial_functions, &mut structs);
   interpret_with_env(ast, &mut env)
 }
 
@@ -461,10 +490,7 @@ pub fn interpret_string(code : &str) -> Result<Value, Error> {
 #[test]
 fn test_interpret() {
   let code = "(3 + 4) * 10";
-  let mut sc = SymbolCache::new();
-  let tokens = lexer::lex_with_cache(code, &mut sc).unwrap();
-  let ast = parser::parse_with_cache(tokens, &mut sc).unwrap();
-  let result = interpret_with_cache(&ast, &mut sc);
+  let result = interpret_string(code);
   println!("{:?}", result);
 }
 

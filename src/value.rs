@@ -136,17 +136,27 @@ pub enum Value {
   Unit,
 }
 
+pub const ANY: i32 = 0;
+pub const FLOAT: i32 = 1;
+pub const ARRAY: i32 = 2;
+pub const BOOL: i32 = 3;
+pub const STRING: i32 = 4;
+pub const FUNCTION: i32 = 5;
+pub const STRUCT: i32 = 6;
+pub const UNIT: i32 = 7;
+
 impl Value {
+
   pub fn tag(&self) -> i32 {
     use self::Value::*;
     match self {
-      Float(_) => 1,
-      Array(_) => 2,
-      Bool(_) => 3,
-      String(_) => 4,
-      Function(_, _) => 5,
-      Struct(_) => 6,
-      Unit => 7,
+      Float(_) => FLOAT,
+      Array(_) => ARRAY,
+      Bool(_) => BOOL,
+      String(_) => STRING,
+      Function(_, _) => FUNCTION,
+      Struct(_) => STRUCT,
+      Unit => UNIT,
     }
   }
 }
