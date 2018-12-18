@@ -55,8 +55,6 @@ fn intrinsic_functions(sc : &mut SymbolCache) -> HashMap<RefStr, MultiMethod> {
     (()) => { Type::Unit };
   }
 
-  // TODO: awful bug - Can't have multiple operators with the same name
-
   let instrinsics = vec![
     intrinsic!("+", f32, f32, f32, |a, b| a + b),
     intrinsic!("-", f32, f32, f32, |a, b| a - b),
@@ -500,6 +498,7 @@ fn interpret_with_env(expr : &Expr, env : &mut Environment) -> Result<Value, Err
   }
 }
 
+// TODO: this should store the expression id counter for the parser. At the moment, ids will be reused!
 pub struct Interpreter {
   env : Environment
 }

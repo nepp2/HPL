@@ -6,21 +6,6 @@ use std::collections::HashSet;
 use std::f32;
 use std::str::FromStr;
 
-/*
-
-TODO: there should be a symbol table to get rid of all the string duplication.
-
-TODO: a lot of string copying happens in this file, which isn't great.
-I guess garbage collection is actually pretty good for strings. A lot of
-them could be static, but I'd have to fiddle the types a lot to do something
-about that. I could also consume the tokens way more efficiency, but I'd
-have to change a lot of code.
-
-TODO: Question. does creating a new string from a static string actually allocate?
-*/
-
-// TODO: this might be slow because lazy_static is threadsafe
-
 static CALL : &str = "call";
 static INDEX : &str = "index";
 static LITERAL_ARRAY : &str = "literal_array";
@@ -41,7 +26,7 @@ struct ParseState<'l> {
   tokens : Vec<Token>,
   pos : usize,
   symbol_cache : &'l mut SymbolCache,
-  expr_id_gen : ExprId,
+  expr_id_gen : ExprId, // TODO: this should be cached in the interpreter. At the moment, ids will be reused!
 }
 
 impl <'l> ParseState<'l> {
@@ -158,6 +143,7 @@ impl <'l> ParseState<'l> {
   }
 }
 
+// TODO: this might be slow because lazy_static is threadsafe
 lazy_static! {
   static ref TERMINATING_SYNTAX : HashSet<&'static str> =
     vec!["}", ")", "]", ";", ","].into_iter().collect();
