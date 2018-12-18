@@ -58,13 +58,31 @@ pub enum ExprTag {
 pub type ExprId = usize;
 
 /// Expression
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Expr {
   pub id : ExprId,
   pub tag : ExprTag,
   pub children : Vec<Expr>,
   pub loc : TextLocation,
   pub type_info : Type,
+}
+
+impl fmt::Display for Expr {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match &self.tag {
+      ExprTag::Tree(s) => {
+        write!(f, "({}", s)?;
+        for c in self.children.iter() {
+          write!(f, " {}", c)?;
+        }
+        write!(f, ")")
+      }
+      ExprTag::Symbol(x) => write!(f, "{}", x),
+      ExprTag::LiteralString(x) => write!(f, "{}", x),
+      ExprTag::LiteralFloat(x) => write!(f, "{}", x),
+      ExprTag::LiteralBool(x) => write!(f, "{}", x),
+    }
+  }
 }
 
 impl Expr {

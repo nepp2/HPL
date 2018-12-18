@@ -1,10 +1,10 @@
 
-use interpreter_old;
-use interpreter_old::Interpreter;
+use interpreter;
+use interpreter::Interpreter;
 use value::*;
 
 #[test]
-fn test_maths() {
+fn test_basics() {
   let cases = vec![
     ("4 + 5", Value::from(9.0)),
     ("4 - 5", Value::from(-1.0)),
@@ -17,17 +17,25 @@ fn test_maths() {
     ("true && false", Value::from(false)),
     ("true || false", Value::from(true)),
     ("-(4 - 5)", Value::from(1.0)),
+    ("if true { 3 } else { 4 }", Value::from(3.0)),
+    ("if false { 3 } else { 4 }", Value::from(4.0)),
+    ("let a = 5; a", Value::from(5.0)),
   ];
   for (code, expected_result) in cases {
-    let er = Ok(expected_result);
-    let result = interpreter_old::interpret(code);
-    assert!(
-      result == er,
-      "error in code '{}'. Expected result '{:?}'. Actual result was '{:?}'",
-      code, er, result);
+    assert_result(code, expected_result);
   }
 }
 
+fn assert_result(code : &str, expected_result : Value){
+  let expected = Ok(expected_result);
+  let result = interpreter::interpret(code);
+  assert!(
+    result == expected,
+    "error in code '{}'. Expected result '{:?}'. Actual result was '{:?}'",
+    code, expected, result);
+}
+
+#[test]
 fn test_dispatch(){
   let fundef_code = "
     fun add(a : float, b : float) {
@@ -45,12 +53,28 @@ fn test_dispatch(){
   ];
   for (code, expected_result) in cases {
     let mut i = Interpreter::new();
-    assert!(i.interpret(fundef_code).is_ok());
-    let er = Ok(expected_result);
+    let def_result = i.interpret(fundef_code);
+    assert!(def_result.is_ok(), "Error: {:?}", def_result);
+    let expected = Ok(expected_result);
     let result = i.interpret(code);
     assert!(
-      result == er,
+      result == expected,
       "error in code '{}'. Expected result '{:?}'. Actual result was '{:?}'",
-      code, er, result);
+      code, expected, result);
   }
+}
+
+#[test]
+fn test_scope(){
+  let code = "
+    let a = 4
+    let b = 0
+    if true {
+      let a = 5
+      b = b + a
+    }
+    b = b + a
+    b
+  ";
+  assert_result(code, Value::from(9.0));
 }

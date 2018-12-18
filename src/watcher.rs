@@ -6,14 +6,8 @@ use std::io::Read;
 use std::path::PathBuf;
 
 use error::Error;
-use parser;
-use lexer;
-use value::{Value, SymbolCache};
-use bytecode_compile;
-use bytecode_vm;
-use typecheck;
-use intrinsics;
-use interpreter_old;
+use value::Value;
+use interpreter;
 
 fn print(r : Result<Value, Error>){
   match r {
@@ -42,7 +36,7 @@ fn load_and_run(path : &PathBuf){
   let mut f = File::open(path).expect("file not found");
   let mut code = String::new();
   f.read_to_string(&mut code).unwrap();
-  let result = interpreter_old::interpret(&code);
+  let result = interpreter::interpret(&code);
   print(result);
 }
 
