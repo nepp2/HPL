@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashSet;
 
-use error::{Error, TextLocation, error};
+use crate::error::{Error, TextLocation, error};
 
 /// An immutable, reference counted string
 pub type RefStr = Rc<str>;

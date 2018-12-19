@@ -1,7 +1,7 @@
 
-use interpreter;
-use interpreter::Interpreter;
-use value::*;
+use crate::interpreter;
+use crate::interpreter::Interpreter;
+use crate::value::*;
 
 #[test]
 fn test_basics() {

@@ -5,9 +5,9 @@ use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
 
-use error::Error;
-use value::Value;
-use interpreter;
+use crate::error::Error;
+use crate::value::Value;
+use crate::interpreter;
 
 fn print(r : Result<Value, Error>){
   match r {

@@ -1,7 +1,7 @@
-use lexer;
-use lexer::{Token, TokenType};
-use value::{RefStr, SymbolCache, Expr, ExprTag, ExprId, Type};
-use error::{Error, TextLocation, TextMarker, error};
+use crate::lexer;
+use crate::lexer::{Token, TokenType};
+use crate::value::{RefStr, SymbolCache, Expr, ExprTag, ExprId, Type};
+use crate::error::{Error, TextLocation, TextMarker, error};
 use std::collections::HashSet;
 use std::f32;
 use std::str::FromStr;
@@ -185,50 +185,39 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
 
   /// This expression parser is vaguely based on some blogs about pratt parsing.
   fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
-    // TODO: this is currently implemented with an enum in a dumb way to handle limitation of Rust's
-    // lifetime inference. Once these limitations are fixed (non-lexical lifetimes) I can fix this.
-    enum Action { FunctionCall, IndexExpression, Infix(i32) }
     let mut expr = parse_prefix(ps)?;
     while ps.has_tokens() {
-      let action;
-      { // open scope to scope-limit lifetime of token
-        let t = ps.peek()?;
-        if t.token_type == TokenType::Syntax && TERMINATING_SYNTAX.contains(t.string.as_ref()) {
-          break;
-        }
-        else if t.token_type == TokenType::Syntax && (t.string.as_ref() == "(" || t.string.as_ref() == "[") {
-          let next_precedence = operator_precedence(t)?;
-          if next_precedence > precedence {
-            action = if t.string.as_ref() == "(" {
-              Action::FunctionCall
-            }
-            else {
-              Action::IndexExpression
-            };
+      let t = ps.peek()?;
+      if t.token_type == TokenType::Syntax && TERMINATING_SYNTAX.contains(t.string.as_ref()) {
+        break;
+      }
+      else if t.token_type == TokenType::Syntax && (t.string.as_ref() == "(" || t.string.as_ref() == "[") {
+        let next_precedence = operator_precedence(t)?;
+        if next_precedence > precedence {
+          if t.string.as_ref() == "(" {
+            expr = parse_function_call(ps, expr)?;
           }
           else {
-            break;
-          }
-        }
-        else if t.token_type == TokenType::Syntax && INFIX_OPERATORS.contains(t.string.as_ref()) {
-          let next_precedence = operator_precedence(t)?;
-          if next_precedence > precedence {
-            action = Action::Infix(next_precedence);
-          }
-          else {
-            break;
-          }
+            expr = parse_index_expression(ps, expr)?;
+          };
         }
         else {
-          // TODO: this seems crazy
-          //return Err(format!("Unexpected token '{}' of type '{:?}' (PRATT)", t.string, t.token_type));
           break;
         }
-      };
-      match action {
-        Action::FunctionCall => expr = parse_function_call(ps, expr)?,
-        Action::IndexExpression => expr = parse_index_expression(ps, expr)?,
-        Action::Infix(next_precedence) => expr = parse_infix(ps, expr, next_precedence)?,
+      }
+      else if t.token_type == TokenType::Syntax && INFIX_OPERATORS.contains(t.string.as_ref()) {
+        let next_precedence = operator_precedence(t)?;
+        if next_precedence > precedence {
+          expr = parse_infix(ps, expr, next_precedence)?;
+        }
+        else {
+          break;
+        }
+      }
+      else {
+        // Just break, with confidence that the expression is complete. This is a bit crazy, because
+        // it would allow a sequence of statements to be placed on the same line without separators.
+        break; // TODO: Consider making this throw errors instead
       }
     }
     Ok(expr)
@@ -261,20 +250,13 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
 
   fn parse_prefix(ps : &mut ParseState) -> Result<Expr, Error> {
     let start = ps.peek_marker();
+    let t = ps.peek()?;
     // if the next token is a prefix operator
-    let prefix_operator = {
-      // TODO: fix this with non-lexical lifetimes at some point
-      let t = ps.peek()?;
-      if t.token_type == TokenType::Syntax && PREFIX_OPERATORS.contains(t.string.as_ref()) {
-        Some(t.string.clone())
-      }
-      else { None }
-    };
-    // then parse a prefix pattern
-    if let Some(operator) = prefix_operator {
+    if t.token_type == TokenType::Syntax && PREFIX_OPERATORS.contains(t.string.as_ref()) {
+      let operator = ps.add_symbol(t.string.clone(), start);
       ps.expect_type(TokenType::Syntax)?;
       let expr = parse_expression_term(ps)?;
-      let args = vec![ps.add_symbol(operator, start), expr];
+      let args = vec![operator, expr];
       Ok(ps.add_tree(CALL, args, start))
     }
     // else assume it's an expression term

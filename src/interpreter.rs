@@ -1,9 +1,9 @@
 
-use parser;
-use parser::NO_TYPE;
-use lexer;
-use value::*;
-use error::{Error, error, error_raw, error_no_loc};
+use crate::parser;
+use crate::parser::NO_TYPE;
+use crate::lexer;
+use crate::value::*;
+use crate::error::{Error, error, error_raw, error_no_loc};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -232,28 +232,26 @@ fn interpret_function_call(expr : &Expr, function_name_expr: &Expr, args: &[Expr
     arg_types.push(v.to_type());
     arg_values.push(v);
   }
-  // TODO: this code is structured in a crazy way using direct returns because the borrow-checker is stupid
-  let (function_scope, expr) = {
-    let m =
-      env.get_method(function_name, arg_types.as_slice())
-      .map_err(|s| error_raw(expr, s))?;
-    match &m.handle {
-      FunctionHandle::Ast(expr) => {
-        let mut args = HashMap::new();
-        for (v, n) in arg_values.into_iter().zip(&m.arg_names) {
-          args.insert(n.clone(), v);
-        }
-        (vec!(args), expr.clone())
+  let m =
+    env.get_method(function_name, arg_types.as_slice())
+    .map_err(|s| error_raw(expr, s))?;
+  match &m.handle {
+    FunctionHandle::Ast(expr) => {
+      let mut args = HashMap::new();
+      for (v, n) in arg_values.into_iter().zip(&m.arg_names) {
+        args.insert(n.clone(), v);
       }
-      FunctionHandle::Intrinsic(f) => {
-        return f(arg_values.as_slice()).map_err(|s| error_raw(function_name_expr, s))
-      }
+      let function_scope = vec!(args);
+      let expr = expr.clone();
+      env.call_stack.push(function_scope);
+      let r = interpret_with_env(&expr, env)?;
+      env.call_stack.pop();
+      Ok(r)
     }
-  };
-  env.call_stack.push(function_scope);
-  let r = interpret_with_env(&expr, env)?;
-  env.call_stack.pop();
-  Ok(r)
+    FunctionHandle::Intrinsic(f) => {
+      f(arg_values.as_slice()).map_err(|s| error_raw(function_name_expr, s))
+    }
+  }
 }
 
 fn to_value<V>(e : &Expr, env : &mut Environment) -> Result<V, Error>

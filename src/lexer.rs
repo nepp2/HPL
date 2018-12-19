@@ -1,7 +1,7 @@
 
 use std::collections::HashSet;
-use value::{RefStr, SymbolCache};
-use error::{Error, TextLocation, TextMarker};
+use crate::value::{RefStr, SymbolCache};
+use crate::error::{Error, TextLocation, TextMarker};
 
 lazy_static! {
   static ref KEYWORDS : HashSet<&'static str> =
