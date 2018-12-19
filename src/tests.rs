@@ -187,7 +187,7 @@ fn test_for_loop() {
 
 Features to add:
 
-  * for loops
+  * non-native types (can fold strings and arrays into this?)
   * explicit returns
 
 */
