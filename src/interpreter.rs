@@ -493,11 +493,14 @@ fn interpret_with_env(expr : &Expr, env : &mut Environment) -> Result<Value, Err
           error(expr, format!("can't break outside a loop"))
         }
       }
+      else if let Some(v) = env.dereference_variable(&s) {
+        Ok(v.clone())
+      }
+      else if env.functions.contains_key(s.as_ref()) {
+        Ok(Value::Function(FunctionRef{ name: s.clone() }))
+      }
       else {
-        match env.dereference_variable(&s) {
-          Some(v) => Ok(v.clone()),
-          None => error(expr, format!("symbol '{}' was not defined", s)),
-        }
+        return error(expr, format!("no variable or function in scope called '{}'", s));
       }
     }
     ExprTag::LiteralString(s) => Ok(Value::String(s.clone())),

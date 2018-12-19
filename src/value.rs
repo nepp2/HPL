@@ -22,27 +22,10 @@ pub enum Type {
   String,
   Bool,
   Array,
-  Function(Rc<FunctionSignature>),
+  Function,
   Struct(RefStr),
   Any,
   Unresolved
-}
-
-impl Type {
-  pub fn tag(&self) -> i32 {
-    use self::Type::*;
-    match self {
-      Unit => UNIT,
-      Float => FLOAT,
-      String => STRING,
-      Bool => BOOL,
-      Array => ARRAY,
-      Function(_) => FUNCTION,
-      Struct(_) => STRUCT,
-      Any => ANY,
-      Unresolved => panic!(),
-    }
-  }
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -163,12 +146,14 @@ pub struct Struct {
   pub fields : Vec<Value>,
 }
 
+#[derive(Clone, PartialEq)]
+pub struct FunctionRef {
+  pub name : RefStr
+}
+
 pub type StructVal = Rc<RefCell<Struct>>;
 
 pub type Array = Rc<RefCell<Vec<Value>>>;
-
-#[derive(Clone, PartialEq, Debug)]
-pub enum FunctionType { Function, Intrinsic }
 
 /// Represents a value in the interpreted language.
 /// Currently uses 16 bytes. I think this is because there are 8 byte
@@ -181,19 +166,10 @@ pub enum Value {
   Array(Array),
   Bool(bool),
   String(RefStr),
-  Function(FunctionType, usize),
+  Function(FunctionRef),
   Struct(StructVal),
   Unit,
 }
-
-pub const ANY: i32 = 0;
-pub const FLOAT: i32 = 1;
-pub const ARRAY: i32 = 2;
-pub const BOOL: i32 = 3;
-pub const STRING: i32 = 4;
-pub const FUNCTION: i32 = 5;
-pub const STRUCT: i32 = 6;
-pub const UNIT: i32 = 7;
 
 impl Value {
   pub fn to_type(&self) -> Type {
@@ -203,7 +179,7 @@ impl Value {
       Array(_) => Type::Array,
       Bool(_) => Type::Bool,
       String(_) => Type::String,
-      Function(_, _) => panic!(),
+      Function(_) => Type::Function,
       Struct(s) => Type::Struct(s.borrow().def.name.clone()),
       Unit => Type::Unit,
     }
@@ -217,7 +193,7 @@ impl fmt::Debug for Value {
       Value::Array(a) => write!(f, "{:?}", &*a.borrow()),
       Value::Bool(b) => write!(f, "{}", b),
       Value::String(s) => write!(f, "{}", s),
-      Value::Function(t, id) => write!(f, "{:?}[{}]", t, id),
+      Value::Function(fr) => write!(f, "{}[..]", fr.name),
       Value::Struct(s) => {
         let Struct { def, fields } = &*s.borrow();
         let name = &def.name;
@@ -266,10 +242,10 @@ impl Into<Result<bool, String>> for Value {
     }
   }
 }
-impl Into<Result<(FunctionType, usize), String>> for Value {
-  fn into(self) -> Result<(FunctionType, usize), String> {
+impl Into<Result<FunctionRef, String>> for Value {
+  fn into(self) -> Result<FunctionRef, String> {
     match self {
-      Value::Function(ft, args) => Ok((ft, args)),
+      Value::Function(f) => Ok(f),
       x => Err(format!("Expected function, found {:?}.", x))
     }
   }
