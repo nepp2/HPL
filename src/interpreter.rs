@@ -220,37 +220,60 @@ impl Environment {
   }
 }
 
-fn interpret_function_call(expr : &Expr, function_name_expr: &Expr, args: &[Expr], env : &mut Environment)
+fn interpret_function_call(expr : &Expr, function_expr: &Expr, args: &[Expr], env : &mut Environment)
   -> Result<Value, Error>
 {
-  let function_name = function_name_expr.symbol_unwrap()?;
-  let mut arg_values = vec!();
-  let mut arg_types = vec!();
-  for i in 0..args.len() {
-    let e = &args[i];
-    let v = interpret_with_env(e, env)?;
-    arg_types.push(v.to_type());
-    arg_values.push(v);
-  }
-  let m =
-    env.get_method(function_name, arg_types.as_slice())
-    .map_err(|s| error_raw(expr, s))?;
-  match &m.handle {
-    FunctionHandle::Ast(expr) => {
-      let mut args = HashMap::new();
-      for (v, n) in arg_values.into_iter().zip(&m.arg_names) {
-        args.insert(n.clone(), v);
+  fn call_function(expr : &Expr, function_name: &str, args: &[Expr], env : &mut Environment)
+    -> Result<Value, Error>
+  {
+    let mut arg_values = vec!();
+    let mut arg_types = vec!();
+    for i in 0..args.len() {
+      let e = &args[i];
+      let v = interpret_with_env(e, env)?;
+      arg_types.push(v.to_type());
+      arg_values.push(v);
+    }
+    let m =
+      env.get_method(function_name, arg_types.as_slice())
+      .map_err(|s| error_raw(expr, s))?;
+    match &m.handle {
+      FunctionHandle::Ast(expr) => {
+        let mut args = HashMap::new();
+        for (v, n) in arg_values.into_iter().zip(&m.arg_names) {
+          args.insert(n.clone(), v);
+        }
+        let function_scope = vec!(args);
+        let expr = expr.clone();
+        env.call_stack.push(function_scope);
+        let r = interpret_with_env(&expr, env)?;
+        env.call_stack.pop();
+        Ok(r)
       }
-      let function_scope = vec!(args);
-      let expr = expr.clone();
-      env.call_stack.push(function_scope);
-      let r = interpret_with_env(&expr, env)?;
-      env.call_stack.pop();
-      Ok(r)
+      FunctionHandle::Intrinsic(f) => {
+        f(arg_values.as_slice()).map_err(|s| error_raw(expr, s))
+      }
     }
-    FunctionHandle::Intrinsic(f) => {
-      f(arg_values.as_slice()).map_err(|s| error_raw(function_name_expr, s))
-    }
+  }
+  
+  // Decide whether this is a first class function or a static function reference
+
+  let symbol = function_expr.symbol_unwrap().ok();
+  let var = symbol.and_then(|s| env.dereference_variable(s));
+  if let Some(v) = var {
+    // Symbol refers to a local variable (containing function reference)
+    let f : Result<FunctionRef, String> = v.clone().into();
+    let name = f.map_err(|s| error_raw(function_expr, s))?.name;
+    call_function(expr, &name, args, env)
+  }
+  else if let Some(name) = symbol {
+    // Assume it's a symbol referring to a function
+    call_function(expr, name, args, env)
+  }
+  else {
+    // More complex expression, which must be evaluated to a function reference
+    let name = to_value::<FunctionRef>(function_expr, env)?.name;
+    call_function(expr, &name, args, env)
   }
 }
 
