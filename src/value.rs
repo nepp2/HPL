@@ -67,21 +67,36 @@ pub struct Expr {
   pub type_info : Type,
 }
 
+fn pretty_print(e: &Expr, f: &mut fmt::Formatter, indent : usize) -> fmt::Result {
+  match &e.tag {
+    ExprTag::Tree(s) => {
+      write!(f, "({}", s)?;
+      if s.as_ref() == "block" {
+        let indent = indent + 2;
+        for c in e.children.iter() {
+          writeln!(f)?;
+          write!(f, "{:indent$}", "", indent=indent)?;
+          pretty_print(c, f, indent)?
+        }
+      }
+      else {
+        for c in e.children.iter() {
+          write!(f, " ")?;
+          pretty_print(c, f, indent)?
+        }
+      }
+      write!(f, ")")
+    }
+    ExprTag::Symbol(x) => write!(f, "{}", x),
+    ExprTag::LiteralString(x) => write!(f, "{}", x),
+    ExprTag::LiteralFloat(x) => write!(f, "{}", x),
+    ExprTag::LiteralBool(x) => write!(f, "{}", x),
+  }
+}
+
 impl fmt::Display for Expr {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    match &self.tag {
-      ExprTag::Tree(s) => {
-        write!(f, "({}", s)?;
-        for c in self.children.iter() {
-          write!(f, " {}", c)?;
-        }
-        write!(f, ")")
-      }
-      ExprTag::Symbol(x) => write!(f, "{}", x),
-      ExprTag::LiteralString(x) => write!(f, "{}", x),
-      ExprTag::LiteralFloat(x) => write!(f, "{}", x),
-      ExprTag::LiteralBool(x) => write!(f, "{}", x),
-    }
+    pretty_print(self, f, 0)
   }
 }
 

@@ -78,3 +78,21 @@ fn test_scope(){
   ";
   assert_result(code, Value::from(9.0));
 }
+
+#[test]
+fn test_struct() {
+  let code = "
+    struct vec2 {
+      x : float
+      y : float
+    }
+    fun add(a : vec2, b : vec2) {
+      vec2(x: a.x + b.x, y: a.y + b.y)
+    }
+    let a = vec2(x: 10, y: 1)
+    let b = vec2(x: 20, y: 2)
+    let c = add(a, b)
+    c.y
+  ";
+  assert_result(code, Value::from(3.0));
+}

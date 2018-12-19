@@ -359,7 +359,7 @@ fn interpret_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> 
     }
     ("struct_define", exprs) => {
       if exprs.len() < 1 {
-        return error(expr, format!("malformed struct definition"));
+        return error(expr, "malformed struct definition");
       }
       let name_expr = &exprs[0];
       let name = name_expr.symbol_to_refstr()?;
@@ -367,11 +367,14 @@ fn interpret_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> 
         return error(name_expr, format!("A struct called {} has already been defined.", name));
       }
       // TODO: check for duplicates?
-      let struct_def =
-        exprs[1..].iter().map(|e| e.symbol_to_refstr())
-        .collect::<Result<Vec<RefStr>, Error>>()
-        .map(|fields| Rc::new(StructDef { name: name.clone(), fields}))?;
-      env.structs.insert(name, struct_def);
+      let field_exprs = &exprs[1..];
+      let mut fields = vec![];
+      // TODO: record the field types, and check them!
+      for (e, _) in field_exprs.iter().tuples() {
+        fields.push(e.symbol_to_refstr()?);
+      }
+      let def = Rc::new(StructDef { name: name.clone(), fields });
+      env.structs.insert(name, def);
       Ok(Value::Unit)
     }
     ("struct_instantiate", exprs) => {
@@ -379,31 +382,31 @@ fn interpret_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> 
         return error(expr, format!("malformed struct instantiation {:?}", expr));
       }
       let name_expr = &exprs[0];
+      let field_exprs = &exprs[1..];
       let name = name_expr.symbol_to_refstr()?;
       let def =
         env.structs.get(name.as_ref())
         .ok_or_else(|| error_raw(name_expr, format!("struct {} does not exist", name)))?.clone();
-      let mut fields = vec![Value::Unit ; def.fields.len()];
-      {
-        let mut field_index_map =
-          def.fields.iter().enumerate()
-          .map(|(i, s)| (s.as_ref(), i)).collect::<HashMap<&str, usize>>();
-        for i in (1..exprs.len()).step_by(2) {
-          let field_name_expr = &exprs[i];
-          let field_name = field_name_expr.symbol_to_refstr()?;
-          let field_value = interpret_with_env(&exprs[i+1], env)?;
-          let index = field_index_map.remove(field_name.as_ref())
-            .ok_or_else(|| error_raw(field_name_expr, format!("field {} does not exist", field_name)))?;
-          fields[index] = field_value;
-        }
-        if field_index_map.len() > 0 {
-          return error(expr, format!("Some fields not initialised"));
-        }
+      let mut value_map =
+        field_exprs.iter().tuples().map(|(field, value)| {
+          let field_name = field.symbol_to_refstr()?;
+          let field_value = interpret_with_env(value, env)?;
+          Ok((field_name, field_value))
+        })
+        .collect::<Result<HashMap<RefStr, Value>, Error>>()?;
+      let fields =
+        def.fields.iter().map(|s| {
+          value_map.remove(s.as_ref())
+            .ok_or_else(|| error_raw(expr, format!("expected field '{}', but it was not defined", s)))
+        })
+        .collect::<Result<Vec<Value>, Error>>()?;
+      if value_map.len() > 0 {
+        return error(expr, format!("unexpected field(s) defined: '{:?}'", value_map.keys()));
       }
       let s = Rc::new(RefCell::new(Struct { def, fields }));
       Ok(Value::Struct(s))
     }
-    (".", [expr, name_expr]) => {
+    (".", [_, expr, name_expr]) => {
       let s : StructVal = to_value(expr, env)?;
       let index = struct_field_index(&s.borrow().def, name_expr)?;
       let v = s.borrow().fields[index].clone();
@@ -516,6 +519,7 @@ impl  Interpreter {
   }
 
   pub fn interpret_ast(&mut self, ast : &Expr) -> Result<Value, Error> {
+    println!("{}", ast);
     interpret_with_env(ast, &mut self.env)
   }
 
