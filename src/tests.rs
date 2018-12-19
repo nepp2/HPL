@@ -90,9 +90,42 @@ fn test_struct() {
       vec2(x: a.x + b.x, y: a.y + b.y)
     }
     let a = vec2(x: 10, y: 1)
-    let b = vec2(x: 20, y: 2)
+    let b = vec2(y: 20, x: 2)
     let c = add(a, b)
     c.y
   ";
-  assert_result(code, Value::from(3.0));
+  assert_result(code, Value::from(21.0));
+}
+
+#[test]
+fn test_arrays() {
+  let code = "
+    let a = [0, [1, 2, 3], 6]
+    a[1][1] = 50
+    a[1][1] + a[2]
+  ";
+  assert_result(code, Value::from(56.0));
+}
+
+#[test]
+fn test_while() {
+  let a = "
+    let x = 10
+    while true {
+      x = x - 1;
+      if x <= 5 {
+        break;
+      }
+    }
+    x
+  ";
+  assert_result(a, Value::from(5.0));
+  let b = "
+    let x = 1
+    while x < 10 {
+      x = x + 6;
+    }
+    x
+  ";
+  assert_result(b, Value::from(13.0));
 }
