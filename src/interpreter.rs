@@ -74,6 +74,11 @@ fn intrinsic_functions(sc : &mut SymbolCache) -> HashMap<RefStr, MultiMethod> {
       let f : Result<f32, String> = vs[0].clone().into();
       Ok(Value::from(-f?))
     }),
+    ("len", vec![Type::Array], |vs| {
+      let a = Into::<Result<Array, String>>::into(vs[0].clone())?;
+      let len = a.borrow().len() as f32;
+      Ok(Value::from(len))
+    }),
   ];
 
   let mut functions = HashMap::new();

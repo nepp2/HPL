@@ -244,6 +244,11 @@ impl From<f32> for Value {
     Value::Float(v)
   }
 }
+impl From<Array> for Value {
+  fn from(v : Array) -> Value {
+    Value::Array(v)
+  }
+}
 
 impl Into<Result<f32, String>> for Value {
   fn into(self) -> Result<f32, String> {

@@ -129,3 +129,23 @@ fn test_while() {
   ";
   assert_result(b, Value::from(13.0));
 }
+
+#[test]
+fn test_first_class_function() {
+  let code = "
+    let a = [1, 2, 3, 4]
+    fun add(a, b) {
+      a + b
+    }
+    fun fold(a, v, f) {
+      let i = 0
+      while i < len(a) {
+        v = f(v, a[i])
+        i = i + 1
+      }
+      v
+    }
+    fold(a, 0, add)
+  ";
+  assert_result(code, Value::from(10.0));
+}
