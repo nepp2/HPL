@@ -220,10 +220,35 @@ impl Environment {
   }
 }
 
-fn interpret_function_call(expr : &Expr, function_expr: &Expr, args: &[Expr], env : &mut Environment)
+fn call_function(error_source : &Expr, function_name: &str, arg_values: Vec<Value>, arg_types: Vec<Type>, env : &mut Environment)
   -> Result<Value, Error>
 {
-  fn call_function(expr : &Expr, function_name: &str, args: &[Expr], env : &mut Environment)
+  let m =
+    env.get_method(function_name, arg_types.as_slice())
+    .map_err(|s| error_raw(error_source, s))?;
+  match &m.handle {
+    FunctionHandle::Ast(expr) => {
+      let mut args = HashMap::new();
+      for (v, n) in arg_values.into_iter().zip(&m.arg_names) {
+        args.insert(n.clone(), v);
+      }
+      let function_scope = vec!(args);
+      let expr = expr.clone();
+      env.call_stack.push(function_scope);
+      let r = interpret_with_env(&expr, env)?;
+      env.call_stack.pop();
+      Ok(r)
+    }
+    FunctionHandle::Intrinsic(f) => {
+      f(arg_values.as_slice()).map_err(|s| error_raw(error_source, s))
+    }
+  }
+}
+
+fn interpret_function_call(expr : &Expr, function_expr: &Expr, args: &[Expr], env : &mut Environment)
+  -> Result<Value, Error>
+{ 
+  fn interpret_named_function_call(expr : &Expr, function_name: &str, args: &[Expr], env : &mut Environment)
     -> Result<Value, Error>
   {
     let mut arg_values = vec!();
@@ -234,46 +259,25 @@ fn interpret_function_call(expr : &Expr, function_expr: &Expr, args: &[Expr], en
       arg_types.push(v.to_type());
       arg_values.push(v);
     }
-    let m =
-      env.get_method(function_name, arg_types.as_slice())
-      .map_err(|s| error_raw(expr, s))?;
-    match &m.handle {
-      FunctionHandle::Ast(expr) => {
-        let mut args = HashMap::new();
-        for (v, n) in arg_values.into_iter().zip(&m.arg_names) {
-          args.insert(n.clone(), v);
-        }
-        let function_scope = vec!(args);
-        let expr = expr.clone();
-        env.call_stack.push(function_scope);
-        let r = interpret_with_env(&expr, env)?;
-        env.call_stack.pop();
-        Ok(r)
-      }
-      FunctionHandle::Intrinsic(f) => {
-        f(arg_values.as_slice()).map_err(|s| error_raw(expr, s))
-      }
-    }
+    call_function(expr, function_name, arg_values, arg_types, env)
   }
-  
   // Decide whether this is a first class function or a static function reference
-
   let symbol = function_expr.symbol_unwrap().ok();
   let var = symbol.and_then(|s| env.dereference_variable(s));
   if let Some(v) = var {
     // Symbol refers to a local variable (containing function reference)
     let f : Result<FunctionRef, String> = v.clone().into();
     let name = f.map_err(|s| error_raw(function_expr, s))?.name;
-    call_function(expr, &name, args, env)
+    interpret_named_function_call(expr, &name, args, env)
   }
   else if let Some(name) = symbol {
     // Assume it's a symbol referring to a function
-    call_function(expr, name, args, env)
+    interpret_named_function_call(expr, name, args, env)
   }
   else {
     // More complex expression, which must be evaluated to a function reference
     let name = to_value::<FunctionRef>(function_expr, env)?.name;
-    call_function(expr, &name, args, env)
+    interpret_named_function_call(expr, &name, args, env)
   }
 }
 
@@ -330,17 +334,15 @@ fn interpret_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> 
       env.new_variable(name.clone(), v);
       Ok(Value::Unit)
     }
-    ("=", [_, assign_expr, value_expr]) => {
+    ("=", [assign_expr, value_expr]) => {
       match &assign_expr.tag {
         ExprTag::Symbol(var_symbol) => {
-          let v = interpret_with_env(&value_expr, env)?;
-          match env.dereference_variable(var_symbol) {
-            Some(variable) => {
-              *variable = v;
-              return Ok(Value::Unit)
-            }
-            None => return error(assign_expr, format!("symbol '{}' was not defined", var_symbol)),
-          }
+          let value = interpret_with_env(&value_expr, env)?;
+          let var =
+            env.dereference_variable(var_symbol)
+            .ok_or_else(|| error_raw(assign_expr, format!("symbol '{}' was not defined", var_symbol)))?;
+          *var = value;
+          return Ok(Value::Unit)
         }
         ExprTag::Tree(symbol) => {
           match (symbol.as_ref(), assign_expr.children.as_slice()) {
@@ -432,7 +434,7 @@ fn interpret_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> 
       let s = Rc::new(RefCell::new(Struct { def, fields }));
       Ok(Value::Struct(s))
     }
-    (".", [_, expr, name_expr]) => {
+    (".", [expr, name_expr]) => {
       let s : StructVal = to_value(expr, env)?;
       let index = struct_field_index(&s.borrow().def, name_expr)?;
       let v = s.borrow().fields[index].clone();
@@ -447,6 +449,36 @@ fn interpret_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> 
         interpret_with_env(&exprs[1], env)?;
       }
       env.loop_depth -= 1;
+      env.break_state = BreakState::NotBreaking;
+      Ok(Value::Unit)
+    }
+    ("for", exprs) => {
+      if exprs.len() != 3 {
+        return error(expr, format!("malformed for block"));
+      }
+      // TODO: this for loop implementation is wildly slow, for many different reasons.
+      let var = exprs[0].symbol_unwrap()?;
+      let iterable = {
+        let thing = interpret_with_env(&exprs[1], env)?;
+        let thing_type = thing.to_type();
+        call_function(&exprs[1], "iterator", vec![thing], vec![thing_type], env)?
+      };
+      let iterable_type = iterable.to_type();
+      let body = &exprs[2];
+      env.current_function_scope().push(HashMap::new());
+      env.new_variable(var.clone(), Value::Unit);
+      env.loop_depth += 1;
+      while env.break_state != BreakState::Breaking {
+        let item = call_function(&exprs[1], "next_item", vec![iterable.clone()], vec![iterable_type.clone()], env)?;
+        if item == Value::Unit {
+          break;
+        }
+        let var_ref = env.dereference_variable(var).unwrap();
+        *var_ref = item;
+        interpret_with_env(body, env)?;
+      }
+      env.loop_depth -= 1;
+      env.current_function_scope().pop();
       env.break_state = BreakState::NotBreaking;
       Ok(Value::Unit)
     }
@@ -471,7 +503,7 @@ fn interpret_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> 
       Ok(Value::Unit)
     }
     ("literal_array", exprs) => {
-      let mut array_contents = Rc::new(RefCell::new(vec!()));
+      let array_contents = Rc::new(RefCell::new(vec!()));
       for e in exprs {
         let v = interpret_with_env(e, env)?;
         array_contents.borrow_mut().push(v);
@@ -527,6 +559,7 @@ fn interpret_with_env(expr : &Expr, env : &mut Environment) -> Result<Value, Err
     ExprTag::LiteralString(s) => Ok(Value::String(s.clone())),
     ExprTag::LiteralFloat(f) => Ok(Value::Float(*f)),
     ExprTag::LiteralBool(b) => Ok(Value::Bool(*b)),
+    ExprTag::LiteralUnit => Ok(Value::Unit),
   }
 }
 

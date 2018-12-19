@@ -151,6 +151,38 @@ fn test_first_class_function() {
   assert_result(code, Value::from(10.0));
 }
 
+#[test]
+fn test_for_loop() {
+  let code = "
+    struct array_it {
+      a : array,
+      i : float,
+    }
+
+    fun iterator(a : array) {
+      array_it(a: a, i: 0)
+    }
+
+    fun next_item(it : array_it) {
+      if it.i < len(it.a) {
+        let i = it.a[it.i]
+        it.i = it.i + 1
+        i
+      }
+      else {
+        ()
+      }
+    }
+
+    let t = 0
+    for v in [1, 2, 3, 4] {
+      t = t + v
+    }
+    t
+  ";
+  assert_result(code, Value::from(10.0));
+}
+
 /*
 
 Features to add:

@@ -1,10 +1,27 @@
 
-fun add(a : float, b : float) {
-  a + b
+struct array_it {
+  a : array,
+  i : float,
 }
 
-fun add(a : bool, b : bool) {
-  a == b
+fun iterator(a : array) {
+  array_it(a: a, i: 0)
 }
 
-add(-3, 5)
+fun next_item(it : array_it) {
+  if it.i < len(it.a) {
+    let i = it.a[it.i]
+    it.i = it.i + 1
+    i
+  }
+  else {
+    ()
+  }
+}
+
+let a = [1, 2, 3, 4]
+let t = 0
+for v in a {
+  t = t + v
+}
+t

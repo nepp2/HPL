@@ -35,6 +35,7 @@ pub enum ExprTag {
   LiteralString(RefStr),
   LiteralFloat(f32),
   LiteralBool(bool),
+  LiteralUnit,
 }
 
 /// Used to look up expressions in the abstract syntax tree
@@ -74,6 +75,7 @@ fn pretty_print(e: &Expr, f: &mut fmt::Formatter, indent : usize) -> fmt::Result
     ExprTag::LiteralString(x) => write!(f, "{}", x),
     ExprTag::LiteralFloat(x) => write!(f, "{}", x),
     ExprTag::LiteralBool(x) => write!(f, "{}", x),
+    ExprTag::LiteralUnit => write!(f, "()"),
   }
 }
 

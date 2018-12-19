@@ -14,6 +14,7 @@ static FUN : &str = "fun";
 static LET : &str = "let";
 static IF : &str = "if";
 static WHILE : &str = "while";
+static FOR : &str = "for";
 static STRUCT_DEFINE : &str = "struct_define";
 static STRUCT_INSTANTIATE : &str = "struct_instantiate";
 static BREAK : &str = "break";
@@ -269,13 +270,15 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
     let infix_start = left_expr.loc.start;
     let operator_start = ps.peek_marker();
     let operator_str = ps.pop_type(TokenType::Syntax)?.string.clone();
-    let operator = ps.add_symbol(operator_str.clone(), operator_start);
-    let right_expr = pratt_parse(ps, precedence)?;
-    let args = vec!(operator, left_expr, right_expr);
     if SPECIAL_OPERATORS.contains(operator_str.as_ref()) {
+      let right_expr = pratt_parse(ps, precedence)?;
+      let args = vec!(left_expr, right_expr);
       Ok(ps.add_tree(operator_str, args, infix_start))
     }
     else {
+      let operator = ps.add_symbol(operator_str, operator_start);
+      let right_expr = pratt_parse(ps, precedence)?;
+      let args = vec!(operator, left_expr, right_expr);
       Ok(ps.add_tree(CALL, args, infix_start))
     }
   }
@@ -316,9 +319,16 @@ fn parse_syntax(ps : &mut ParseState) -> Result<Expr, Error> {
     }
     "(" => {
       ps.expect_string("(")?;
-      let a = parse_expression(ps)?;
-      ps.expect_string(")")?;
-      Ok(a)
+      if ps.accept_string(")") {
+        // "()" denotes the unit value
+        let u = ExprTag::LiteralUnit;
+        Ok(ps.add_leaf(u, start))
+      }
+      else {
+        let a = parse_expression(ps)?;
+        ps.expect_string(")")?;
+        Ok(a)
+      }
     }
     _ => error(ps.peek()?.loc, format!("Unexpected syntax '{}'", ps.peek()?.string)),
   }
@@ -398,13 +408,26 @@ fn parse_if(ps : &mut ParseState) -> Result<Expr, Error> {
 
 fn parse_while(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
-  ps.expect_string("while")?;
+  ps.expect_string(WHILE)?;
   let conditional = parse_expression(ps)?;
   ps.expect_string("{")?;
   let loop_block = parse_block(ps)?;
   ps.expect_string("}")?;
   let args = vec!(conditional, loop_block);
   Ok(ps.add_tree(WHILE, args, start))
+}
+
+fn parse_for(ps : &mut ParseState) -> Result<Expr, Error> {
+  let start = ps.peek_marker();
+  ps.expect_string(FOR)?;
+  let loop_var = parse_simple_symbol(ps)?;
+  ps.expect_string("in")?;
+  let iterator = parse_expression(ps)?;
+  ps.expect_string("{")?;
+  let loop_block = parse_block(ps)?;
+  ps.expect_string("}")?;
+  let args = vec!(loop_var, iterator, loop_block);
+  Ok(ps.add_tree(FOR, args, start))
 }
 
 fn parse_struct_definition(ps : &mut ParseState) -> Result<Expr, Error> {
@@ -478,6 +501,7 @@ fn parse_keyword_term(ps : &mut ParseState) -> Result<Expr, Error> {
     "let" => parse_let(ps),
     "fun" => parse_fun(ps),
     "if" => parse_if(ps),
+    "for" => parse_for(ps),
     "break" => {
       Ok(parse_simple_string(ps, TokenType::Keyword)?)
     }
