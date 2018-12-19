@@ -20,6 +20,7 @@ fn test_basics() {
     ("if true { 3 } else { 4 }", Value::from(3.0)),
     ("if false { 3 } else { 4 }", Value::from(4.0)),
     ("let a = 5; a", Value::from(5.0)),
+    (r#""Hello world""#, Value::from("Hello world")),
   ];
   for (code, expected_result) in cases {
     assert_result(code, expected_result);
@@ -149,3 +150,12 @@ fn test_first_class_function() {
   ";
   assert_result(code, Value::from(10.0));
 }
+
+/*
+
+Features to add:
+
+  * for loops
+  * explicit returns
+
+*/

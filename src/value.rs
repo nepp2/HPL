@@ -225,6 +225,11 @@ impl From<Array> for Value {
     Value::Array(v)
   }
 }
+impl From<&str> for Value {
+  fn from(v : &str) -> Value {
+    Value::String(v.into())
+  }
+}
 
 impl Into<Result<f32, String>> for Value {
   fn into(self) -> Result<f32, String> {
