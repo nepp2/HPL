@@ -3,6 +3,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::any::Any;
 
 use crate::error::{Error, TextLocation, error};
 
@@ -170,8 +171,11 @@ pub enum Value {
   String(RefStr),
   Function(FunctionRef),
   Struct(StructVal),
+  External(Box<External>),
   Unit,
 }
+
+pub trait External : Any + Clone {}
 
 impl Value {
   pub fn to_type(&self) -> Type {
