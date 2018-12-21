@@ -26,6 +26,7 @@ pub enum Type {
   Function,
   Struct(RefStr),
   Any,
+  External(RefStr),
   Unresolved
 }
 
@@ -171,11 +172,21 @@ pub enum Value {
   String(RefStr),
   Function(FunctionRef),
   Struct(StructVal),
-  External(Box<External>),
+  External(ExternalVal),
   Unit,
 }
 
-pub trait External : Any + Clone {}
+#[derive(Clone)]
+struct ExternalVal {
+  type_name : RefStr,
+  val : Rc<Any>,
+}
+
+impl PartialEq for ExternalVal {
+  fn eq(&self, rhs : &ExternalVal) -> bool {
+    Rc::ptr_eq(&self.val, &rhs.val)
+  }
+}
 
 impl Value {
   pub fn to_type(&self) -> Type {
@@ -187,6 +198,7 @@ impl Value {
       String(_) => Type::String,
       Function(_) => Type::Function,
       Struct(s) => Type::Struct(s.borrow().def.name.clone()),
+      External(e) => Type::External(e.type_name.clone()),
       Unit => Type::Unit,
     }
   }
@@ -199,7 +211,8 @@ impl fmt::Debug for Value {
       Value::Array(a) => write!(f, "{:?}", &*a.borrow()),
       Value::Bool(b) => write!(f, "{}", b),
       Value::String(s) => write!(f, "{}", s),
-      Value::Function(fr) => write!(f, "{}[..]", fr.name),
+      Value::Function(fr) => write!(f, "{}(..)", fr.name),
+      Value::External(e) => write!(f, "external({})", e.type_name),
       Value::Struct(s) => {
         let Struct { def, fields } = &*s.borrow();
         let name = &def.name;
