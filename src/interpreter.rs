@@ -9,6 +9,8 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::fmt;
 use itertools::Itertools;
+use std::fs::File;
+use std::io::Read;
 
 #[derive(PartialEq)]
 enum BreakState {
@@ -570,7 +572,13 @@ pub struct Interpreter {
 
 impl  Interpreter {
   pub fn new() -> Interpreter {
-    Interpreter { env: Environment::new() }
+    let mut i = Interpreter { env: Environment::new() };
+    // TODO: this is slow and dumb
+    let mut f = File::open("prelude.code").expect("file not found");
+    let mut code = String::new();
+    f.read_to_string(&mut code).unwrap();
+    i.interpret(&code).unwrap();
+    i
   }
 
   pub fn parse(&mut self, code : &str) -> Result<Expr, Error> {

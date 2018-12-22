@@ -154,26 +154,6 @@ fn test_first_class_function() {
 #[test]
 fn test_for_loop() {
   let code = "
-    struct array_it {
-      a : array,
-      i : float,
-    }
-
-    fun iterator(a : array) {
-      array_it(a: a, i: 0)
-    }
-
-    fun next_item(it : array_it) {
-      if it.i < len(it.a) {
-        let i = it.a[it.i]
-        it.i = it.i + 1
-        i
-      }
-      else {
-        ()
-      }
-    }
-
     let t = 0
     for v in [1, 2, 3, 4] {
       t = t + v
@@ -188,6 +168,7 @@ fn test_for_loop() {
 Features to add:
 
   * non-native types (can fold strings and arrays into this?)
-  * explicit returns
+  * explicit returns (not sure what to do about semi-colons)
+  * consider making new-lines significant in some cases (relating to semi-colons)
 
 */

@@ -1,0 +1,20 @@
+
+struct array_it {
+  a : array,
+  i : float,
+}
+
+fun iterator(a : array) {
+  array_it(a: a, i: 0)
+}
+
+fun next_item(it : array_it) {
+  if it.i < len(it.a) {
+    let i = it.a[it.i]
+    it.i = it.i + 1
+    i
+  }
+  else {
+    ()
+  }
+}
