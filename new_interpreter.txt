@@ -1,14 +1,18 @@
 
-struct array_it {
-  a : array,
-  i : float,
+struct range_it {
+  start : float,
+  end : float,
 }
 
-fun iterator(a : array) {
-  array_it(a: a, i: 0)
+fun range(start, end) {
+  range_it(start: start, end: end)
 }
 
-fun next_item(it : array_it) {
+fun iterator(r : Any) {
+  a
+}
+
+fun next_item(it : range_it) {
   if it.i < len(it.a) {
     let i = it.a[it.i]
     it.i = it.i + 1
@@ -19,7 +23,7 @@ fun next_item(it : array_it) {
   }
 }
 
-let a = [1, 2, 3, 4]
+let a = [1, 2, 3, 4, 5]
 let t = 0
 for v in a {
   t = t + v

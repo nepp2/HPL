@@ -4,6 +4,7 @@ use crate::parser::NO_TYPE;
 use crate::lexer;
 use crate::value::*;
 use crate::error::{Error, error, error_raw, error_no_loc};
+use crate::library::load_library;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -13,143 +14,65 @@ use std::fs::File;
 use std::io::Read;
 
 #[derive(PartialEq)]
-enum BreakState {
+pub enum BreakState {
   Breaking,
   NotBreaking,
 }
 
-enum FunctionHandle {
+pub enum FunctionHandle {
   Ast(Rc<Expr>),
-  Intrinsic(fn(&[Value]) -> Result<Value, String>),
+  BuiltIn(fn(Vec<Value>) -> Result<Value, String>),
 }
 
 impl fmt::Debug for FunctionHandle {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
       FunctionHandle::Ast(_) => write!(f, "FunctionHandle::Ast"),
-      FunctionHandle::Intrinsic(_) => write!(f, "FunctionHandle::Intrinsic"),
+      FunctionHandle::BuiltIn(_) => write!(f, "FunctionHandle::BuiltIn"),
     }
   }
-}
-
-fn intrinsic_functions(sc : &mut SymbolCache) -> HashMap<RefStr, MultiMethod> {
-
-  macro_rules! intrinsic {
-    ($n:expr, $a:ident, $b:ident, $c:ident, $f:expr) => {
-      {
-        let f : fn(&[Value]) -> Result<Value, String> =
-          |vals : &[Value]| {
-            let a : Result<$a, String> = vals[0].clone().into();
-            let b : Result<$b, String> = vals[1].clone().into();
-            let c : $c = ($f)(a?, b?);
-            let v : Value = Value::from(c);
-            Ok(v)
-          };
-        ($n, vec![type_tag!($a), type_tag!($b)], f)
-      }
-    }
-  }
-
-  macro_rules! type_tag {
-    (f32) => { Type::Float };
-    (bool) => { Type::Bool };
-    (RefStr) => { Type::String };
-    (()) => { Type::Unit };
-  }
-
-  let instrinsics = vec![
-    intrinsic!("+", f32, f32, f32, |a, b| a + b),
-    intrinsic!("-", f32, f32, f32, |a, b| a - b),
-    intrinsic!("*", f32, f32, f32, |a, b| a * b),
-    intrinsic!("/", f32, f32, f32, |a, b| a / b),
-    intrinsic!(">", f32, f32, bool, |a, b| a > b),
-    intrinsic!("<", f32, f32, bool, |a, b| a < b),
-    intrinsic!("<=", f32, f32, bool, |a, b| a <= b),
-    intrinsic!(">=", f32, f32, bool, |a, b| a >= b),
-    ("==", vec![Type::Any, Type::Any], |vs| {
-      let b = vs[0] == vs[1];
-      Ok(Value::from(b))
-    }),
-    intrinsic!("&&", bool, bool, bool, |a, b| a && b),
-    intrinsic!("||", bool, bool, bool, |a, b| a || b),
-    ("-", vec![Type::Float], |vs| {
-      let f : Result<f32, String> = vs[0].clone().into();
-      Ok(Value::from(-f?))
-    }),
-    ("len", vec![Type::Array], |vs| {
-      let a = Into::<Result<Array, String>>::into(vs[0].clone())?;
-      let len = a.borrow().len() as f32;
-      Ok(Value::from(len))
-    }),
-  ];
-
-  let mut functions = HashMap::new();
-  for (n, arg_types, f) in instrinsics {
-    let arg_names : Vec<RefStr> =
-      (0..arg_types.len()).map(|i| ((('a' as usize) + i) as u8 as char)
-      .to_string()).map(|s| sc.symbol(s)).collect();
-    let m = Method { arg_names, arg_types, handle: FunctionHandle::Intrinsic(f) };
-    add_method(n, m, sc, &mut functions).unwrap();
-  }
-  functions
-}
-
-fn add_method(name : &str, method : Method, sc : &mut SymbolCache, functions : &mut HashMap<RefStr, MultiMethod>) -> Result<(), String> {
-  if let Some(mm) = functions.get_mut(name) {
-    for m in mm.variants.iter() {
-      if m.arg_types == method.arg_types {
-        return Err(format!("function {} defined more than once with the same signature.", name))
-      }
-    }
-    mm.variants.push(method);
-    return Ok(());
-  }  
-  let name = sc.symbol(name);
-  let m = MultiMethod { variants: vec![method] };
-  functions.insert(name, m);
-  Ok(())
 }
 
 #[derive(Debug)]
-struct Method {
-  arg_types : Vec<Type>,
-  arg_names : Vec<RefStr>,
-  handle : FunctionHandle,
+pub struct Method {
+  pub arg_types : Vec<Type>,
+  pub arg_names : Vec<RefStr>,
+  pub handle : FunctionHandle,
 }
 
-struct MultiMethod {
-  variants : Vec<Method>,
+pub struct MultiMethod {
+  pub variants : Vec<Method>,
 }
 
 type LocalScope = Vec<HashMap<RefStr, Value>>;
 
 type FunctionScope = Vec<LocalScope>;
 
-struct Environment {
-  symbol_cache : SymbolCache,
+pub struct Environment {
+  pub symbol_cache : SymbolCache,
 
-  call_stack : FunctionScope,
-  functions : HashMap<RefStr, MultiMethod>,
-  structs : HashMap<RefStr, Rc<StructDef>>,
+  pub call_stack : FunctionScope,
+  pub functions : HashMap<RefStr, MultiMethod>,
+  pub structs : HashMap<RefStr, Rc<StructDef>>,
 
   /// indicates how many nested loops we are inside in the currently-executing function
-  loop_depth : i32,
+  pub loop_depth : i32,
 
   /// indicates whether the program is currently breaking out of a loop
-  break_state : BreakState,
+  pub break_state : BreakState,
 }
 
 impl Environment {
-  fn new() -> Environment {
-    let mut symbol_cache = SymbolCache::new();
-    let functions = intrinsic_functions(&mut symbol_cache);
-    Environment{
-      symbol_cache,
+  pub fn new() -> Environment {
+    let mut env = Environment{
+      symbol_cache: SymbolCache::new(),
       call_stack: vec![vec![HashMap::new()]],
-      functions, structs: HashMap::new(),
+      functions: HashMap::new(), structs: HashMap::new(),
       loop_depth: 0,
       break_state: BreakState::NotBreaking
-    }
+    };
+    load_library(&mut env);
+    env
   }
 
   fn current_function_scope(&mut self) -> &mut LocalScope {
@@ -176,8 +99,28 @@ impl Environment {
     return None;
   }
 
-  fn add_function(&mut self, name : &str, method : Method) -> Result<(), String> {
-    add_method(name, method, &mut self.symbol_cache, &mut self.functions)
+  pub fn add_struct(&mut self, def: StructDef) -> Result<(), String> {
+    if self.structs.contains_key(&def.name) {
+      return Err(format!("A struct called {} has already been defined.", def.name));
+    }
+    self.structs.insert(def.name.clone(), Rc::new(def));
+    Ok(())
+  }
+
+  pub fn add_function(&mut self, name : &str, method : Method) -> Result<(), String> {
+    if let Some(mm) = self.functions.get_mut(name) {
+      for m in mm.variants.iter() {
+        if m.arg_types == method.arg_types {
+          return Err(format!("function {} defined more than once with the same signature.", name))
+        }
+      }
+      mm.variants.push(method);
+      return Ok(());
+    }  
+    let name = self.symbol_cache.symbol(name);
+    let m = MultiMethod { variants: vec![method] };
+    self.functions.insert(name, m);
+    Ok(())
   }
 
   fn get_method(&self, name : &str, arg_types : &[Type]) -> Result<&Method, String> {
@@ -241,8 +184,8 @@ fn call_function(error_source : &Expr, function_name: &str, arg_values: Vec<Valu
       env.call_stack.pop();
       Ok(r)
     }
-    FunctionHandle::Intrinsic(f) => {
-      f(arg_values.as_slice()).map_err(|s| error_raw(error_source, s))
+    FunctionHandle::BuiltIn(f) => {
+      f(arg_values).map_err(|s| error_raw(error_source, s))
     }
   }
 }
@@ -393,9 +336,6 @@ fn interpret_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> 
       }
       let name_expr = &exprs[0];
       let name = name_expr.symbol_to_refstr()?;
-      if env.structs.contains_key(&name) {
-        return error(name_expr, format!("A struct called {} has already been defined.", name));
-      }
       // TODO: check for duplicates?
       let field_exprs = &exprs[1..];
       let mut fields = vec![];
@@ -403,8 +343,8 @@ fn interpret_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> 
       for (e, _) in field_exprs.iter().tuples() {
         fields.push(e.symbol_to_refstr()?);
       }
-      let def = Rc::new(StructDef { name: name.clone(), fields });
-      env.structs.insert(name, def);
+      let def = StructDef { name, fields };
+      env.add_struct(def).map_err(|s| error_raw(name_expr, s))?;
       Ok(Value::Unit)
     }
     ("struct_instantiate", exprs) => {
@@ -589,7 +529,7 @@ impl  Interpreter {
   }
 
   pub fn interpret_ast(&mut self, ast : &Expr) -> Result<Value, Error> {
-    println!("{}", ast);
+    // TODO debug thingy: println!("{}", ast);
     interpret_with_env(ast, &mut self.env)
   }
 

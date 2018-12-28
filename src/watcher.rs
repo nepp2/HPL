@@ -54,6 +54,7 @@ pub fn watch(path : &str) {
   // Add a path to be watched. All files and directories at that path and
   // below will be monitored for changes.
   watcher.watch(path, RecursiveMode::Recursive).unwrap();
+  watcher.watch("prelude.code", RecursiveMode::Recursive).unwrap();
 
   loop {
     match rx.recv() {
