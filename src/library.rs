@@ -170,15 +170,6 @@ impl Environment {
   }
 }
 
-/*
-impl ExternalVal {
-  fn cast<'l, V : 'static>(&'l mut self, to : &str) -> Result<&'l mut V, String> {
-    self.val.borrow_mut().downcast_mut::<V>()
-      .ok_or_else(|| format!("Tried to downcast '{}' to '{}'", self.type_name, to))
-  }
-}
-*/
-
 fn load_sdl(e : &mut Environment) {
 
   const SDL_VIEW : &'static str = "sdl_view";
@@ -196,7 +187,6 @@ fn load_sdl(e : &mut Environment) {
     let v = vs[0].get().convert::<ExternalVal>()?;
     let mut v = v.val.borrow_mut();
     let view = v.downcast_mut::<SdlView>().unwrap();
-    //let view = v.cast::<SdlView>(SDL_VIEW)?;
     match view.events.poll_event() {
       Some(event) => {
         let v = e.ext_val::<Event>(SDL_EVENT, event);
