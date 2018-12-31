@@ -2,16 +2,32 @@
 use crate::value::*;
 use crate::error::*;
 use crate::interpreter::{Environment, FunctionHandle, Method};
+use std::mem;
+use std::rc::Rc;
+use std::cell::RefCell;
+use std::any::Any;
 
-fn into<T>(vals : Vec<usize>, i : usize, )
+impl Value {
+  fn convert<T>(self) -> Result<T, String>
+    where Value: Into<Result<T, String>>
+  {
+    let r : Result<T, String> = self.into();
+    return r;
+  }
+
+  /// Return the borrowed value and replace it in-place with Unit
+  fn get(&mut self) -> Value {
+    mem::replace(self, Value::Unit)
+  }
+}
 
 macro_rules! binary {
   ($env:expr, $n:expr, $a:ident, $b:ident, $c:ident, $f:expr) => {
     {
-      let f : fn(Vec<Value>) -> Result<Value, String> =
-        |vals : Vec<Value>| {
-          let a : Result<$a, String> = vals.swap_remove(0, Value::Unit).into();
-          let b : Result<$b, String> = vals.swap_remove(1, Value::Unit).into();
+      let f : BuiltInFunction =
+        |_, mut vals : Vec<Value>| {
+          let a = vals[0].get().convert::<$a>();
+          let b = vals[1].get().convert::<$b>();
           let c : $c = ($f)(a?, b?);
           let v : Value = Value::from(c);
           Ok(v)
@@ -28,7 +44,7 @@ macro_rules! type_tag {
   (()) => { Type::Unit };
 }
 
-type BuiltInFunction = fn(Vec<Value>) -> Result<Value, String>;
+type BuiltInFunction = fn(&mut Environment, Vec<Value>) -> Result<Value, String>;
 
 fn fun(env : &mut Environment, name : &'static str, arg_types : Vec<Type>, f : BuiltInFunction) {
   let arg_names : Vec<RefStr> =
@@ -47,17 +63,17 @@ pub fn load_library(e : &mut Environment) {
   binary!(e, "<", f32, f32, bool, |a, b| a < b);
   binary!(e, "<=", f32, f32, bool, |a, b| a <= b);
   binary!(e, ">=", f32, f32, bool, |a, b| a >= b);
-  fun(e, "==", vec![Type::Any, Type::Any], |vs| {
+  fun(e, "==", vec![Type::Any, Type::Any], |_, vs| {
     let b = vs[0] == vs[1];
     Ok(Value::from(b))
   });
   binary!(e, "&&", bool, bool, bool, |a, b| a && b);
   binary!(e, "||", bool, bool, bool, |a, b| a || b);
-  fun(e, "-", vec![Type::Float], |vs| {
+  fun(e, "-", vec![Type::Float], |_, vs| {
     let f : Result<f32, String> = vs[0].clone().into();
     Ok(Value::from(-f?))
   });
-  fun(e, "len", vec![Type::Array], |vs| {
+  fun(e, "len", vec![Type::Array], |_, vs| {
     let a = Into::<Result<Array, String>>::into(vs[0].clone())?;
     let len = a.borrow().len() as f32;
     Ok(Value::from(len))
@@ -141,10 +157,52 @@ pub fn run() {
   }
 }
 
+impl Environment {
+  fn ext_type(&mut self, s : &str) -> Type {
+    Type::External(self.symbol_cache.symbol(s))
+  }
+
+  fn ext_val<V : 'static>(&mut self, s : &str, v : V) -> ExternalVal {
+    ExternalVal {
+      type_name: self.symbol_cache.symbol(s),
+      val: Rc::new(RefCell::new(v)),
+    }
+  }
+}
+
+/*
+impl ExternalVal {
+  fn cast<'l, V : 'static>(&'l mut self, to : &str) -> Result<&'l mut V, String> {
+    self.val.borrow_mut().downcast_mut::<V>()
+      .ok_or_else(|| format!("Tried to downcast '{}' to '{}'", self.type_name, to))
+  }
+}
+*/
+
 fn load_sdl(e : &mut Environment) {
-  fun(e, "create_sdl_view", vec![Type::Float, Type::Float], |vs| {
-    let a = Into::<Result<Array, String>>::into(vs[0].clone())?;
-    let len = a.borrow().len() as f32;
-    Ok(Value::from(len))
+
+  const SDL_VIEW : &'static str = "sdl_view";
+  const SDL_EVENT : &'static str = "sdl_event";
+  let sdl_view_type = e.ext_type(SDL_VIEW);
+
+  fun(e, "create_sdl_view", vec![Type::Float, Type::Float], |e, mut vs| {
+    let a = vs[0].get().convert::<f32>()? as u32;
+    let b = vs[1].get().convert::<f32>()? as u32;
+    let v = e.ext_val(SDL_VIEW, create_sdl_view(a, b));
+    Ok(Value::External(v))
+  });
+
+  fun(e, "poll_event", vec![sdl_view_type], |e, mut vs| {
+    let v = vs[0].get().convert::<ExternalVal>()?;
+    let mut v = v.val.borrow_mut();
+    let view = v.downcast_mut::<SdlView>().unwrap();
+    //let view = v.cast::<SdlView>(SDL_VIEW)?;
+    match view.events.poll_event() {
+      Some(event) => {
+        let v = e.ext_val::<Event>(SDL_EVENT, event);
+        Ok(Value::External(v))
+      }
+      None => Ok(Value::Unit)
+    }
   });
 }

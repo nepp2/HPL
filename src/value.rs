@@ -177,9 +177,9 @@ pub enum Value {
 }
 
 #[derive(Clone)]
-struct ExternalVal {
-  type_name : RefStr,
-  val : Rc<Any>,
+pub struct ExternalVal {
+  pub type_name : RefStr,
+  pub val : Rc<RefCell<Any>>,
 }
 
 impl PartialEq for ExternalVal {
@@ -286,6 +286,15 @@ impl Into<Result<StructVal, String>> for Value {
   fn into(self) -> Result<StructVal, String> {
     match self {
       Value::Struct(s) => Ok(s),
+      x => Err(format!("Expected struct, found {:?}.", x))
+    }
+  }
+}
+
+impl Into<Result<ExternalVal, String>> for Value {
+  fn into(self) -> Result<ExternalVal, String> {
+    match self {
+      Value::External(v) => Ok(v),
       x => Err(format!("Expected struct, found {:?}.", x))
     }
   }

@@ -8,7 +8,7 @@ fun range(start, end) {
   range_it(start: start, end: end)
 }
 
-fun iterator(r : Any) {
+fun iterator(r : any) {
   a
 }
 
@@ -23,9 +23,15 @@ fun next_item(it : range_it) {
   }
 }
 
+let view = create_sdl_view(400, 400)
+
 let a = [1, 2, 3, 4, 5]
 let t = 0
 for v in a {
   t = t + v
 }
 t
+
+while true {
+  
+}

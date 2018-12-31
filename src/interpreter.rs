@@ -21,7 +21,7 @@ pub enum BreakState {
 
 pub enum FunctionHandle {
   Ast(Rc<Expr>),
-  BuiltIn(fn(Vec<Value>) -> Result<Value, String>),
+  BuiltIn(fn(&mut Environment, Vec<Value>) -> Result<Value, String>),
 }
 
 impl fmt::Debug for FunctionHandle {
@@ -185,7 +185,7 @@ fn call_function(error_source : &Expr, function_name: &str, arg_values: Vec<Valu
       Ok(r)
     }
     FunctionHandle::BuiltIn(f) => {
-      f(arg_values).map_err(|s| error_raw(error_source, s))
+      f(env, arg_values).map_err(|s| error_raw(error_source, s))
     }
   }
 }
@@ -263,12 +263,15 @@ fn interpret_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> 
       env.current_function_scope().push(HashMap::new());
       let last_val = {
         let expr_count = exprs.len();
-        if expr_count > 1 {
+        if expr_count > 0 {
           for i in 0..(expr_count-1) {
             let _ = interpret_with_env(&exprs[i], env)?;
           }
+          interpret_with_env(&exprs[expr_count-1], env)
         }
-        interpret_with_env(&exprs[expr_count-1], env)
+        else {
+          Ok(Value::Unit)
+        }
       };
       env.current_function_scope().pop();
       last_val
