@@ -67,6 +67,10 @@ pub fn load_library(e : &mut Environment) {
     let b = vs[0] == vs[1];
     Ok(Value::from(b))
   });
+  fun(e, "!=", vec![Type::Any, Type::Any], |_, vs| {
+    let b = vs[0] != vs[1];
+    Ok(Value::from(b))
+  });
   binary!(e, "&&", bool, bool, bool, |a, b| a && b);
   binary!(e, "||", bool, bool, bool, |a, b| a || b);
   fun(e, "-", vec![Type::Float], |_, vs| {
@@ -77,6 +81,10 @@ pub fn load_library(e : &mut Environment) {
     let a = Into::<Result<Array, String>>::into(vs[0].clone())?;
     let len = a.borrow().len() as f32;
     Ok(Value::from(len))
+  });
+  fun(e, "print", vec![Type::Any], |_, vs| {
+    println!("{:?}", vs[0]);
+    Ok(Value::Unit)
   });
 
   load_sdl(e);
@@ -189,8 +197,8 @@ fn load_sdl(e : &mut Environment) {
     let view = v.downcast_mut::<SdlView>().unwrap();
     match view.events.poll_event() {
       Some(event) => {
-        let v = e.ext_val::<Event>(SDL_EVENT, event);
-        Ok(Value::External(v))
+        let s = format!("{:?}", event);
+        Ok(Value::String(s.into()))
       }
       None => Ok(Value::Unit)
     }

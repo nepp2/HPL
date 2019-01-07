@@ -1,20 +1,20 @@
 
 struct range_it {
-  start : float,
+  i : float,
   end : float,
 }
 
 fun range(start, end) {
-  range_it(start: start, end: end)
+  range_it(i: start, end: end)
 }
 
-fun iterator(r : any) {
-  a
+fun iterator(r : range_it) {
+  range_it(i: r.i, end: r.end)
 }
 
 fun next_item(it : range_it) {
-  if it.i < len(it.a) {
-    let i = it.a[it.i]
+  if it.i < it.end {
+    let i = it.i
     it.i = it.i + 1
     i
   }
@@ -24,14 +24,18 @@ fun next_item(it : range_it) {
 }
 
 let view = create_sdl_view(400, 400)
-
-let a = [1, 2, 3, 4, 5]
 let t = 0
-for v in a {
-  t = t + v
+let r = range(0, 5)
+for x in range(0, 2) {
+  for v in r {
+    t = t + 1
+  }
 }
 t
 
 while true {
-  
+  let e = poll_event(view)
+  if e != () {
+    print(e)
+  }
 }

@@ -169,6 +169,7 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
         ">=" => 2,
         "<=" => 2,
         "==" => 2,
+        "!=" => 2,
         "&&" => 3,
         "||" => 3,
         "+" => 4,
