@@ -35,6 +35,12 @@ t
 
 while true {
   let e = poll_event(view)
+  if e == "Event::Quit" {
+    break
+  }
+  if e == "Event::KeyUp" {
+    break
+  }
   if e != () {
     print(e)
   }

@@ -1,15 +1,4 @@
 
-
-extern crate sdl2;
-extern crate rusttype;
-extern crate unicode_normalization;
-extern crate ropey;
-extern crate clipboard;
-extern crate rand;
-extern crate rustyline;
-extern crate notify;
-extern crate itertools;
-
 #[macro_use]
 extern crate lazy_static;
 

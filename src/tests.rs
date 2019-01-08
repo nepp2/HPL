@@ -53,7 +53,7 @@ fn test_dispatch(){
     ("add(false, false)", Value::from(true)),
   ];
   for (code, expected_result) in cases {
-    let mut i = Interpreter::new();
+    let mut i = Interpreter::simple();
     let def_result = i.interpret(fundef_code);
     assert!(def_result.is_ok(), "Error: {:?}", def_result);
     let expected = Ok(expected_result);

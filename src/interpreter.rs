@@ -7,11 +7,13 @@ use crate::error::{Error, error, error_raw, error_no_loc};
 use crate::library::load_library;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::cell::RefCell;
 use std::fmt;
 use itertools::Itertools;
 use std::fs::File;
 use std::io::Read;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(PartialEq)]
 pub enum BreakState {
@@ -60,19 +62,32 @@ pub struct Environment {
 
   /// indicates whether the program is currently breaking out of a loop
   pub break_state : BreakState,
+
+  /// used to halt the interpreter from another thread
+  pub interrupt_flag : Arc<AtomicBool>,
 }
 
 impl Environment {
-  pub fn new() -> Environment {
+  pub fn new(interrupt_flag : Arc<AtomicBool>) -> Environment {
     let mut env = Environment{
       symbol_cache: SymbolCache::new(),
       call_stack: vec![vec![HashMap::new()]],
       functions: HashMap::new(), structs: HashMap::new(),
       loop_depth: 0,
-      break_state: BreakState::NotBreaking
+      break_state: BreakState::NotBreaking,
+      interrupt_flag,
     };
     load_library(&mut env);
     env
+  }
+
+  fn check_interrupt(&self) -> Result<(), String> {
+    if self.interrupt_flag.load(Ordering::Relaxed) {
+      Err(format!("Interpreter received interrupt"))
+    }
+    else {
+      Ok(())
+    }
   }
 
   fn current_function_scope(&mut self) -> &mut LocalScope {
@@ -251,6 +266,10 @@ fn struct_field_index(def : &StructDef, field_expr : &Expr) -> Result<usize, Err
 }
 
 fn interpret_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
+  // Check if the interrupt flag is set
+  // TODO: this is a very slow thing to do for every instruction
+  env.check_interrupt().map_err(|s| error_raw(expr, s))?;
+
   let instr = expr.tree_symbol_unwrap()?.as_ref();
   let children = expr.children.as_slice();
   match (instr, children) {
@@ -513,9 +532,13 @@ pub struct Interpreter {
   env : Environment
 }
 
-impl  Interpreter {
-  pub fn new() -> Interpreter {
-    let mut i = Interpreter { env: Environment::new() };
+impl Interpreter {
+  pub fn simple() -> Interpreter {
+    Interpreter::new(Arc::new(AtomicBool::new(false)))
+  }
+
+  pub fn new(interrupt_flag : Arc<AtomicBool>) -> Interpreter {
+    let mut i = Interpreter { env: Environment::new(interrupt_flag) };
     // TODO: this is slow and dumb
     let mut f = File::open("prelude.code").expect("file not found");
     let mut code = String::new();
@@ -542,9 +565,13 @@ impl  Interpreter {
   }
 }
 
-pub fn interpret(code : &str) -> Result<Value, Error> {
-  let mut i = Interpreter::new();
+pub fn interpret_with_interrupt(code : &str, interrupt_flag : Arc<AtomicBool>) -> Result<Value, Error> {
+  let mut i = Interpreter::new(interrupt_flag);
   i.interpret(code)
+}
+
+pub fn interpret(code : &str) -> Result<Value, Error> {
+  interpret_with_interrupt(code, Arc::new(AtomicBool::new(false)))
 }
 
 #[test]
