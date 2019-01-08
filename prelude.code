@@ -18,3 +18,27 @@ fun next_item(it : array_it) {
     ()
   }
 }
+
+struct range_it {
+  i : float,
+  end : float,
+}
+
+fun range(start, end) {
+  range_it(i: start, end: end)
+}
+
+fun iterator(r : range_it) {
+  range_it(i: r.i, end: r.end)
+}
+
+fun next_item(it : range_it) {
+  if it.i < it.end {
+    let i = it.i
+    it.i = it.i + 1
+    i
+  }
+  else {
+    ()
+  }
+}

@@ -30,7 +30,8 @@ struct InterpreterTask {
   handle : JoinHandle<String>,
 }
 
-fn load_and_run(path : PathBuf) -> InterpreterTask {
+fn load_and_run(path : &str) -> InterpreterTask {
+  let path = PathBuf::from(path);
   let interrupt_flag = Arc::new(AtomicBool::new(false));
   let completion_flag = Arc::new(AtomicBool::new(false));
 
@@ -52,7 +53,7 @@ fn load_and_run(path : PathBuf) -> InterpreterTask {
 
 pub fn watch(path : &str) {
 
-  let mut task = Some(load_and_run(PathBuf::from(path)));
+  let mut task = Some(load_and_run(path));
 
   // Create a channel to receive the events.
   let (tx, rx) = channel();
@@ -81,7 +82,7 @@ pub fn watch(path : &str) {
       match rx.try_recv() {
         Ok(event) => {
           match event {
-            DebouncedEvent::Write(path) => {
+            DebouncedEvent::Write(_) => {
               if let Some(t) = task {
                 t.interrupt_flag.store(true, Ordering::Relaxed);
                 println!("{}", t.handle.join().unwrap());

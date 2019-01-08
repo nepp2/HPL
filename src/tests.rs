@@ -153,14 +153,25 @@ fn test_first_class_function() {
 
 #[test]
 fn test_for_loop() {
-  let code = "
+  let array_code = "
     let t = 0
     for v in [1, 2, 3, 4] {
       t = t + v
     }
     t
   ";
-  assert_result(code, Value::from(10.0));
+  let range_code = "
+    let t = 0
+    let r = range(0, 5)
+    for x in range(0, 2) {
+      for v in r {
+        t = t + 1
+      }
+    }
+    t
+  ";
+  assert_result(array_code, Value::from(10.0));
+  assert_result(range_code, Value::from(10.0));
 }
 
 /*

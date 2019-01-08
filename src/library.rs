@@ -181,7 +181,6 @@ impl Environment {
 fn load_sdl(e : &mut Environment) {
 
   const SDL_VIEW : &'static str = "sdl_view";
-  const SDL_EVENT : &'static str = "sdl_event";
   let sdl_view_type = e.ext_type(SDL_VIEW);
 
   fun(e, "create_sdl_view", vec![Type::Float, Type::Float], |e, mut vs| {
@@ -191,13 +190,22 @@ fn load_sdl(e : &mut Environment) {
     Ok(Value::External(v))
   });
 
+  e.add_struct(StructDef {
+    name: "sdl_event".into(),
+    fields: vec![
+      "name".into(),
+      "attribs".into(),
+    ],
+  }).unwrap();
+
   fun(e, "poll_event", vec![sdl_view_type], |e, mut vs| {
     let v = vs[0].get().convert::<ExternalVal>()?;
     let mut v = v.val.borrow_mut();
     let view = v.downcast_mut::<SdlView>().unwrap();
     match view.events.poll_event() {
       Some(event) => {
-        let s = format!("{:?}", event);
+        let mut s = format!("{:?}", event);
+        s.replace_range(..7, ""); // remove "Event::"
         Ok(Value::String(s.into()))
       }
       None => Ok(Value::Unit)
