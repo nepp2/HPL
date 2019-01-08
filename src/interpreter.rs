@@ -122,6 +122,24 @@ impl Environment {
     Ok(())
   }
 
+  pub fn instantiate_struct(&self, name: &str, mut value_map: HashMap<RefStr, Value>)
+    -> Result<StructVal, String>
+  {
+    let def =
+      self.structs.get(name)
+      .ok_or_else(|| format!("struct {} does not exist", name))?.clone();
+    let fields =
+      def.fields.iter().map(|s| {
+        value_map.remove(s.as_ref())
+          .ok_or_else(|| format!("expected field '{}', but it was not defined", s))
+      })
+      .collect::<Result<Vec<Value>, String>>()?;
+    if value_map.len() > 0 {
+      return Err(format!("unexpected field(s) defined: '{:?}'", value_map.keys()));
+    }
+    Ok(Rc::new(RefCell::new(Struct { def, fields })))
+  }
+
   pub fn add_function(&mut self, name : &str, method : Method) -> Result<(), String> {
     if let Some(mm) = self.functions.get_mut(name) {
       for m in mm.variants.iter() {
@@ -301,6 +319,14 @@ fn interpret_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> 
       env.new_variable(name.clone(), v);
       Ok(Value::Unit)
     }
+    ("&&", [a, b]) => {
+      let v = to_value(a, env)? && to_value(b, env)?;
+      Ok(Value::Bool(v))
+    }
+    ("||", [a, b]) => {
+      let v = to_value(a, env)? || to_value(b, env)?;
+      Ok(Value::Bool(v))
+    }
     ("=", [assign_expr, value_expr]) => {
       match &assign_expr.tag {
         ExprTag::Symbol(var_symbol) => {
@@ -376,26 +402,14 @@ fn interpret_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> 
       let name_expr = &exprs[0];
       let field_exprs = &exprs[1..];
       let name = name_expr.symbol_to_refstr()?;
-      let def =
-        env.structs.get(name.as_ref())
-        .ok_or_else(|| error_raw(name_expr, format!("struct {} does not exist", name)))?.clone();
-      let mut value_map =
+      let value_map =
         field_exprs.iter().tuples().map(|(field, value)| {
           let field_name = field.symbol_to_refstr()?;
           let field_value = interpret_with_env(value, env)?;
           Ok((field_name, field_value))
         })
         .collect::<Result<HashMap<RefStr, Value>, Error>>()?;
-      let fields =
-        def.fields.iter().map(|s| {
-          value_map.remove(s.as_ref())
-            .ok_or_else(|| error_raw(expr, format!("expected field '{}', but it was not defined", s)))
-        })
-        .collect::<Result<Vec<Value>, Error>>()?;
-      if value_map.len() > 0 {
-        return error(expr, format!("unexpected field(s) defined: '{:?}'", value_map.keys()));
-      }
-      let s = Rc::new(RefCell::new(Struct { def, fields }));
+      let s = env.instantiate_struct(&name, value_map).map_err(|s| error_raw(expr, s))?;
       Ok(Value::Struct(s))
     }
     (".", [expr, name_expr]) => {

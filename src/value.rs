@@ -239,9 +239,9 @@ impl From<f32> for Value {
     Value::Float(v)
   }
 }
-impl From<Array> for Value {
-  fn from(v : Array) -> Value {
-    Value::Array(v)
+impl From<Vec<Value>> for Value {
+  fn from(v : Vec<Value>) -> Value {
+    Value::Array(Rc::new(RefCell::new(v)))
   }
 }
 impl From<&str> for Value {

@@ -6,6 +6,8 @@ use crate::value::*;
 #[test]
 fn test_basics() {
   let cases = vec![
+    ("", Value::Unit),
+    ("()", Value::Unit),
     ("4 + 5", Value::from(9.0)),
     ("4 - 5", Value::from(-1.0)),
     ("4 * 5", Value::from(20.0)),
@@ -14,9 +16,8 @@ fn test_basics() {
     ("5 <= 5", Value::from(true)),
     ("5 >= 5", Value::from(true)),
     ("5 == 5", Value::from(true)),
-    ("true && false", Value::from(false)),
-    ("true || false", Value::from(true)),
     ("-(4 - 5)", Value::from(1.0)),
+    ("4 + {let a = 5; let b = 4; a}", Value::from(9.0)),
     ("if true { 3 } else { 4 }", Value::from(3.0)),
     ("if false { 3 } else { 4 }", Value::from(4.0)),
     ("let a = 5; a", Value::from(5.0)),
@@ -25,6 +26,25 @@ fn test_basics() {
   for (code, expected_result) in cases {
     assert_result(code, expected_result);
   }
+}
+
+#[test]
+fn test_and_or() {
+  assert_result("true && false", Value::from(false));
+  assert_result("true || false", Value::from(true));
+  // Make sure they terminate early
+  let and = "
+    let a = 0
+    false && {a = 1; true}
+    a
+  ";
+  let or = "
+    let a = 0
+    true || {a = 1; true}
+    a
+  ";
+  assert_result(and, Value::from(0.0));
+  assert_result(or, Value::from(0.0));
 }
 
 fn assert_result(code : &str, expected_result : Value){

@@ -14,6 +14,7 @@ rustyline = "3.0.0"
 notify = "4.0.4"
 lazy_static = "1.2.0"
 itertools = "0.7.3"
+maplit = "1.0.1"
 
 [dependencies.rusttype]
 version = "0.5.2"

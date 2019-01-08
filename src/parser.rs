@@ -54,6 +54,9 @@ impl <'l> ParseState<'l> {
     if self.has_tokens() {
       self.tokens[self.pos].loc.start
     }
+    else if self.tokens.len() == 0 {
+      TextMarker { col: 0, line: 0 }
+    }
     else {
       self.tokens[self.pos-1].loc.end
     }
@@ -154,7 +157,7 @@ lazy_static! {
     vec!["=", ".", "==", "!=", "<=", ">=", "=>", "+=", "-=", "*=", "/=", "||", "&&",
       "<", ">", "+", "-", "*", "/", "|", "&", "^"].into_iter().collect();
   static ref SPECIAL_OPERATORS : HashSet<&'static str> =
-    vec!["=", ".", "+="].into_iter().collect();
+    vec!["=", ".", "+=", "&&", "||"].into_iter().collect();
 }
 
 fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
@@ -330,6 +333,12 @@ fn parse_syntax(ps : &mut ParseState) -> Result<Expr, Error> {
         ps.expect_string(")")?;
         Ok(a)
       }
+    }
+    "{" => {
+      ps.expect_string("{")?;
+      let block = parse_block(ps)?;
+      ps.expect_string("}")?;
+      Ok(block)
     }
     _ => error(ps.peek()?.loc, format!("Unexpected syntax '{}'", ps.peek()?.string)),
   }

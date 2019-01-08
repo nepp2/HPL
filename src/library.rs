@@ -71,8 +71,6 @@ pub fn load_library(e : &mut Environment) {
     let b = vs[0] != vs[1];
     Ok(Value::from(b))
   });
-  binary!(e, "&&", bool, bool, bool, |a, b| a && b);
-  binary!(e, "||", bool, bool, bool, |a, b| a || b);
   fun(e, "-", vec![Type::Float], |_, vs| {
     let f : Result<f32, String> = vs[0].clone().into();
     Ok(Value::from(-f?))
@@ -205,8 +203,20 @@ fn load_sdl(e : &mut Environment) {
     match view.events.poll_event() {
       Some(event) => {
         let mut s = format!("{:?}", event);
+        let mut attribs = vec![];
+        match event {
+          Event::KeyDown {keycode, ..} =>
+            if let Some(kc) = keycode {
+              attribs.push(Value::String(format!("{}", kc).into()));
+            },
+          _ => (),
+        };
         s.replace_range(..7, ""); // remove "Event::"
-        Ok(Value::String(s.into()))
+        let s = e.instantiate_struct("sdl_event", hashmap!{
+          "name".into() => Value::String(s.into()),
+          "attribs".into() => Value::from(attribs),
+        }).unwrap();
+        Ok(Value::Struct(s))
       }
       None => Ok(Value::Unit)
     }

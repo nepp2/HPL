@@ -5,11 +5,12 @@ let s = ""
 
 while true {
   let e = poll_event(view)
-  if e == "Quit" {
-    break
-  }
-  if e != () && e != s {
-    s = e
-    print(e)
+  if e != () {
+    if e.name == "Quit" {
+      break
+    }
+    if len(e.attribs) > 0 {
+      print(e.attribs)
+    }
   }
 }
