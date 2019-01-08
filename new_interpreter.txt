@@ -6,7 +6,7 @@ let s = ""
 while true {
   let e = poll_event(view)
   if e != () {
-    if e.name == "Quit" {
+    if e.tag == "Quit" {
       break
     }
     if len(e.attribs) > 0 {

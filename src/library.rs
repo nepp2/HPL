@@ -1,7 +1,7 @@
 
 use crate::value::*;
 use crate::error::*;
-use crate::interpreter::{Environment, FunctionHandle, Method};
+use crate::interpreter::{Interpreter, Environment, FunctionHandle, Method};
 use std::mem;
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -54,7 +54,8 @@ fn fun(env : &mut Environment, name : &'static str, arg_types : Vec<Type>, f : B
   env.add_function(name, m).unwrap();
 }
 
-pub fn load_library(e : &mut Environment) {
+pub fn load_library(i : &mut Interpreter) {
+  let e = &mut i.env;
   binary!(e, "+", f32, f32, f32, |a, b| a + b);
   binary!(e, "-", f32, f32, f32, |a, b| a - b);
   binary!(e, "*", f32, f32, f32, |a, b| a * b);
@@ -83,6 +84,9 @@ pub fn load_library(e : &mut Environment) {
   fun(e, "print", vec![Type::Any], |_, vs| {
     println!("{:?}", vs[0]);
     Ok(Value::Unit)
+  });
+  fun(e, "type_name", vec![Type::Any], |_, vs| {
+    Ok(Value::String(vs[0].type_name()))
   });
 
   load_sdl(e);
@@ -176,8 +180,16 @@ impl Environment {
   }
 }
 
-fn load_sdl(e : &mut Environment) {
+fn load_sdl(i : &mut Interpreter) {
 
+  let code = "
+    struct sdl_event_keydown { key : string }
+    struct sdl_event_quit { dummy : unit }
+  ";
+
+  i.interpret(code).unwrap();
+
+  let e = &mut i.env;
   const SDL_VIEW : &'static str = "sdl_view";
   let sdl_view_type = e.ext_type(SDL_VIEW);
 
@@ -188,29 +200,23 @@ fn load_sdl(e : &mut Environment) {
     Ok(Value::External(v))
   });
 
-  e.add_struct(StructDef {
-    name: "sdl_event".into(),
-    fields: vec![
-      "name".into(),
-      "attribs".into(),
-    ],
-  }).unwrap();
-
   fun(e, "poll_event", vec![sdl_view_type], |e, mut vs| {
     let v = vs[0].get().convert::<ExternalVal>()?;
     let mut v = v.val.borrow_mut();
     let view = v.downcast_mut::<SdlView>().unwrap();
     match view.events.poll_event() {
       Some(event) => {
-        let mut s = format!("{:?}", event);
-        let mut attribs = vec![];
-        match event {
-          Event::KeyDown {keycode, ..} =>
-            if let Some(kc) = keycode {
-              attribs.push(Value::String(format!("{}", kc).into()));
-            },
-          _ => (),
-        };
+        //let mut s = format!("{:?}", event);
+        let e =
+          match event {
+            Event::KeyDown {keycode, ..} =>
+              if let Some(kc) = keycode {
+                Value::Struct(e.instantiate_struct("sdl_event_keydown", hashmap!{
+                  "key".into() => Value::String(format!("{}", kc).into())
+                }).unwrap())
+              },
+            _ => Ok(Value::Unit),
+          };
         s.replace_range(..7, ""); // remove "Event::"
         let s = e.instantiate_struct("sdl_event", hashmap!{
           "name".into() => Value::String(s.into()),

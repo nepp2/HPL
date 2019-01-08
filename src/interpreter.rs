@@ -543,7 +543,7 @@ fn interpret_with_env(expr : &Expr, env : &mut Environment) -> Result<Value, Err
 
 // TODO: this should store the expression id counter for the parser. At the moment, ids will be reused!
 pub struct Interpreter {
-  env : Environment
+  pub env : Environment
 }
 
 impl Interpreter {

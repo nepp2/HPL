@@ -202,6 +202,20 @@ impl Value {
       Unit => Type::Unit,
     }
   }
+
+  pub fn type_name(&self) -> RefStr {
+    use self::Value::*;
+    match self {
+      Float(_) => "float".into(),
+      Array(_) => "array".into(),
+      Bool(_) => "bool".into(),
+      String(_) => "string".into(),
+      Function(_) => "function".into(),
+      Struct(s) => s.borrow().def.name.clone(),
+      External(e) => e.type_name.clone(),
+      Unit => "unit".into(),
+    }
+  }
 }
 
 impl fmt::Debug for Value {
