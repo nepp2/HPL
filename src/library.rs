@@ -89,7 +89,7 @@ pub fn load_library(i : &mut Interpreter) {
     Ok(Value::String(vs[0].type_name()))
   });
 
-  load_sdl(e);
+  load_sdl(i);
 }
 
 use sdl2;
@@ -184,7 +184,8 @@ fn load_sdl(i : &mut Interpreter) {
 
   let code = "
     struct sdl_event_keydown { key : string }
-    struct sdl_event_quit { dummy : unit }
+    struct sdl_event_keyup { key : string }
+    struct sdl_event_quit { }
   ";
 
   i.interpret(code).unwrap();
@@ -204,27 +205,36 @@ fn load_sdl(i : &mut Interpreter) {
     let v = vs[0].get().convert::<ExternalVal>()?;
     let mut v = v.val.borrow_mut();
     let view = v.downcast_mut::<SdlView>().unwrap();
-    match view.events.poll_event() {
-      Some(event) => {
-        //let mut s = format!("{:?}", event);
-        let e =
-          match event {
-            Event::KeyDown {keycode, ..} =>
-              if let Some(kc) = keycode {
-                Value::Struct(e.instantiate_struct("sdl_event_keydown", hashmap!{
-                  "key".into() => Value::String(format!("{}", kc).into())
-                }).unwrap())
-              },
-            _ => Ok(Value::Unit),
-          };
-        s.replace_range(..7, ""); // remove "Event::"
-        let s = e.instantiate_struct("sdl_event", hashmap!{
-          "name".into() => Value::String(s.into()),
-          "attribs".into() => Value::from(attribs),
-        }).unwrap();
-        Ok(Value::Struct(s))
-      }
-      None => Ok(Value::Unit)
+    let event = if let Some(e) = view.events.poll_event() {
+      e
     }
+    else {
+      return Ok(Value::Unit);
+    };
+    match event {
+      Event::KeyDown {keycode, ..} => {
+        if let Some(kc) = keycode {
+          let v = e.instantiate_struct("sdl_event_keydown", hashmap!{
+            "key".into() => Value::String(format!("{}", kc).into())
+          }).map(|s| Value::Struct(s));
+          return v;
+        }
+      }
+      Event::KeyUp {keycode, ..} => {
+        if let Some(kc) = keycode {
+          let v = e.instantiate_struct("sdl_event_keyup", hashmap!{
+            "key".into() => Value::String(format!("{}", kc).into())
+          }).map(|s| Value::Struct(s));
+          return v;
+        }
+      }
+      Event::Quit { .. } => {
+        let v = e.instantiate_struct("sdl_event_quit", hashmap!{})
+          .map(|s| Value::Struct(s));
+        return v;
+      }
+      _ => (),
+    }
+    return Ok(Value::Unit);
   });
 }

@@ -69,16 +69,14 @@ pub struct Environment {
 
 impl Environment {
   pub fn new(interrupt_flag : Arc<AtomicBool>) -> Environment {
-    let mut env = Environment{
+    Environment{
       symbol_cache: SymbolCache::new(),
       call_stack: vec![vec![HashMap::new()]],
       functions: HashMap::new(), structs: HashMap::new(),
       loop_depth: 0,
       break_state: BreakState::NotBreaking,
       interrupt_flag,
-    };
-    load_library(&mut env);
-    env
+    }
   }
 
   fn check_interrupt(&self) -> Result<(), String> {
@@ -553,6 +551,7 @@ impl Interpreter {
 
   pub fn new(interrupt_flag : Arc<AtomicBool>) -> Interpreter {
     let mut i = Interpreter { env: Environment::new(interrupt_flag) };
+    load_library(&mut i);
     // TODO: this is slow and dumb
     let mut f = File::open("prelude.code").expect("file not found");
     let mut code = String::new();

@@ -6,11 +6,15 @@ let s = ""
 while true {
   let e = poll_event(view)
   if e != () {
-    if e.tag == "Quit" {
+    let t = type_name(e)
+    if t == "sdl_event_quit" {
       break
     }
-    if len(e.attribs) > 0 {
-      print(e.attribs)
+    if t == "sdl_event_keydown" {
+      if e.key == "Escape" {
+        break
+      }
+      print(e.key)
     }
   }
 }
