@@ -194,6 +194,16 @@ fn test_for_loop() {
   assert_result(range_code, Value::from(10.0));
 }
 
+#[test]
+fn test_brace_syntax_quirks(){
+  // This test demonstrates a problem with the struct initialisation syntax
+  let code = "
+    struct a { }
+    let b = a()
+  ";
+  assert_result(code, Value::Unit);
+}
+
 /*
 
 Features to add:
