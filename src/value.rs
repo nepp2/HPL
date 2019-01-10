@@ -263,6 +263,11 @@ impl From<&str> for Value {
     Value::String(v.into())
   }
 }
+impl From<String> for Value {
+  fn from(v : String) -> Value {
+    Value::String(v.into())
+  }
+}
 
 impl Into<Result<f32, String>> for Value {
   fn into(self) -> Result<f32, String> {

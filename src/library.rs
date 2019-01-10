@@ -4,8 +4,18 @@ use crate::error::*;
 use crate::interpreter::{Interpreter, Environment, FunctionHandle, Method};
 use std::mem;
 use std::rc::Rc;
-use std::cell::RefCell;
-use std::any::Any;
+use std::cell::{RefCell, RefMut};
+use std::collections::HashMap;
+use std::any::{Any};
+
+use sdl2;
+use sdl2::{Sdl, VideoSubsystem, EventPump};
+use sdl2::event::Event;
+use sdl2::keyboard::{Keycode};
+use sdl2::pixels::Color;
+use sdl2::rect::{Rect, Point};
+use sdl2::video::{Window};
+use std::time::Duration;
 
 impl Value {
   fn convert<T>(self) -> Result<T, String>
@@ -92,15 +102,6 @@ pub fn load_library(i : &mut Interpreter) {
   load_sdl(i);
 }
 
-use sdl2;
-use sdl2::{Sdl, VideoSubsystem, EventPump};
-use sdl2::event::Event;
-use sdl2::keyboard::{Keycode};
-use sdl2::pixels::Color;
-use sdl2::rect::{Rect, Point};
-use sdl2::video::{Window};
-use std::time::Duration;
-
 fn dpi_ratio(w : &Window) -> f32 {
   let (dw, _) = w.drawable_size();
   let (w, _) = w.size();
@@ -134,39 +135,6 @@ pub fn create_sdl_view (width : u32, height : u32) -> SdlView {
   SdlView { sdl, video, dpi_ratio, canvas, events }
 }
 
-pub fn run() {
-  let (width, height) = (800, 600);
-  let mut v = create_sdl_view(width, height);
-
-  'mainloop: loop {
-    for event in v.events.poll_iter() {
-      match &event {
-        &Event::Quit{..} |
-        &Event::KeyDown {keycode: Some(Keycode::Escape), ..} =>
-          break 'mainloop,
-        _ => (),
-      }
-
-      v.canvas.set_draw_color(Color::RGBA(20, 20, 20, 255));
-      v.canvas.clear();
-
-      // draw background lines
-      let (width, height) = (width as i32, height as i32);
-      v.canvas.set_draw_color(Color::RGBA(0, 0, 0, 255));
-      let line_interval = 15;
-      for x in 0..(width/line_interval) {
-        v.canvas.draw_line(Point::new(x * line_interval, 0), Point::new(x * line_interval, height)).unwrap();
-      }
-      for y in 0..(height/line_interval) {
-        v.canvas.draw_line(Point::new(0, y * line_interval), Point::new(width, y * line_interval)).unwrap();
-      }
-
-      v.canvas.present();
-      ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
-    }
-  }
-}
-
 impl Environment {
   fn ext_type(&mut self, s : &str) -> Type {
     Type::External(self.symbol_cache.symbol(s))
@@ -186,6 +154,11 @@ fn load_sdl(i : &mut Interpreter) {
     struct sdl_event_keydown { key : string }
     struct sdl_event_keyup { key : string }
     struct sdl_event_quit { }
+    struct sdl_event_mouse_motion { x, y }
+    struct sdl_event_mouse_down { x, y, button }
+    struct sdl_event_mouse_up { x, y, button }
+    struct sdl_event_mouse_wheel { y }
+    // struct sdl_window_resized { }
   ";
 
   i.interpret(code).unwrap();
@@ -201,7 +174,24 @@ fn load_sdl(i : &mut Interpreter) {
     Ok(Value::External(v))
   });
 
-  fun(e, "poll_event", vec![sdl_view_type], |e, mut vs| {
+  fn new_struct(e : &mut Environment, name : &str, vals : HashMap<RefStr, Value>)
+    -> Result<Value, String>
+  {
+    return e.instantiate_struct(name, vals).map(|s| Value::Struct(s));
+  }
+
+  fun(e, "poll_event_any", vec![sdl_view_type.clone()], |_e, mut vs| {
+    let v = vs[0].get().convert::<ExternalVal>()?;
+    let mut v = v.val.borrow_mut();
+    let view = v.downcast_mut::<SdlView>().unwrap();
+    if let Some(e) = view.events.poll_event() {
+      let s = format!("{:?}", e);
+      return Ok(Value::String(s.into()));
+    }
+    Ok(Value::Unit)
+  });
+
+  fun(e, "poll_event", vec![sdl_view_type.clone()], |e, mut vs| {
     let v = vs[0].get().convert::<ExternalVal>()?;
     let mut v = v.val.borrow_mut();
     let view = v.downcast_mut::<SdlView>().unwrap();
@@ -214,27 +204,107 @@ fn load_sdl(i : &mut Interpreter) {
     match event {
       Event::KeyDown {keycode, ..} => {
         if let Some(kc) = keycode {
-          let v = e.instantiate_struct("sdl_event_keydown", hashmap!{
-            "key".into() => Value::String(format!("{}", kc).into())
-          }).map(|s| Value::Struct(s));
-          return v;
+          return new_struct(e, "sdl_event_keydown", hashmap!{
+            "key".into() => format!("{}", kc).into(),
+          });
         }
       }
       Event::KeyUp {keycode, ..} => {
         if let Some(kc) = keycode {
-          let v = e.instantiate_struct("sdl_event_keyup", hashmap!{
-            "key".into() => Value::String(format!("{}", kc).into())
-          }).map(|s| Value::Struct(s));
-          return v;
+          return new_struct(e, "sdl_event_keyup", hashmap!{
+            "key".into() => format!("{}", kc).into(),
+          });
         }
       }
       Event::Quit { .. } => {
-        let v = e.instantiate_struct("sdl_event_quit", hashmap!{})
-          .map(|s| Value::Struct(s));
-        return v;
+        return new_struct(e, "sdl_event_quit", hashmap!{});
+      }
+      Event::MouseMotion { x, y, .. } => {
+          return new_struct(e, "sdl_event_mouse_motion", hashmap!{
+            "x".into() => (x as f32).into(),
+            "y".into() => (y as f32).into(),
+          });
+      }
+      Event::MouseButtonDown { x, y, mouse_btn, .. } => {
+          return new_struct(e, "sdl_event_mouse_down", hashmap!{
+            "x".into() => (x as f32).into(),
+            "y".into() => (y as f32).into(),
+            "button".into() => format!("{:?}", mouse_btn).into(),
+          });
+      }
+      Event::MouseButtonUp { x, y, mouse_btn, .. } => {
+          return new_struct(e, "sdl_event_mouse_up", hashmap!{
+            "x".into() => (x as f32).into(),
+            "y".into() => (y as f32).into(),
+            "button".into() => format!("{:?}", mouse_btn).into(),
+          });
+      }
+      Event::MouseWheel { y, .. } => {
+          return new_struct(e, "sdl_event_mouse_wheel", hashmap!{
+            "y".into() => (y as f32).into(),
+          });
       }
       _ => (),
     }
+    return Ok(Value::Unit);
+  });
+
+  fun(e, "clear", vec![sdl_view_type.clone()], |_e, mut vs| {
+    let v = vs[0].get().convert::<ExternalVal>()?;
+    let mut v = v.val.borrow_mut();
+    let view = v.downcast_mut::<SdlView>().unwrap();
+    view.canvas.clear();
+    return Ok(Value::Unit);
+  });
+
+  fun(e, "set_draw_color", vec![sdl_view_type.clone(), Type::Float, Type::Float, Type::Float, Type::Float], |_e, mut vs| {
+    let v = vs[0].get().convert::<ExternalVal>()?;
+    let r = vs[1].get().convert::<f32>()? as u8;
+    let g = vs[2].get().convert::<f32>()? as u8;
+    let b = vs[3].get().convert::<f32>()? as u8;
+    let a = vs[4].get().convert::<f32>()? as u8;
+    let mut v = v.val.borrow_mut();
+    let view = v.downcast_mut::<SdlView>().unwrap();
+    view.canvas.set_draw_color(Color::RGBA(r, g, b, a));
+    return Ok(Value::Unit);
+  });
+
+  fun(e, "draw_line", vec![sdl_view_type.clone(), Type::Float, Type::Float, Type::Float, Type::Float], |_e, mut vs| {
+    let v = vs[0].get().convert::<ExternalVal>()?;
+    let x1 = vs[1].get().convert::<f32>()? as i32;
+    let y1 = vs[2].get().convert::<f32>()? as i32;
+    let x2 = vs[3].get().convert::<f32>()? as i32;
+    let y2 = vs[4].get().convert::<f32>()? as i32;
+    let mut v = v.val.borrow_mut();
+    let view = v.downcast_mut::<SdlView>().unwrap();
+    view.canvas.draw_line(Point::new(x1, y1), Point::new(x2, y2)).unwrap();
+    return Ok(Value::Unit);
+  });
+
+  fun(e, "fill_rect", vec![sdl_view_type.clone(), Type::Float, Type::Float, Type::Float, Type::Float], |_e, mut vs| {
+    let v = vs[0].get().convert::<ExternalVal>()?;
+    let x = vs[1].get().convert::<f32>()? as i32;
+    let y = vs[2].get().convert::<f32>()? as i32;
+    let w = vs[3].get().convert::<f32>()? as u32;
+    let h = vs[4].get().convert::<f32>()? as u32;
+    let mut v = v.val.borrow_mut();
+    let view = v.downcast_mut::<SdlView>().unwrap();
+    view.canvas.fill_rect(Rect::new(x, y, w, h)).unwrap();
+    return Ok(Value::Unit);
+  });
+
+  fun(e, "present", vec![sdl_view_type.clone()], |_e, mut vs| {
+    let v = vs[0].get().convert::<ExternalVal>()?;
+    let mut v = v.val.borrow_mut();
+    let view = v.downcast_mut::<SdlView>().unwrap();
+    view.canvas.present();
+    return Ok(Value::Unit);
+  });
+
+  fun(e, "sleep", vec![Type::Float], |_e, mut vs| {
+    let millis = vs[0].get().convert::<f32>()?;
+    let micros = millis * 1000.0;
+    Duration::from_micros(micros as u64);
     return Ok(Value::Unit);
   });
 }
