@@ -6,7 +6,7 @@ use crate::error::{Error, TextLocation, TextMarker};
 lazy_static! {
   static ref KEYWORDS : HashSet<&'static str> =
     vec!["fun", "if", "else", "type", "while", "struct", "for",
-    "break", "return", "let", "true", "false", "region"].into_iter().collect();
+    "break", "return", "let", "true", "false", "region", "import"].into_iter().collect();
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -266,7 +266,7 @@ impl <'l> CStream<'l> {
   const SYNTAX : &'static [&'static str] =
     &["==", "!=", "<=", ">=", "=>", "+=", "-=", "*=", "/=", "||",
       "&&", "{", "}", "(", ")", "[", "]", "<", ">", ";", ":", ",",
-      ".", "=", "+", "-", "*", "/", "?", "|", "&", "^", "!"];
+      ".", "=", "+", "-", "*", "/", "%", "?", "|", "&", "^", "!"];
 
   fn parse_syntax(&mut self) -> bool {
     for s in CStream::SYNTAX {

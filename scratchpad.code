@@ -1,8 +1,151 @@
 
-let width = 800
-let height = 600
+let width = 1000
+let height = 800
 
 let view = create_sdl_view(width, height)
+
+struct colour {
+  r, g, b, a
+}
+
+struct shape {
+  tiles, colour
+}
+
+fun set_draw_color(view, c : array) {
+  set_draw_color(view, c[0], c[1], c[2], c[3])
+}
+
+let red = [255, 0, 50, 255]
+let green = [0, 255, 0, 255]
+let blue = [50, 100, 255, 255]
+let sky_blue = [50, 200, 255, 255]
+let orange = [255, 150, 50, 255]
+let yellow = [255, 200, 0, 255]
+let magenta = [255, 80, 255, 255]
+
+let shape_l1 =
+  [0, 1, 0, 0,
+   0, 1, 0, 0,
+   0, 1, 1, 0,
+   0, 0, 0, 0,
+  ]
+
+let shape_l2 =
+  [0, 0, 1, 0,
+   0, 0, 1, 0,
+   0, 1, 1, 0,
+   0, 0, 0, 0,
+  ]
+
+let shape_bar =
+  [ 0, 1, 0, 0,
+    0, 1, 0, 0,
+    0, 1, 0, 0,
+    0, 1, 0, 0 ]
+
+let shape_z =
+  [ 0, 0, 0, 0,
+    1, 1, 0, 0,
+    0, 1, 1, 0,
+    0, 0, 0, 0 ]
+
+let shape_s =
+  [ 0, 0, 0, 0,
+    0, 0, 1, 1,
+    0, 1, 1, 0,
+    0, 0, 0, 0 ]
+
+let shape_square =
+  [ 0, 0, 0, 0,
+    0, 1, 1, 0,
+    0, 1, 1, 0,
+    0, 0, 0, 0 ]
+
+let shape_T =
+  [ 0, 0, 0, 0,
+    0, 1, 0, 0,
+    1, 1, 1, 0,
+    0, 0, 0, 0 ]
+
+let shapes = [
+  shape_l1, orange,
+  shape_l2, blue,
+  shape_bar, sky_blue,
+  shape_z, red,
+  shape_s, green,
+  shape_square, yellow,
+  shape_T, magenta,
+]
+
+let r90 =
+  [ 12,  8,  4,  0,
+    13,  9,  5,  1,
+    14,  10, 6,  2,
+    15,  11, 7,  3 ]
+
+fun rotate(shape, rotation_grid){
+  let s = []
+  for i in range(0, 16) {
+    let index = rotation_grid[i]
+    add(s, shape[index])
+  }
+  s
+}
+
+let all_shapes = {
+  let all = []
+  for i in range(0, len(shapes)/2) {
+    let c = shapes[i*2 + 1]
+    let s1 = shapes[i*2]
+    let s2 = rotate(s1, r90)
+    let s3 = rotate(s2, r90)
+    let s4 = rotate(s3, r90)
+    let shape = shape(tiles: [s1, s2, s3, s4], colour: c)
+    add(all, shape)
+  }
+  all
+}
+
+fun draw_tetronimo(view, shape, colour, size, xpos, ypos) {
+  set_draw_color(view, colour)
+  for x in range(0, 4) {
+    for y in range(0, 4) {
+      let v = shape[x + y * 4]
+      if v == 1 {
+        fill_rect(
+          view, size * (x + xpos), size * (y + ypos),
+          size, size)
+      }
+    }    
+  }
+}
+
+fun draw_all_shapes(){
+  for i in range(0, len(all_shapes)) {
+    for j in range(0, 4) {
+      let s = all_shapes[i]
+      draw_tetronimo(
+        view, s.tiles[j], s.colour,
+        20, 1 + j * 4, 1 + i * 5)
+    }
+  }
+}
+
+struct game {
+  orientation,
+  shape, 
+  pos_x,
+  pos_y,
+}
+
+let game =
+  game(
+    orientation: 0,
+    shape: 0,
+    pos_x: 30,
+    pos_y: 5,
+  )
 
 while true {
   let e = poll_event(view)
@@ -15,13 +158,29 @@ while true {
       if e.key == "Escape" {
         break
       }
-      print(e)
+      if e.key == "Up" {
+        game.orientation =
+          (game.orientation + 1) % 4
+      }
+      if e.key == "Left" {
+        game.pos_x = game.pos_x - 1
+      }
+      if e.key == "Right" {
+        game.pos_x = game.pos_x + 1
+      }
+      if e.key == "Down" {
+        game.pos_y = game.pos_y + 1
+      }
+      if e.key == "Left Shift" {
+        game.orientation = 0
+        game.shape =
+          (game.shape + 1) % len(all_shapes)
+      }
     }
   }
   else {
     set_draw_color(view, 40, 40, 40, 255)
     clear(view)
-
     set_draw_color(view, 0, 0, 0, 255)
     let gap = 50
     for x in range(0, width/gap) {
@@ -30,6 +189,11 @@ while true {
     for y in range(0, height/gap) {
       draw_line(view, 0, y * gap, width, y * gap)
     }
+
+    let s = all_shapes[game.shape]
+    draw_tetronimo(
+      view, s.tiles[game.orientation], s.colour,
+      20, game.pos_x, game.pos_y)
 
     present(view)
   }

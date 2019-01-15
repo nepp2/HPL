@@ -17,9 +17,8 @@ static WHILE : &str = "while";
 static FOR : &str = "for";
 static STRUCT_DEFINE : &str = "struct_define";
 static STRUCT_INSTANTIATE : &str = "struct_instantiate";
-static BREAK : &str = "break";
 static BLOCK : &str = "block";
-static REGION : &str = "region";
+static IMPORT : &str = "import";
 pub static NO_TYPE : &str = "[NO_TYPE]";
 
 // TODO: this might be better implemented with a ring buffer (or just a backwards vec)
@@ -155,7 +154,7 @@ lazy_static! {
     vec!["-", "!"].into_iter().collect();
   static ref INFIX_OPERATORS : HashSet<&'static str> =
     vec!["=", ".", "==", "!=", "<=", ">=", "=>", "+=", "-=", "*=", "/=", "||", "&&",
-      "<", ">", "+", "-", "*", "/", "|", "&", "^"].into_iter().collect();
+      "<", ">", "+", "-", "*", "/", "%", "|", "&", "^"].into_iter().collect();
   static ref SPECIAL_OPERATORS : HashSet<&'static str> =
     vec!["=", ".", "+=", "&&", "||"].into_iter().collect();
 }
@@ -179,6 +178,7 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
         "-" => 4,
         "*" => 5,
         "/" => 5,
+        "%" => 5,
         "!" => 6,
         "(" => 7,
         "[" => 7,
@@ -505,11 +505,19 @@ fn parse_region(ps : &mut ParseState) -> Result<Expr, Error> {
   Ok(ps.add_tree(BLOCK, exprs, start))
 }
 
+fn parse_import(ps : &mut ParseState) -> Result<Expr, Error> {
+  let start = ps.peek_marker();
+  ps.expect_string(IMPORT)?;
+  let name = parse_simple_string(ps, TokenType::Keyword)?;
+  Ok(ps.add_tree(IMPORT, vec![name], start))
+}
+
 fn parse_keyword_term(ps : &mut ParseState) -> Result<Expr, Error> {
   match ps.peek()?.string.as_ref() {
     "region" => parse_region(ps),
     "let" => parse_let(ps),
     "fun" => parse_fun(ps),
+    "import" => parse_import(ps),
     "if" => parse_if(ps),
     "for" => parse_for(ps),
     "break" => {

@@ -1,17 +1,15 @@
 
 use crate::value::*;
-use crate::error::*;
 use crate::interpreter::{Interpreter, Environment, FunctionHandle, Method};
 use std::mem;
 use std::rc::Rc;
-use std::cell::{RefCell, RefMut};
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::any::{Any};
 
 use sdl2;
 use sdl2::{Sdl, VideoSubsystem, EventPump};
 use sdl2::event::Event;
-use sdl2::keyboard::{Keycode};
+//use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
 use sdl2::rect::{Rect, Point};
 use sdl2::video::{Window};
@@ -70,6 +68,7 @@ pub fn load_library(i : &mut Interpreter) {
   binary!(e, "-", f32, f32, f32, |a, b| a - b);
   binary!(e, "*", f32, f32, f32, |a, b| a * b);
   binary!(e, "/", f32, f32, f32, |a, b| a / b);
+  binary!(e, "%", f32, f32, f32, |a, b| a % b);
   binary!(e, ">", f32, f32, bool, |a, b| a > b);
   binary!(e, "<", f32, f32, bool, |a, b| a < b);
   binary!(e, "<=", f32, f32, bool, |a, b| a <= b);
@@ -90,6 +89,12 @@ pub fn load_library(i : &mut Interpreter) {
     let a = Into::<Result<Array, String>>::into(vs[0].clone())?;
     let len = a.borrow().len() as f32;
     Ok(Value::from(len))
+  });
+  fun(e, "add", vec![Type::Array, Type::Any], |_, vs| {
+    let a = Into::<Result<Array, String>>::into(vs[0].clone())?;
+    let v = vs[1].clone();
+    a.borrow_mut().push(v);
+    Ok(Value::Unit)
   });
   fun(e, "print", vec![Type::Any], |_, vs| {
     println!("{:?}", vs[0]);
