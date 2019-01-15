@@ -5,6 +5,7 @@ use std::mem;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use sdl2::video::WindowPos;
 
 use sdl2;
 use sdl2::{Sdl, VideoSubsystem, EventPump};
@@ -179,6 +180,20 @@ fn load_sdl(i : &mut Interpreter) {
     Ok(Value::External(v))
   });
 
+  fun(e, "set_window_pos", vec![sdl_view_type.clone(), Type::Any, Type::Any], |_, mut vs| {
+    fn to_pos(v : Value) -> Result<WindowPos, String> {
+      if v == Value::Unit { Ok(WindowPos::Centered) }
+      else { Ok(WindowPos::Positioned(v.convert::<f32>()? as i32)) }
+    }
+    let v = vs[0].get().convert::<ExternalVal>()?;
+    let mut v = v.val.borrow_mut();
+    let view = v.downcast_mut::<SdlView>().unwrap();
+    let x = to_pos(vs[1].get())?;
+    let y = to_pos(vs[2].get())?;
+    view.canvas.window_mut().set_position(x, y);
+    Ok(Value::Unit)
+  });
+
   fn new_struct(e : &mut Environment, name : &str, vals : HashMap<RefStr, Value>)
     -> Result<Value, String>
   {
@@ -283,6 +298,18 @@ fn load_sdl(i : &mut Interpreter) {
     let mut v = v.val.borrow_mut();
     let view = v.downcast_mut::<SdlView>().unwrap();
     view.canvas.draw_line(Point::new(x1, y1), Point::new(x2, y2)).unwrap();
+    return Ok(Value::Unit);
+  });
+
+  fun(e, "draw_rect", vec![sdl_view_type.clone(), Type::Float, Type::Float, Type::Float, Type::Float], |_e, mut vs| {
+    let v = vs[0].get().convert::<ExternalVal>()?;
+    let x = vs[1].get().convert::<f32>()? as i32;
+    let y = vs[2].get().convert::<f32>()? as i32;
+    let w = vs[3].get().convert::<f32>()? as u32;
+    let h = vs[4].get().convert::<f32>()? as u32;
+    let mut v = v.val.borrow_mut();
+    let view = v.downcast_mut::<SdlView>().unwrap();
+    view.canvas.draw_rect(Rect::new(x, y, w, h)).unwrap();
     return Ok(Value::Unit);
   });
 

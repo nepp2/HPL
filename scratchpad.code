@@ -3,6 +3,7 @@ let width = 1000
 let height = 800
 
 let view = create_sdl_view(width, height)
+set_window_pos(view, 10, ())
 
 struct colour {
   r, g, b, a
@@ -107,18 +108,36 @@ let all_shapes = {
   all
 }
 
-fun draw_tetronimo(view, shape, colour, size, xpos, ypos) {
+fun draw_tetronimo(
+  view, shape, colour, size,
+  xpos, ypos, xoffset, yoffset)
+{
   set_draw_color(view, colour)
   for x in range(0, 4) {
     for y in range(0, 4) {
       let v = shape[x + y * 4]
       if v == 1 {
         fill_rect(
-          view, size * (x + xpos), size * (y + ypos),
+          view,
+          size * (x + xpos) + xoffset,
+          size * (y + ypos) + yoffset,
           size, size)
       }
     }    
   }
+}
+
+fun check_contact(grid_width, shape, xpos){
+  for x in range(0, 4) {
+    for y in range(0, 4) {
+      if shape(x + y * 4) == 1 {
+        if xpos + x < 0 || xpos + x + 4 >= grid_width {
+          return true
+        }
+      }
+    }
+  }
+  return false
 }
 
 fun draw_all_shapes(){
@@ -132,6 +151,15 @@ fun draw_all_shapes(){
   }
 }
 
+fun draw_background_grid(view, width, height, gap){
+  for x in range(0, width/gap) {
+    draw_line(view, x * gap, 0, x * gap, height)
+  }
+  for y in range(0, height/gap) {
+    draw_line(view, 0, y * gap, width, y * gap)
+  }
+}
+
 struct game {
   orientation,
   shape, 
@@ -139,12 +167,18 @@ struct game {
   pos_y,
 }
 
+let tile_size = 30;
+let rx = 40;
+let ry = 40;
+let grid_height = 20;
+let grid_width = 10;
+
 let game =
   game(
     orientation: 0,
     shape: 0,
-    pos_x: 30,
-    pos_y: 5,
+    pos_x: 0,
+    pos_y: 0,
   )
 
 while true {
@@ -182,18 +216,15 @@ while true {
     set_draw_color(view, 40, 40, 40, 255)
     clear(view)
     set_draw_color(view, 0, 0, 0, 255)
-    let gap = 50
-    for x in range(0, width/gap) {
-      draw_line(view, x * gap, 0, x * gap, height)
-    }
-    for y in range(0, height/gap) {
-      draw_line(view, 0, y * gap, width, y * gap)
-    }
+    draw_rect(view, rx, ry,
+      tile_size * grid_width,
+      tile_size * grid_height)
 
     let s = all_shapes[game.shape]
     draw_tetronimo(
       view, s.tiles[game.orientation], s.colour,
-      20, game.pos_x, game.pos_y)
+      tile_size, game.pos_x, game.pos_y,
+      rx, ry)
 
     present(view)
   }
