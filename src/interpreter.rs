@@ -3,7 +3,7 @@ use crate::parser;
 use crate::parser::NO_TYPE;
 use crate::lexer;
 use crate::value::*;
-use crate::error::{Error, error, error_raw, error_no_loc};
+use crate::error::{Error, error, error_raw};
 use crate::library::load_library;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub enum ExitState {
   NotExiting,
   Breaking,
-  Returning,
+  Returning(Value),
 }
 
 pub enum FunctionHandle {
@@ -215,10 +215,13 @@ fn call_function(error_source : &Expr, function_name: &str, arg_values: Vec<Valu
       env.call_stack.push(function_scope);
       let r = interpret_with_env(&expr, env)?;
       env.call_stack.pop();
-      if env.exit_state == ExitState::Returning {
+      if let ExitState::Returning(ref v) = env.exit_state {
         env.exit_state = ExitState::NotExiting;
+        Ok(Value::Unit)
       }
-      Ok(r)
+      else {
+        Ok(r)
+      }
     }
     FunctionHandle::BuiltIn(f) => {
       f(env, arg_values).map_err(|s| error_raw(error_source, s))
@@ -270,13 +273,13 @@ fn to_value<V>(e : &Expr, env : &mut Environment) -> Result<V, Error>
   r.map_err(|s| error_raw(e, s))
 }
 
-fn array_index(array : &Vec<Value>, index : f32) -> Result<usize, Error> {
+fn array_index(e : &Expr, array : &Vec<Value>, index : f32) -> Result<usize, Error> {
   let i = index as usize;
   if index >= 0.0 && i < array.len() {
     Ok(i)
   }
   else {
-    Err(error_no_loc(format!("Index out of bounds error. Array of {} elements given index {}.", array.len(), index)))
+    error(e, format!("Index out of bounds error. Array of {} elements given index {}.", array.len(), index))
   }
 }
 
@@ -352,7 +355,7 @@ fn interpret_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> 
               let array_rc : Array = to_value(array_expr, env)?;
               let mut array = array_rc.borrow_mut();
               let f = to_value(index_expr, env)?;
-              let i = array_index(&array, f)?;
+              let i = array_index(expr, &array, f)?;
               array[i] = v;
               return Ok(Value::Unit)
             }
@@ -376,13 +379,13 @@ fn interpret_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> 
       }
       let return_val =
         if exprs.len() == 1 {
-          interpret_with_env(&exprs[0], env)
+          interpret_with_env(&exprs[0], env)?
         }
         else {
-          Ok(Value::Unit)
+          Value::Unit
         };
-      env.exit_state = ExitState::Returning;
-      return_val
+      env.exit_state = ExitState::Returning(return_val);
+      Ok(Value::Unit)
     }
     ("if", exprs) => {
       let arg_count = exprs.len();
@@ -519,7 +522,7 @@ fn interpret_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> 
         let array_rc = to_value::<Array>(array_expr, env)?;
         let array = array_rc.borrow();
         let f = to_value(index_expr, env)?;
-        let i = array_index(&array, f)?;
+        let i = array_index(expr, &array, f)?;
         Ok(array[i].clone())
       }
       else {

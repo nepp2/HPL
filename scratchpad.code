@@ -1,6 +1,6 @@
 
-let width = 1000
-let height = 800
+let width = 700
+let height = 600
 
 let view = create_sdl_view(width, height)
 set_window_pos(view, 10, ())
@@ -113,8 +113,8 @@ fun draw_tetronimo(
   xpos, ypos, xoffset, yoffset)
 {
   set_draw_color(view, colour)
-  for x in range(0, 4) {
-    for y in range(0, 4) {
+  for y in range(0, 4) {
+    for x in range(0, 4) {
       let v = shape[x + y * 4]
       if v == 1 {
         fill_rect(
@@ -128,9 +128,9 @@ fun draw_tetronimo(
 }
 
 fun check_contact(grid_width, shape, xpos){
-  for x in range(0, 4) {
-    for y in range(0, 4) {
-      if shape(x + y * 4) == 1 {
+  for y in range(0, 4) {
+    for x in range(0, 4) {
+      if shape[x + y * 4] == 1 {
         if xpos + x < 0 || xpos + x + 4 >= grid_width {
           return true
         }
@@ -167,7 +167,7 @@ struct game {
   pos_y,
 }
 
-let tile_size = 30;
+let tile_size = 25;
 let rx = 40;
 let ry = 40;
 let grid_height = 20;
@@ -215,14 +215,22 @@ while true {
   else {
     set_draw_color(view, 40, 40, 40, 255)
     clear(view)
-    set_draw_color(view, 0, 0, 0, 255)
+    set_draw_color(view, 120, 120, 120, 255)
     draw_rect(view, rx, ry,
       tile_size * grid_width,
       tile_size * grid_height)
 
     let s = all_shapes[game.shape]
+    let t = s.tiles[game.orientation];
+    let c =
+      if check_contact(grid_width, t, game.pos_x) {
+        red
+      }
+      else {
+        s.colour
+      }
     draw_tetronimo(
-      view, s.tiles[game.orientation], s.colour,
+      view, t, c,
       tile_size, game.pos_x, game.pos_y,
       rx, ry)
 

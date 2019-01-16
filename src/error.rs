@@ -9,10 +9,6 @@ pub fn error<T, L : Into<TextLocation>, S : Into<String>>(loc : L, message : S) 
   Err(Error { message: message.into(), location: loc.into() })
 }
 
-pub fn error_no_loc<S : Into<String>>(message : S) -> Error {
-  Error { message: message.into(), location: TextLocation::new((0,0), (0,0)) }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TextMarker {
   pub line : usize,
