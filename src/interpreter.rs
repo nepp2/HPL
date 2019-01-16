@@ -13,6 +13,7 @@ use std::fmt;
 use itertools::Itertools;
 use std::fs::File;
 use std::io::Read;
+use std::mem;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(PartialEq)]
@@ -215,9 +216,9 @@ fn call_function(error_source : &Expr, function_name: &str, arg_values: Vec<Valu
       env.call_stack.push(function_scope);
       let r = interpret_with_env(&expr, env)?;
       env.call_stack.pop();
-      if let ExitState::Returning(ref v) = env.exit_state {
-        env.exit_state = ExitState::NotExiting;
-        Ok(Value::Unit)
+      let es = mem::replace(&mut env.exit_state, ExitState::NotExiting);
+      if let ExitState::Returning(v) = es {
+        Ok(v)
       }
       else {
         Ok(r)

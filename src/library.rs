@@ -86,6 +86,10 @@ pub fn load_library(i : &mut Interpreter) {
     let f : Result<f32, String> = vs[0].clone().into();
     Ok(Value::from(-f?))
   });
+  fun(e, "!", vec![Type::Bool], |_, vs| {
+    let b : Result<bool, String> = vs[0].clone().into();
+    Ok(Value::from(!(b?)))
+  });
   fun(e, "len", vec![Type::Array], |_, vs| {
     let a = Into::<Result<Array, String>>::into(vs[0].clone())?;
     let len = a.borrow().len() as f32;

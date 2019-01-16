@@ -9,7 +9,7 @@ struct colour {
   r, g, b, a
 }
 
-struct shape {
+struct tetronimo {
   tiles, colour
 }
 
@@ -69,7 +69,7 @@ let shape_T =
     1, 1, 1, 0,
     0, 0, 0, 0 ]
 
-let shapes = [
+let colours = [
   shape_l1, orange,
   shape_l2, blue,
   shape_bar, sky_blue,
@@ -94,18 +94,18 @@ fun rotate(shape, rotation_grid){
   s
 }
 
-let all_shapes = {
-  let all = []
-  for i in range(0, len(shapes)/2) {
-    let c = shapes[i*2 + 1]
-    let s1 = shapes[i*2]
+let tetronimos = {
+  let ts = []
+  for i in range(0, len(colours)/2) {
+    let c = colours[i*2 + 1]
+    let s1 = colours[i*2]
     let s2 = rotate(s1, r90)
     let s3 = rotate(s2, r90)
     let s4 = rotate(s3, r90)
-    let shape = shape(tiles: [s1, s2, s3, s4], colour: c)
-    add(all, shape)
+    let t = tetronimo(tiles: [s1, s2, s3, s4], colour: c)
+    add(ts, t)
   }
-  all
+  ts
 }
 
 fun draw_tetronimo(
@@ -127,11 +127,20 @@ fun draw_tetronimo(
   }
 }
 
-fun check_contact(grid_width, shape, xpos){
+fun check_contact(grid, grid_width, grid_height, shape, pos_x, pos_y){
   for y in range(0, 4) {
     for x in range(0, 4) {
       if shape[x + y * 4] == 1 {
-        if xpos + x < 0 || xpos + x + 4 >= grid_width {
+        let xpos = x + pos_x
+        let ypos = y + pos_y
+        if xpos < 0 || xpos >= grid_width {
+          return true
+        }
+        if ypos >= grid_height {
+          return true
+        }
+        let i = xpos + ypos * grid_width
+        if grid[i] != () {
           return true
         }
       }
@@ -162,9 +171,13 @@ fun draw_background_grid(view, width, height, gap){
 
 struct game {
   orientation,
-  shape, 
+  tet_index, 
   pos_x,
   pos_y,
+  ticks_per_drop,
+  tick_count,
+  grid,
+  tetronimos,
 }
 
 let tile_size = 25;
@@ -173,69 +186,200 @@ let ry = 40;
 let grid_height = 20;
 let grid_width = 10;
 
+let grid = []
+for i in range(0, grid_width * grid_height) {
+  add(grid, ())
+}
+
 let game =
   game(
     orientation: 0,
-    shape: 0,
-    pos_x: 0,
+    tet_index: 0,
+    pos_x: grid_width/2 - 2,
     pos_y: 0,
+    ticks_per_drop: 30,
+    tick_count: 0,
+    grid: grid,
+    tetronimos: tetronimos,
   )
 
-while true {
-  let e = poll_event(view)
-  if e != () {
-    let t = type_name(e)
-    if t == "sdl_event_quit" {
-      break
-    }
-    if t == "sdl_event_keydown" {
-      if e.key == "Escape" {
-        break
-      }
-      if e.key == "Up" {
-        game.orientation =
-          (game.orientation + 1) % 4
-      }
-      if e.key == "Left" {
-        game.pos_x = game.pos_x - 1
-      }
-      if e.key == "Right" {
-        game.pos_x = game.pos_x + 1
-      }
-      if e.key == "Down" {
-        game.pos_y = game.pos_y + 1
-      }
-      if e.key == "Left Shift" {
-        game.orientation = 0
-        game.shape =
-          (game.shape + 1) % len(all_shapes)
+fun blit(game, shape, colour, grid_width) {
+  for y in range(0, 4) {
+    for x in range(0, 4) {
+      if shape[x + y * 4] == 1 {
+        let xpos = x + game.pos_x
+        let ypos = y + game.pos_y
+        let i = xpos + ypos * grid_width
+        game.grid[i] = colour
       }
     }
+  }
+}
+
+fun check_line(grid, y, grid_width) {
+  let i = y * grid_width
+  for i in range(i, i + grid_width) {
+    if grid[i] == () {
+      return false
+    }
+  }
+  return true
+}
+
+fun min(a, b) {
+  if a < b { a} else { b }
+}
+
+fun erase_lines(grid, y, grid_width, grid_height) {
+  for y in range(y, min(y + 4, grid_height)) {
+    if check_line(grid, y, grid_width) {
+      let end = (y + 1) * grid_width
+      for i in range(1, (end + 1) - grid_width) {
+        grid[end - i] = grid[(end - i) - grid_width]
+      }
+      for i in range(0, grid_width) {
+        grid[i] = ()
+      }
+    }
+  }
+}
+
+fun move_horizontal(game, grid_width, grid_height, shape, offset) {
+  let new_x = game.pos_x + offset
+  let c = check_contact(
+    game.grid, grid_width, grid_height,
+    shape, new_x, game.pos_y)
+  if !c {
+    game.pos_x = new_x
+  }
+}
+
+fun move_down(game, shape, colour, grid_width, grid_height) {
+  let new_y = game.pos_y + 1
+  game.tick_count = 0
+  let c = check_contact(
+    game.grid, grid_width, grid_height,
+    shape, game.pos_x, new_y)
+  if c {
+    blit(game, shape, colour, grid_width)
+    erase_lines(game.grid, game.pos_y, grid_width, grid_height)
+    game.pos_x = grid_width/2 - 2
+    game.pos_y = 0
+    game.tick_count = 0
+    game.orientation = 0
+    game.tet_index =
+      (game.tet_index + 1) % len(game.tetronimos)
+    true
   }
   else {
-    set_draw_color(view, 40, 40, 40, 255)
-    clear(view)
-    set_draw_color(view, 120, 120, 120, 255)
-    draw_rect(view, rx, ry,
-      tile_size * grid_width,
-      tile_size * grid_height)
-
-    let s = all_shapes[game.shape]
-    let t = s.tiles[game.orientation];
-    let c =
-      if check_contact(grid_width, t, game.pos_x) {
-        red
-      }
-      else {
-        s.colour
-      }
-    draw_tetronimo(
-      view, t, c,
-      tile_size, game.pos_x, game.pos_y,
-      rx, ry)
-
-    present(view)
+    game.pos_y = new_y
+    false
   }
+}
+
+while true {
+  while true {
+    let e = poll_event(view)
+    if e == () {
+      break
+    }
+    else {
+      let tet = tetronimos[game.tet_index]
+      let shape = tet.tiles[game.orientation]
+      let t = type_name(e)
+      if t == "sdl_event_quit" {
+        return
+      }
+      if t == "sdl_event_keydown" {
+        if e.key == "Escape" {
+          return
+        }
+        if e.key == "Up" {
+          game.orientation =
+            (game.orientation + 1) % 4
+        }
+        if e.key == "Left" {
+          move_horizontal(
+            game, grid_width, grid_height, shape, -1)
+        }
+        if e.key == "Right" {
+          move_horizontal(
+            game, grid_width, grid_height, shape, 1)
+        }
+        if e.key == "Down" {
+          move_down(game, shape, tet.colour, grid_width, grid_height)
+        }
+        if e.key == "Space" {
+          while true {
+            if move_down(game, shape, tet.colour, grid_width, grid_height) {
+              break
+            }
+          }
+        }
+        if e.key == "Left Shift" {
+          game.orientation = 0
+          game.tet_index =
+            (game.tet_index + 1) % len(tetronimos)
+        }
+      }
+    }
+  }
+
+  set_draw_color(view, 40, 40, 40, 255)
+  clear(view)
+  set_draw_color(view, 120, 120, 120, 255)
+  draw_rect(view, rx, ry,
+    tile_size * grid_width,
+    tile_size * grid_height)
+
+  let tet = tetronimos[game.tet_index]
+  let shape = tet.tiles[game.orientation]
+
+  game.tick_count = game.tick_count + 1
+  if game.tick_count >= game.ticks_per_drop {
+    move_down(game, shape, tet.colour, grid_width, grid_height)
+  }
+
+  for y in range(0, grid_height) {
+    for x in range(0, grid_width) {
+      let i = y * grid_width + x
+      let c = game.grid[i]
+      if c != () {
+        set_draw_color(view, c)
+        fill_rect(
+          view,
+          tile_size * x + rx,
+          tile_size * y + ry,
+          tile_size, tile_size)
+      }
+    }
+  }
+
+  let ghost_y = game.pos_y
+  while true {
+    let new_y = ghost_y + 1
+    let c = check_contact(
+      game.grid, grid_width, grid_height,
+      shape, game.pos_x, new_y)
+    if c {
+      break
+    }
+    ghost_y = new_y
+  }
+
+  // draw ghost
+  draw_tetronimo(
+    view, shape, [60, 60, 60, 255],
+    tile_size, game.pos_x, ghost_y,
+    rx, ry)
+
+  // draw real tetronimo
+  draw_tetronimo(
+    view, shape, tet.colour,
+    tile_size, game.pos_x, game.pos_y,
+    rx, ry)
+
+  present(view)
 
   sleep(1000/60)
 }
