@@ -16,9 +16,10 @@ use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(PartialEq)]
-pub enum BreakState {
+pub enum ExitState {
+  NotExiting,
   Breaking,
-  NotBreaking,
+  Returning,
 }
 
 pub enum FunctionHandle {
@@ -61,7 +62,8 @@ pub struct Environment {
   pub loop_depth : i32,
 
   /// indicates whether the program is currently breaking out of a loop
-  pub break_state : BreakState,
+  /// or returning from the function
+  pub exit_state : ExitState,
 
   /// used to halt the interpreter from another thread
   pub interrupt_flag : Arc<AtomicBool>,
@@ -74,7 +76,7 @@ impl Environment {
       call_stack: vec![vec![HashMap::new()]],
       functions: HashMap::new(), structs: HashMap::new(),
       loop_depth: 0,
-      break_state: BreakState::NotBreaking,
+      exit_state: ExitState::NotExiting,
       interrupt_flag,
     }
   }
@@ -213,6 +215,9 @@ fn call_function(error_source : &Expr, function_name: &str, arg_values: Vec<Valu
       env.call_stack.push(function_scope);
       let r = interpret_with_env(&expr, env)?;
       env.call_stack.pop();
+      if env.exit_state == ExitState::Returning {
+        env.exit_state = ExitState::NotExiting;
+      }
       Ok(r)
     }
     FunctionHandle::BuiltIn(f) => {
@@ -295,21 +300,26 @@ fn interpret_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> 
       interpret_function_call(expr, function_name_expr, params, env)
     }
     ("block", exprs) => {
-      env.current_function_scope().push(HashMap::new());
-      let last_val = {
+      fn evaluate_block(exprs : &[Expr], env : &mut Environment)
+        -> Result<Value, Error>
+      {
         let expr_count = exprs.len();
         if expr_count > 0 {
           for i in 0..(expr_count-1) {
-            let _ = interpret_with_env(&exprs[i], env)?;
+            let v = interpret_with_env(&exprs[i], env)?;
+            if env.exit_state != ExitState::NotExiting {
+              return Ok(v);
+            }
           }
-          interpret_with_env(&exprs[expr_count-1], env)
+          return interpret_with_env(&exprs[expr_count-1], env)
         }
-        else {
-          Ok(Value::Unit)
-        }
-      };
+        Ok(Value::Unit)
+      }
+
+      env.current_function_scope().push(HashMap::new());
+      let val = evaluate_block(exprs, env);
       env.current_function_scope().pop();
-      last_val
+      val
     }
     ("let", exprs) => {
       let name = exprs[0].symbol_unwrap()?;
@@ -359,6 +369,20 @@ fn interpret_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> 
         _ => (),
       }
       error(assign_expr, format!("can't assign to {:?}", assign_expr))
+    }
+    ("return", exprs) => {
+      if exprs.len() > 1 {
+        return error(expr, format!("malformed return expression"));
+      }
+      let return_val =
+        if exprs.len() == 1 {
+          interpret_with_env(&exprs[0], env)
+        }
+        else {
+          Ok(Value::Unit)
+        };
+      env.exit_state = ExitState::Returning;
+      return_val
     }
     ("if", exprs) => {
       let arg_count = exprs.len();
@@ -421,11 +445,13 @@ fn interpret_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> 
         return error(expr, format!("malformed while block"));
       }
       env.loop_depth += 1;
-      while env.break_state != BreakState::Breaking && to_value(&exprs[0], env)? {
+      while env.exit_state == ExitState::NotExiting && to_value(&exprs[0], env)? {
         interpret_with_env(&exprs[1], env)?;
       }
       env.loop_depth -= 1;
-      env.break_state = BreakState::NotBreaking;
+      if env.exit_state == ExitState::Breaking {
+        env.exit_state = ExitState::NotExiting;
+      }
       Ok(Value::Unit)
     }
     ("for", exprs) => {
@@ -444,7 +470,7 @@ fn interpret_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> 
       env.current_function_scope().push(HashMap::new());
       env.new_variable(var.clone(), Value::Unit);
       env.loop_depth += 1;
-      while env.break_state != BreakState::Breaking {
+      while env.exit_state == ExitState::NotExiting {
         let item = call_function(&exprs[1], "next_item", vec![iterable.clone()], vec![iterable_type.clone()], env)?;
         if item == Value::Unit {
           break;
@@ -455,7 +481,9 @@ fn interpret_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> 
       }
       env.loop_depth -= 1;
       env.current_function_scope().pop();
-      env.break_state = BreakState::NotBreaking;
+      if env.exit_state == ExitState::Breaking {
+        env.exit_state = ExitState::NotExiting;
+      }
       Ok(Value::Unit)
     }
     ("fun", exprs) => {
@@ -503,9 +531,9 @@ fn interpret_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> 
 }
 
 fn interpret_with_env(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
-  if env.break_state == BreakState::Breaking {
-    // this basically skips all evaluations until we backtrack to the loop,
-    // which will spot the break state and stop iterating.
+  if env.exit_state != ExitState::NotExiting {
+    // this skips all evaluations until we backtrack to something
+    // that stops the exit state, such as a loop or function call
     return Ok(Value::Unit);
   }
   match &expr.tag {
@@ -515,7 +543,7 @@ fn interpret_with_env(expr : &Expr, env : &mut Environment) -> Result<Value, Err
     ExprTag::Symbol(s) => {
       if s.as_ref() == "break" {
         if env.loop_depth > 0 {
-          env.break_state = BreakState::Breaking;
+          env.exit_state = ExitState::Breaking;
           Ok(Value::Unit)
         }
         else {

@@ -512,6 +512,19 @@ fn parse_import(ps : &mut ParseState) -> Result<Expr, Error> {
   Ok(ps.add_tree(IMPORT, vec![name], start))
 }
 
+fn parse_return(ps : &mut ParseState) -> Result<Expr, Error> {
+  let start = ps.peek_marker();
+  ps.expect_string("return")?;
+  if ps.has_tokens() {
+    let t = ps.peek()?;
+    if !TERMINATING_SYNTAX.contains(t.string.as_ref()) {
+      let e = parse_expression(ps)?;
+      return Ok(ps.add_tree("return", vec![e], start));
+    }
+  }
+  Ok(ps.add_tree("return", vec![], start))
+}
+
 fn parse_keyword_term(ps : &mut ParseState) -> Result<Expr, Error> {
   match ps.peek()?.string.as_ref() {
     "region" => parse_region(ps),
@@ -523,6 +536,7 @@ fn parse_keyword_term(ps : &mut ParseState) -> Result<Expr, Error> {
     "break" => {
       Ok(parse_simple_string(ps, TokenType::Keyword)?)
     }
+    "return" => parse_return(ps),
     "while" => parse_while(ps),
     "struct" => parse_struct_definition(ps),
     "true" => {
