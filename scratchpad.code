@@ -1,5 +1,5 @@
 
-let width = 700
+let width = 400
 let height = 600
 
 let view = create_sdl_view(width, height)
@@ -178,6 +178,8 @@ struct game {
   tick_count,
   grid,
   tetronimos,
+  tetronimo_bag,
+  rng,
 }
 
 let tile_size = 25;
@@ -197,11 +199,31 @@ let game =
     tet_index: 0,
     pos_x: grid_width/2 - 2,
     pos_y: 0,
-    ticks_per_drop: 30,
+    ticks_per_drop: 120,
     tick_count: 0,
     grid: grid,
     tetronimos: tetronimos,
+    tetronimo_bag: [],
+    rng: random_generator(),
   )
+
+fun next_tetronimo(game){
+  if len(game.tetronimo_bag) == 0 {
+    for i in range(0, 2) {
+      for i in range(0, len(game.tetronimos)) {
+        add(game.tetronimo_bag, i)
+      }
+    }
+  }
+  let tets = len(game.tetronimo_bag)
+  let i = next_rand(game.rng) * tets
+  let next_tet = game.tetronimo_bag[i]
+  game.tetronimo_bag[i] = game.tetronimo_bag[tets-1]
+  pop(game.tetronimo_bag)
+  next_tet
+}
+
+game.tet_index = next_tetronimo(game)
 
 fun blit(game, shape, colour, grid_width) {
   for y in range(0, 4) {
@@ -272,8 +294,7 @@ fun move_down(game, shape, colour, grid_width, grid_height) {
     game.pos_y = 0
     game.tick_count = 0
     game.orientation = 0
-    game.tet_index =
-      (game.tet_index + 1) % len(game.tetronimos)
+    game.tet_index = next_tetronimo(game)
     true
   }
   else {
@@ -323,11 +344,6 @@ while true {
               break
             }
           }
-        }
-        if e.key == "Left Shift" {
-          game.orientation = 0
-          game.tet_index =
-            (game.tet_index + 1) % len(tetronimos)
         }
       }
     }
@@ -393,7 +409,7 @@ while true {
   let millis = 1000/60
   let sleep_time = max(millis - elapsed, 0)
 
-  print(elapsed)
+  //print(elapsed)
 
   sleep(sleep_time)
 }

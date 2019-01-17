@@ -6,6 +6,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
+use rand::prelude::*;
 
 use sdl2::video::WindowPos;
 use sdl2;
@@ -101,6 +102,11 @@ pub fn load_library(i : &mut Interpreter) {
     a.borrow_mut().push(v);
     Ok(Value::Unit)
   });
+  fun(e, "pop", vec![Type::Array], |_, vs| {
+    let a = Into::<Result<Array, String>>::into(vs[0].clone())?;
+    let v = a.borrow_mut().pop();
+    v.ok_or_else(|| format!("can't pop from empty array"))
+  });
   fun(e, "print", vec![Type::Any], |_, vs| {
     println!("{:?}", vs[0]);
     Ok(Value::Unit)
@@ -176,9 +182,6 @@ fn load_sdl(i : &mut Interpreter) {
   let e = &mut i.env;
   const SDL_VIEW : &'static str = "sdl_view";
   let sdl_view_type = e.ext_type(SDL_VIEW);
-
-  const TIME_SNAPSHOT : &'static str = "time_snapshot";
-  let time_snapshot_type = e.ext_type(TIME_SNAPSHOT);
 
   fun(e, "create_sdl_view", vec![Type::Float, Type::Float], |e, mut vs| {
     let a = vs[0].get().convert::<f32>()? as u32;
@@ -347,12 +350,15 @@ fn load_sdl(i : &mut Interpreter) {
     return Ok(Value::Unit);
   });
 
+  const TIME_SNAPSHOT : &'static str = "time_snapshot";
+  let time_snapshot_type = e.ext_type(TIME_SNAPSHOT);
+
   fun(e, "time_now", vec![], |e, mut _vs| {
     let v = e.ext_val(TIME_SNAPSHOT, Instant::now());
     Ok(Value::External(v))
   });
 
-  fun(e, "time_since", vec![time_snapshot_type], |e, mut vs| {
+  fun(e, "time_since", vec![time_snapshot_type], |_e, mut vs| {
     let v = vs[0].get().convert::<ExternalVal>()?;
     let mut v = v.val.borrow_mut();
     let instant = v.downcast_mut::<Instant>().unwrap();
@@ -360,5 +366,20 @@ fn load_sdl(i : &mut Interpreter) {
     let duration = new_now.duration_since(*instant);
     let f = duration.subsec_micros() as f32 / 1000.0;
     Ok(Value::from(f))
+  });
+
+  const RANDOM_GENERATOR : &'static str = "random_generator";
+  let random_generator = e.ext_type(RANDOM_GENERATOR);
+
+  fun(e, "random_generator", vec![], |e, mut _vs| {
+    let v = e.ext_val(RANDOM_GENERATOR, thread_rng());
+    Ok(Value::External(v))
+  });
+
+  fun(e, "next_rand", vec![random_generator], |_e, mut vs| {
+    let v = vs[0].get().convert::<ExternalVal>()?;
+    let mut v = v.val.borrow_mut();
+    let rng = v.downcast_mut::<ThreadRng>().unwrap();
+    Ok(Value::Float(rng.gen()))
   });
 }
