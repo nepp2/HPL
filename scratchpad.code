@@ -230,6 +230,11 @@ fun min(a, b) {
   if a < b { a} else { b }
 }
 
+fun max(a, b) {
+  if a > b { a} else { b }
+}
+
+
 fun erase_lines(grid, y, grid_width, grid_height) {
   for y in range(y, min(y + 4, grid_height)) {
     if check_line(grid, y, grid_width) {
@@ -278,6 +283,9 @@ fun move_down(game, shape, colour, grid_width, grid_height) {
 }
 
 while true {
+
+  let time = time_now()
+
   while true {
     let e = poll_event(view)
     if e == () {
@@ -381,5 +389,11 @@ while true {
 
   present(view)
 
-  sleep(1000/60)
+  let elapsed = time_since(time)
+  let millis = 1000/60
+  let sleep_time = max(millis - elapsed, 0)
+
+  print(elapsed)
+
+  sleep(sleep_time)
 }

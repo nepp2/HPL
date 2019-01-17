@@ -5,8 +5,9 @@ use std::mem;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use sdl2::video::WindowPos;
+use std::time::{Duration, Instant};
 
+use sdl2::video::WindowPos;
 use sdl2;
 use sdl2::{Sdl, VideoSubsystem, EventPump};
 use sdl2::event::Event;
@@ -14,7 +15,6 @@ use sdl2::event::Event;
 use sdl2::pixels::Color;
 use sdl2::rect::{Rect, Point};
 use sdl2::video::{Window};
-use std::time::Duration;
 
 impl Value {
   fn convert<T>(self) -> Result<T, String>
@@ -176,6 +176,9 @@ fn load_sdl(i : &mut Interpreter) {
   let e = &mut i.env;
   const SDL_VIEW : &'static str = "sdl_view";
   let sdl_view_type = e.ext_type(SDL_VIEW);
+
+  const TIME_SNAPSHOT : &'static str = "time_snapshot";
+  let time_snapshot_type = e.ext_type(TIME_SNAPSHOT);
 
   fun(e, "create_sdl_view", vec![Type::Float, Type::Float], |e, mut vs| {
     let a = vs[0].get().convert::<f32>()? as u32;
@@ -342,5 +345,20 @@ fn load_sdl(i : &mut Interpreter) {
     let micros = millis * 1000.0;
     Duration::from_micros(micros as u64);
     return Ok(Value::Unit);
+  });
+
+  fun(e, "time_now", vec![], |e, mut _vs| {
+    let v = e.ext_val(TIME_SNAPSHOT, Instant::now());
+    Ok(Value::External(v))
+  });
+
+  fun(e, "time_since", vec![time_snapshot_type], |e, mut vs| {
+    let v = vs[0].get().convert::<ExternalVal>()?;
+    let mut v = v.val.borrow_mut();
+    let instant = v.downcast_mut::<Instant>().unwrap();
+    let new_now = Instant::now();
+    let duration = new_now.duration_since(*instant);
+    let f = duration.subsec_micros() as f32 / 1000.0;
+    Ok(Value::from(f))
   });
 }
