@@ -326,12 +326,16 @@ fun rotate(game, grid_width, grid_height) {
   let orientation = (game.orientation + 1) % 4
   let tet = game.tetronimos[game.tet_index]
   let shape = tet.tiles[orientation]
-  let c = contact_type(
-    game.grid, grid_width, grid_height,
-    shape, game.pos_x, game.pos_y)
-  if c == () {
-    game.orientation = orientation
+  if shape is out of the left edge {
+    // move right until it's not
   }
+  if shape is out of the right edge {
+    // move left until it's not
+  }
+  if shape is off the bottom edge, or touching something {
+    // move up until it isn't
+  }
+  game.orientation = orientation
 }
 
 while true {
