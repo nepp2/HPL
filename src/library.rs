@@ -87,6 +87,14 @@ pub fn load_library(i : &mut Interpreter) {
     let f : Result<f32, String> = vs[0].clone().into();
     Ok(Value::from(-f?))
   });
+  fun(e, "sqrt", vec![Type::Float], |_e, mut vs| {
+    let f = vs[0].get().convert::<f32>()?;
+    Ok(Value::from(f.sqrt()))
+  });
+  fun(e, "floor", vec![Type::Float], |_e, mut vs| {
+    let v = vs[0].get().convert::<f32>()? as i64;
+    Ok(Value::from(v as f32))
+  });
   fun(e, "!", vec![Type::Bool], |_, vs| {
     let b : Result<bool, String> = vs[0].clone().into();
     Ok(Value::from(!(b?)))

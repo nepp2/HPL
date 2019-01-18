@@ -26,18 +26,14 @@ let yellow = [255, 200, 0, 255]
 let magenta = [255, 80, 255, 255]
 
 let shape_l1 =
-  [0, 1, 0, 0,
-   0, 1, 0, 0,
-   0, 1, 1, 0,
-   0, 0, 0, 0,
-  ]
+  [ 0, 1, 0,
+    0, 1, 0,
+    0, 1, 1 ]
 
 let shape_l2 =
-  [0, 0, 1, 0,
-   0, 0, 1, 0,
-   0, 1, 1, 0,
-   0, 0, 0, 0,
-  ]
+  [ 0, 1, 0,
+    0, 1, 0,
+    1, 1, 0 ]
 
 let shape_bar =
   [ 0, 1, 0, 0,
@@ -46,28 +42,23 @@ let shape_bar =
     0, 1, 0, 0 ]
 
 let shape_z =
-  [ 0, 0, 0, 0,
-    1, 1, 0, 0,
-    0, 1, 1, 0,
-    0, 0, 0, 0 ]
+  [ 0, 0, 0,
+    1, 1, 0,
+    0, 1, 1 ]
 
 let shape_s =
-  [ 0, 0, 0, 0,
-    0, 0, 1, 1,
-    0, 1, 1, 0,
-    0, 0, 0, 0 ]
+  [ 0, 0, 0,
+    0, 1, 1,
+    1, 1, 0 ]
 
 let shape_square =
-  [ 0, 0, 0, 0,
-    0, 1, 1, 0,
-    0, 1, 1, 0,
-    0, 0, 0, 0 ]
+  [ 1, 1,
+    1, 1 ]
 
 let shape_T =
-  [ 0, 0, 0, 0,
-    0, 1, 0, 0,
-    1, 1, 1, 0,
-    0, 0, 0, 0 ]
+  [ 0, 1, 0,
+    1, 1, 1,
+    0, 0, 0 ]
 
 let colours = [
   shape_l1, orange,
@@ -79,17 +70,18 @@ let colours = [
   shape_T, magenta,
 ]
 
-let r90 =
-  [ 12,  8,  4,  0,
-    13,  9,  5,  1,
-    14,  10, 6,  2,
-    15,  11, 7,  3 ]
+fun shape_size(shape){
+  sqrt(len(shape))
+}
 
-fun rotate(shape, rotation_grid){
+fun rotate_90(shape){
+  let size =shape_size(shape)
   let s = []
-  for i in range(0, 16) {
-    let index = rotation_grid[i]
-    add(s, shape[index])
+  for i in range(0, size * size) {
+    let y = floor(i / size)
+    let x = i % size
+    let i = (size - 1 - x) * size + y
+    add(s, shape[i])
   }
   s
 }
@@ -99,10 +91,12 @@ let tetronimos = {
   for i in range(0, len(colours)/2) {
     let c = colours[i*2 + 1]
     let s1 = colours[i*2]
-    let s2 = rotate(s1, r90)
-    let s3 = rotate(s2, r90)
-    let s4 = rotate(s3, r90)
-    let t = tetronimo(tiles: [s1, s2, s3, s4], colour: c)
+    let s2 = rotate_90(s1)
+    let s3 = rotate_90(s2)
+    let s4 = rotate_90(s3)
+    let t = tetronimo(
+      tiles: [s1, s2, s3, s4],
+      colour: c)
     add(ts, t)
   }
   ts
@@ -113,9 +107,10 @@ fun draw_tetronimo(
   xpos, ypos, xoffset, yoffset)
 {
   set_draw_color(view, colour)
-  for y in range(0, 4) {
-    for x in range(0, 4) {
-      let v = shape[x + y * 4]
+  let shape_size = shape_size(shape)
+  for y in range(0, shape_size) {
+    for x in range(0, shape_size) {
+      let v = shape[x + y * shape_size]
       if v == 1 {
         fill_rect(
           view,
@@ -127,26 +122,37 @@ fun draw_tetronimo(
   }
 }
 
-fun check_contact(grid, grid_width, grid_height, shape, pos_x, pos_y){
-  for y in range(0, 4) {
-    for x in range(0, 4) {
-      if shape[x + y * 4] == 1 {
+fun contact_type(grid, grid_width, grid_height, shape, pos_x, pos_y){
+  let shape_size = shape_size(shape)
+  for y in range(0, shape_size) {
+    for x in range(0, shape_size) {
+      if shape[x + y * shape_size] == 1 {
         let xpos = x + pos_x
         let ypos = y + pos_y
-        if xpos < 0 || xpos >= grid_width {
-          return true
+        if xpos < 0 {
+          return "left"
+        }
+        if xpos >= grid_width {
+          return "right"
         }
         if ypos >= grid_height {
-          return true
+          return "bottom"
         }
         let i = xpos + ypos * grid_width
         if grid[i] != () {
-          return true
+          return "tile"
         }
       }
     }
   }
-  return false
+  return ()
+}
+
+fun check_contact(grid, grid_width, grid_height, shape, pos_x, pos_y){
+  let c = contact_type(
+    grid, grid_width, grid_height,
+    shape, pos_x, pos_y)
+  c != ()
 }
 
 fun draw_all_shapes(){
@@ -197,7 +203,7 @@ let game =
   game(
     orientation: 0,
     tet_index: 0,
-    pos_x: grid_width/2 - 2,
+    pos_x: 0,
     pos_y: 0,
     ticks_per_drop: 120,
     tick_count: 0,
@@ -207,7 +213,17 @@ let game =
     rng: random_generator(),
   )
 
-fun next_tetronimo(game){
+fun init_tetronimo_state(game, grid_width) {
+  game.pos_y = 0
+  game.tick_count = 0
+  game.orientation = 0
+  let tet = game.tetronimos[game.tet_index]
+  let shape = tet.tiles[game.orientation]
+  let half_size = floor(shape_size(shape) / 2)
+  game.pos_x = grid_width/2 - half_size
+}
+
+fun next_tetronimo(game, grid_width){
   if len(game.tetronimo_bag) == 0 {
     for i in range(0, 2) {
       for i in range(0, len(game.tetronimos)) {
@@ -220,15 +236,17 @@ fun next_tetronimo(game){
   let next_tet = game.tetronimo_bag[i]
   game.tetronimo_bag[i] = game.tetronimo_bag[tets-1]
   pop(game.tetronimo_bag)
-  next_tet
+  game.tet_index = next_tet
+  init_tetronimo_state(game, grid_width)
 }
 
-game.tet_index = next_tetronimo(game)
+next_tetronimo(game, grid_width)
 
 fun blit(game, shape, colour, grid_width) {
-  for y in range(0, 4) {
-    for x in range(0, 4) {
-      if shape[x + y * 4] == 1 {
+  let shape_size = shape_size(shape)
+  for y in range(0, shape_size) {
+    for x in range(0, shape_size) {
+      if shape[x + y * shape_size] == 1 {
         let xpos = x + game.pos_x
         let ypos = y + game.pos_y
         let i = xpos + ypos * grid_width
@@ -236,6 +254,14 @@ fun blit(game, shape, colour, grid_width) {
       }
     }
   }
+}
+
+fun min(a, b) {
+  if a < b { a} else { b }
+}
+
+fun max(a, b) {
+  if a > b { a} else { b }
 }
 
 fun check_line(grid, y, grid_width) {
@@ -248,17 +274,8 @@ fun check_line(grid, y, grid_width) {
   return true
 }
 
-fun min(a, b) {
-  if a < b { a} else { b }
-}
-
-fun max(a, b) {
-  if a > b { a} else { b }
-}
-
-
-fun erase_lines(grid, y, grid_width, grid_height) {
-  for y in range(y, min(y + 4, grid_height)) {
+fun erase_lines(grid, y, shape_size, grid_width, grid_height) {
+  for y in range(y, min(y + shape_size, grid_height)) {
     if check_line(grid, y, grid_width) {
       let end = (y + 1) * grid_width
       for i in range(1, (end + 1) - grid_width) {
@@ -289,17 +306,31 @@ fun move_down(game, shape, colour, grid_width, grid_height) {
     shape, game.pos_x, new_y)
   if c {
     blit(game, shape, colour, grid_width)
-    erase_lines(game.grid, game.pos_y, grid_width, grid_height)
+    erase_lines(
+      game.grid, game.pos_y, shape_size(shape),
+      grid_width, grid_height)
     game.pos_x = grid_width/2 - 2
     game.pos_y = 0
     game.tick_count = 0
     game.orientation = 0
-    game.tet_index = next_tetronimo(game)
+    next_tetronimo(game, grid_width)
     true
   }
   else {
     game.pos_y = new_y
     false
+  }
+}
+
+fun rotate(game, grid_width, grid_height) {
+  let orientation = (game.orientation + 1) % 4
+  let tet = game.tetronimos[game.tet_index]
+  let shape = tet.tiles[orientation]
+  let c = contact_type(
+    game.grid, grid_width, grid_height,
+    shape, game.pos_x, game.pos_y)
+  if c == () {
+    game.orientation = orientation
   }
 }
 
@@ -324,8 +355,7 @@ while true {
           return
         }
         if e.key == "Up" {
-          game.orientation =
-            (game.orientation + 1) % 4
+          rotate(game, grid_width, grid_height)
         }
         if e.key == "Left" {
           move_horizontal(
@@ -336,7 +366,7 @@ while true {
             game, grid_width, grid_height, shape, 1)
         }
         if e.key == "Down" {
-          move_down(game, shape, tet.colour, grid_width, grid_height)
+          move_down(game, shape, tet.shape_size, tet.colour, grid_width, grid_height)
         }
         if e.key == "Space" {
           while true {
