@@ -5,13 +5,11 @@ let height = 600
 let view = create_sdl_view(width, height)
 set_window_pos(view, 10, ())
 
-struct colour {
-  r, g, b, a
-}
+struct colour { r, g, b, a }
 
-struct tetronimo {
-  tiles, colour
-}
+struct tetronimo { tiles, colour }
+
+struct vec2 { x , y }
 
 fun set_draw_color(view, c : array) {
   set_draw_color(view, c[0], c[1], c[2], c[3])
@@ -138,9 +136,11 @@ fun contact_type(grid, grid_width, grid_height, shape, pos_x, pos_y){
         if ypos >= grid_height {
           return "bottom"
         }
-        let i = xpos + ypos * grid_width
-        if grid[i] != () {
-          return "tile"
+        if ypos >= 0 {
+          let i = xpos + ypos * grid_width
+          if grid[i] != () {
+            return "overlap"
+          }
         }
       }
     }
@@ -149,9 +149,7 @@ fun contact_type(grid, grid_width, grid_height, shape, pos_x, pos_y){
 }
 
 fun check_contact(grid, grid_width, grid_height, shape, pos_x, pos_y){
-  let c = contact_type(
-    grid, grid_width, grid_height,
-    shape, pos_x, pos_y)
+  let c = contact_type( grid, grid_width, grid_height, shape, pos_x, pos_y)
   c != ()
 }
 
@@ -205,7 +203,7 @@ let game =
     tet_index: 0,
     pos_x: 0,
     pos_y: 0,
-    ticks_per_drop: 120,
+    ticks_per_drop: 200,
     tick_count: 0,
     grid: grid,
     tetronimos: tetronimos,
@@ -323,19 +321,27 @@ fun move_down(game, shape, colour, grid_width, grid_height) {
 }
 
 fun rotate(game, grid_width, grid_height) {
-  let orientation = (game.orientation + 1) % 4
+  game.orientation = (game.orientation + 1) % 4
   let tet = game.tetronimos[game.tet_index]
-  let shape = tet.tiles[orientation]
-  if shape is out of the left edge {
-    // move right until it's not
+  let shape = tet.tiles[game.orientation]
+  while true {
+    let c = contact_type(
+      game.grid, grid_width, grid_height,
+      shape, game.pos_x, game.pos_y)
+    if c == () {
+      break
+    }
+    else if c == "left" {
+      game.pos_x = game.pos_x + 1
+    }
+    else if c == "right" {
+      game.pos_x = game.pos_x - 1
+    }
+    else {
+      // overlap or bottom
+      game.pos_y = game.pos_y - 1
+    }
   }
-  if shape is out of the right edge {
-    // move left until it's not
-  }
-  if shape is off the bottom edge, or touching something {
-    // move up until it isn't
-  }
-  game.orientation = orientation
 }
 
 while true {
@@ -370,7 +376,7 @@ while true {
             game, grid_width, grid_height, shape, 1)
         }
         if e.key == "Down" {
-          move_down(game, shape, tet.shape_size, tet.colour, grid_width, grid_height)
+          move_down(game, shape, tet.colour, grid_width, grid_height)
         }
         if e.key == "Space" {
           while true {

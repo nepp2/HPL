@@ -408,10 +408,16 @@ fn parse_if(ps : &mut ParseState) -> Result<Expr, Error> {
   ps.expect_string("}")?;
   let mut args = vec!(conditional, then_block);
   if ps.accept_string("else") {
-    ps.expect_string("{")?;
-    let else_block = parse_block(ps)?;
-    ps.expect_string("}")?;
-    args.push(else_block);
+    if ps.peek()?.string.as_ref() == "if" {
+      let else_if = parse_if(ps)?;
+      args.push(else_if);
+    }
+    else {
+      ps.expect_string("{")?;
+      let else_block = parse_block(ps)?;
+      ps.expect_string("}")?;
+      args.push(else_block);
+    }
   }
   Ok(ps.add_tree(IF, args, start))
 }
