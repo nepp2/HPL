@@ -12,5 +12,5 @@ mod watcher;
 mod tests;
 
 fn main(){
-  watcher::watch("scratchpad.code");
+  watcher::watch("code/scratchpad.code");
 }

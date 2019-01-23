@@ -1,0 +1,60 @@
+
+use prelude
+
+struct tick { tick }
+
+fun live_gameloop(game_module_name) {
+  let view = create_sdl_view(width, height)
+  set_window_pos(view, 10, ())
+
+  let watcher = watch(game_module_name)
+  let events = []
+
+  while true {
+    // load the game
+    let game = module(game_module_name)
+
+    // Load the module and update it on past events
+    use game
+    let state = init()
+    for e in events {
+      update(state, e)
+    }
+
+    while true {
+      let time = time_now()
+
+      // check the watcher for code changes
+    	let e = watcher.poll_event()
+    	if e == game_module_name {
+        break
+      }
+
+      // consume sdl events
+      while true {
+        let e = view.poll_event()
+        if e == () {
+          break
+        }
+        else {
+          add(events, e)
+          update(state, e)
+        }
+      }
+
+      // send a normal tick event
+      let t = tick(tick: ())
+      add(events, t)
+      update(state, t)
+
+      // draw the game
+      render(view, state)
+
+      // sleep until 
+      let elapsed = time_since(time)
+      let millis = 1000/60
+      let sleep_time = max(millis - elapsed, 0)
+      sleep(sleep_time)
+    }
+  }
+}

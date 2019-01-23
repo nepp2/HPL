@@ -52,8 +52,16 @@ type LocalScope = Vec<HashMap<RefStr, Value>>;
 
 type FunctionScope = Vec<LocalScope>;
 
+pub struct Module {
+  pub modules : HashMap<RefStr, Rc<Module>>,
+  pub functions : HashMap<RefStr, MultiMethod>,
+  pub structs : HashMap<RefStr, Rc<StructDef>>,
+}
+
 pub struct Environment {
   pub symbol_cache : SymbolCache,
+
+  // TODO pub modules : HashMap<RefStr, Rc<Module>>,
 
   pub call_stack : FunctionScope,
   pub functions : HashMap<RefStr, MultiMethod>,
@@ -585,7 +593,7 @@ impl Interpreter {
     let mut i = Interpreter { env: Environment::new(interrupt_flag) };
     load_library(&mut i);
     // TODO: this is slow and dumb
-    let mut f = File::open("prelude.code").expect("file not found");
+    let mut f = File::open("code/prelude.code").expect("file not found");
     let mut code = String::new();
     f.read_to_string(&mut code).unwrap();
     i.interpret(&code).unwrap();
