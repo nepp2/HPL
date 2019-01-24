@@ -43,33 +43,31 @@ pub struct MultiMethod {
   pub variants : Vec<Method>,
 }
 
-type LocalScope = Vec<HashMap<RefStr, Value>>;
+#[derive(Default)]
+pub struct BlockScope {
+  variables : HashMap<RefStr, Value>,
+  modules : Vec<Module>,
+}
 
-type FunctionScope = Vec<LocalScope>;
+type FunctionScope = Vec<BlockScope>;
 
+#[derive(Default)]
 pub struct Definitions {
   pub modules : HashMap<RefStr, Rc<Definitions>>,
   pub functions : HashMap<RefStr, MultiMethod>,
   pub structs : HashMap<RefStr, Rc<StructDef>>,
 }
 
-impl Definitions {
-  fn new() -> Definitions {
-    Definitions {
-      modules: HashMap::new(),
-      functions: HashMap::new(),
-      structs: HashMap::new(),
-    }
-  }
-}
+pub type Module = Rc<RefCell<Definitions>>;
 
-pub struct Environment {
-  pub symbol_cache : SymbolCache,
+pub struct Environment<'l> {
 
-  pub modules : HashMap<RefStr, Rc<Definitions>>,
+  pub symbol_cache : &'l mut SymbolCache,
+  pub loaded_modules : &'l mut HashMap<RefStr, Module>,
+  pub current_module : &'l mut Module,
+  pub interrupt_flag : &'l mut Arc<AtomicBool>,
 
-  pub call_stack : FunctionScope,
-  pub definitions : Definitions,
+  pub scope : Vec<BlockScope>,
 
   /// indicates how many nested loops we are inside in the currently-executing function
   pub loop_depth : i32,
@@ -78,20 +76,22 @@ pub struct Environment {
   /// or returning from the function
   pub exit_state : ExitState,
 
-  /// used to halt the interpreter from another thread
-  pub interrupt_flag : Arc<AtomicBool>,
 }
 
-impl Environment {
-  pub fn new(interrupt_flag : Arc<AtomicBool>) -> Environment {
+impl <'l> Environment<'l> {
+  pub fn new(
+    symbol_cache : &'l mut SymbolCache,
+    loaded_modules : &'l mut HashMap<RefStr, Module>,
+    current_module : &'l mut Module,
+    interrupt_flag : &'l mut Arc<AtomicBool>,
+    initial_scope : BlockScope,
+  ) -> Environment<'l> {
     Environment{
-      symbol_cache: SymbolCache::new(),
-      modules: HashMap::new(),
-      definitions: Definitions::new(),
-      call_stack: vec![vec![HashMap::new()]],
+      symbol_cache, loaded_modules,
+      current_module, interrupt_flag,
+      scope: vec![initial_scope],
       loop_depth: 0,
       exit_state: ExitState::NotExiting,
-      interrupt_flag,
     }
   }
 
@@ -104,23 +104,19 @@ impl Environment {
     }
   }
 
-  fn current_function_scope(&mut self) -> &mut LocalScope {
-    self.call_stack.last_mut().unwrap()
-  }
-
-  fn current_local_scope(&mut self) -> &mut HashMap<RefStr, Value> {
-    self.current_function_scope().last_mut().unwrap()
+  fn current_block_scope(&mut self) -> &mut BlockScope {
+    self.scope.last_mut().unwrap()
   }
 
   fn new_variable(&mut self, s : RefStr, v : Value) {
-    self.current_local_scope().insert(s, v);
+    self.current_block_scope().variables.insert(s, v);
   }
 
   /// Retrieve the value closest to the end of the vector of hashmaps (the most local scope)
   /// in the environment
   fn dereference_variable(&mut self, s : &str) -> Option<&mut Value> {
-    let local = self.current_function_scope();
-    for map in local.iter_mut().rev() {
+    for block in self.scope.iter_mut().rev() {
+      let map = &mut block.variables;
       if map.contains_key(s) {
         return Some(map.get_mut(s).unwrap());
       }
@@ -129,10 +125,10 @@ impl Environment {
   }
 
   pub fn add_struct(&mut self, def: StructDef) -> Result<(), String> {
-    if self.definitions.structs.contains_key(&def.name) {
+    if self.current_module.borrow().structs.contains_key(&def.name) {
       return Err(format!("A struct called {} has already been defined.", def.name));
     }
-    self.definitions.structs.insert(def.name.clone(), Rc::new(def));
+    self.current_module.borrow().structs.insert(def.name.clone(), Rc::new(def));
     Ok(())
   }
 
@@ -140,7 +136,7 @@ impl Environment {
     -> Result<StructVal, String>
   {
     let def =
-      self.definitions.structs.get(name)
+      self.current_module.borrow().structs.get(name)
       .ok_or_else(|| format!("struct {} does not exist", name))?.clone();
     let fields =
       def.fields.iter().map(|s| {
@@ -155,7 +151,7 @@ impl Environment {
   }
 
   pub fn add_function(&mut self, name : &str, method : Method) -> Result<(), String> {
-    if let Some(mm) = self.definitions.functions.get_mut(name) {
+    if let Some(mm) = self.current_module.borrow().functions.get_mut(name) {
       for m in mm.variants.iter() {
         if m.arg_types == method.arg_types {
           return Err(format!("function {} defined more than once with the same signature.", name))
@@ -166,13 +162,13 @@ impl Environment {
     }  
     let name = self.symbol_cache.symbol(name);
     let m = MultiMethod { variants: vec![method] };
-    self.definitions.functions.insert(name, m);
+    self.current_module.borrow().functions.insert(name, m);
     Ok(())
   }
 
   fn get_method(&self, name : &str, arg_types : &[Type]) -> Result<&Method, String> {
     let mm =
-      self.definitions.functions.get(name)
+      self.current_module.borrow().functions.get(name)
       .ok_or_else(|| format!("Found no function called '{}'", name))?;
     
     'outer: for m in mm.variants.iter() {
@@ -201,7 +197,7 @@ impl Environment {
       "array" => Ok(Type::Array),
       "any" => Ok(Type::Any),
       _ => {
-        if self.definitions.structs.contains_key(s) {
+        if self.current_module.borrow().structs.contains_key(s) {
           Ok(Type::Struct(s.clone()))
         }
         else {
@@ -224,11 +220,15 @@ fn call_function(error_source : &Expr, function_name: &str, arg_values: Vec<Valu
       for (v, n) in arg_values.into_iter().zip(&m.arg_names) {
         args.insert(n.clone(), v);
       }
-      let function_scope = vec!(args);
+      let block = BlockScope {
+        variables: args,
+        modules: vec![], // TODO: need to actually include some modules
+      };
       let expr = expr.clone();
-      env.call_stack.push(function_scope);
-      let r = eval(&expr, env)?;
-      env.call_stack.pop();
+      let r = {
+        let mut new_env = Environment::new(env.symbol_cache, env.loaded_modules, env.current_module, env.interrupt_flag, block);
+        eval(&expr, &mut new_env)?
+      };
       let es = mem::replace(&mut env.exit_state, ExitState::NotExiting);
       if let ExitState::Returning(v) = es {
         Ok(v)
@@ -333,9 +333,9 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
         Ok(Value::Unit)
       }
 
-      env.current_function_scope().push(HashMap::new());
+      env.scope.push(Default::default());
       let val = evaluate_block(exprs, env);
-      env.current_function_scope().pop();
+      env.scope.pop();
       val
     }
     ("let", exprs) => {
@@ -484,7 +484,7 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
       };
       let iterable_type = iterable.to_type();
       let body = &exprs[2];
-      env.current_function_scope().push(HashMap::new());
+      env.scope.push(Default::default());
       env.new_variable(var.clone(), Value::Unit);
       env.loop_depth += 1;
       while env.exit_state == ExitState::NotExiting {
@@ -497,7 +497,7 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
         eval(body, env)?;
       }
       env.loop_depth -= 1;
-      env.current_function_scope().pop();
+      env.scope.pop();
       if env.exit_state == ExitState::Breaking {
         env.exit_state = ExitState::NotExiting;
       }
@@ -570,7 +570,7 @@ pub fn eval(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
       else if let Some(v) = env.dereference_variable(&s) {
         Ok(v.clone())
       }
-      else if env.definitions.functions.contains_key(s.as_ref()) {
+      else if env.current_module.borrow().functions.contains_key(s.as_ref()) {
         Ok(Value::Function(FunctionRef{ name: s.clone() }))
       }
       else {
