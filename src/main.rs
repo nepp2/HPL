@@ -5,6 +5,7 @@
 mod error;
 mod lexer;
 mod parser;
+mod eval;
 mod interpreter;
 mod value;
 mod library;

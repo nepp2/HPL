@@ -12,10 +12,9 @@ fun live_gameloop(game_module_name) {
 
   while true {
     // load the game
-    let game = module(game_module_name)
+    load_module(game_module_name)
 
-    // Load the module and update it on past events
-    use game
+    // initialise the module and update it on past events
     let state = init()
     for e in events {
       update(state, e)

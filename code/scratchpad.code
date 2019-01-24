@@ -1,4 +1,4 @@
 
-use live_gameloop
+load_module("live_gameloop")
 
 live_gameloop("tetris_live")

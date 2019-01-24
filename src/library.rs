@@ -1,6 +1,7 @@
 
 use crate::value::*;
-use crate::interpreter::{Interpreter, Environment, FunctionHandle, Method};
+use crate::eval::{Environment, FunctionHandle, Method};
+use crate::interpreter::Interpreter;
 use std::mem;
 use std::rc::Rc;
 use std::cell::RefCell;
