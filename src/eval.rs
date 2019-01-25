@@ -12,6 +12,8 @@ use std::fmt;
 use itertools::Itertools;
 use std::mem;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::fs::File;
+use std::io::Read;
 
 #[derive(PartialEq)]
 pub enum ExitState {
@@ -52,6 +54,18 @@ pub struct BlockScope {
   pub modules : Vec<ModuleId>,
 }
 
+pub fn get_module_id(loaded_modules : &mut Vec<Module>, name : &str) -> Option<ModuleId> {
+  loaded_modules.iter().enumerate()
+    .find(|(_, m)| m.name.as_ref() == name)
+    .map(|(i, _)| ModuleId{i})
+}
+
+pub fn add_module(loaded_modules : &mut Vec<Module>, m : Module) -> ModuleId {
+  let id = ModuleId { i: loaded_modules.len() };
+  loaded_modules.push(m);
+  id
+}
+
 pub struct Module {
   pub name : RefStr,
   // TODO: is this needed?
@@ -88,8 +102,7 @@ pub struct Environment<'l> {
 
 }
 
-pub fn iter_modules<'m>(scope : &'m Vec<BlockScope>)
-  -> impl Iterator<Item = &'m ModuleId> {
+pub fn iter_modules<'m>(scope : &'m Vec<BlockScope>) -> impl Iterator<Item = &'m ModuleId> {
   scope.iter().rev()
   .flat_map(|b| b.modules.iter())
 }
@@ -127,6 +140,15 @@ impl <'l> Environment<'l> {
 
   fn new_variable(&mut self, s : RefStr, v : Value) {
     self.current_block_scope().variables.insert(s, v);
+  }
+
+  pub fn import_module(&mut self, module_id : ModuleId) -> Result<(), String> {
+    if let Some(id) = iter_modules(&self.scope).find(|id| *id == &module_id) {
+      let m = self.loaded_modules[id.i].name;
+      return Err(format!("Module '{}' already imported", m));
+    }
+    self.current_block_scope().modules.push(module_id);
+    Ok(())
   }
 
   /// Retrieve the value closest to the end of the vector of hashmaps (the most local scope)
@@ -288,7 +310,8 @@ fn call_function(
         modules: m.visible_modules.clone()
       };
       let expr = expr.clone();
-      let mut new_env = Environment::new(env.symbol_cache, env.loaded_modules, env.current_module, env.interrupt_flag, block);
+      let mut new_env = Environment::new(
+        env.symbol_cache, env.loaded_modules, env.current_module, env.interrupt_flag, block);
       let r = eval(&expr, &mut new_env)?;
       let es = mem::replace(&mut new_env.exit_state, ExitState::NotExiting);
       if let ExitState::Returning(v) = es {

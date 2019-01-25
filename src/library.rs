@@ -1,12 +1,17 @@
 
+use crate::error::Error;
 use crate::value::*;
-use crate::eval::{Environment, FunctionHandle, Method, eval_string};
+use crate::eval::{
+  Environment, FunctionHandle, Method, eval_string,
+  add_module, get_module_id, Module, BlockScope};
 use std::mem;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use rand::prelude::*;
+use std::fs::File;
+use std::io::Read;
 
 use sdl2::video::WindowPos;
 use sdl2;
@@ -124,6 +129,43 @@ pub fn load_library(e : &mut Environment) {
   });
 
   load_sdl(e);
+}
+
+pub fn import_module(env : &mut Environment, module_name: &str, load_fresh : bool) -> Result<(), String> {
+  if let Some(id) = get_module_id(env.loaded_modules, &module_name) {
+    if load_fresh {
+      let module = Module::new(env.symbol_cache.symbol(module_name));
+      env.loaded_modules[id.i] = module;
+      load_module(env, module_name, id).map_err(|_| format!("Error when loading module '{}'", module_name))?;
+    }
+    env.import_module(id)?;
+  }
+  else {
+    let module = Module::new(env.symbol_cache.symbol(module_name));
+    let id = add_module(env.loaded_modules, module);
+    load_module(env, module_name, id).map_err(|_| format!("Error when loading module '{}'", module_name))?;
+    env.import_module(id)?;
+  }
+  Ok(())
+}
+
+pub fn load_module(env : &mut Environment, module_name: &str, module_id : ModuleId) -> Result<(), Error> {
+  let file_name = format!("code/{}.code", module_name);
+  let mut f = File::open(file_name).expect("file not found");
+  let mut code = String::new();
+  f.read_to_string(&mut code).unwrap();
+
+  let prelude_id = get_module_id(env.loaded_modules, "prelude").unwrap();
+  let initial_scope = BlockScope {
+    variables: hashmap![],
+    modules: vec![prelude_id, module_id],
+  };
+
+  let mut new_env = Environment::new(
+    env.symbol_cache, env.loaded_modules,
+    module_id, env.interrupt_flag, initial_scope);
+  eval_string(&code, &mut new_env)?;
+  Ok(())
 }
 
 fn dpi_ratio(w : &Window) -> f32 {

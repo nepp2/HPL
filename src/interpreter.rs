@@ -2,7 +2,9 @@
 use crate::value::*;
 use crate::error::Error;
 use crate::library::load_library;
-use crate::eval::{Environment, eval_string, Module, BlockScope};
+use crate::eval::{
+  Environment, eval_string, Module,
+  BlockScope, add_module};
 
 use std::mem;
 use std::fs::File;
@@ -17,17 +19,10 @@ pub struct Interpreter {
   pub symbol_cache : SymbolCache,
   pub loaded_modules : Vec<Module>,
   pub top_level_scope : Option<BlockScope>,
-  pub prelude : ModuleId,
   pub top_level_module : ModuleId,
 
   /// used to halt the interpreter from another thread
   pub interrupt_flag : Arc<AtomicBool>,
-}
-
-fn add_module(loaded_modules : &mut Vec<Module>, m : Module) -> ModuleId {
-  let id = ModuleId { i: loaded_modules.len() };
-  loaded_modules.push(m);
-  id
 }
 
 impl Interpreter {
@@ -65,28 +60,9 @@ impl Interpreter {
         variables: HashMap::new(),
         modules: vec![prelude, top_level_module],
       }),
-      prelude,
       top_level_module,
       interrupt_flag,
     }
-  }
-
-  pub fn load_module(&mut self, module_name: RefStr) {
-    let file_name = format!("code/{}.code", module_name);
-    let mut f = File::open(file_name).expect("file not found");
-    let mut code = String::new();
-    f.read_to_string(&mut code).unwrap();
-
-    let module_id = add_module(&mut self.loaded_modules, Module::new(module_name));
-    let initial_scope = BlockScope {
-      variables: hashmap![],
-      modules: vec![self.prelude, module_id],
-    };
-    let mut env = Environment::new(
-      &mut self.symbol_cache, &mut self.loaded_modules,
-      module_id, &mut self.interrupt_flag, initial_scope);
-    
-    eval_string(&code, &mut env).unwrap();
   }
 
   pub fn simple() -> Interpreter {
