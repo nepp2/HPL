@@ -287,6 +287,14 @@ impl Into<Result<f32, String>> for Value {
     }
   }
 }
+impl Into<Result<RefStr, String>> for Value {
+  fn into(self) -> Result<RefStr, String> {
+    match self {
+      Value::String(s) => Ok(s),
+      x => Err(format!("Expected string, found {:?}.", x))
+    }
+  }
+}
 impl Into<Result<bool, String>> for Value {
   fn into(self) -> Result<bool, String> {
     match self {

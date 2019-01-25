@@ -128,10 +128,22 @@ pub fn load_library(e : &mut Environment) {
     Ok(Value::String(vs[0].type_name()))
   });
 
+  fun(e, "import_module", vec![Type::String], |e, vs| {
+    let name = Into::<Result<RefStr, String>>::into(vs[0].clone())?;
+    import_module(e, name.as_ref(), false)?;
+    Ok(Value::Unit)
+  });
+
+  fun(e, "import_module_fresh", vec![Type::String], |e, vs| {
+    let name = Into::<Result<RefStr, String>>::into(vs[0].clone())?;
+    import_module(e, name.as_ref(), true)?;
+    Ok(Value::Unit)
+  });
+
   load_sdl(e);
 }
 
-pub fn import_module(env : &mut Environment, module_name: &str, load_fresh : bool) -> Result<(), String> {
+fn import_module(env : &mut Environment, module_name: &str, load_fresh : bool) -> Result<(), String> {
   if let Some(id) = get_module_id(env.loaded_modules, &module_name) {
     if load_fresh {
       let module = Module::new(env.symbol_cache.symbol(module_name));
@@ -149,7 +161,7 @@ pub fn import_module(env : &mut Environment, module_name: &str, load_fresh : boo
   Ok(())
 }
 
-pub fn load_module(env : &mut Environment, module_name: &str, module_id : ModuleId) -> Result<(), Error> {
+fn load_module(env : &mut Environment, module_name: &str, module_id : ModuleId) -> Result<(), Error> {
   let file_name = format!("code/{}.code", module_name);
   let mut f = File::open(file_name).expect("file not found");
   let mut code = String::new();

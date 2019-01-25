@@ -144,8 +144,8 @@ impl <'l> Environment<'l> {
 
   pub fn import_module(&mut self, module_id : ModuleId) -> Result<(), String> {
     if let Some(id) = iter_modules(&self.scope).find(|id| *id == &module_id) {
-      let m = self.loaded_modules[id.i].name;
-      return Err(format!("Module '{}' already imported", m));
+      let m = &self.loaded_modules[id.i];
+      return Err(format!("Module '{}' already imported", m.name));
     }
     self.current_block_scope().modules.push(module_id);
     Ok(())

@@ -42,8 +42,14 @@ impl TextLocation {
   }
 }
 
+enum TextOrigin {
+  Module(String),
+  Dynamic,
+}
+
 #[derive(Debug, PartialEq)]
 pub struct Error {
   pub message : String,
   pub location : TextLocation,
+  pub module : RefStr,
 }
