@@ -1,4 +1,6 @@
 
+use crate::lexer;
+use crate::parser;
 use crate::parser::NO_TYPE;
 use crate::value::*;
 use crate::error::{Error, error, error_raw};
@@ -34,6 +36,7 @@ impl fmt::Debug for FunctionHandle {
 
 #[derive(Debug)]
 pub struct Method {
+  pub visible_modules : Vec<ModuleId>,
   pub arg_types : Vec<Type>,
   pub arg_names : Vec<RefStr>,
   pub handle : FunctionHandle,
@@ -45,26 +48,33 @@ pub struct MultiMethod {
 
 #[derive(Default)]
 pub struct BlockScope {
-  variables : HashMap<RefStr, Value>,
-  modules : Vec<Module>,
+  pub variables : HashMap<RefStr, Value>,
+  pub modules : Vec<ModuleId>,
 }
 
-type FunctionScope = Vec<BlockScope>;
-
-#[derive(Default)]
-pub struct Definitions {
-  pub modules : HashMap<RefStr, Rc<Definitions>>,
+pub struct Module {
+  pub name : RefStr,
+  // TODO: is this needed?
+  // pub modules : Vec<ModuleId>,
   pub functions : HashMap<RefStr, MultiMethod>,
   pub structs : HashMap<RefStr, Rc<StructDef>>,
 }
 
-pub type Module = Rc<RefCell<Definitions>>;
+impl Module {
+  pub fn new(name : RefStr) -> Module {
+    Module {
+      name,
+      functions: Default::default(),
+      structs: Default::default(),
+    }
+  }
+}
 
 pub struct Environment<'l> {
 
   pub symbol_cache : &'l mut SymbolCache,
-  pub loaded_modules : &'l mut HashMap<RefStr, Module>,
-  pub current_module : &'l mut Module,
+  pub loaded_modules : &'l mut Vec<Module>,
+  pub current_module : ModuleId,
   pub interrupt_flag : &'l mut Arc<AtomicBool>,
 
   pub scope : Vec<BlockScope>,
@@ -78,11 +88,18 @@ pub struct Environment<'l> {
 
 }
 
+pub fn iter_modules<'m>(scope : &'m Vec<BlockScope>)
+  -> impl Iterator<Item = &'m ModuleId> {
+  scope.iter().rev()
+  .flat_map(|b| b.modules.iter())
+}
+
 impl <'l> Environment<'l> {
+
   pub fn new(
     symbol_cache : &'l mut SymbolCache,
-    loaded_modules : &'l mut HashMap<RefStr, Module>,
-    current_module : &'l mut Module,
+    loaded_modules : &'l mut Vec<Module>,
+    current_module : ModuleId,
     interrupt_flag : &'l mut Arc<AtomicBool>,
     initial_scope : BlockScope,
   ) -> Environment<'l> {
@@ -124,11 +141,37 @@ impl <'l> Environment<'l> {
     return None;
   }
 
+  pub fn visible_modules(&self) -> Vec<ModuleId> {
+    let mut ms = vec![];
+    for block in self.scope.iter().rev() {
+      ms.copy_from_slice(block.modules.as_slice());
+    }
+    ms
+  }
+
+  pub fn current_module_mut(&mut self) -> &mut Module {
+    &mut self.loaded_modules[self.current_module.i]
+  }
+
+  pub fn current_module(&self) -> &Module {
+    &self.loaded_modules[self.current_module.i]
+  }
+
+  pub fn struct_lookup(&self, name : &str) -> Option<&Rc<StructDef>> {
+    for id in iter_modules(&self.scope) {
+      let m = &self.loaded_modules[id.i];
+      if let Some(s) = m.structs.get(name) {
+        return Some(s);
+      }
+    }
+    None
+  }
+
   pub fn add_struct(&mut self, def: StructDef) -> Result<(), String> {
-    if self.current_module.borrow().structs.contains_key(&def.name) {
+    if self.struct_lookup(&def.name).is_some() {
       return Err(format!("A struct called {} has already been defined.", def.name));
     }
-    self.current_module.borrow().structs.insert(def.name.clone(), Rc::new(def));
+    self.current_module_mut().structs.insert(def.name.clone(), Rc::new(def));
     Ok(())
   }
 
@@ -136,7 +179,7 @@ impl <'l> Environment<'l> {
     -> Result<StructVal, String>
   {
     let def =
-      self.current_module.borrow().structs.get(name)
+      self.struct_lookup(name)
       .ok_or_else(|| format!("struct {} does not exist", name))?.clone();
     let fields =
       def.fields.iter().map(|s| {
@@ -151,36 +194,50 @@ impl <'l> Environment<'l> {
   }
 
   pub fn add_function(&mut self, name : &str, method : Method) -> Result<(), String> {
-    if let Some(mm) = self.current_module.borrow().functions.get_mut(name) {
-      for m in mm.variants.iter() {
-        if m.arg_types == method.arg_types {
-          return Err(format!("function {} defined more than once with the same signature.", name))
+    // Check if anything with this precise signature is already defined
+    for id in iter_modules(&self.scope) {
+      let m = &mut self.loaded_modules[id.i];
+      if let Some(mm) = m.functions.get_mut(name) {
+        for m in mm.variants.iter() {
+          if m.arg_types == method.arg_types {
+            return Err(format!("function {} defined more than once with the same signature.", name))
+          }
         }
+        mm.variants.push(method);
+        return Ok(());
       }
+    }
+    // Add the method to the current scope. Check if this scope already has a multi-method.
+    if let Some(mm) = self.current_module_mut().functions.get_mut(name) {
       mm.variants.push(method);
-      return Ok(());
-    }  
-    let name = self.symbol_cache.symbol(name);
-    let m = MultiMethod { variants: vec![method] };
-    self.current_module.borrow().functions.insert(name, m);
+    }
+    else {
+      let name = self.symbol_cache.symbol(name);
+      let mm = MultiMethod { variants: vec![method] };
+      self.current_module_mut().functions.insert(name, mm);
+    }
     Ok(())
   }
 
-  fn get_method(&self, name : &str, arg_types : &[Type]) -> Result<&Method, String> {
-    let mm =
-      self.current_module.borrow().functions.get(name)
-      .ok_or_else(|| format!("Found no function called '{}'", name))?;
-    
-    'outer: for m in mm.variants.iter() {
-      if m.arg_types.len() != arg_types.len(){
-        continue 'outer;
-      }
-      for (a, b) in m.arg_types.iter().zip(arg_types) {
-        if a != b && *a != Type::Any && *b != Type::Any {
-          continue 'outer;
+  fn get_method<'m, A>(&'m self, name : &str, arg_types : &[Type], module_ids : A)
+    -> Result<&Method, String>
+    where A : Iterator<Item = &'m ModuleId>
+  {
+    for id in module_ids {
+      let module = &self.loaded_modules[id.i];
+      if let Some(mm) = module.functions.get(name) {
+        'outer: for m in mm.variants.iter() {
+          if m.arg_types.len() != arg_types.len(){
+            continue 'outer;
+          }
+          for (a, b) in m.arg_types.iter().zip(arg_types) {
+            if a != b && *a != Type::Any && *b != Type::Any {
+              continue 'outer;
+            }
+          }
+          return Ok(m)
         }
       }
-      return Ok(m)
     }
     Err(format!("Cannot dispatch function '{}' with signature {:?}.", name, arg_types))
   }
@@ -197,8 +254,12 @@ impl <'l> Environment<'l> {
       "array" => Ok(Type::Array),
       "any" => Ok(Type::Any),
       _ => {
-        if self.current_module.borrow().structs.contains_key(s) {
-          Ok(Type::Struct(s.clone()))
+        if self.struct_lookup(s).is_some() {
+          // TODO this type is shit. It needs to include the source module!
+          Ok(Type::Struct{
+            module: self.current_module().name.clone(),
+            name: s.clone(),
+          })
         }
         else {
           Err(format!("{:?} is not a valid type", s))
@@ -208,12 +269,19 @@ impl <'l> Environment<'l> {
   }
 }
 
-fn call_function(error_source : &Expr, function_name: &str, arg_values: Vec<Value>, arg_types: Vec<Type>, env : &mut Environment)
+fn call_function(
+  error_source : &Expr, function_name: &str,
+  visible_modules: Option<&Vec<ModuleId>>, arg_values: Vec<Value>,
+  arg_types: Vec<Type>, env : &mut Environment)
   -> Result<Value, Error>
 {
-  let m =
-    env.get_method(function_name, arg_types.as_slice())
-    .map_err(|s| error_raw(error_source, s))?;
+  let r = if let Some(ids) = visible_modules {
+    env.get_method(function_name, arg_types.as_slice(), ids.iter())
+  }
+  else {
+    env.get_method(function_name, arg_types.as_slice(), iter_modules(&env.scope))
+  };
+  let m = r.map_err(|s| error_raw(error_source, s))?;
   match &m.handle {
     FunctionHandle::Ast(expr) => {
       let mut args = HashMap::new();
@@ -246,7 +314,9 @@ fn call_function(error_source : &Expr, function_name: &str, arg_values: Vec<Valu
 fn eval_function_call(expr : &Expr, function_expr: &Expr, args: &[Expr], env : &mut Environment)
   -> Result<Value, Error>
 { 
-  fn eval_named_function_call(expr : &Expr, function_name: &str, args: &[Expr], env : &mut Environment)
+  fn eval_named_function_call(
+    expr : &Expr, function_name: &str, visible_modules: Option<&Vec<ModuleId>>,
+    args: &[Expr], env : &mut Environment)
     -> Result<Value, Error>
   {
     let mut arg_values = vec!();
@@ -257,25 +327,25 @@ fn eval_function_call(expr : &Expr, function_expr: &Expr, args: &[Expr], env : &
       arg_types.push(v.to_type());
       arg_values.push(v);
     }
-    call_function(expr, function_name, arg_values, arg_types, env)
+    call_function(expr, function_name, visible_modules, arg_values, arg_types, env)
   }
   // Decide whether this is a first class function or a static function reference
   let symbol = function_expr.symbol_unwrap().ok();
   let var = symbol.and_then(|s| env.dereference_variable(s));
   if let Some(v) = var {
     // Symbol refers to a local variable (containing function reference)
-    let f : Result<FunctionRef, String> = v.clone().into();
-    let name = f.map_err(|s| error_raw(function_expr, s))?.name;
-    eval_named_function_call(expr, &name, args, env)
+    let r : Result<FunctionRef, String> = v.clone().into();
+    let f = r.map_err(|s| error_raw(function_expr, s))?;
+    eval_named_function_call(expr, &f.name, Some(&f.visible_modules), args, env)
   }
   else if let Some(name) = symbol {
     // Assume it's a symbol referring to a function
-    eval_named_function_call(expr, name, args, env)
+    eval_named_function_call(expr, name, None, args, env)
   }
   else {
     // More complex expression, which must be evaluated to a function reference
-    let name = to_value::<FunctionRef>(function_expr, env)?.name;
-    eval_named_function_call(expr, &name, args, env)
+    let f = to_value::<FunctionRef>(function_expr, env)?;
+    eval_named_function_call(expr, &f.name, Some(&f.visible_modules), args, env)
   }
 }
 
@@ -430,7 +500,8 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
       for (e, _) in field_exprs.iter().tuples() {
         fields.push(e.symbol_to_refstr()?);
       }
-      let def = StructDef { name, fields };
+      let module = env.current_module().name.clone();
+      let def = StructDef { module, name, fields };
       env.add_struct(def).map_err(|s| error_raw(name_expr, s))?;
       Ok(Value::Unit)
     }
@@ -480,7 +551,7 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
       let iterable = {
         let thing = eval(&exprs[1], env)?;
         let thing_type = thing.to_type();
-        call_function(&exprs[1], "iterator", vec![thing], vec![thing_type], env)?
+        call_function(&exprs[1], "iterator", None, vec![thing], vec![thing_type], env)?
       };
       let iterable_type = iterable.to_type();
       let body = &exprs[2];
@@ -488,7 +559,7 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
       env.new_variable(var.clone(), Value::Unit);
       env.loop_depth += 1;
       while env.exit_state == ExitState::NotExiting {
-        let item = call_function(&exprs[1], "next_item", vec![iterable.clone()], vec![iterable_type.clone()], env)?;
+        let item = call_function(&exprs[1], "next_item", None, vec![iterable.clone()], vec![iterable_type.clone()], env)?;
         if item == Value::Unit {
           break;
         }
@@ -517,6 +588,7 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
         arg_types.push(arg_type);
       }
       let method = Method {
+        visible_modules: env.visible_modules(),
         arg_names, arg_types,
         handle: FunctionHandle::Ast(Rc::new(function_body.clone())),
       };
@@ -570,8 +642,13 @@ pub fn eval(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
       else if let Some(v) = env.dereference_variable(&s) {
         Ok(v.clone())
       }
-      else if env.current_module.borrow().functions.contains_key(s.as_ref()) {
-        Ok(Value::Function(FunctionRef{ name: s.clone() }))
+      else if
+        iter_modules(&env.scope)
+        .map(|id| &env.loaded_modules[id.i])
+        .find(|m| m.functions.contains_key(s.as_ref()))
+        .is_some()
+      {
+        Ok(Value::Function(FunctionRef{ name: s.clone(), visible_modules: env.visible_modules() }))
       }
       else {
         return error(expr, format!("no variable or function in scope called '{}'", s));
@@ -582,5 +659,13 @@ pub fn eval(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
     ExprTag::LiteralBool(b) => Ok(Value::Bool(*b)),
     ExprTag::LiteralUnit => Ok(Value::Unit),
   }
+}
+
+pub fn eval_string(code : &str, env : &mut Environment) -> Result<Value, Error> {
+  let tokens =
+    lexer::lex_with_cache(code, env.symbol_cache)
+    .map_err(|mut es| es.remove(0))?;
+  let ast = parser::parse_with_cache(tokens, env.symbol_cache)?;
+  eval(&ast, env)
 }
 

@@ -24,7 +24,7 @@ pub enum Type {
   Bool,
   Array,
   Function,
-  Struct(RefStr),
+  Struct{ module: RefStr, name: RefStr },
   Any,
   External(RefStr),
   Unresolved
@@ -141,6 +141,7 @@ impl SymbolCache {
 #[derive(Debug, PartialEq)]
 pub struct StructDef {
   pub name : RefStr,
+  pub module : RefStr,
   pub fields : Vec<RefStr>,
 }
 
@@ -150,9 +151,15 @@ pub struct Struct {
   pub fields : Vec<Value>,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ModuleId {
+  pub i : usize
+}
+
 #[derive(Clone, PartialEq)]
 pub struct FunctionRef {
-  pub name : RefStr
+  pub name : RefStr,
+  pub visible_modules : Vec<ModuleId>,
 }
 
 pub type StructVal = Rc<RefCell<Struct>>;
@@ -197,7 +204,10 @@ impl Value {
       Bool(_) => Type::Bool,
       String(_) => Type::String,
       Function(_) => Type::Function,
-      Struct(s) => Type::Struct(s.borrow().def.name.clone()),
+      Struct(s) => Type::Struct{
+        module: s.borrow().def.module.clone(),
+        name: s.borrow().def.name.clone(),
+      },
       External(e) => Type::External(e.type_name.clone()),
       Unit => Type::Unit,
     }

@@ -1,7 +1,6 @@
 
 use crate::value::*;
-use crate::eval::{Environment, FunctionHandle, Method};
-use crate::interpreter::Interpreter;
+use crate::eval::{Environment, FunctionHandle, Method, eval_string};
 use std::mem;
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -61,12 +60,12 @@ fn fun(env : &mut Environment, name : &'static str, arg_types : Vec<Type>, f : B
   let arg_names : Vec<RefStr> =
     (0..arg_types.len()).map(|i| ((('a' as usize) + i) as u8 as char)
     .to_string()).map(|s| env.symbol_cache.symbol(s)).collect();
-  let m = Method { arg_names, arg_types, handle: FunctionHandle::BuiltIn(f) };
+  let visible_modules = env.visible_modules();
+  let m = Method { visible_modules, arg_names, arg_types, handle: FunctionHandle::BuiltIn(f) };
   env.add_function(name, m).unwrap();
 }
 
-pub fn load_library(i : &mut Interpreter) {
-  let e = &mut i.env;
+pub fn load_library(e : &mut Environment) {
   binary!(e, "+", f32, f32, f32, |a, b| a + b);
   binary!(e, "-", f32, f32, f32, |a, b| a - b);
   binary!(e, "*", f32, f32, f32, |a, b| a * b);
@@ -124,7 +123,7 @@ pub fn load_library(i : &mut Interpreter) {
     Ok(Value::String(vs[0].type_name()))
   });
 
-  load_sdl(i);
+  load_sdl(e);
 }
 
 fn dpi_ratio(w : &Window) -> f32 {
@@ -160,7 +159,7 @@ pub fn create_sdl_view (width : u32, height : u32) -> SdlView {
   SdlView { sdl, video, dpi_ratio, canvas, events }
 }
 
-impl Environment {
+impl Environment<'_> {
   fn ext_type(&mut self, s : &str) -> Type {
     Type::External(self.symbol_cache.symbol(s))
   }
@@ -173,7 +172,7 @@ impl Environment {
   }
 }
 
-fn load_sdl(i : &mut Interpreter) {
+fn load_sdl(e : &mut Environment) {
 
   let code = "
     struct sdl_event_keydown { key : string }
@@ -186,9 +185,8 @@ fn load_sdl(i : &mut Interpreter) {
     // struct sdl_window_resized { }
   ";
 
-  i.interpret(code).unwrap();
-
-  let e = &mut i.env;
+  eval_string(code, e).unwrap();
+  
   const SDL_VIEW : &'static str = "sdl_view";
   let sdl_view_type = e.ext_type(SDL_VIEW);
 

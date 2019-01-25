@@ -1,12 +1,10 @@
 
-use crate::parser;
-use crate::parser::NO_TYPE;
-use crate::lexer;
 use crate::value::*;
 use crate::error::Error;
 use crate::library::load_library;
-use crate::eval::{Environment, eval, Module, BlockScope};
+use crate::eval::{Environment, eval_string, Module, BlockScope};
 
+use std::mem;
 use std::fs::File;
 use std::io::Read;
 use std::sync::atomic::AtomicBool;
@@ -17,67 +15,93 @@ use std::collections::HashMap;
 
 pub struct Interpreter {
   pub symbol_cache : SymbolCache,
-  pub loaded_modules : HashMap<RefStr, Module>,
-  pub top_level_module : Module,
-  pub top_level_scope : BlockScope,
+  pub loaded_modules : Vec<Module>,
+  pub top_level_scope : Option<BlockScope>,
+  pub prelude : ModuleId,
+  pub top_level_module : ModuleId,
 
   /// used to halt the interpreter from another thread
   pub interrupt_flag : Arc<AtomicBool>,
 }
 
+fn add_module(loaded_modules : &mut Vec<Module>, m : Module) -> ModuleId {
+  let id = ModuleId { i: loaded_modules.len() };
+  loaded_modules.push(m);
+  id
+}
+
 impl Interpreter {
-  pub fn new(interrupt_flag : Arc<AtomicBool>) -> Interpreter {
-    let top_level_module : Module = Default::default();
-    let loaded_modules = hashmap!("top_level".into() => top_level_module);
-    let i = Interpreter {
-      symbol_cache: SymbolCache::new(),
+
+  pub fn new(mut interrupt_flag : Arc<AtomicBool>) -> Interpreter {
+    let mut symbol_cache = SymbolCache::new();
+    let mut loaded_modules = vec!();
+
+    // load prelude
+    let prelude = add_module(&mut loaded_modules, Module::new("prelude".into()));
+    {
+      let mut f = File::open("code/prelude.code").expect("file not found");
+      let mut code = String::new();
+      f.read_to_string(&mut code).unwrap();
+      let mut env = Environment::new(
+        &mut symbol_cache,
+        &mut loaded_modules,
+        prelude, &mut interrupt_flag,
+        Default::default());
+      load_library(&mut env);
+      eval_string(&code, &mut env).unwrap();
+    }
+
+    // load top level module
+    let top_level_module =
+      add_module(&mut loaded_modules, Module::new("top_level".into()));
+
+    Interpreter {
+      symbol_cache,
       loaded_modules,
-      top_level_module,
-      top_level_scope: BlockScope {
+      top_level_scope: Some(BlockScope {
         variables: HashMap::new(),
-        modules: vec![top_level_module],
-      },
+        modules: vec![prelude, top_level_module],
+      }),
+      prelude,
+      top_level_module,
       interrupt_flag,
-    };
-    load_library(&mut i);
-    // TODO: this is slow and dumb
-    let mut f = File::open("code/prelude.code").expect("file not found");
-    let mut code = String::new();
-    f.read_to_string(&mut code).unwrap();
-    i.interpret(&code).unwrap();
-    i
+    }
   }
 
-  pub fn load_module(&mut self, module_name: &str) {
+  pub fn load_module(&mut self, module_name: RefStr) {
     let file_name = format!("code/{}.code", module_name);
     let mut f = File::open(file_name).expect("file not found");
-    let module : Module = Default::default();
+    let mut code = String::new();
+    f.read_to_string(&mut code).unwrap();
+
+    let module_id = add_module(&mut self.loaded_modules, Module::new(module_name));
     let initial_scope = BlockScope {
       variables: hashmap![],
-      modules: vec![self.loaded_modules.get("prelude").unwrap().clone()],
+      modules: vec![self.prelude, module_id],
     };
-    let mut env = Environment::new(&mut self.symbol_cache, &mut self.loaded_modules, &mut module, &mut self.interrupt_flag, initial_scope);
+    let mut env = Environment::new(
+      &mut self.symbol_cache, &mut self.loaded_modules,
+      module_id, &mut self.interrupt_flag, initial_scope);
+    
+    eval_string(&code, &mut env).unwrap();
   }
 
   pub fn simple() -> Interpreter {
     Interpreter::new(Arc::new(AtomicBool::new(false)))
   }
 
-  pub fn parse(&mut self, code : &str) -> Result<Expr, Error> {
-    let tokens =
-      lexer::lex_with_cache(code, &mut self.symbol_cache)
-      .map_err(|mut es| es.remove(0))?;
-    parser::parse_with_cache(tokens, &mut self.symbol_cache)
-  }
-
-  pub fn interpret_ast(&mut self, ast : &Expr) -> Result<Value, Error> {
-    // TODO debug thingy: println!("{}", ast);
-    eval(ast, &mut self.env)
-  }
-
   pub fn interpret(&mut self, code : &str) -> Result<Value, Error> {
-    let ast = self.parse(code)?;
-    self.interpret_ast(&ast)
+    let scope = mem::replace(&mut self.top_level_scope, None).unwrap();
+    let mut env = Environment::new(
+      &mut self.symbol_cache,
+      &mut self.loaded_modules,
+      self.top_level_module,
+      &mut self.interrupt_flag,
+      scope);
+    let r = eval_string(code, &mut env);
+    assert!(env.scope.len()==1);
+    self.top_level_scope = env.scope.pop();
+    r
   }
 }
 
