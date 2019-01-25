@@ -46,7 +46,10 @@ impl Interpreter {
         &mut symbol_cache,
         &mut loaded_modules,
         prelude, &mut interrupt_flag,
-        Default::default());
+        BlockScope {
+          variables: hashmap![],
+          modules: vec![prelude],
+        });
       load_library(&mut env);
       eval_string(&code, &mut env).unwrap();
     }

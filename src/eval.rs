@@ -46,7 +46,7 @@ pub struct MultiMethod {
   pub variants : Vec<Method>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct BlockScope {
   pub variables : HashMap<RefStr, Value>,
   pub modules : Vec<ModuleId>,
@@ -142,11 +142,7 @@ impl <'l> Environment<'l> {
   }
 
   pub fn visible_modules(&self) -> Vec<ModuleId> {
-    let mut ms = vec![];
-    for block in self.scope.iter().rev() {
-      ms.copy_from_slice(block.modules.as_slice());
-    }
-    ms
+    iter_modules(&self.scope).cloned().collect()
   }
 
   pub fn current_module_mut(&mut self) -> &mut Module {
@@ -255,7 +251,6 @@ impl <'l> Environment<'l> {
       "any" => Ok(Type::Any),
       _ => {
         if self.struct_lookup(s).is_some() {
-          // TODO this type is shit. It needs to include the source module!
           Ok(Type::Struct{
             module: self.current_module().name.clone(),
             name: s.clone(),
@@ -290,14 +285,12 @@ fn call_function(
       }
       let block = BlockScope {
         variables: args,
-        modules: vec![], // TODO: need to actually include some modules
+        modules: m.visible_modules.clone()
       };
       let expr = expr.clone();
-      let r = {
-        let mut new_env = Environment::new(env.symbol_cache, env.loaded_modules, env.current_module, env.interrupt_flag, block);
-        eval(&expr, &mut new_env)?
-      };
-      let es = mem::replace(&mut env.exit_state, ExitState::NotExiting);
+      let mut new_env = Environment::new(env.symbol_cache, env.loaded_modules, env.current_module, env.interrupt_flag, block);
+      let r = eval(&expr, &mut new_env)?;
+      let es = mem::replace(&mut new_env.exit_state, ExitState::NotExiting);
       if let ExitState::Returning(v) = es {
         Ok(v)
       }
