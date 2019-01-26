@@ -66,7 +66,7 @@ fn fun(env : &mut Environment, name : &'static str, arg_types : Vec<Type>, f : B
     (0..arg_types.len()).map(|i| ((('a' as usize) + i) as u8 as char)
     .to_string()).map(|s| env.symbol_cache.symbol(s)).collect();
   let visible_modules = env.visible_modules();
-  let m = Method { visible_modules, arg_names, arg_types, handle: FunctionHandle::BuiltIn(f) };
+  let m = Method { module_id: env.current_module, visible_modules, arg_names, arg_types, handle: FunctionHandle::BuiltIn(f) };
   env.add_function(name, m).unwrap();
 }
 
@@ -494,14 +494,15 @@ fn load_sdl(e : &mut Environment) {
   let random_generator = e.ext_type(RANDOM_GENERATOR);
 
   fun(e, "random_generator", vec![], |e, mut _vs| {
-    let v = e.ext_val(RANDOM_GENERATOR, thread_rng());
+    let rng : StdRng = SeedableRng::seed_from_u64(0);
+    let v = e.ext_val(RANDOM_GENERATOR, rng);
     Ok(Value::External(v))
   });
 
-  fun(e, "next_rand", vec![random_generator], |_e, mut vs| {
+  fun(e, "next_rand", vec![random_generator], |_e, mut vs| {  
     let v = vs[0].get().convert::<ExternalVal>()?;
     let mut v = v.val.borrow_mut();
-    let rng = v.downcast_mut::<ThreadRng>().unwrap();
+    let rng = v.downcast_mut::<StdRng>().unwrap();
     Ok(Value::Float(rng.gen()))
   });
 }

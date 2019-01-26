@@ -1,22 +1,4 @@
 
-struct static {
-  colours
-}
-
-struct game {
-  static : static,
-  orientation,
-  tet_index, 
-  pos_x,
-  pos_y,
-  ticks_per_drop,
-  tick_count,
-  grid,
-  tetronimos,
-  tetronimo_bag,
-  rng,
-}
-
 struct colour { r, g, b, a }
 
 struct tetronimo { tiles, colour }
@@ -25,6 +7,39 @@ struct vec2 { x , y }
 
 fun set_draw_color(view, c : array) {
   set_draw_color(view, c[0], c[1], c[2], c[3])
+}
+
+fun next_tetronimo(game, grid_width){
+  if len(game.tetronimo_bag) == 0 {
+    for i in range(0, 2) {
+      for i in range(0, len(game.tetronimos)) {
+        add(game.tetronimo_bag, i)
+      }
+    }
+  }
+  let tets = len(game.tetronimo_bag)
+  let i = next_rand(game.rng) * tets
+  let next_tet = game.tetronimo_bag[i]
+  game.tetronimo_bag[i] = game.tetronimo_bag[tets-1]
+  pop(game.tetronimo_bag)
+  game.tet_index = next_tet
+  init_tetronimo_state(game, grid_width)
+}
+
+fun shape_size(shape){
+  sqrt(len(shape))
+}
+
+fun rotate_90(shape){
+  let size = shape_size(shape)
+  let s = []
+  for i in range(0, size * size) {
+    let y = floor(i / size)
+    let x = i % size
+    let i = (size - 1 - x) * size + y
+    add(s, shape[i])
+  }
+  s
 }
 
 fun init(view, width, height) {
@@ -63,31 +78,25 @@ fun init(view, width, height) {
       1, 1, 1,
       0, 0, 0 ]
 
+  let p = palette(
+    red: [255, 0, 50, 255],
+    green: [0, 255, 0, 255],
+    blue: [50, 100, 255, 255],
+    sky_blue: [50, 200, 255, 255],
+    orange: [255, 150, 50, 255],
+    yellow: [255, 200, 0, 255],
+    magenta: [255, 80, 255, 255],
+  )
+
   let colours = [
-    shape_l1, orange,
-    shape_l2, blue,
-    shape_bar, sky_blue,
-    shape_z, red,
-    shape_s, green,
-    shape_square, yellow,
-    shape_T, magenta,
+    shape_l1, p.orange,
+    shape_l2, p.blue,
+    shape_bar, p.sky_blue,
+    shape_z, p.red,
+    shape_s, p.green,
+    shape_square, p.yellow,
+    shape_T, p.magenta,
   ]
-
-  fun shape_size(shape){
-    sqrt(len(shape))
-  }
-
-  fun rotate_90(shape){
-    let size =shape_size(shape)
-    let s = []
-    for i in range(0, size * size) {
-      let y = floor(i / size)
-      let x = i % size
-      let i = (size - 1 - x) * size + y
-      add(s, shape[i])
-    }
-    s
-  }
 
   let tetronimos = {
     let ts = []
@@ -105,13 +114,36 @@ fun init(view, width, height) {
     ts
   }
 
-  let red = [255, 0, 50, 255]
-  let green = [0, 255, 0, 255]
-  let blue = [50, 100, 255, 255]
-  let sky_blue = [50, 200, 255, 255]
-  let orange = [255, 150, 50, 255]
-  let yellow = [255, 200, 0, 255]
-  let magenta = [255, 80, 255, 255]
+  let config = config(
+    tile_size: 25,
+    rx: 40,
+    ry: 40,
+    grid_height: 20,
+    grid_width: 10,       
+  )
+
+  let grid = []
+  for i in range(0, config.grid_width * config.grid_height) {
+    add(grid, ())
+  }
+  let game =
+    game(
+      config: config,
+      orientation: 0,
+      tet_index: 0,
+      pos_x: 0,
+      pos_y: 0,
+      ticks_per_drop: 200,
+      tick_count: 0,
+      grid: grid,
+      tetronimos: tetronimos,
+      tetronimo_bag: [],
+      rng: random_generator(),
+      palette: p,
+    )
+  next_tetronimo(game, config.grid_width)
+
+  game
 }
 
 fun draw_tetronimo(
@@ -187,32 +219,6 @@ fun draw_background_grid(view, width, height, gap){
   }
 }
 
-
-let tile_size = 25;
-let rx = 40;
-let ry = 40;
-let grid_height = 20;
-let grid_width = 10;
-
-let grid = []
-for i in range(0, grid_width * grid_height) {
-  add(grid, ())
-}
-
-let game =
-  game(
-    orientation: 0,
-    tet_index: 0,
-    pos_x: 0,
-    pos_y: 0,
-    ticks_per_drop: 200,
-    tick_count: 0,
-    grid: grid,
-    tetronimos: tetronimos,
-    tetronimo_bag: [],
-    rng: random_generator(),
-  )
-
 fun init_tetronimo_state(game, grid_width) {
   game.pos_y = 0
   game.tick_count = 0
@@ -222,25 +228,6 @@ fun init_tetronimo_state(game, grid_width) {
   let half_size = floor(shape_size(shape) / 2)
   game.pos_x = grid_width/2 - half_size
 }
-
-fun next_tetronimo(game, grid_width){
-  if len(game.tetronimo_bag) == 0 {
-    for i in range(0, 2) {
-      for i in range(0, len(game.tetronimos)) {
-        add(game.tetronimo_bag, i)
-      }
-    }
-  }
-  let tets = len(game.tetronimo_bag)
-  let i = next_rand(game.rng) * tets
-  let next_tet = game.tetronimo_bag[i]
-  game.tetronimo_bag[i] = game.tetronimo_bag[tets-1]
-  pop(game.tetronimo_bag)
-  game.tet_index = next_tet
-  init_tetronimo_state(game, grid_width)
-}
-
-next_tetronimo(game, grid_width)
 
 fun blit(game, shape, colour, grid_width) {
   let shape_size = shape_size(shape)
@@ -346,70 +333,7 @@ fun rotate(game, grid_width, grid_height) {
   }
 }
 
-fun init() {
-
-}
-
-fun update(state, event) {
-
-}
-
-fun render(view, state) {
-  
-}
-
-while true {
-
-  let time = time_now()
-
-  while true {
-    let e = poll_event(view)
-    if e == () {
-      break
-    }
-    else {
-      let tet = tetronimos[game.tet_index]
-      let shape = tet.tiles[game.orientation]
-      let t = type_name(e)
-      if t == "sdl_event_quit" {
-        return
-      }
-      if t == "sdl_event_keydown" {
-        if e.key == "Escape" {
-          return
-        }
-        if e.key == "Up" {
-          rotate(game, grid_width, grid_height)
-        }
-        if e.key == "Left" {
-          move_horizontal(
-            game, grid_width, grid_height, shape, -1)
-        }
-        if e.key == "Right" {
-          move_horizontal(
-            game, grid_width, grid_height, shape, 1)
-        }
-        if e.key == "Down" {
-          move_down(game, shape, tet.colour, grid_width, grid_height)
-        }
-        if e.key == "Space" {
-          while true {
-            if move_down(game, shape, tet.colour, grid_width, grid_height) {
-              break
-            }
-          }
-        }
-      }
-    }
-  }
-
-  set_draw_color(view, 40, 40, 40, 255)
-  clear(view)
-  set_draw_color(view, 120, 120, 120, 255)
-  draw_rect(view, rx, ry,
-    tile_size * grid_width,
-    tile_size * grid_height)
-
+fun update_tick(game) {
   let tet = tetronimos[game.tet_index]
   let shape = tet.tiles[game.orientation]
 
@@ -417,13 +341,69 @@ while true {
   if game.tick_count >= game.ticks_per_drop {
     move_down(game, shape, tet.colour, grid_width, grid_height)
   }
+}
+
+fun update(game, e) {
+  let tet = game.tetronimos[game.tet_index]
+  let shape = tet.tiles[game.orientation]
+  let c = game.config
+  let grid_width = c.grid_width
+  let grid_height = c.grid_height
+  let t = type_name(e)
+  if t == "sdl_event_keydown" {
+    if e.key == "Up" {
+      rotate(game, grid_width, grid_height)
+    }
+    if e.key == "Left" {
+      move_horizontal(
+        game, grid_width, grid_height, shape, -1)
+    }
+    if e.key == "Right" {
+      move_horizontal(
+        game, grid_width, grid_height, shape, 1)
+    }
+    if e.key == "Down" {
+      move_down(game, shape, tet.colour, grid_width, grid_height)
+    }
+    if e.key == "Space" {
+      while true {
+        if move_down(game, shape, tet.colour, grid_width, grid_height) {
+          break
+        }
+      }
+    }
+  }
+  else if t == "tick" {
+    game.tick_count = game.tick_count + 1
+    if game.tick_count >= game.ticks_per_drop {
+      move_down(game, shape, tet.colour, grid_width, grid_height)
+    }
+  }
+}
+
+fun render(view, game) {
+  set_draw_color(view, 40, 40, 40, 255)
+  clear(view)
+  set_draw_color(view, 120, 120, 120, 255)
+  let c = game.config
+  let rx = c.rx
+  let ry = c.ry
+  let tile_size = c.tile_size
+  let grid_width = c.grid_width
+  let grid_height = c.grid_height
+  draw_rect(view, rx, ry,
+    tile_size * grid_width,
+    tile_size * grid_height)
+
+  let tet = game.tetronimos[game.tet_index]
+  let shape = tet.tiles[game.orientation]
 
   for y in range(0, grid_height) {
     for x in range(0, grid_width) {
       let i = y * grid_width + x
-      let c = game.grid[i]
-      if c != () {
-        set_draw_color(view, c)
+      let colour = game.grid[i]
+      if colour != () {
+        set_draw_color(view, colour)
         fill_rect(
           view,
           tile_size * x + rx,
@@ -458,12 +438,4 @@ while true {
     rx, ry)
 
   present(view)
-
-  let elapsed = time_since(time)
-  let millis = 1000/60
-  let sleep_time = max(millis - elapsed, 0)
-
-  //print(elapsed)
-
-  sleep(sleep_time)
 }

@@ -38,12 +38,14 @@ impl fmt::Debug for FunctionHandle {
 
 #[derive(Debug)]
 pub struct Method {
+  pub module_id : ModuleId,
   pub visible_modules : Vec<ModuleId>,
   pub arg_types : Vec<Type>,
   pub arg_names : Vec<RefStr>,
   pub handle : FunctionHandle,
 }
 
+#[derive(Debug)]
 pub struct MultiMethod {
   pub variants : Vec<Method>,
 }
@@ -66,6 +68,7 @@ pub fn add_module(loaded_modules : &mut Vec<Module>, m : Module) -> ModuleId {
   id
 }
 
+#[derive(Debug)]
 pub struct Module {
   pub name : RefStr,
   // TODO: is this needed?
@@ -231,15 +234,13 @@ impl <'l> Environment<'l> {
   pub fn add_function(&mut self, name : &str, method : Method) -> Result<(), String> {
     // Check if anything with this precise signature is already defined
     for id in iter_modules(&self.scope) {
-      let m = &mut self.loaded_modules[id.i];
-      if let Some(mm) = m.functions.get_mut(name) {
+      let module = &mut self.loaded_modules[id.i];
+      if let Some(mm) = module.functions.get_mut(name) {
         for m in mm.variants.iter() {
           if m.arg_types == method.arg_types {
             return Err(format!("function {} defined more than once with the same signature.", name))
           }
         }
-        mm.variants.push(method);
-        return Ok(());
       }
     }
     // Add the method to the current scope. Check if this scope already has a multi-method.
@@ -247,9 +248,9 @@ impl <'l> Environment<'l> {
       mm.variants.push(method);
     }
     else {
-      let name = self.symbol_cache.symbol(name);
+      let function_name = self.symbol_cache.symbol(name);
       let mm = MultiMethod { variants: vec![method] };
-      self.current_module_mut().functions.insert(name, mm);
+      self.current_module_mut().functions.insert(function_name, mm);
     }
     Ok(())
   }
@@ -276,7 +277,7 @@ impl <'l> Environment<'l> {
         }
       }
     }
-    Err(format!("Cannot dispatch function '{}' with signature {:?}.", name, arg_types))
+    Err(format!("Cannot dispatch function '{}' with signature {:?}", name, arg_types))
   }
 
   fn string_to_type(&self, s : &RefStr) -> Result<Type, String> {
@@ -330,7 +331,7 @@ fn call_function(
       };
       let expr = expr.clone();
       let mut new_env = Environment::new(
-        env.symbol_cache, env.loaded_modules, env.current_module, env.interrupt_flag, block);
+        env.symbol_cache, env.loaded_modules, m.module_id, env.interrupt_flag, block);
       let r = eval(&expr, &mut new_env)?;
       let es = mem::replace(&mut new_env.exit_state, ExitState::NotExiting);
       if let ExitState::Returning(v) = es {
@@ -623,6 +624,7 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
         arg_types.push(arg_type);
       }
       let method = Method {
+        module_id: env.current_module,
         visible_modules: env.visible_modules(),
         arg_names, arg_types,
         handle: FunctionHandle::Ast(Rc::new(function_body.clone())),
