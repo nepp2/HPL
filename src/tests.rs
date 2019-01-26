@@ -111,7 +111,7 @@ fn test_struct() {
       vec2(x: a.x + b.x, y: a.y + b.y)
     }
     let a = vec2(x: 10, y: 1)
-    let b = vec2(y: 20, x: 2)
+    let b = vec2(x: 2, y: 20)
     let c = add(a, b)
     c.y
   ";

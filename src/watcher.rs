@@ -13,7 +13,7 @@ use crate::error::Error;
 use crate::value::Value;
 use crate::interpreter;
 
-fn print(r : Result<Value, Error>) -> String {
+pub fn print_result(r : Result<Value, Error>) -> String {
   match r {
     Ok(v) => format!("{:?}", v),
     Err(e) => format!( "{}", e),
@@ -39,7 +39,7 @@ fn load_and_run(path : &str) -> InterpreterTask {
     let mut code = String::new();
     f.read_to_string(&mut code).unwrap();
     let result = interpreter::interpret_with_interrupt(&code, iflag);
-    let s = print(result);
+    let s = print_result(result);
     cflag.store(true, Ordering::Relaxed);
     s
   });

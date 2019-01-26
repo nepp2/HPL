@@ -127,20 +127,73 @@ pub fn load_library(e : &mut Environment) {
   fun(e, "type_name", vec![Type::Any], |_, vs| {
     Ok(Value::String(vs[0].type_name()))
   });
-
   fun(e, "import_module", vec![Type::String], |e, vs| {
     let name = Into::<Result<RefStr, String>>::into(vs[0].clone())?;
     import_module(e, name.as_ref(), false)?;
     Ok(Value::Unit)
   });
-
   fun(e, "import_module_fresh", vec![Type::String], |e, vs| {
     let name = Into::<Result<RefStr, String>>::into(vs[0].clone())?;
     import_module(e, name.as_ref(), true)?;
     Ok(Value::Unit)
   });
 
+  const WATCHER : &'static str = "watcher";
+  let watcher_type = e.ext_type(WATCHER);
+
+  fun(e, "create_watcher", vec![], |e, mut _vs| {
+    let v = e.ext_val(WATCHER, create_watcher());
+    Ok(Value::External(v))
+  });
+  fun(e, "watch_module", vec![watcher_type.clone(), Type::String], |_e, mut vs| {
+    let v = vs[0].get().convert::<ExternalVal>()?;
+    let mut v = v.val.borrow_mut();
+    let w = v.downcast_mut::<FileWatcher>().unwrap();
+    let module_name = vs[1].get().convert::<RefStr>()?;
+    let path = format!("code/{}.code", module_name);
+    w.watcher.watch(path.as_str(), RecursiveMode::Recursive)
+      .map_err(|_| format!("failed to watch file '{}'", path))?;
+    Ok(Value::Unit)
+  });
+  fun(e, "poll_event", vec![watcher_type], |_e, mut vs| {
+    let v = vs[0].get().convert::<ExternalVal>()?;
+    let mut v = v.val.borrow_mut();
+    let w = v.downcast_mut::<FileWatcher>().unwrap();
+    Ok(poll_event(w))
+  });
   load_sdl(e);
+}
+
+use notify::{Watcher, RecursiveMode, watcher, DebouncedEvent, ReadDirectoryChangesWatcher};
+use std::sync::mpsc::{channel, TryRecvError, Receiver};
+
+struct FileWatcher {
+  watcher : ReadDirectoryChangesWatcher,
+  rx : Receiver<DebouncedEvent>,
+}
+
+fn create_watcher() -> FileWatcher {
+  let (tx, rx) = channel();
+  let watcher = watcher(tx, Duration::from_millis(500)).unwrap();
+  FileWatcher { watcher, rx}
+}
+
+fn poll_event(w : &mut FileWatcher) -> Value {
+  match w.rx.try_recv() {
+    Ok(event) => {
+      match event {
+        DebouncedEvent::Write(path) => {
+          let module_name = path.file_stem().unwrap().to_str().unwrap();
+          Value::from(module_name)
+        }
+        _ => Value::Unit
+      }
+    },
+    Err(e) => match e {
+      TryRecvError::Disconnected => Value::Unit,
+      TryRecvError::Empty => Value::Unit,
+    },
+  }
 }
 
 fn import_module(env : &mut Environment, module_name: &str, load_fresh : bool) -> Result<(), ErrorContent> {
@@ -268,7 +321,11 @@ fn load_sdl(e : &mut Environment) {
     Ok(Value::Unit)
   });
 
-  fn new_struct(e : &mut Environment, name : &str, vals : HashMap<RefStr, Value>)
+  fn f<V : Into<Value>>(field_name : &str, v : V) -> (RefStr, Value) {
+    (field_name.into(), v.into())
+  }
+
+  fn new_struct(e : &mut Environment, name : &str, vals : Vec<(RefStr, Value)>)
     -> Result<Value, ErrorContent>
   {
     return e.instantiate_struct(name, vals).map(|s| Value::Struct(s));
@@ -299,45 +356,45 @@ fn load_sdl(e : &mut Environment) {
       Event::KeyDown {keycode, ..} => {
         if let Some(kc) = keycode {
 
-          return new_struct(e, "sdl_event_keydown", hashmap!{
-            "key".into() => format!("{}", kc).into(),
-          });
+          return new_struct(e, "sdl_event_keydown", vec![
+            f("key", format!("{}", kc)),
+          ]);
         }
       }
       Event::KeyUp {keycode, ..} => {
         if let Some(kc) = keycode {
-          return new_struct(e, "sdl_event_keyup", hashmap!{
-            "key".into() => format!("{}", kc).into(),
-          });
+          return new_struct(e, "sdl_event_keyup", vec![
+            f("key", format!("{}", kc)),
+          ]);
         }
       }
       Event::Quit { .. } => {
-        return new_struct(e, "sdl_event_quit", hashmap!{});
+        return new_struct(e, "sdl_event_quit", vec![]);
       }
       Event::MouseMotion { x, y, .. } => {
-          return new_struct(e, "sdl_event_mouse_motion", hashmap!{
-            "x".into() => (x as f32).into(),
-            "y".into() => (y as f32).into(),
-          });
+          return new_struct(e, "sdl_event_mouse_motion", vec![
+            f("x", x as f32),
+            f("y", y as f32),
+          ]);
       }
       Event::MouseButtonDown { x, y, mouse_btn, .. } => {
-          return new_struct(e, "sdl_event_mouse_down", hashmap!{
-            "x".into() => (x as f32).into(),
-            "y".into() => (y as f32).into(),
-            "button".into() => format!("{:?}", mouse_btn).into(),
-          });
+          return new_struct(e, "sdl_event_mouse_down", vec![
+            f("x", x as f32),
+            f("y", y as f32),
+            f("button", format!("{:?}", mouse_btn)),
+          ]);
       }
       Event::MouseButtonUp { x, y, mouse_btn, .. } => {
-          return new_struct(e, "sdl_event_mouse_up", hashmap!{
-            "x".into() => (x as f32).into(),
-            "y".into() => (y as f32).into(),
-            "button".into() => format!("{:?}", mouse_btn).into(),
-          });
+          return new_struct(e, "sdl_event_mouse_up", vec![
+            f("x", x as f32),
+            f("y", y as f32),
+            f("button", format!("{:?}", mouse_btn)),
+          ]);
       }
       Event::MouseWheel { y, .. } => {
-          return new_struct(e, "sdl_event_mouse_wheel", hashmap!{
-            "y".into() => (y as f32).into(),
-          });
+          return new_struct(e, "sdl_event_mouse_wheel", vec![
+            f("y", y as f32),
+          ]);
       }
       _ => (),
     }

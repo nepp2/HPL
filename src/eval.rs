@@ -193,22 +193,39 @@ impl <'l> Environment<'l> {
     Ok(())
   }
 
-  pub fn instantiate_struct(&self, name: &str, mut value_map: HashMap<RefStr, Value>)
+  pub fn instantiate_struct(&mut self, name: &str, field_value_pairs: Vec<(RefStr, Value)>)
     -> Result<StructVal, ErrorContent>
   {
-    let def =
-      self.struct_lookup(name)
-      .ok_or_else(|| format!("struct {} does not exist", name))?.clone();
-    let fields =
-      def.fields.iter().map(|s| {
-        value_map.remove(s.as_ref())
-          .ok_or_else(|| format!("expected field '{}', but it was not defined", s))
-      })
-      .collect::<Result<Vec<Value>, String>>()?;
-    if value_map.len() > 0 {
-      return Err(format!("unexpected field(s) defined: '{:?}'", value_map.keys()).into());
+    let def = {
+      if let Some(def) = self.struct_lookup(name) {
+        def.clone()
+      }
+      else {
+        let fields = field_value_pairs.iter().map(|t| t.0.clone()).collect();
+        let m = self.current_module_mut();
+        let def = Rc::new(StructDef { module: m.name.clone(), name: name.into(), fields });
+        m.structs.insert(def.name.clone(), def.clone());
+        def
+      }
+    };
+    let mut field_values = vec![];
+    let mut i = 0;
+    let num_fields = def.fields.len();
+    for (found, value) in field_value_pairs {
+      if i >= num_fields {
+        return Err(format!("found unexpected field: {}", found).into());
+      }
+      let expected = &def.fields[i];
+      if expected != &found {
+        return Err(format!("expected field name '{}', but found '{}'", expected, found).into());
+      }
+      field_values.push(value);
+      i += 1;
     }
-    Ok(Rc::new(RefCell::new(Struct { def, fields })))
+    if i < num_fields {
+      return Err(format!("some fields were not initialised: {:?}", &def.fields[i..num_fields]).into());
+    }
+    Ok(Rc::new(RefCell::new(Struct { def, fields : field_values })))
   }
 
   pub fn add_function(&mut self, name : &str, method : Method) -> Result<(), String> {
@@ -530,14 +547,14 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
       let name_expr = &exprs[0];
       let field_exprs = &exprs[1..];
       let name = name_expr.symbol_to_refstr()?;
-      let value_map =
+      let field_value_pairs =
         field_exprs.iter().tuples().map(|(field, value)| {
           let field_name = field.symbol_to_refstr()?;
           let field_value = eval(value, env)?;
           Ok((field_name, field_value))
         })
-        .collect::<Result<HashMap<RefStr, Value>, Error>>()?;
-      let s = env.instantiate_struct(&name, value_map).map_err(|s| error_raw(expr, s))?;
+        .collect::<Result<Vec<(RefStr, Value)>, Error>>()?;
+      let s = env.instantiate_struct(&name, field_value_pairs).map_err(|s| error_raw(expr, s))?;
       Ok(Value::Struct(s))
     }
     (".", [expr, name_expr]) => {

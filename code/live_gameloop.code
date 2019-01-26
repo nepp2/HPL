@@ -2,18 +2,24 @@
 struct tick { tick }
 
 fun live_gameloop(game_module_name) {
+
+  let width = 400
+  let height = 600
+
   let view = create_sdl_view(width, height)
   set_window_pos(view, 10, ())
 
-  let watcher = watch(game_module_name)
+  let watcher = create_watcher()
+  watch_module(watcher, game_module_name)
+
   let events = []
 
   while true {
     // load the game
-    load_module(game_module_name)
+    import_module_fresh(game_module_name)
 
     // initialise the module and update it on past events
-    let state = init()
+    let state = init(view, width, height)
     for e in events {
       update(state, e)
     }
@@ -22,7 +28,7 @@ fun live_gameloop(game_module_name) {
       let time = time_now()
 
       // check the watcher for code changes
-    	let e = watcher.poll_event()
+    	let e = poll_event(watcher)
     	if e == game_module_name {
         break
       }

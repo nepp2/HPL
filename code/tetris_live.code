@@ -1,9 +1,21 @@
 
-let width = 400
-let height = 600
+struct static {
+  colours
+}
 
-let view = create_sdl_view(width, height)
-set_window_pos(view, 10, ())
+struct game {
+  static : static,
+  orientation,
+  tet_index, 
+  pos_x,
+  pos_y,
+  ticks_per_drop,
+  tick_count,
+  grid,
+  tetronimos,
+  tetronimo_bag,
+  rng,
+}
 
 struct colour { r, g, b, a }
 
@@ -15,89 +27,91 @@ fun set_draw_color(view, c : array) {
   set_draw_color(view, c[0], c[1], c[2], c[3])
 }
 
-let red = [255, 0, 50, 255]
-let green = [0, 255, 0, 255]
-let blue = [50, 100, 255, 255]
-let sky_blue = [50, 200, 255, 255]
-let orange = [255, 150, 50, 255]
-let yellow = [255, 200, 0, 255]
-let magenta = [255, 80, 255, 255]
+fun init(view, width, height) {
+  let shape_l1 =
+    [ 0, 1, 0,
+      0, 1, 0,
+      0, 1, 1 ]
 
-let shape_l1 =
-  [ 0, 1, 0,
-    0, 1, 0,
-    0, 1, 1 ]
+  let shape_l2 =
+    [ 0, 1, 0,
+      0, 1, 0,
+      1, 1, 0 ]
 
-let shape_l2 =
-  [ 0, 1, 0,
-    0, 1, 0,
-    1, 1, 0 ]
+  let shape_bar =
+    [ 0, 1, 0, 0,
+      0, 1, 0, 0,
+      0, 1, 0, 0,
+      0, 1, 0, 0 ]
 
-let shape_bar =
-  [ 0, 1, 0, 0,
-    0, 1, 0, 0,
-    0, 1, 0, 0,
-    0, 1, 0, 0 ]
+  let shape_z =
+    [ 0, 0, 0,
+      1, 1, 0,
+      0, 1, 1 ]
 
-let shape_z =
-  [ 0, 0, 0,
-    1, 1, 0,
-    0, 1, 1 ]
+  let shape_s =
+    [ 0, 0, 0,
+      0, 1, 1,
+      1, 1, 0 ]
 
-let shape_s =
-  [ 0, 0, 0,
-    0, 1, 1,
-    1, 1, 0 ]
+  let shape_square =
+    [ 1, 1,
+      1, 1 ]
 
-let shape_square =
-  [ 1, 1,
-    1, 1 ]
+  let shape_T =
+    [ 0, 1, 0,
+      1, 1, 1,
+      0, 0, 0 ]
 
-let shape_T =
-  [ 0, 1, 0,
-    1, 1, 1,
-    0, 0, 0 ]
+  let colours = [
+    shape_l1, orange,
+    shape_l2, blue,
+    shape_bar, sky_blue,
+    shape_z, red,
+    shape_s, green,
+    shape_square, yellow,
+    shape_T, magenta,
+  ]
 
-let colours = [
-  shape_l1, orange,
-  shape_l2, blue,
-  shape_bar, sky_blue,
-  shape_z, red,
-  shape_s, green,
-  shape_square, yellow,
-  shape_T, magenta,
-]
-
-fun shape_size(shape){
-  sqrt(len(shape))
-}
-
-fun rotate_90(shape){
-  let size =shape_size(shape)
-  let s = []
-  for i in range(0, size * size) {
-    let y = floor(i / size)
-    let x = i % size
-    let i = (size - 1 - x) * size + y
-    add(s, shape[i])
+  fun shape_size(shape){
+    sqrt(len(shape))
   }
-  s
-}
 
-let tetronimos = {
-  let ts = []
-  for i in range(0, len(colours)/2) {
-    let c = colours[i*2 + 1]
-    let s1 = colours[i*2]
-    let s2 = rotate_90(s1)
-    let s3 = rotate_90(s2)
-    let s4 = rotate_90(s3)
-    let t = tetronimo(
-      tiles: [s1, s2, s3, s4],
-      colour: c)
-    add(ts, t)
+  fun rotate_90(shape){
+    let size =shape_size(shape)
+    let s = []
+    for i in range(0, size * size) {
+      let y = floor(i / size)
+      let x = i % size
+      let i = (size - 1 - x) * size + y
+      add(s, shape[i])
+    }
+    s
   }
-  ts
+
+  let tetronimos = {
+    let ts = []
+    for i in range(0, len(colours)/2) {
+      let c = colours[i*2 + 1]
+      let s1 = colours[i*2]
+      let s2 = rotate_90(s1)
+      let s3 = rotate_90(s2)
+      let s4 = rotate_90(s3)
+      let t = tetronimo(
+        tiles: [s1, s2, s3, s4],
+        colour: c)
+      add(ts, t)
+    }
+    ts
+  }
+
+  let red = [255, 0, 50, 255]
+  let green = [0, 255, 0, 255]
+  let blue = [50, 100, 255, 255]
+  let sky_blue = [50, 200, 255, 255]
+  let orange = [255, 150, 50, 255]
+  let yellow = [255, 200, 0, 255]
+  let magenta = [255, 80, 255, 255]
 }
 
 fun draw_tetronimo(
@@ -173,18 +187,6 @@ fun draw_background_grid(view, width, height, gap){
   }
 }
 
-struct game {
-  orientation,
-  tet_index, 
-  pos_x,
-  pos_y,
-  ticks_per_drop,
-  tick_count,
-  grid,
-  tetronimos,
-  tetronimo_bag,
-  rng,
-}
 
 let tile_size = 25;
 let rx = 40;
