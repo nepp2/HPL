@@ -1,7 +1,7 @@
 
 use std::collections::HashSet;
 use crate::value::{RefStr, SymbolCache};
-use crate::error::{Error, TextLocation, TextMarker};
+use crate::error::{Error, TextLocation, TextMarker, error_raw};
 
 lazy_static! {
   static ref KEYWORDS : HashSet<&'static str> =
@@ -92,7 +92,7 @@ impl <'l> CStream<'l> {
   fn error(&mut self, start_loc : StreamLocation, message : String) {
     let location = self.get_text_location(start_loc);
     self.current_token.clear();
-    self.errors.push(Error{ message, location });
+    self.errors.push(error_raw(location, message));
   }
 
   fn advance_line(&mut self) {

@@ -1,6 +1,4 @@
 
-use prelude
-
 struct tick { tick }
 
 fun live_gameloop(game_module_name) {

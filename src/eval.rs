@@ -3,7 +3,7 @@ use crate::lexer;
 use crate::parser;
 use crate::parser::NO_TYPE;
 use crate::value::*;
-use crate::error::{Error, error, error_raw};
+use crate::error::{Error, ErrorContent, error, error_raw};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -24,7 +24,7 @@ pub enum ExitState {
 
 pub enum FunctionHandle {
   Ast(Rc<Expr>),
-  BuiltIn(fn(&mut Environment, Vec<Value>) -> Result<Value, String>),
+  BuiltIn(fn(&mut Environment, Vec<Value>) -> Result<Value, ErrorContent>),
 }
 
 impl fmt::Debug for FunctionHandle {
@@ -194,7 +194,7 @@ impl <'l> Environment<'l> {
   }
 
   pub fn instantiate_struct(&self, name: &str, mut value_map: HashMap<RefStr, Value>)
-    -> Result<StructVal, String>
+    -> Result<StructVal, ErrorContent>
   {
     let def =
       self.struct_lookup(name)
@@ -206,7 +206,7 @@ impl <'l> Environment<'l> {
       })
       .collect::<Result<Vec<Value>, String>>()?;
     if value_map.len() > 0 {
-      return Err(format!("unexpected field(s) defined: '{:?}'", value_map.keys()));
+      return Err(format!("unexpected field(s) defined: '{:?}'", value_map.keys()).into());
     }
     Ok(Rc::new(RefCell::new(Struct { def, fields })))
   }
@@ -241,6 +241,8 @@ impl <'l> Environment<'l> {
     -> Result<&Method, String>
     where A : Iterator<Item = &'m ModuleId>
   {
+    // TODO: this function resolves multi-methods based on the types of the parameters passed.
+    // Unfortunately it doesn't do a very good job of it (particularly the Any type)
     for id in module_ids {
       let module = &self.loaded_modules[id.i];
       if let Some(mm) = module.functions.get(name) {
@@ -322,7 +324,7 @@ fn call_function(
       }
     }
     FunctionHandle::BuiltIn(f) => {
-      f(env, arg_values).map_err(|s| error_raw(error_source, s))
+      f(env, arg_values).map_err(|e| error_raw(error_source, e))
     }
   }
 }

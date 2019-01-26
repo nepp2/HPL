@@ -16,11 +16,7 @@ use crate::interpreter;
 fn print(r : Result<Value, Error>) -> String {
   match r {
     Ok(v) => format!("{:?}", v),
-    Err(e) => {
-      format!(
-        "line: {}, column: {}, message: {}",
-        e.location.start.line, e.location.start.col, e.message)
-    }
+    Err(e) => format!( "{}", e),
   }
 }
 

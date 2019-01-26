@@ -1,5 +1,5 @@
 
-use crate::error::Error;
+use crate::error::{Error, ErrorContent};
 use crate::value::*;
 use crate::eval::{
   Environment, FunctionHandle, Method, eval_string,
@@ -59,7 +59,7 @@ macro_rules! type_tag {
   (()) => { Type::Unit };
 }
 
-type BuiltInFunction = fn(&mut Environment, Vec<Value>) -> Result<Value, String>;
+type BuiltInFunction = fn(&mut Environment, Vec<Value>) -> Result<Value, ErrorContent>;
 
 fn fun(env : &mut Environment, name : &'static str, arg_types : Vec<Type>, f : BuiltInFunction) {
   let arg_names : Vec<RefStr> =
@@ -118,7 +118,7 @@ pub fn load_library(e : &mut Environment) {
   fun(e, "pop", vec![Type::Array], |_, vs| {
     let a = Into::<Result<Array, String>>::into(vs[0].clone())?;
     let v = a.borrow_mut().pop();
-    v.ok_or_else(|| format!("can't pop from empty array"))
+    v.ok_or_else(|| format!("can't pop from empty array").into())
   });
   fun(e, "print", vec![Type::Any], |_, vs| {
     println!("{:?}", vs[0]);
@@ -143,19 +143,22 @@ pub fn load_library(e : &mut Environment) {
   load_sdl(e);
 }
 
-fn import_module(env : &mut Environment, module_name: &str, load_fresh : bool) -> Result<(), String> {
+fn import_module(env : &mut Environment, module_name: &str, load_fresh : bool) -> Result<(), ErrorContent> {
+  fn inner_error(e : Error, name : &str) -> ErrorContent {
+    ErrorContent::InnerError(format!("Error when loading module '{}'", name), Box::new(e))
+  }
   if let Some(id) = get_module_id(env.loaded_modules, &module_name) {
     if load_fresh {
       let module = Module::new(env.symbol_cache.symbol(module_name));
       env.loaded_modules[id.i] = module;
-      load_module(env, module_name, id).map_err(|_| format!("Error when loading module '{}'", module_name))?;
+      load_module(env, module_name, id).map_err(|e| inner_error(e, module_name))?;
     }
     env.import_module(id)?;
   }
   else {
     let module = Module::new(env.symbol_cache.symbol(module_name));
     let id = add_module(env.loaded_modules, module);
-    load_module(env, module_name, id).map_err(|_| format!("Error when loading module '{}'", module_name))?;
+    load_module(env, module_name, id).map_err(|e| inner_error(e, module_name))?;
     env.import_module(id)?;
   }
   Ok(())
@@ -266,7 +269,7 @@ fn load_sdl(e : &mut Environment) {
   });
 
   fn new_struct(e : &mut Environment, name : &str, vals : HashMap<RefStr, Value>)
-    -> Result<Value, String>
+    -> Result<Value, ErrorContent>
   {
     return e.instantiate_struct(name, vals).map(|s| Value::Struct(s));
   }
@@ -295,6 +298,7 @@ fn load_sdl(e : &mut Environment) {
     match event {
       Event::KeyDown {keycode, ..} => {
         if let Some(kc) = keycode {
+
           return new_struct(e, "sdl_event_keydown", hashmap!{
             "key".into() => format!("{}", kc).into(),
           });
