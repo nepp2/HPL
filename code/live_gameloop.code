@@ -13,7 +13,7 @@ fun live_gameloop(game_module_name) {
   watch_module(watcher, game_module_name)
 
   let events = []
-
+  
   while true {
     // load the game
     import_module_fresh(game_module_name)

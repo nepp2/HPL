@@ -95,7 +95,6 @@ pub fn watch(path : &str) {
         },
       }
     }
-
     thread::sleep(Duration::from_millis(100));
   }
 }

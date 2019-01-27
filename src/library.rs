@@ -292,6 +292,7 @@ fn load_sdl(e : &mut Environment) {
     struct sdl_event_mouse_down { x, y, button }
     struct sdl_event_mouse_up { x, y, button }
     struct sdl_event_mouse_wheel { y }
+    struct sdl_event_window { event }
     // struct sdl_window_resized { }
   ";
 
@@ -395,6 +396,11 @@ fn load_sdl(e : &mut Environment) {
           return new_struct(e, "sdl_event_mouse_wheel", vec![
             f("y", y as f32),
           ]);
+      }
+      Event::Window { win_event, .. } => {
+        return new_struct(e, "sdl_event_window", vec![
+          f("event", format!("{:?}", win_event)),
+        ]);
       }
       _ => (),
     }

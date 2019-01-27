@@ -26,6 +26,6 @@ fn load_and_run(path : &str) {
 }
 
 fn main(){
-  load_and_run("code/scratchpad.code");
-  //watcher::watch("code/scratchpad.code");
+  //load_and_run("code/scratchpad.code");
+  watcher::watch("code/scratchpad.code");
 }
