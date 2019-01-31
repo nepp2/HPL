@@ -6,6 +6,7 @@ mod error;
 mod lexer;
 mod parser;
 mod eval;
+mod eval_simple;
 mod interpreter;
 mod value;
 mod library;
