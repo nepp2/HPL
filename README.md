@@ -1,23 +1,23 @@
 # Programming language research prototype
 
-I am iteratively designing a language for programming games. It is very unfinished.
+This is a language for programming games. It is very unfinished.
 
 ## Goals
 
 ### Unify the engine and scripting language
 
-Usually a game engine is written in C++, and the gameplay code will be written in something like C# or Lua. I am aiming to create a language that is good at both, just as [Julia](https://julialang.org/) is trying to do for scientific computing.
+Usually a game engine is written in C++, and the gameplay code will be written in something like C# or Lua. This language aims to be good at both, just as [Julia](https://julialang.org/) does in the scientific computing domain.
 
 ### Enable live programming functionality
 
-I am aiming for fairly simple live programming functionality in the vein of React/Redux and Elm. Strong, pervasive support for hot-swapping code and a time-travelling debugger would be a great start. These features are usually delivered via a technique that requires immutable data structures and heavy allocation patterns. This will not work for game engine functionality.
+The initial target is simple live programming functionality in the vein of React/Redux and Elm. That means providing strong, pervasive support for hot-swapping code, and a time-travelling debugger. These features are usually delivered through pervasive immutability. The heavy allocation patterns and pointer indirection this usually involves are not ideal for game engine functionality. This language aims to permit mutability by instead guaranteeing restricted aliasing at key moments.
 
-## Requirements
+## Other Requirements
 
 - Simple, high-level language
 - High throughput (good cache behaviour)
 - No unpredictable garbage collection pauses
-- State transitions are explicit
+- State transitions are local and explicit
 - States can be reliably serialised and recovered
 
 ## Plan
