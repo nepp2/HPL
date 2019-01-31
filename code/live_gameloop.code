@@ -1,4 +1,5 @@
 
+
 struct tick { tick }
 
 fun live_gameloop(game_module_name) {
@@ -13,7 +14,9 @@ fun live_gameloop(game_module_name) {
   watch_module(watcher, game_module_name)
 
   let events = []
-  
+
+  let paused = false
+
   while true {
     // load the game
     import_module_fresh(game_module_name)
@@ -28,8 +31,8 @@ fun live_gameloop(game_module_name) {
       let time = time_now()
 
       // check the watcher for code changes
-    	let e = poll_event(watcher)
-    	if e == game_module_name {
+      let e = poll_event(watcher)
+      if e == game_module_name {
         break
       }
 
@@ -39,16 +42,34 @@ fun live_gameloop(game_module_name) {
         if e == () {
           break
         }
-        else {
+        let t = type_name(e)
+        if t == "sdl_event_quit" {
+          return
+        }
+        if t == "sdl_event_keydown" {
+          if e.key == "Escape" {
+            return
+          }
+        }
+        if t == "sdl_event_window" {
+          if e.event == "FocusLost" {
+            paused = true
+          }
+          else if e.event == "FocusGained" {
+            paused = false
+          }
+        }
+        if !paused {
           add(events, e)
           update(state, e)
         }
       }
-
-      // send a normal tick event
-      let t = tick(tick: ())
-      add(events, t)
-      update(state, t)
+      if !paused {
+        // send a normal tick event
+        let t = tick(tick: ())
+        add(events, t)
+        update(state, t)
+      }
 
       // draw the game
       render(view, state)
@@ -61,3 +82,4 @@ fun live_gameloop(game_module_name) {
     }
   }
 }
+
