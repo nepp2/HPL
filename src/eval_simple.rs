@@ -22,37 +22,34 @@ pub enum ExitState {
   Returning,
 }
 
-type Value = (u64, u128);
+type Val = (u64, u64);
 
-#[derive(Clone)]
-struct Object {
-  x : Rc<RefCell<HashMap<u64, Value>>>,
+struct Munger {
+  tag : u64
 }
 
-impl Object {
-  fn get(&self, symbol : u64) -> Option<Value> {
-    self.x.borrow().get(&symbol).cloned()
+impl Munger {
+  fn munge_expr_tag(&self, e : &ExprTag) -> DictVal {
+    panic!()
   }
 
-  fn set(&self, symbol : u64, v : Value) -> Option<Value> {
-    self.x.borrow_mut().insert(symbol, v)
+  fn munge_expr(&self, e : &Expr) -> DictVal {
+    let mut d : Dict = Default::default();
+    d.set(self.tag, )
+    d
   }
 }
 
+#[derive(Default)]
 pub struct SymbolTable {
   symbol_map : HashMap<RefStr, u64>,
   symbols : Vec<RefStr>,
 }
 
-pub struct Env {
-  st : SymbolTable,
-}
+pub struct Interpreter {
 
-pub struct Environment<'l> {
-
-  pub symbol_cache : &'l mut SymbolCache,
-  pub interrupt_flag : &'l mut Arc<AtomicBool>,
-  pub scope : Object,
+  pub st : SymbolTable,
+  pub interrupt_flag : Arc<AtomicBool>,
 
   /// indicates how many nested loops we are inside in the currently-executing function
   pub loop_depth : i32,
@@ -60,19 +57,14 @@ pub struct Environment<'l> {
   /// indicates whether the program is currently breaking out of a loop
   /// or returning from the function
   pub exit_state : ExitState,
-
 }
 
-impl <'l> Environment<'l> {
+impl Interpreter {
 
-  pub fn new(
-    symbol_cache : &'l mut SymbolCache,
-    interrupt_flag : &'l mut Arc<AtomicBool>,
-    initial_scope : BlockScope,
-  ) -> Environment<'l> {
-    Environment{
-      symbol_cache, interrupt_flag,
-      scope: vec![initial_scope],
+  pub fn new(interrupt_flag : Arc<AtomicBool>) -> Interpreter {
+    Interpreter{
+      st: Default::default(),
+      interrupt_flag,
       loop_depth: 0,
       exit_state: ExitState::NotExiting,
     }
@@ -86,6 +78,12 @@ impl <'l> Environment<'l> {
       Ok(())
     }
   }
+
+  fn eval(&mut self, ast : Dict, env : Dict) {
+
+  }
+
+}
 
   /*
 
