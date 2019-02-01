@@ -36,3 +36,10 @@ object needs operations:
   get
   set
 
+## Consider ditching the hashmap
+
+Instead work on a boxed slice of bytes. Use actual pointers...
+
+Initial dict type would instead be implemented as follows:
+
+{ length : u64, entries [{symbol : u64, type : u64, value : u64} ; N] }

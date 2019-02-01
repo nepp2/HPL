@@ -22,24 +22,6 @@ pub enum ExitState {
   Returning,
 }
 
-type Val = (u64, u64);
-
-struct Munger {
-  tag : u64
-}
-
-impl Munger {
-  fn munge_expr_tag(&self, e : &ExprTag) -> DictVal {
-    panic!()
-  }
-
-  fn munge_expr(&self, e : &Expr) -> DictVal {
-    let mut d : Dict = Default::default();
-    d.set(self.tag, )
-    d
-  }
-}
-
 #[derive(Default)]
 pub struct SymbolTable {
   symbol_map : HashMap<RefStr, u64>,
@@ -48,6 +30,7 @@ pub struct SymbolTable {
 
 pub struct Interpreter {
 
+  pub mem : Vec<u8>,
   pub st : SymbolTable,
   pub interrupt_flag : Arc<AtomicBool>,
 
