@@ -30,13 +30,22 @@ struct Object {
 }
 
 impl Object {
-  fn get(&self, s : &str) -> Option<Value> {
-    self.x.borrow().get(s).cloned()
+  fn get(&self, symbol : u64) -> Option<Value> {
+    self.x.borrow().get(&symbol).cloned()
   }
 
-  fn set<S : Into<RefStr>>(&self, s : S, v : Value) -> Option<Value> {
-    self.x.borrow_mut().insert(s.into(), v)
+  fn set(&self, symbol : u64, v : Value) -> Option<Value> {
+    self.x.borrow_mut().insert(symbol, v)
   }
+}
+
+pub struct SymbolTable {
+  symbol_map : HashMap<RefStr, u64>,
+  symbols : Vec<RefStr>,
+}
+
+pub struct Env {
+  st : SymbolTable,
 }
 
 pub struct Environment<'l> {
@@ -77,6 +86,8 @@ impl <'l> Environment<'l> {
       Ok(())
     }
   }
+
+  /*
 
   fn current_block_scope(&mut self) -> &mut BlockScope {
     self.scope.last_mut().unwrap()
@@ -608,3 +619,4 @@ pub fn eval_string(code : &str, env : &mut Environment) -> Result<Value, Error> 
   eval(&ast, env)
 }
 
+*/
