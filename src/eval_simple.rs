@@ -28,9 +28,26 @@ pub struct SymbolTable {
   symbols : Vec<RefStr>,
 }
 
-pub struct Interpreter {
+struct Value { tag: u64, val: u64 }
 
-  pub mem : Vec<u8>,
+fn value(tag : u64, val : u64) -> Value {
+  Value{ tag, val }
+}
+
+const UNIT_TAG : u64 = 0;
+const BOOL_TAG : u64 = 1;
+const FLOAT_TAG : u64 = 2;
+
+const UNIT : Value = value(UNIT_TAG, 0);
+const TRUE : Value = value(BOOL_TAG, 1);
+const FALSE : Value = value(BOOL_TAG, 0);
+
+
+type Ptr = u64;
+
+pub struct Interpreter {
+  pub mem_counter : Ptr,
+  pub mem : HashMap<Ptr, Vec<u8>>,
   pub st : SymbolTable,
   pub interrupt_flag : Arc<AtomicBool>,
 
@@ -46,11 +63,25 @@ impl Interpreter {
 
   pub fn new(interrupt_flag : Arc<AtomicBool>) -> Interpreter {
     Interpreter{
+      mem_counter: 0,
+      mem: Default::default(),
       st: Default::default(),
       interrupt_flag,
       loop_depth: 0,
       exit_state: ExitState::NotExiting,
     }
+  }
+
+  fn malloc(&mut self, bytes : u64) -> Ptr {
+    let ptr = self.mem_counter;
+    self.mem_counter += 1;
+    let allocation : Vec<u8> = vec![0; bytes as usize];
+    self.mem.insert(ptr, allocation);
+    ptr
+  }
+
+  fn free(&mut self, ptr : Ptr) {
+    self.mem.remove(&ptr);
   }
 
   fn check_interrupt(&self) -> Result<(), String> {
@@ -62,8 +93,38 @@ impl Interpreter {
     }
   }
 
-  fn eval(&mut self, ast : Dict, env : Dict) {
-
+  pub fn eval(&mut self, expr : &Expr, env : Ptr) -> Result<Value, Error> {
+    if self.exit_state != ExitState::NotExiting {
+      // this skips all evaluations until we backtrack to something
+      // that stops the exit state, such as a loop or function call
+      return Ok(UNIT);
+    }
+    match &expr.tag {
+      ExprTag::Tree(_) => {
+        panic!()
+      }
+      ExprTag::Symbol(s) => {
+        if s.as_ref() == "break" {
+          if self.loop_depth > 0 {
+            self.exit_state = ExitState::Breaking;
+            Ok(UNIT)
+          }
+          else {
+            error(expr, format!("can't break outside a loop"))
+          }
+        }
+        else if let Some(v) = env.dereference_variable(&s) {
+          Ok(v.clone())
+        }
+        else {
+          return error(expr, format!("no variable or function in scope called '{}'", s));
+        }
+      }
+      ExprTag::LiteralString(s) => panic!(),
+      ExprTag::LiteralFloat(f) => Ok(value(FLOAT_TAG, f.to_bits() as u64)),
+      ExprTag::LiteralBool(b) => Ok(if *b { TRUE } else { FALSE }),
+      ExprTag::LiteralUnit => Ok(UNIT),
+    }
   }
 
 }
