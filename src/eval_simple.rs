@@ -38,9 +38,9 @@ const UNIT_TAG : u64 = 0;
 const BOOL_TAG : u64 = 1;
 const FLOAT_TAG : u64 = 2;
 
-const UNIT : Value = value(UNIT_TAG, 0);
-const TRUE : Value = value(BOOL_TAG, 1);
-const FALSE : Value = value(BOOL_TAG, 0);
+const UNIT : Value = Value { tag: UNIT_TAG, val: 0 };
+const TRUE : Value = Value { tag: BOOL_TAG, val: 1 };
+const FALSE : Value = Value { tag: BOOL_TAG, val: 0 };
 
 
 type Ptr = u64;
@@ -93,6 +93,18 @@ impl Interpreter {
     }
   }
 
+  fn dereference_variable(&mut self, env : Ptr, name : &str) -> Result<Value, ErrorContent> {
+    let sym =
+      self.st.symbol_map.get(name)
+      .ok_or_else(|| format!("symbol not defined"))?;
+    let env =
+      self.mem.get(&env)
+      .ok_or_else(|| format!("invalid pointer dereferenced"))?;
+
+
+    panic!();
+  }
+
   pub fn eval(&mut self, expr : &Expr, env : Ptr) -> Result<Value, Error> {
     if self.exit_state != ExitState::NotExiting {
       // this skips all evaluations until we backtrack to something
@@ -113,11 +125,9 @@ impl Interpreter {
             error(expr, format!("can't break outside a loop"))
           }
         }
-        else if let Some(v) = env.dereference_variable(&s) {
-          Ok(v.clone())
-        }
         else {
-          return error(expr, format!("no variable or function in scope called '{}'", s));
+          let ptr = self.dereference_variable(env, &s).map_err(|c| error_raw(expr, c))?;
+          Ok(ptr)
         }
       }
       ExprTag::LiteralString(s) => panic!(),
