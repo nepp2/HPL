@@ -105,6 +105,10 @@ impl Interpreter {
     panic!();
   }
 
+  pub fn eval2(&mut self, expr : &Expr, env : Ptr, ret : &mut[u8]) -> Result<(), Error> {
+    Ok(())
+  }
+
   pub fn eval(&mut self, expr : &Expr, env : Ptr) -> Result<Value, Error> {
     if self.exit_state != ExitState::NotExiting {
       // this skips all evaluations until we backtrack to something
