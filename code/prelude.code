@@ -4,11 +4,11 @@ struct array_it {
   i : float,
 }
 
-fun iterator(a : array) {
+fun array_iterator(a : array) {
   array_it(a: a, i: 0)
 }
 
-fun next_item(it : array_it) {
+fun array_iterator_next(it : array_it) {
   if it.i < len(it.a) {
     let i = it.a[it.i]
     it.i = it.i + 1
@@ -19,26 +19,11 @@ fun next_item(it : array_it) {
   }
 }
 
-struct range_it {
-  i : float,
+struct range {
+  start : float,
   end : float,
 }
 
 fun range(start, end) {
-  range_it(i: start, end: end)
-}
-
-fun iterator(r : range_it) {
-  range_it(i: r.i, end: r.end)
-}
-
-fun next_item(it : range_it) {
-  if it.i < it.end {
-    let i = it.i
-    it.i = it.i + 1
-    i
-  }
-  else {
-    ()
-  }
+  range(start: start, end: end)
 }

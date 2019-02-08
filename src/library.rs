@@ -2,7 +2,7 @@
 use crate::error::{Error, ErrorContent};
 use crate::value::*;
 use crate::eval::{
-  Environment, FunctionHandle, Method, eval_string,
+  Environment, FunctionHandle, Function, eval_string,
   add_module, get_module_id, Module, BlockScope};
 use std::mem;
 use std::rc::Rc;
@@ -66,8 +66,8 @@ fn fun(env : &mut Environment, name : &'static str, arg_types : Vec<Type>, f : B
     (0..arg_types.len()).map(|i| ((('a' as usize) + i) as u8 as char)
     .to_string()).map(|s| env.symbol_cache.symbol(s)).collect();
   let visible_modules = env.visible_modules();
-  let m = Method { module_id: env.current_module, visible_modules, arg_names, arg_types, handle: FunctionHandle::BuiltIn(f) };
-  env.add_function(name, m).unwrap();
+  let f = Function { module_id: env.current_module, visible_modules, arg_names, arg_types, handle: FunctionHandle::BuiltIn(f) };
+  env.add_function(name, f).unwrap();
 }
 
 pub fn load_library(e : &mut Environment) {
@@ -88,7 +88,7 @@ pub fn load_library(e : &mut Environment) {
     let b = vs[0] != vs[1];
     Ok(Value::from(b))
   });
-  fun(e, "-", vec![Type::Float], |_, vs| {
+  fun(e, "negate", vec![Type::Float], |_, vs| {
     let f : Result<f32, String> = vs[0].clone().into();
     Ok(Value::from(-f?))
   });
@@ -155,11 +155,11 @@ pub fn load_library(e : &mut Environment) {
       .map_err(|_| format!("failed to watch file '{}'", path))?;
     Ok(Value::Unit)
   });
-  fun(e, "poll_event", vec![watcher_type], |_e, mut vs| {
+  fun(e, "poll_watcher_event", vec![watcher_type], |_e, mut vs| {
     let v = vs[0].get().convert::<ExternalVal>()?;
     let mut v = v.val.borrow_mut();
     let w = v.downcast_mut::<FileWatcher>().unwrap();
-    Ok(poll_event(w))
+    Ok(poll_watcher_event(w))
   });
   load_sdl(e);
 }
@@ -178,7 +178,7 @@ fn create_watcher() -> FileWatcher {
   FileWatcher { watcher, rx}
 }
 
-fn poll_event(w : &mut FileWatcher) -> Value {
+fn poll_watcher_event(w : &mut FileWatcher) -> Value {
   match w.rx.try_recv() {
     Ok(event) => {
       match event {
@@ -332,7 +332,7 @@ fn load_sdl(e : &mut Environment) {
     return e.instantiate_struct(name, vals).map(|s| Value::Struct(s));
   }
 
-  fun(e, "poll_event_any", vec![sdl_view_type.clone()], |_e, mut vs| {
+  fun(e, "poll_sdl_event_string", vec![sdl_view_type.clone()], |_e, mut vs| {
     let v = vs[0].get().convert::<ExternalVal>()?;
     let mut v = v.val.borrow_mut();
     let view = v.downcast_mut::<SdlView>().unwrap();
@@ -343,7 +343,7 @@ fn load_sdl(e : &mut Environment) {
     Ok(Value::Unit)
   });
 
-  fun(e, "poll_event", vec![sdl_view_type.clone()], |e, mut vs| {
+  fun(e, "poll_sdl_event", vec![sdl_view_type.clone()], |e, mut vs| {
     let v = vs[0].get().convert::<ExternalVal>()?;
     let mut v = v.val.borrow_mut();
     let view = v.downcast_mut::<SdlView>().unwrap();

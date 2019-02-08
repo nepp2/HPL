@@ -37,17 +37,12 @@ impl fmt::Debug for FunctionHandle {
 }
 
 #[derive(Debug)]
-pub struct Method {
+pub struct Function {
   pub module_id : ModuleId,
   pub visible_modules : Vec<ModuleId>,
   pub arg_types : Vec<Type>,
   pub arg_names : Vec<RefStr>,
   pub handle : FunctionHandle,
-}
-
-#[derive(Debug)]
-pub struct MultiMethod {
-  pub variants : Vec<Method>,
 }
 
 #[derive(Default, Debug)]
@@ -73,7 +68,7 @@ pub struct Module {
   pub name : RefStr,
   // TODO: is this needed?
   // pub modules : Vec<ModuleId>,
-  pub functions : HashMap<RefStr, MultiMethod>,
+  pub functions : HashMap<RefStr, Function>,
   pub structs : HashMap<RefStr, Rc<StructDef>>,
 }
 
@@ -231,50 +226,27 @@ impl <'l> Environment<'l> {
     Ok(Rc::new(RefCell::new(Struct { def, fields : field_values })))
   }
 
-  pub fn add_function(&mut self, name : &str, method : Method) -> Result<(), String> {
+  pub fn add_function(&mut self, name : &str, function : Function) -> Result<(), String> {
     // Check if anything with this precise signature is already defined
     for id in iter_modules(&self.scope) {
       let module = &mut self.loaded_modules[id.i];
-      if let Some(mm) = module.functions.get_mut(name) {
-        for m in mm.variants.iter() {
-          if m.arg_types == method.arg_types {
-            return Err(format!("function {} defined more than once with the same signature.", name))
-          }
-        }
+      if let Some(f) = module.functions.get_mut(name) {
+        return Err(format!("function {} defined more than once.", name))
       }
     }
-    // Add the method to the current scope. Check if this scope already has a multi-method.
-    if let Some(mm) = self.current_module_mut().functions.get_mut(name) {
-      mm.variants.push(method);
-    }
-    else {
-      let function_name = self.symbol_cache.symbol(name);
-      let mm = MultiMethod { variants: vec![method] };
-      self.current_module_mut().functions.insert(function_name, mm);
-    }
+    let function_name = self.symbol_cache.symbol(name);
+    self.current_module_mut().functions.insert(function_name, function);
     Ok(())
   }
 
-  fn get_method<'m, A>(&'m self, name : &str, arg_types : &[Type], module_ids : A)
-    -> Result<&Method, String>
+  fn get_function<'m, A>(&'m self, name : &str, arg_types : &[Type], module_ids : A)
+    -> Result<&Function, String>
     where A : Iterator<Item = &'m ModuleId>
   {
-    // TODO: this function resolves multi-methods based on the types of the parameters passed.
-    // Unfortunately it doesn't do a very good job of it (particularly the Any type)
     for id in module_ids {
       let module = &self.loaded_modules[id.i];
-      if let Some(mm) = module.functions.get(name) {
-        'outer: for m in mm.variants.iter() {
-          if m.arg_types.len() != arg_types.len(){
-            continue 'outer;
-          }
-          for (a, b) in m.arg_types.iter().zip(arg_types) {
-            if a != b && *a != Type::Any && *b != Type::Any {
-              continue 'outer;
-            }
-          }
-          return Ok(m)
-        }
+      if let Some(f) = module.functions.get(name) {
+        return Ok(f)
       }
     }
     Err(format!("Cannot dispatch function '{}' with signature {:?}", name, arg_types))
@@ -313,10 +285,10 @@ fn call_function(
   -> Result<Value, Error>
 {
   let r = if let Some(ids) = visible_modules {
-    env.get_method(function_name, arg_types.as_slice(), ids.iter())
+    env.get_function(function_name, arg_types.as_slice(), ids.iter())
   }
   else {
-    env.get_method(function_name, arg_types.as_slice(), iter_modules(&env.scope))
+    env.get_function(function_name, arg_types.as_slice(), iter_modules(&env.scope))
   };
   let m = r.map_err(|s| error_raw(error_source, s))?;
   match &m.handle {
@@ -582,26 +554,36 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
       if exprs.len() != 3 {
         return error(expr, format!("malformed for block"));
       }
+      fn from_value<V>(v : Value) -> Result<V, String>
+        where Value : Into<Result<V, String>>
+      {
+        v.into()
+      }
+      fn to_range(v : Value) -> Result<(i64, i64), ErrorContent> {
+        let r : StructVal = from_value(v)?;
+        let range = r.borrow();
+        if range.def.name.as_ref() != "range" {
+          return Err(format!("expected range struct in for loop").into());
+        }
+        let start : f32 = from_value(range.fields[0].clone())?;
+        let end : f32 = from_value(range.fields[1].clone())?;
+        Ok((start as i64, end as i64))
+      }
       // TODO: this for loop implementation is wildly slow, for many different reasons.
       let var = exprs[0].symbol_unwrap()?;
-      let iterable = {
-        let thing = eval(&exprs[1], env)?;
-        let thing_type = thing.to_type();
-        call_function(&exprs[1], "iterator", None, vec![thing], vec![thing_type], env)?
-      };
-      let iterable_type = iterable.to_type();
+      let (start, end) = to_range(eval(&exprs[1], env)?).map_err(|e| error_raw(&exprs[1], e))?;
       let body = &exprs[2];
       env.scope.push(Default::default());
       env.new_variable(var.clone(), Value::Unit);
       env.loop_depth += 1;
-      while env.exit_state == ExitState::NotExiting {
-        let item = call_function(&exprs[1], "next_item", None, vec![iterable.clone()], vec![iterable_type.clone()], env)?;
-        if item == Value::Unit {
+      for i in start..end {
+        let v : Value = (i as f32).into();
+        let var_ref = env.dereference_variable(var).unwrap();
+        *var_ref = v;
+        eval(body, env)?;
+        if env.exit_state != ExitState::NotExiting {
           break;
         }
-        let var_ref = env.dereference_variable(var).unwrap();
-        *var_ref = item;
-        eval(body, env)?;
       }
       env.loop_depth -= 1;
       env.scope.pop();
@@ -623,13 +605,13 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
           .map_err(|s| error_raw(type_expr, s))?;
         arg_types.push(arg_type);
       }
-      let method = Method {
+      let f = Function {
         module_id: env.current_module,
         visible_modules: env.visible_modules(),
         arg_names, arg_types,
         handle: FunctionHandle::Ast(Rc::new(function_body.clone())),
       };
-      env.add_function(name, method).map_err(|s| error_raw(expr, s))?;
+      env.add_function(name, f).map_err(|s| error_raw(expr, s))?;
       Ok(Value::Unit)
     }
     ("literal_array", exprs) => {
@@ -652,7 +634,10 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
         error(expr, format!("index instruction expected 2 arguments. Found {}.", exprs.len()))
       }
     }
-    _ => error(expr, format!("instruction '{}' with args {:?} is not supported by the interpreter.", instr, children)),
+    _ => {
+      let child_tags = children.iter().map(|e| e.tag.clone()).collect::<Vec<ExprTag>>();
+      error(expr, format!("instruction '{}' with args '{:?}' is not supported by the interpreter.", instr, child_tags))
+    }
   }
 }
 

@@ -5,7 +5,7 @@ struct tetronimo { tiles, colour }
 
 struct vec2 { x , y }
 
-fun set_draw_color(view, c : array) {
+fun set_color(view, c : array) {
   set_draw_color(view, c[0], c[1], c[2], c[3])
 }
 
@@ -150,7 +150,7 @@ fun draw_tetronimo(
   view, shape, colour, size,
   xpos, ypos, xoffset, yoffset)
 {
-  set_draw_color(view, colour)
+  set_color(view, colour)
   let shape_size = shape_size(shape)
   for y in range(0, shape_size) {
     for x in range(0, shape_size) {
@@ -403,7 +403,7 @@ fun render(view, game) {
       let i = y * grid_width + x
       let colour = game.grid[i]
       if colour != () {
-        set_draw_color(view, colour)
+        set_color(view, colour)
         fill_rect(
           view,
           tile_size * x + rx,
