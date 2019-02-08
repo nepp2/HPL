@@ -1,0 +1,24 @@
+
+
+block(bytes)
+sym
+map
+
+
+let u64 = block(8);
+let f32 = block(4);
+let sym = block(4);
+*u64
+f64
+f32
+u8
+
+struct blah {
+  a : u8, b : u64,
+}
+
+
+fun blah(a, b, c) {
+
+}
+

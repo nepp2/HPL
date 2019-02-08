@@ -47,35 +47,9 @@ pub fn load_and_run(path : &str) -> InterpreterTask {
   InterpreterTask { interrupt_flag, completion_flag, handle }
 }
 
-pub fn load_and_run_simple(path : &str) -> InterpreterTask {
-  let path = PathBuf::from(path);
-  let interrupt_flag = Arc::new(AtomicBool::new(false));
-  let completion_flag = Arc::new(AtomicBool::new(false));
+pub fn watch(path : &str) {
 
-  let iflag = interrupt_flag.clone();
-  let cflag = completion_flag.clone();
-
-  let handle = thread::spawn(move || {
-    use crate::eval_simple::Interpreter;
-    let mut f = File::open(path).expect("file not found");
-    let mut code = String::new();
-    f.read_to_string(&mut code).unwrap();
-    let i = Interpreter::new(iflag);
-    i.eval()
-
-
-    let result = interpreter::interpret_with_interrupt(&code, iflag);
-    let s = print_result(result);
-    cflag.store(true, Ordering::Relaxed);
-    s
-  });
-
-  InterpreterTask { interrupt_flag, completion_flag, handle }
-}
-
-pub fn watch(path : &str, executor : fn(&str) -> InterpreterTask) {
-
-  let mut task = Some(executor(path));
+  let mut task = Some(load_and_run(path));
 
   // Create a channel to receive the events.
   let (tx, rx) = channel();
@@ -109,7 +83,7 @@ pub fn watch(path : &str, executor : fn(&str) -> InterpreterTask) {
                 t.interrupt_flag.store(true, Ordering::Relaxed);
                 println!("{}", t.handle.join().unwrap());
               }
-              task = Some(executor(path))
+              task = Some(load_and_run(path))
             }
             _ => {}
           }

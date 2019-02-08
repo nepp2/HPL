@@ -19,37 +19,77 @@ use std::io::Read;
 pub enum ExitState {
   NotExiting,
   Breaking,
-  Returning,
+  Returning(Value),
 }
 
-#[derive(Default)]
-pub struct SymbolTable {
-  symbol_map : HashMap<RefStr, u64>,
-  symbols : Vec<RefStr>,
+pub enum FunctionHandle {
+  Ast(Rc<Expr>),
+  BuiltIn(fn(&mut Environment, Vec<Value>) -> Result<Value, ErrorContent>),
 }
 
-struct Value { tag: u64, val: u64 }
-
-fn value(tag : u64, val : u64) -> Value {
-  Value{ tag, val }
+impl fmt::Debug for FunctionHandle {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      FunctionHandle::Ast(_) => write!(f, "FunctionHandle::Ast"),
+      FunctionHandle::BuiltIn(_) => write!(f, "FunctionHandle::BuiltIn"),
+    }
+  }
 }
 
-const UNIT_TAG : u64 = 0;
-const BOOL_TAG : u64 = 1;
-const FLOAT_TAG : u64 = 2;
+#[derive(Debug)]
+pub struct Function {
+  pub module_id : ModuleId,
+  pub visible_modules : Vec<ModuleId>,
+  pub arg_types : Vec<Type>,
+  pub arg_names : Vec<RefStr>,
+  pub handle : FunctionHandle,
+}
 
-const UNIT : Value = Value { tag: UNIT_TAG, val: 0 };
-const TRUE : Value = Value { tag: BOOL_TAG, val: 1 };
-const FALSE : Value = Value { tag: BOOL_TAG, val: 0 };
+#[derive(Default, Debug)]
+pub struct BlockScope {
+  pub variables : HashMap<RefStr, Value>,
+  pub modules : Vec<ModuleId>,
+}
 
+pub fn get_module_id(loaded_modules : &mut Vec<Module>, name : &str) -> Option<ModuleId> {
+  loaded_modules.iter().enumerate()
+    .find(|(_, m)| m.name.as_ref() == name)
+    .map(|(i, _)| ModuleId{i})
+}
 
-type Ptr = u64;
+pub fn add_module(loaded_modules : &mut Vec<Module>, m : Module) -> ModuleId {
+  let id = ModuleId { i: loaded_modules.len() };
+  loaded_modules.push(m);
+  id
+}
 
-pub struct Interpreter {
-  pub mem_counter : Ptr,
-  pub mem : HashMap<Ptr, Vec<u8>>,
-  pub st : SymbolTable,
-  pub interrupt_flag : Arc<AtomicBool>,
+#[derive(Debug)]
+pub struct Module {
+  pub name : RefStr,
+  // TODO: is this needed?
+  // pub modules : Vec<ModuleId>,
+  pub functions : HashMap<RefStr, Function>,
+  pub structs : HashMap<RefStr, Rc<StructDef>>,
+}
+
+impl Module {
+  pub fn new(name : RefStr) -> Module {
+    Module {
+      name,
+      functions: Default::default(),
+      structs: Default::default(),
+    }
+  }
+}
+
+pub struct Environment<'l> {
+
+  pub symbol_cache : &'l mut SymbolCache,
+  pub loaded_modules : &'l mut Vec<Module>,
+  pub current_module : ModuleId,
+  pub interrupt_flag : &'l mut Arc<AtomicBool>,
+
+  pub scope : Vec<BlockScope>,
 
   /// indicates how many nested loops we are inside in the currently-executing function
   pub loop_depth : i32,
@@ -57,31 +97,30 @@ pub struct Interpreter {
   /// indicates whether the program is currently breaking out of a loop
   /// or returning from the function
   pub exit_state : ExitState,
+
 }
 
-impl Interpreter {
+pub fn iter_modules<'m>(scope : &'m Vec<BlockScope>) -> impl Iterator<Item = &'m ModuleId> {
+  scope.iter().rev()
+  .flat_map(|b| b.modules.iter())
+}
 
-  pub fn new(interrupt_flag : Arc<AtomicBool>) -> Interpreter {
-    Interpreter{
-      mem_counter: 0,
-      mem: Default::default(),
-      st: Default::default(),
-      interrupt_flag,
+impl <'l> Environment<'l> {
+
+  pub fn new(
+    symbol_cache : &'l mut SymbolCache,
+    loaded_modules : &'l mut Vec<Module>,
+    current_module : ModuleId,
+    interrupt_flag : &'l mut Arc<AtomicBool>,
+    initial_scope : BlockScope,
+  ) -> Environment<'l> {
+    Environment{
+      symbol_cache, loaded_modules,
+      current_module, interrupt_flag,
+      scope: vec![initial_scope],
       loop_depth: 0,
       exit_state: ExitState::NotExiting,
     }
-  }
-
-  fn malloc(&mut self, bytes : u64) -> Ptr {
-    let ptr = self.mem_counter;
-    self.mem_counter += 1;
-    let allocation : Vec<u8> = vec![0; bytes as usize];
-    self.mem.insert(ptr, allocation);
-    ptr
-  }
-
-  fn free(&mut self, ptr : Ptr) {
-    self.mem.remove(&ptr);
   }
 
   fn check_interrupt(&self) -> Result<(), String> {
@@ -93,64 +132,21 @@ impl Interpreter {
     }
   }
 
-  fn dereference_variable(&mut self, env : Ptr, name : &str) -> Result<Value, ErrorContent> {
-    let sym =
-      self.st.symbol_map.get(name)
-      .ok_or_else(|| format!("symbol not defined"))?;
-    let env =
-      self.mem.get(&env)
-      .ok_or_else(|| format!("invalid pointer dereferenced"))?;
-
-
-    panic!();
-  }
-
-  pub fn eval2(&mut self, expr : &Expr, env : Ptr, ret : &mut[u8]) -> Result<(), Error> {
-    Ok(())
-  }
-
-  pub fn eval(&mut self, expr : &Expr, env : Ptr) -> Result<Value, Error> {
-    if self.exit_state != ExitState::NotExiting {
-      // this skips all evaluations until we backtrack to something
-      // that stops the exit state, such as a loop or function call
-      return Ok(UNIT);
-    }
-    match &expr.tag {
-      ExprTag::Tree(_) => {
-        panic!()
-      }
-      ExprTag::Symbol(s) => {
-        if s.as_ref() == "break" {
-          if self.loop_depth > 0 {
-            self.exit_state = ExitState::Breaking;
-            Ok(UNIT)
-          }
-          else {
-            error(expr, format!("can't break outside a loop"))
-          }
-        }
-        else {
-          let ptr = self.dereference_variable(env, &s).map_err(|c| error_raw(expr, c))?;
-          Ok(ptr)
-        }
-      }
-      ExprTag::LiteralString(s) => panic!(),
-      ExprTag::LiteralFloat(f) => Ok(value(FLOAT_TAG, f.to_bits() as u64)),
-      ExprTag::LiteralBool(b) => Ok(if *b { TRUE } else { FALSE }),
-      ExprTag::LiteralUnit => Ok(UNIT),
-    }
-  }
-
-}
-
-  /*
-
   fn current_block_scope(&mut self) -> &mut BlockScope {
     self.scope.last_mut().unwrap()
   }
 
   fn new_variable(&mut self, s : RefStr, v : Value) {
     self.current_block_scope().variables.insert(s, v);
+  }
+
+  pub fn import_module(&mut self, module_id : ModuleId) -> Result<(), String> {
+    if let Some(id) = iter_modules(&self.scope).find(|id| *id == &module_id) {
+      let m = &self.loaded_modules[id.i];
+      return Err(format!("Module '{}' already imported", m.name));
+    }
+    self.current_block_scope().modules.push(module_id);
+    Ok(())
   }
 
   /// Retrieve the value closest to the end of the vector of hashmaps (the most local scope)
@@ -165,8 +161,38 @@ impl Interpreter {
     return None;
   }
 
-  pub fn instantiate_object(&mut self, name: &str, field_value_pairs: Vec<(RefStr, Value)>)
-    -> Result<Object, ErrorContent>
+  pub fn visible_modules(&self) -> Vec<ModuleId> {
+    iter_modules(&self.scope).cloned().collect()
+  }
+
+  pub fn current_module_mut(&mut self) -> &mut Module {
+    &mut self.loaded_modules[self.current_module.i]
+  }
+
+  pub fn current_module(&self) -> &Module {
+    &self.loaded_modules[self.current_module.i]
+  }
+
+  pub fn struct_lookup(&self, name : &str) -> Option<&Rc<StructDef>> {
+    for id in iter_modules(&self.scope) {
+      let m = &self.loaded_modules[id.i];
+      if let Some(s) = m.structs.get(name) {
+        return Some(s);
+      }
+    }
+    None
+  }
+
+  pub fn add_struct(&mut self, def: StructDef) -> Result<(), String> {
+    if self.struct_lookup(&def.name).is_some() {
+      return Err(format!("A struct called {} has already been defined.", def.name));
+    }
+    self.current_module_mut().structs.insert(def.name.clone(), Rc::new(def));
+    Ok(())
+  }
+
+  pub fn instantiate_struct(&mut self, name: &str, field_value_pairs: Vec<(RefStr, Value)>)
+    -> Result<StructVal, ErrorContent>
   {
     let def = {
       if let Some(def) = self.struct_lookup(name) {
@@ -200,50 +226,27 @@ impl Interpreter {
     Ok(Rc::new(RefCell::new(Struct { def, fields : field_values })))
   }
 
-  pub fn add_function(&mut self, name : &str, method : Method) -> Result<(), String> {
+  pub fn add_function(&mut self, name : &str, function : Function) -> Result<(), String> {
     // Check if anything with this precise signature is already defined
     for id in iter_modules(&self.scope) {
       let module = &mut self.loaded_modules[id.i];
-      if let Some(mm) = module.functions.get_mut(name) {
-        for m in mm.variants.iter() {
-          if m.arg_types == method.arg_types {
-            return Err(format!("function {} defined more than once with the same signature.", name))
-          }
-        }
+      if let Some(f) = module.functions.get_mut(name) {
+        return Err(format!("function {} defined more than once.", name))
       }
     }
-    // Add the method to the current scope. Check if this scope already has a multi-method.
-    if let Some(mm) = self.current_module_mut().functions.get_mut(name) {
-      mm.variants.push(method);
-    }
-    else {
-      let function_name = self.symbol_cache.symbol(name);
-      let mm = MultiMethod { variants: vec![method] };
-      self.current_module_mut().functions.insert(function_name, mm);
-    }
+    let function_name = self.symbol_cache.symbol(name);
+    self.current_module_mut().functions.insert(function_name, function);
     Ok(())
   }
 
-  fn get_method<'m, A>(&'m self, name : &str, arg_types : &[Type], module_ids : A)
-    -> Result<&Method, String>
+  fn get_function<'m, A>(&'m self, name : &str, arg_types : &[Type], module_ids : A)
+    -> Result<&Function, String>
     where A : Iterator<Item = &'m ModuleId>
   {
-    // TODO: this function resolves multi-methods based on the types of the parameters passed.
-    // Unfortunately it doesn't do a very good job of it (particularly the Any type)
     for id in module_ids {
       let module = &self.loaded_modules[id.i];
-      if let Some(mm) = module.functions.get(name) {
-        'outer: for m in mm.variants.iter() {
-          if m.arg_types.len() != arg_types.len(){
-            continue 'outer;
-          }
-          for (a, b) in m.arg_types.iter().zip(arg_types) {
-            if a != b && *a != Type::Any && *b != Type::Any {
-              continue 'outer;
-            }
-          }
-          return Ok(m)
-        }
+      if let Some(f) = module.functions.get(name) {
+        return Ok(f)
       }
     }
     Err(format!("Cannot dispatch function '{}' with signature {:?}", name, arg_types))
@@ -282,10 +285,10 @@ fn call_function(
   -> Result<Value, Error>
 {
   let r = if let Some(ids) = visible_modules {
-    env.get_method(function_name, arg_types.as_slice(), ids.iter())
+    env.get_function(function_name, arg_types.as_slice(), ids.iter())
   }
   else {
-    env.get_method(function_name, arg_types.as_slice(), iter_modules(&env.scope))
+    env.get_function(function_name, arg_types.as_slice(), iter_modules(&env.scope))
   };
   let m = r.map_err(|s| error_raw(error_source, s))?;
   match &m.handle {
@@ -592,13 +595,13 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
           .map_err(|s| error_raw(type_expr, s))?;
         arg_types.push(arg_type);
       }
-      let method = Method {
+      let f = Function {
         module_id: env.current_module,
         visible_modules: env.visible_modules(),
         arg_names, arg_types,
         handle: FunctionHandle::Ast(Rc::new(function_body.clone())),
       };
-      env.add_function(name, method).map_err(|s| error_raw(expr, s))?;
+      env.add_function(name, f).map_err(|s| error_raw(expr, s))?;
       Ok(Value::Unit)
     }
     ("literal_array", exprs) => {
@@ -675,4 +678,3 @@ pub fn eval_string(code : &str, env : &mut Environment) -> Result<Value, Error> 
   eval(&ast, env)
 }
 
-*/
