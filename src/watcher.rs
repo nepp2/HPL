@@ -20,13 +20,13 @@ pub fn print_result(r : Result<Value, Error>) -> String {
   }
 }
 
-struct InterpreterTask {
+pub struct InterpreterTask {
   interrupt_flag : Arc<AtomicBool>,
   completion_flag : Arc<AtomicBool>,
   handle : JoinHandle<String>,
 }
 
-fn load_and_run(path : &str) -> InterpreterTask {
+pub fn load_and_run(path : &str) -> InterpreterTask {
   let path = PathBuf::from(path);
   let interrupt_flag = Arc::new(AtomicBool::new(false));
   let completion_flag = Arc::new(AtomicBool::new(false));
@@ -47,9 +47,35 @@ fn load_and_run(path : &str) -> InterpreterTask {
   InterpreterTask { interrupt_flag, completion_flag, handle }
 }
 
-pub fn watch(path : &str) {
+pub fn load_and_run_simple(path : &str) -> InterpreterTask {
+  let path = PathBuf::from(path);
+  let interrupt_flag = Arc::new(AtomicBool::new(false));
+  let completion_flag = Arc::new(AtomicBool::new(false));
 
-  let mut task = Some(load_and_run(path));
+  let iflag = interrupt_flag.clone();
+  let cflag = completion_flag.clone();
+
+  let handle = thread::spawn(move || {
+    use crate::eval_simple::Interpreter;
+    let mut f = File::open(path).expect("file not found");
+    let mut code = String::new();
+    f.read_to_string(&mut code).unwrap();
+    let i = Interpreter::new(iflag);
+    i.eval()
+
+
+    let result = interpreter::interpret_with_interrupt(&code, iflag);
+    let s = print_result(result);
+    cflag.store(true, Ordering::Relaxed);
+    s
+  });
+
+  InterpreterTask { interrupt_flag, completion_flag, handle }
+}
+
+pub fn watch(path : &str, executor : fn(&str) -> InterpreterTask) {
+
+  let mut task = Some(executor(path));
 
   // Create a channel to receive the events.
   let (tx, rx) = channel();
@@ -83,7 +109,7 @@ pub fn watch(path : &str) {
                 t.interrupt_flag.store(true, Ordering::Relaxed);
                 println!("{}", t.handle.join().unwrap());
               }
-              task = Some(load_and_run(path))
+              task = Some(executor(path))
             }
             _ => {}
           }
