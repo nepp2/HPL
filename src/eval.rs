@@ -12,8 +12,6 @@ use std::fmt;
 use itertools::Itertools;
 use std::mem;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::fs::File;
-use std::io::Read;
 
 #[derive(PartialEq)]
 pub enum ExitState {
@@ -230,7 +228,7 @@ impl <'l> Environment<'l> {
     // Check if anything with this precise signature is already defined
     for id in iter_modules(&self.scope) {
       let module = &mut self.loaded_modules[id.i];
-      if let Some(f) = module.functions.get_mut(name) {
+      if module.functions.contains_key(name) {
         return Err(format!("function {} defined more than once.", name))
       }
     }
@@ -239,7 +237,7 @@ impl <'l> Environment<'l> {
     Ok(())
   }
 
-  fn get_function<'m, A>(&'m self, name : &str, arg_types : &[Type], module_ids : A)
+  fn get_function<'m, A>(&'m self, name : &str, module_ids : A)
     -> Result<&Function, String>
     where A : Iterator<Item = &'m ModuleId>
   {
@@ -249,7 +247,7 @@ impl <'l> Environment<'l> {
         return Ok(f)
       }
     }
-    Err(format!("Cannot dispatch function '{}' with signature {:?}", name, arg_types))
+    Err(format!("No function called '{}' defined", name))
   }
 
   fn string_to_type(&self, s : &RefStr) -> Result<Type, String> {
@@ -281,29 +279,34 @@ impl <'l> Environment<'l> {
 fn call_function(
   error_source : &Expr, function_name: &str,
   visible_modules: Option<&Vec<ModuleId>>, arg_values: Vec<Value>,
-  arg_types: Vec<Type>, env : &mut Environment)
+  env : &mut Environment)
   -> Result<Value, Error>
 {
   let r = if let Some(ids) = visible_modules {
-    env.get_function(function_name, arg_types.as_slice(), ids.iter())
+    env.get_function(function_name, ids.iter())
   }
   else {
-    env.get_function(function_name, arg_types.as_slice(), iter_modules(&env.scope))
+    env.get_function(function_name, iter_modules(&env.scope))
   };
-  let m = r.map_err(|s| error_raw(error_source, s))?;
-  match &m.handle {
+  let f = r.map_err(|s| error_raw(error_source, s))?;
+  if f.arg_names.len() != arg_values.len() {
+    return error(error_source,
+      format!("function '{}' expected {} arguments, but received {}",
+        function_name, f.arg_names.len(), arg_values.len()))
+  }
+  match &f.handle {
     FunctionHandle::Ast(expr) => {
       let mut args = HashMap::new();
-      for (v, n) in arg_values.into_iter().zip(&m.arg_names) {
+      for (v, n) in arg_values.into_iter().zip(&f.arg_names) {
         args.insert(n.clone(), v);
       }
       let block = BlockScope {
         variables: args,
-        modules: m.visible_modules.clone()
+        modules: f.visible_modules.clone()
       };
       let expr = expr.clone();
       let mut new_env = Environment::new(
-        env.symbol_cache, env.loaded_modules, m.module_id, env.interrupt_flag, block);
+        env.symbol_cache, env.loaded_modules, f.module_id, env.interrupt_flag, block);
       let r = eval(&expr, &mut new_env)?;
       let es = mem::replace(&mut new_env.exit_state, ExitState::NotExiting);
       if let ExitState::Returning(v) = es {
@@ -328,14 +331,12 @@ fn eval_function_call(expr : &Expr, function_expr: &Expr, args: &[Expr], env : &
     -> Result<Value, Error>
   {
     let mut arg_values = vec!();
-    let mut arg_types = vec!();
     for i in 0..args.len() {
       let e = &args[i];
       let v = eval(e, env)?;
-      arg_types.push(v.to_type());
       arg_values.push(v);
     }
-    call_function(expr, function_name, visible_modules, arg_values, arg_types, env)
+    call_function(expr, function_name, visible_modules, arg_values, env)
   }
   // Decide whether this is a first class function or a static function reference
   let symbol = function_expr.symbol_unwrap().ok();

@@ -23,22 +23,22 @@ fun live_gameloop(game_module_name) {
 
     // initialise the module and update it on past events
     let state = init(view, width, height)
-    for e in events {
-      update(state, e)
+    for i in range(0, len(events)) {
+      update(state, events[i])
     }
 
     while true {
       let time = time_now()
 
       // check the watcher for code changes
-      let e = poll_event(watcher)
+      let e = poll_watcher_event(watcher)
       if e == game_module_name {
         break
       }
 
       // consume sdl events
       while true {
-        let e = poll_event(view)
+        let e = poll_sdl_event(view)
         if e == () {
           break
         }
