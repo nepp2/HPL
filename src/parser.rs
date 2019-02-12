@@ -1,6 +1,6 @@
 use crate::lexer;
 use crate::lexer::{Token, TokenType};
-use crate::value::{RefStr, SymbolCache, Expr, ExprTag, ExprId, Type};
+use crate::value::{RefStr, SymbolTable, Symbol, Expr, ExprTag, ExprId};
 use crate::error::{Error, TextLocation, TextMarker, error};
 use std::collections::HashSet;
 use std::f32;
@@ -25,14 +25,14 @@ pub static NO_TYPE : &str = "[NO_TYPE]";
 struct ParseState<'l> {
   tokens : Vec<Token>,
   pos : usize,
-  symbol_cache : &'l mut SymbolCache,
+  sym : &'l mut SymbolTable,
   expr_id_gen : ExprId, // TODO: this should be cached in the interpreter. At the moment, ids will be reused!
 }
 
 impl <'l> ParseState<'l> {
 
-  fn new(tokens : Vec<Token>, symbol_cache : &mut SymbolCache,) -> ParseState {
-    ParseState { tokens, pos: 0, symbol_cache, expr_id_gen: 0 }
+  fn new(tokens : Vec<Token>, sym : &mut SymbolTable,) -> ParseState {
+    ParseState { tokens, pos: 0, sym, expr_id_gen: 0 }
   }
 
   fn has_tokens(&self) -> bool {
@@ -84,10 +84,10 @@ impl <'l> ParseState<'l> {
     self.pos += 1;
   }
 
-  fn accept_string(&mut self, string : &str) -> bool {
+  fn accept_symbol(&mut self, symbol : Symbol) -> bool {
     let accept = {
       if let Ok(t) = self.peek() {
-        t.string.as_ref() == string
+        t.symbol == symbol
       }
       else { false }
     };
@@ -95,11 +95,11 @@ impl <'l> ParseState<'l> {
     accept
   }
 
-  fn expect_string(&mut self, string : &str) -> Result<(), Error> {
+  fn expect_symbol(&mut self, symbol : Symbol) -> Result<(), Error> {
     {
       let t = self.peek()?;
-      if t.string.as_ref() != string {
-        return error(t.loc, format!("Expected token '{}', found token '{}'", string, t.string));
+      if t.symbol != symbol {
+        return error(t.loc, format!("Expected token '{}', found token '{}'", self.sym.refstr(symbol), self.sym.refstr(t.symbol)));
       }
     }
     self.skip();
@@ -121,7 +121,7 @@ impl <'l> ParseState<'l> {
   fn add_expr(&mut self, tag : ExprTag, children : Vec<Expr>, loc : TextLocation) -> Expr {
     let id = self.expr_id_gen;
     self.expr_id_gen += 1;
-    Expr { id, tag, children, loc, type_info: Type::Unresolved }
+    Expr { id, tag, children, loc }
   }
 
   fn add_leaf(&mut self, tag : ExprTag, start : TextMarker) -> Expr {
@@ -133,7 +133,7 @@ impl <'l> ParseState<'l> {
     (&mut self, s : T, children : Vec<Expr>, start : TextMarker) -> Expr
   {
     let loc = self.loc(start);
-    let tag = ExprTag::Tree(self.symbol_cache.symbol(s));
+    let tag = ExprTag::Tree(self.sym.get(s));
     self.add_expr(tag, children, loc)
   }
 
@@ -141,7 +141,7 @@ impl <'l> ParseState<'l> {
     (&mut self, s : T, start : TextMarker) -> Expr
   {
     let loc = self.loc(start);
-    let tag = ExprTag::Symbol(self.symbol_cache.symbol(s));
+    let tag = ExprTag::Symbol(self.sym.get(s));
     self.add_expr(tag, vec!(), loc)
   }
 }
@@ -161,9 +161,9 @@ lazy_static! {
 
 fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
   
-  fn operator_precedence(t : &Token) -> Result<i32, Error> {
+  fn operator_precedence(t : &Token, op : &str) -> Result<i32, Error> {
     let p =
-      match t.string.as_ref() {
+      match op {
         "=" => 1,
         "+=" => 1,
         "&&" => 2,
@@ -183,7 +183,7 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
         "(" => 7,
         "[" => 7,
         "." => 8,
-        _ => return error(t.loc, format!("Unexpected operator '{}'", t.string)),
+        _ => return error(t.loc, format!("Unexpected operator '{}'", op)),
       };
     Ok(p)
   }

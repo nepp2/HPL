@@ -1,6 +1,6 @@
 
 use std::collections::HashSet;
-use crate::value::{RefStr, SymbolCache};
+use crate::value::{SymbolTable, Symbol};
 use crate::error::{Error, TextLocation, TextMarker, error_raw};
 
 lazy_static! {
@@ -14,9 +14,8 @@ pub enum TokenType {
   Symbol, Syntax, FloatLiteral, Keyword, StringLiteral
 }
 
-#[derive(Debug)]
 pub struct Token {
-  pub string : RefStr,
+  pub symbol : Symbol,
   pub token_type : TokenType,
   pub loc : TextLocation,
 }
@@ -26,7 +25,7 @@ struct CStream<'l> {
   loc : StreamLocation,
   tokens : Vec<Token>,
   errors : Vec<Error>,
-  symbol_cache : &'l mut SymbolCache,
+  symbols : &'l mut SymbolTable,
   current_token : String,
 }
 
@@ -46,13 +45,13 @@ impl From<StreamLocation> for TextMarker {
 
 impl <'l> CStream<'l> {
 
-  fn new(chars : Vec<char>, symbol_cache : &mut SymbolCache) -> CStream {
+  fn new(chars : Vec<char>, symbols : &mut SymbolTable) -> CStream {
     CStream {
       chars,
       loc : StreamLocation { pos: 0, line: 1, line_start: 0 },
       tokens: vec!(),
       errors: vec!(),
-      symbol_cache,
+      symbols,
       current_token: String::new(),
     }
   }
@@ -79,10 +78,10 @@ impl <'l> CStream<'l> {
 
   fn complete_token(&mut self, start_loc : StreamLocation, token_type : TokenType) {
     let loc = self.get_text_location(start_loc);
-    let string = self.symbol_cache.symbol(self.current_token.as_str());
+    let symbol = self.symbols.get(self.current_token.as_str());
     self.current_token.clear();
     let t = Token {
-      string,
+      symbol,
       token_type: token_type,
       loc : loc,
     };
@@ -299,8 +298,8 @@ impl <'l> CStream<'l> {
   }
 }
 
-pub fn lex_with_cache(code : &str, symbol_cache : &mut SymbolCache) -> Result<Vec<Token>, Vec<Error>> {
-  let mut cs = CStream::new(code.chars().collect(), symbol_cache);
+pub fn lex(code : &str, symbols : &mut SymbolTable) -> Result<Vec<Token>, Vec<Error>> {
+  let mut cs = CStream::new(code.chars().collect(), symbols);
   while cs.has_chars() {
     if cs.handle_newline() {}
     else if cs.skip_space() {}
@@ -319,18 +318,4 @@ pub fn lex_with_cache(code : &str, symbol_cache : &mut SymbolCache) -> Result<Ve
   else {
     Err(cs.errors)
   }
-}
-
-pub fn lex(code : &str) -> Result<Vec<Token>, Vec<Error>> {
-  lex_with_cache(code, &mut SymbolCache::new())
-}
-
-#[test]
-fn test_lex() {
-  let code = "(3 + 4) * 10";
-  let ts = lex(code).unwrap();
-  for t in ts {
-    println!("{:?}", t.string);
-  }
-  //println!("{:?}", ts);
 }

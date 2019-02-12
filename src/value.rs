@@ -3,6 +3,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::collections::HashMap;
 use std::any::Any;
 
 use crate::error::{Error, TextLocation, error, ErrorContent};
@@ -27,14 +28,30 @@ pub enum Type {
   Struct{ module: RefStr, name: RefStr },
   Any,
   External(RefStr),
-  Unresolved
+}
+
+impl Type {
+  pub fn name(&self) -> RefStr {
+    use self::Type::*;
+    match self {
+      Float => "float".into(),
+      Any => "any".into(),
+      Array => "array".into(),
+      Bool => "bool".into(),
+      String => "string".into(),
+      Function => "function".into(),
+      Struct{ name, .. } => name.clone(),
+      External(e) => e.clone(),
+      Unit => "unit".into(),
+    }
+  }
 }
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum ExprTag {
-  Tree(RefStr),
-  Symbol(RefStr),
-  LiteralString(RefStr),
+  Tree(Symbol),
+  Symbol(Symbol),
+  LiteralString(Symbol),
   LiteralFloat(f32),
   LiteralBool(bool),
   LiteralUnit,
@@ -50,7 +67,6 @@ pub struct Expr {
   pub tag : ExprTag,
   pub children : Vec<Expr>,
   pub loc : TextLocation,
-  pub type_info : Type,
 }
 
 fn pretty_print(e: &Expr, f: &mut fmt::Formatter, indent : usize) -> fmt::Result {
@@ -117,24 +133,47 @@ impl <'l> Into<TextLocation> for &'l Expr {
   }
 }
 
-pub struct SymbolCache {
-  symbols : HashSet<RefStr>
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Symbol { id : u64 }
+
+pub struct Keywords {
+  
 }
 
-impl SymbolCache {
-  pub fn new() -> SymbolCache {
-    SymbolCache{ symbols: HashSet::new() }
+pub struct SymbolTable {
+  symbol_map : HashMap<RefStr, Symbol>,
+  symbols : Vec<RefStr>,
+  keywords : Keywords,
+}
+
+impl SymbolTable {
+  pub fn new() -> SymbolTable {
+    SymbolTable {
+      symbol_map: Default::default(),
+      symbols: Default::default(),
+      keywords: Keywords{},
+    }
   }
 
-  pub fn symbol<T : AsRef<str> + Into<RefStr>>(&mut self, s : T) -> RefStr {
-    if self.symbols.contains(s.as_ref()) {
-      self.symbols.get(s.as_ref()).unwrap().clone()
+  pub fn get<S : AsRef<str> + Into<RefStr>>(&mut self, s : S) -> Symbol {
+    if let Some(symbol) = self.symbol_map.get(s.as_ref()) {
+      *symbol
     }
-    else {
-      let s : RefStr = s.into();
-      self.symbols.insert(s.clone());
-      s
+    else{
+      let symbol = Symbol { id : self.symbols.len() as u64 };
+      let string : RefStr = s.into();
+      self.symbols.push(string.clone());
+      self.symbol_map.insert(string, symbol);
+      symbol
     }
+  }
+
+  pub fn refstr(&self, symbol : Symbol) -> RefStr {
+    self.symbols[symbol.id as usize].clone()
+  }
+
+  pub fn str(&self, symbol : Symbol) -> &str {
+    self.symbols[symbol.id as usize].as_ref()
   }
 }
 
@@ -336,3 +375,121 @@ impl Into<Result<ExternalVal, String>> for Value {
     }
   }
 }
+
+// ### VALUE 2 ###
+
+#[derive(Clone, PartialEq)]
+pub enum ValInternal {
+  Small(u64),
+  Big(Rc<RefCell<Vec<u8>>>),
+}
+
+#[derive(Clone, PartialEq)]
+pub struct Value2 {
+  tag : Type,
+  value : ValInternal,
+}
+
+impl Value2 {
+  pub fn to_type(&self) -> Type {
+    self.tag.clone()
+  }
+
+  pub fn type_name(&self) -> RefStr {
+    self.tag.name()
+  }
+}
+
+const BOOL_TRUE : u64 = 1;
+const BOOL_FALSE : u64 = 0;
+
+use self::ValInternal::*;
+
+impl From<bool> for Value2 {
+  fn from(b : bool) -> Value2 {
+    let v = if b { BOOL_TRUE } else { BOOL_FALSE };
+    Value2 { tag: Type::Bool, value: Small(v)}
+  }
+}
+impl From<f32> for Value2 {
+  fn from(f : f32) -> Value2 {
+    let v = f.to_bits() as u64;
+    Value2 { tag: Type::Float, value: Small(v)}
+  }
+}
+
+/*
+impl From<Vec<Value2>> for Value2 {
+  fn from(v : Vec<Value2>) -> Value2 {
+    Value2::Array(Rc::new(RefCell::new(v)))
+  }
+}
+impl From<&str> for Value2 {
+  fn from(v : &str) -> Value2 {
+    Value2::String(v.into())
+  }
+}
+impl From<String> for Value2 {
+  fn from(v : String) -> Value2 {
+    Value2::String(v.into())
+  }
+}
+
+impl Into<Result<f32, String>> for Value2 {
+  fn into(self) -> Result<f32, String> {
+    match self {
+      Value2::Float(f) => Ok(f), 
+      x => Err(format!("Expected float, found {:?}.", x))
+    }
+  }
+}
+impl Into<Result<RefStr, String>> for Value2 {
+  fn into(self) -> Result<RefStr, String> {
+    match self {
+      Value2::String(s) => Ok(s),
+      x => Err(format!("Expected string, found {:?}.", x))
+    }
+  }
+}
+impl Into<Result<bool, String>> for Value2 {
+  fn into(self) -> Result<bool, String> {
+    match self {
+      Value2::Bool(b) => Ok(b),
+      x => Err(format!("Expected bool, found {:?}.", x))
+    }
+  }
+}
+impl Into<Result<FunctionRef, String>> for Value2 {
+  fn into(self) -> Result<FunctionRef, String> {
+    match self {
+      Value2::Function(f) => Ok(f),
+      x => Err(format!("Expected function, found {:?}.", x))
+    }
+  }
+}
+impl Into<Result<Array, String>> for Value2 {
+  fn into(self) -> Result<Array, String> {
+    match self {
+      Value2::Array(a) => Ok(a),
+      x => Err(format!("Expected array, found {:?}.", x))
+    }
+  }
+}
+impl Into<Result<StructVal, String>> for Value2 {
+  fn into(self) -> Result<StructVal, String> {
+    match self {
+      Value2::Struct(s) => Ok(s),
+      x => Err(format!("Expected struct, found {:?}.", x))
+    }
+  }
+}
+
+impl Into<Result<ExternalVal, String>> for Value2 {
+  fn into(self) -> Result<ExternalVal, String> {
+    match self {
+      Value2::External(v) => Ok(v),
+      x => Err(format!("Expected struct, found {:?}.", x))
+    }
+  }
+}
+*/
