@@ -133,29 +133,62 @@ impl <'l> Into<TextLocation> for &'l Expr {
   }
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug, Eq, Hash)]
 pub struct Symbol { id : u64 }
 
 pub struct Keywords {
-  
+  pub terminating_syntax : HashSet<Symbol>,
+  pub prefix_operators : HashSet<Symbol>,
+  pub infix_operators : HashSet<Symbol>,
+  pub special_operators : HashSet<Symbol>,
+
+  pub open_paren : Symbol,
+  pub open_bracket : Symbol,
+  pub open_brace : Symbol,
+  pub close_paren : Symbol,
+  pub close_bracket : Symbol,
+  pub close_brace : Symbol,
+  pub comma : Symbol,
+
+  pub call : Symbol,
+  pub index : Symbol,
 }
 
-pub struct SymbolTable {
-  symbol_map : HashMap<RefStr, Symbol>,
-  symbols : Vec<RefStr>,
-  keywords : Keywords,
-}
+impl Keywords {
+  pub fn new(inner : &mut SymbolInner) -> Keywords {
+    fn symbol_set(inner : &mut SymbolInner, strings : &[&str]) -> HashSet<Symbol> {
+      strings.into_iter().map(|s| inner.get(*s)).collect()
+    }
+    Keywords {
+      terminating_syntax: symbol_set(inner, &["}", ")", "]", ";", ","]),
+      prefix_operators: symbol_set(inner, &["-", "!"]),
+      infix_operators: symbol_set(inner, &[
+        "=", ".", "==", "!=", "<=", ">=", "=>", "+=", "-=", "*=", "/=", "||", "&&",
+        "<", ">", "+", "-", "*", "/", "%", "|", "&", "^"]),
+      special_operators: symbol_set(inner, &["=", ".", "+=", "&&", "||"]),
 
-impl SymbolTable {
-  pub fn new() -> SymbolTable {
-    SymbolTable {
-      symbol_map: Default::default(),
-      symbols: Default::default(),
-      keywords: Keywords{},
+      open_paren: inner.get("("),
+      open_bracket: inner.get("["),
+      open_brace: inner.get("{"),
+      close_paren: inner.get(")"),
+      close_bracket: inner.get("]"),
+      close_brace: inner.get("}"),
+      comma: inner.get(","),
+
+      call: inner.get("call"),
+      index: inner.get("index"),
     }
   }
+}
 
-  pub fn get<S : AsRef<str> + Into<RefStr>>(&mut self, s : S) -> Symbol {
+#[derive(Default)]
+struct SymbolInner {
+  symbol_map : HashMap<RefStr, Symbol>,
+  symbols : Vec<RefStr>,  
+}
+
+impl SymbolInner {
+  fn get<S : AsRef<str> + Into<RefStr>>(&mut self, s : S) -> Symbol {
     if let Some(symbol) = self.symbol_map.get(s.as_ref()) {
       *symbol
     }
@@ -166,6 +199,23 @@ impl SymbolTable {
       self.symbol_map.insert(string, symbol);
       symbol
     }
+  }
+}
+
+pub struct SymbolTable {
+  inner : SymbolInner,
+  pub keywords : Keywords,
+}
+
+impl SymbolTable {
+  pub fn new() -> SymbolTable {
+    let mut inner : SymbolInner = Default::default();
+    let keywords = Keywords::new(&mut inner);
+    SymbolTable { inner, keywords }
+  }
+
+  pub fn get<S : AsRef<str> + Into<RefStr>>(&mut self, s : S) -> Symbol {
+    symbol(s, &mut self.symbol_map, &mut self.symbols)
   }
 
   pub fn refstr(&self, symbol : Symbol) -> RefStr {
