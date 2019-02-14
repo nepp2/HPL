@@ -16,7 +16,7 @@ use std::collections::HashMap;
 // TODO: this should store the expression id counter for the parser. At the moment, ids will be reused!
 
 pub struct Interpreter {
-  pub symbol_cache : SymbolCache,
+  pub symbols : SymbolTable,
   pub loaded_modules : Vec<Module>,
   pub top_level_scope : Option<BlockScope>,
   pub top_level_module : ModuleId,
@@ -28,7 +28,7 @@ pub struct Interpreter {
 impl Interpreter {
 
   pub fn new(mut interrupt_flag : Arc<AtomicBool>) -> Interpreter {
-    let mut symbol_cache = SymbolCache::new();
+    let mut symbols = SymbolTable::new();
     let mut loaded_modules = vec!();
 
     // load prelude
@@ -38,7 +38,7 @@ impl Interpreter {
       let mut code = String::new();
       f.read_to_string(&mut code).unwrap();
       let mut env = Environment::new(
-        &mut symbol_cache,
+        &mut symbols,
         &mut loaded_modules,
         prelude, &mut interrupt_flag,
         BlockScope {
@@ -54,7 +54,7 @@ impl Interpreter {
       add_module(&mut loaded_modules, Module::new("top_level".into()));
 
     Interpreter {
-      symbol_cache,
+      symbols,
       loaded_modules,
       top_level_scope: Some(BlockScope {
         variables: HashMap::new(),
@@ -72,7 +72,7 @@ impl Interpreter {
   pub fn interpret(&mut self, code : &str) -> Result<Value, Error> {
     let scope = mem::replace(&mut self.top_level_scope, None).unwrap();
     let mut env = Environment::new(
-      &mut self.symbol_cache,
+      &mut self.symbols,
       &mut self.loaded_modules,
       self.top_level_module,
       &mut self.interrupt_flag,

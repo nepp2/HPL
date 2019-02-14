@@ -69,22 +69,23 @@ pub struct Expr {
   pub loc : TextLocation,
 }
 
-fn pretty_print(e: &Expr, f: &mut fmt::Formatter, indent : usize) -> fmt::Result {
+fn pretty_print(sym : &mut SymbolTable, e: &Expr, f: &mut fmt::Formatter, indent : usize) -> fmt::Result {
   match &e.tag {
-    ExprTag::Tree(s) => {
+    ExprTag::Tree(symbol) => {
+      let s = sym.str(*symbol);
       write!(f, "({}", s)?;
-      if s.as_ref() == "block" {
+      if s == "block" {
         let indent = indent + 2;
         for c in e.children.iter() {
           writeln!(f)?;
           write!(f, "{:indent$}", "", indent=indent)?;
-          pretty_print(c, f, indent)?
+          pretty_print(sym, c, f, indent)?
         }
       }
       else {
         for c in e.children.iter() {
           write!(f, " ")?;
-          pretty_print(c, f, indent)?
+          pretty_print(sym, c, f, indent)?
         }
       }
       write!(f, ")")
@@ -136,59 +137,18 @@ impl <'l> Into<TextLocation> for &'l Expr {
 #[derive(Clone, Copy, PartialEq, Debug, Eq, Hash)]
 pub struct Symbol { id : u64 }
 
-pub struct Keywords {
-  pub terminating_syntax : HashSet<Symbol>,
-  pub prefix_operators : HashSet<Symbol>,
-  pub infix_operators : HashSet<Symbol>,
-  pub special_operators : HashSet<Symbol>,
-
-  pub open_paren : Symbol,
-  pub open_bracket : Symbol,
-  pub open_brace : Symbol,
-  pub close_paren : Symbol,
-  pub close_bracket : Symbol,
-  pub close_brace : Symbol,
-  pub comma : Symbol,
-
-  pub call : Symbol,
-  pub index : Symbol,
-}
-
-impl Keywords {
-  pub fn new(inner : &mut SymbolInner) -> Keywords {
-    fn symbol_set(inner : &mut SymbolInner, strings : &[&str]) -> HashSet<Symbol> {
-      strings.into_iter().map(|s| inner.get(*s)).collect()
-    }
-    Keywords {
-      terminating_syntax: symbol_set(inner, &["}", ")", "]", ";", ","]),
-      prefix_operators: symbol_set(inner, &["-", "!"]),
-      infix_operators: symbol_set(inner, &[
-        "=", ".", "==", "!=", "<=", ">=", "=>", "+=", "-=", "*=", "/=", "||", "&&",
-        "<", ">", "+", "-", "*", "/", "%", "|", "&", "^"]),
-      special_operators: symbol_set(inner, &["=", ".", "+=", "&&", "||"]),
-
-      open_paren: inner.get("("),
-      open_bracket: inner.get("["),
-      open_brace: inner.get("{"),
-      close_paren: inner.get(")"),
-      close_bracket: inner.get("]"),
-      close_brace: inner.get("}"),
-      comma: inner.get(","),
-
-      call: inner.get("call"),
-      index: inner.get("index"),
-    }
-  }
-}
-
 #[derive(Default)]
-struct SymbolInner {
+pub struct SymbolTable {
   symbol_map : HashMap<RefStr, Symbol>,
   symbols : Vec<RefStr>,  
 }
 
-impl SymbolInner {
-  fn get<S : AsRef<str> + Into<RefStr>>(&mut self, s : S) -> Symbol {
+impl SymbolTable {
+  pub fn new() -> SymbolTable {
+    Default::default()
+  }
+
+  pub fn get<S : AsRef<str> + Into<RefStr>>(&mut self, s : S) -> Symbol {
     if let Some(symbol) = self.symbol_map.get(s.as_ref()) {
       *symbol
     }
@@ -199,23 +159,6 @@ impl SymbolInner {
       self.symbol_map.insert(string, symbol);
       symbol
     }
-  }
-}
-
-pub struct SymbolTable {
-  inner : SymbolInner,
-  pub keywords : Keywords,
-}
-
-impl SymbolTable {
-  pub fn new() -> SymbolTable {
-    let mut inner : SymbolInner = Default::default();
-    let keywords = Keywords::new(&mut inner);
-    SymbolTable { inner, keywords }
-  }
-
-  pub fn get<S : AsRef<str> + Into<RefStr>>(&mut self, s : S) -> Symbol {
-    symbol(s, &mut self.symbol_map, &mut self.symbols)
   }
 
   pub fn refstr(&self, symbol : Symbol) -> RefStr {

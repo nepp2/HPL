@@ -84,10 +84,10 @@ impl <'l> ParseState<'l> {
     self.pos += 1;
   }
 
-  fn accept_symbol(&mut self, symbol : Symbol) -> bool {
+  fn accept_string(&mut self, string : &str) -> bool {
     let accept = {
       if let Ok(t) = self.peek() {
-        t.symbol == symbol
+        t.string.as_ref() == string
       }
       else { false }
     };
@@ -95,12 +95,10 @@ impl <'l> ParseState<'l> {
     accept
   }
 
-  fn expect_symbol(&mut self, symbol : Symbol) -> Result<(), Error> {
-    {
-      let t = self.peek()?;
-      if t.symbol != symbol {
-        return error(t.loc, format!("Expected token '{}', found token '{}'", self.sym.refstr(symbol), self.sym.refstr(t.symbol)));
-      }
+  fn expect_string(&mut self, string : &str) -> Result<(), Error> {
+    let t = self.peek()?;
+    if t.string.as_ref() != string {
+      return error(t.loc, format!("Expected token '{}', found token '{}'", string, t.string));
     }
     self.skip();
     Ok(())
@@ -129,24 +127,41 @@ impl <'l> ParseState<'l> {
     self.add_expr(tag, vec!(), loc)
   }
 
-  fn add_tree(&mut self, s : Symbol, children : Vec<Expr>, start : TextMarker) -> Expr {
+  fn add_tree<T : AsRef<str> + Into<RefStr>>
+    (&mut self, s : T, children : Vec<Expr>, start : TextMarker) -> Expr
+  {
     let loc = self.loc(start);
-    let tag = ExprTag::Tree(s);
+    let tag = ExprTag::Tree(self.sym.get(s));
     self.add_expr(tag, children, loc)
   }
 
-  fn add_symbol(&mut self, s : Symbol, start : TextMarker) -> Expr {
+  fn add_symbol<T : AsRef<str> + Into<RefStr>>
+    (&mut self, s : T, start : TextMarker) -> Expr
+  {
     let loc = self.loc(start);
-    let tag = ExprTag::Symbol(s);
+    let tag = ExprTag::Symbol(self.sym.get(s));
     self.add_expr(tag, vec!(), loc)
   }
 }
 
+// TODO: this might be slow because lazy_static is threadsafe
+lazy_static! {
+  static ref TERMINATING_SYNTAX : HashSet<&'static str> =
+    vec!["}", ")", "]", ";", ","].into_iter().collect();
+  static ref PREFIX_OPERATORS : HashSet<&'static str> =
+    vec!["-", "!"].into_iter().collect();
+  static ref INFIX_OPERATORS : HashSet<&'static str> =
+    vec!["=", ".", "==", "!=", "<=", ">=", "=>", "+=", "-=", "*=", "/=", "||", "&&",
+      "<", ">", "+", "-", "*", "/", "%", "|", "&", "^"].into_iter().collect();
+  static ref SPECIAL_OPERATORS : HashSet<&'static str> =
+    vec!["=", ".", "+=", "&&", "||"].into_iter().collect();
+}
+
 fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
   
-  fn operator_precedence(t : &Token, op : &str) -> Result<i32, Error> {
+  fn operator_precedence(t : &Token) -> Result<i32, Error> {
     let p =
-      match op {
+      match t.string.as_ref() {
         "=" => 1,
         "+=" => 1,
         "&&" => 2,
@@ -166,7 +181,7 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
         "(" => 7,
         "[" => 7,
         "." => 8,
-        _ => return error(t.loc, format!("Unexpected operator '{}'", op)),
+        _ => return error(t.loc, format!("Unexpected operator '{}'", t.string)),
       };
     Ok(p)
   }
@@ -174,16 +189,15 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
   /// This expression parser is vaguely based on some blogs about pratt parsing.
   fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
     let mut expr = parse_prefix(ps)?;
-    let kw = &ps.sym.keywords;
     while ps.has_tokens() {
       let t = ps.peek()?;
-      if t.token_type == TokenType::Syntax && kw.terminating_syntax.contains(&t.symbol) {
+      if t.token_type == TokenType::Syntax && TERMINATING_SYNTAX.contains(t.string.as_ref()) {
         break;
       }
-      else if t.token_type == TokenType::Syntax && (t.symbol == kw.open_paren || t.symbol == kw.open_bracket) {
-        let next_precedence = operator_precedence(t, ps.sym.str(t.symbol))?;
+      else if t.token_type == TokenType::Syntax && (t.string.as_ref() == "(" || t.string.as_ref() == "[") {
+        let next_precedence = operator_precedence(t)?;
         if next_precedence > precedence {
-          if t.symbol == kw.open_paren {
+          if t.string.as_ref() == "(" {
             expr = parse_function_call(ps, expr)?;
           }
           else {
@@ -194,8 +208,8 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
           break;
         }
       }
-      else if t.token_type == TokenType::Syntax && kw.infix_operators.contains(&t.symbol) {
-        let next_precedence = operator_precedence(t, ps.sym.str(t.symbol))?;
+      else if t.token_type == TokenType::Syntax && INFIX_OPERATORS.contains(t.string.as_ref()) {
+        let next_precedence = operator_precedence(t)?;
         if next_precedence > precedence {
           expr = parse_infix(ps, expr, next_precedence)?;
         }
@@ -214,43 +228,39 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
 
   fn parse_index_expression(ps : &mut ParseState, indexee_expr : Expr) -> Result<Expr, Error> {
     let start = indexee_expr.loc.start;
-    let kw = &ps.sym.keywords;
-    ps.expect_symbol(kw.open_bracket)?;
+    ps.expect_string("[")?;
     let indexing_expr = parse_expression(ps)?;
-    ps.expect_symbol(kw.close_bracket)?;
+    ps.expect_string("]")?;
     let args = vec!(indexee_expr, indexing_expr);
-    Ok(ps.add_tree(kw.index, args, start))
+    Ok(ps.add_tree(INDEX, args, start))
   }
 
   fn parse_function_call(ps : &mut ParseState, function_expr : Expr) -> Result<Expr, Error> {
     let start = function_expr.loc.start;
-    let kw = &ps.sym.keywords;
-    ps.expect_symbol(kw.open_paren)?;
+    ps.expect_string("(")?;
     let mut exprs = vec!(function_expr);
-    if !ps.accept_symbol(kw.close_paren) {
+    if !ps.accept_string(")") {
       loop {
         exprs.push(parse_expression(ps)?);
-        if !ps.accept_symbol(kw.comma) {
+        if !ps.accept_string(",") {
           break;
         }
       }
-      ps.expect_symbol(kw.close_paren)?;
+      ps.expect_string(")")?;
     }
-    Ok(ps.add_tree(kw.call, exprs, start))
+    Ok(ps.add_tree(CALL, exprs, start))
   }
 
   fn parse_prefix(ps : &mut ParseState) -> Result<Expr, Error> {
     let start = ps.peek_marker();
-    let kw = &ps.sym.keywords;
     let t = ps.peek()?;
     // if the next token is a prefix operator
-    if t.token_type == TokenType::Syntax && kw.prefix_operators.contains(&t.symbol) {
-      let operator_symbol = ps.sym.get(format!("prefix_{}", ps.sym.str(t.symbol)));
-      let operator = ps.add_symbol(operator_symbol, start);
+    if t.token_type == TokenType::Syntax && PREFIX_OPERATORS.contains(t.string.as_ref()) {
+      let operator = ps.add_symbol(t.string.clone(), start);
       ps.expect_type(TokenType::Syntax)?;
       let expr = parse_expression_term(ps)?;
       let args = vec![operator, expr];
-      Ok(ps.add_tree(kw.call, args, start))
+      Ok(ps.add_tree(CALL, args, start))
     }
     // else assume it's an expression term
     else {
@@ -261,17 +271,17 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
   fn parse_infix(ps : &mut ParseState, left_expr : Expr, precedence : i32) -> Result<Expr, Error> {
     let infix_start = left_expr.loc.start;
     let operator_start = ps.peek_marker();
-    let operator_symbol = ps.pop_type(TokenType::Syntax)?.symbol;
-    if ps.sym.keywords.special_operators.contains(&operator_symbol) {
+    let operator_str = ps.pop_type(TokenType::Syntax)?.string.clone();
+    if SPECIAL_OPERATORS.contains(operator_str.as_ref()) {
       let right_expr = pratt_parse(ps, precedence)?;
       let args = vec!(left_expr, right_expr);
-      Ok(ps.add_tree(operator_symbol, args, infix_start))
+      Ok(ps.add_tree(operator_str, args, infix_start))
     }
     else {
-      let operator = ps.add_symbol(operator_symbol, operator_start);
+      let operator = ps.add_symbol(operator_str, operator_start);
       let right_expr = pratt_parse(ps, precedence)?;
       let args = vec!(operator, left_expr, right_expr);
-      Ok(ps.add_tree(ps.sym.keywords.call, args, infix_start))
+      Ok(ps.add_tree(CALL, args, infix_start))
     }
   }
 
@@ -280,18 +290,17 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
 
 fn parse_float(ps : &mut ParseState) -> Result<f32, Error> {
   let t = ps.pop_type(TokenType::FloatLiteral)?;
-  let float_str = ps.sym.str(t.symbol);
-  if let Ok(f) = f32::from_str(float_str) {
+  if let Ok(f) = f32::from_str(&t.string) {
     Ok(f)
   }
   else {
-    error(t.loc, format!("Failed to parse float from '{}'", float_str))
+    error(t.loc, format!("Failed to parse float from '{}'", t.string))
   }
 }
 
 fn parse_syntax(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
-  match ps.sym.str(ps.peek()?.symbol) {
+  match ps.peek()?.string.as_ref() {
     "[" => {
       ps.expect_string("[")?;
       let mut exprs = vec!();
@@ -574,7 +583,7 @@ fn parse_expression_term(ps : &mut ParseState) -> Result<Expr, Error> {
       let start = ps.peek_marker();
       let s = {
         let t = ps.pop_type(TokenType::StringLiteral)?;
-        ExprTag::LiteralString(t.string.clone())
+        ExprTag::LiteralString(t.symbol)
       };
       Ok(ps.add_leaf(s, start))
     }
@@ -611,24 +620,12 @@ fn parse_block(ps : &mut ParseState) -> Result<Expr, Error> {
   Ok(ps.add_tree(BLOCK, exprs, start))
 }
 
-pub fn parse_with_cache(tokens : Vec<Token>, symbol_cache : &mut SymbolCache,) -> Result<Expr, Error> {
-  let mut ps = ParseState::new(tokens, symbol_cache);
+pub fn parse(tokens : Vec<Token>, symbols : &mut SymbolTable) -> Result<Expr, Error> {
+  let mut ps = ParseState::new(tokens, symbols);
   let e = parse_block(&mut ps)?;
   if ps.has_tokens() {
     let t = ps.peek()?;
     return error(t.loc, format!("Unexpected token '{}' of type '{:?}'", t.string, t.token_type));
   }
   return Ok(e);
-}
-
-pub fn parse(tokens : Vec<Token>) -> Result<Expr, Error> {
-  parse_with_cache(tokens, &mut SymbolCache::new())
-}
-
-#[test]
-fn test_parse() {
-  let code = "(3 + 4) * 10";
-  let tokens = lexer::lex(code).unwrap();
-  let ast = parse(tokens);
-  println!("{:?}", ast);
 }

@@ -82,7 +82,7 @@ impl Module {
 
 pub struct Environment<'l> {
 
-  pub symbol_cache : &'l mut SymbolCache,
+  pub symbols : &'l mut SymbolTable,
   pub loaded_modules : &'l mut Vec<Module>,
   pub current_module : ModuleId,
   pub interrupt_flag : &'l mut Arc<AtomicBool>,
@@ -106,14 +106,14 @@ pub fn iter_modules<'m>(scope : &'m Vec<BlockScope>) -> impl Iterator<Item = &'m
 impl <'l> Environment<'l> {
 
   pub fn new(
-    symbol_cache : &'l mut SymbolCache,
+    symbols : &'l mut SymbolTable,
     loaded_modules : &'l mut Vec<Module>,
     current_module : ModuleId,
     interrupt_flag : &'l mut Arc<AtomicBool>,
     initial_scope : BlockScope,
   ) -> Environment<'l> {
     Environment{
-      symbol_cache, loaded_modules,
+      symbols, loaded_modules,
       current_module, interrupt_flag,
       scope: vec![initial_scope],
       loop_depth: 0,
@@ -232,7 +232,7 @@ impl <'l> Environment<'l> {
         return Err(format!("function {} defined more than once.", name))
       }
     }
-    let function_name = self.symbol_cache.symbol(name);
+    let function_name = self.symbols.get(name);
     self.current_module_mut().functions.insert(function_name, function);
     Ok(())
   }
@@ -306,7 +306,7 @@ fn call_function(
       };
       let expr = expr.clone();
       let mut new_env = Environment::new(
-        env.symbol_cache, env.loaded_modules, f.module_id, env.interrupt_flag, block);
+        env.symbols, env.loaded_modules, f.module_id, env.interrupt_flag, block);
       let r = eval(&expr, &mut new_env)?;
       let es = mem::replace(&mut new_env.exit_state, ExitState::NotExiting);
       if let ExitState::Returning(v) = es {
