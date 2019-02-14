@@ -49,9 +49,9 @@ pub struct BlockScope {
   pub modules : Vec<ModuleId>,
 }
 
-pub fn get_module_id(loaded_modules : &mut Vec<Module>, name : &str) -> Option<ModuleId> {
+pub fn get_module_id(loaded_modules : &mut Vec<Module>, name : Symbol) -> Option<ModuleId> {
   loaded_modules.iter().enumerate()
-    .find(|(_, m)| m.name.as_ref() == name)
+    .find(|(_, m)| m.name == name)
     .map(|(i, _)| ModuleId{i})
 }
 
@@ -63,15 +63,15 @@ pub fn add_module(loaded_modules : &mut Vec<Module>, m : Module) -> ModuleId {
 
 #[derive(Debug)]
 pub struct Module {
-  pub name : RefStr,
+  pub name : Symbol,
   // TODO: is this needed?
   // pub modules : Vec<ModuleId>,
-  pub functions : HashMap<RefStr, Function>,
-  pub structs : HashMap<RefStr, Rc<StructDef>>,
+  pub functions : HashMap<Symbol, Function>,
+  pub structs : HashMap<Symbol, Rc<StructDef>>,
 }
 
 impl Module {
-  pub fn new(name : RefStr) -> Module {
+  pub fn new(name : Symbol) -> Module {
     Module {
       name,
       functions: Default::default(),
@@ -82,7 +82,7 @@ impl Module {
 
 pub struct Environment<'l> {
 
-  pub symbols : &'l mut SymbolTable,
+  pub sym : &'l mut SymbolTable,
   pub loaded_modules : &'l mut Vec<Module>,
   pub current_module : ModuleId,
   pub interrupt_flag : &'l mut Arc<AtomicBool>,
@@ -106,19 +106,23 @@ pub fn iter_modules<'m>(scope : &'m Vec<BlockScope>) -> impl Iterator<Item = &'m
 impl <'l> Environment<'l> {
 
   pub fn new(
-    symbols : &'l mut SymbolTable,
+    sym : &'l mut SymbolTable,
     loaded_modules : &'l mut Vec<Module>,
     current_module : ModuleId,
     interrupt_flag : &'l mut Arc<AtomicBool>,
     initial_scope : BlockScope,
   ) -> Environment<'l> {
     Environment{
-      symbols, loaded_modules,
+      sym, loaded_modules,
       current_module, interrupt_flag,
       scope: vec![initial_scope],
       loop_depth: 0,
       exit_state: ExitState::NotExiting,
     }
+  }
+
+  fn str(&self, s : Symbol) -> &str {
+    self.sym.str(s)
   }
 
   fn check_interrupt(&self) -> Result<(), String> {
@@ -141,7 +145,7 @@ impl <'l> Environment<'l> {
   pub fn import_module(&mut self, module_id : ModuleId) -> Result<(), String> {
     if let Some(id) = iter_modules(&self.scope).find(|id| *id == &module_id) {
       let m = &self.loaded_modules[id.i];
-      return Err(format!("Module '{}' already imported", m.name));
+      return Err(format!("Module '{}' already imported", self.sym.str(m.name)));
     }
     self.current_block_scope().modules.push(module_id);
     Ok(())
@@ -171,10 +175,10 @@ impl <'l> Environment<'l> {
     &self.loaded_modules[self.current_module.i]
   }
 
-  pub fn struct_lookup(&self, name : &str) -> Option<&Rc<StructDef>> {
+  pub fn struct_lookup(&self, name : Symbol) -> Option<&Rc<StructDef>> {
     for id in iter_modules(&self.scope) {
       let m = &self.loaded_modules[id.i];
-      if let Some(s) = m.structs.get(name) {
+      if let Some(s) = m.structs.get(&name) {
         return Some(s);
       }
     }
@@ -182,14 +186,14 @@ impl <'l> Environment<'l> {
   }
 
   pub fn add_struct(&mut self, def: StructDef) -> Result<(), String> {
-    if self.struct_lookup(&def.name).is_some() {
-      return Err(format!("A struct called {} has already been defined.", def.name));
+    if self.struct_lookup(def.name).is_some() {
+      return Err(format!("A struct called {} has already been defined.", self.sym.str(def.name)));
     }
     self.current_module_mut().structs.insert(def.name.clone(), Rc::new(def));
     Ok(())
   }
 
-  pub fn instantiate_struct(&mut self, name: &str, field_value_pairs: Vec<(RefStr, Value)>)
+  pub fn instantiate_struct(&mut self, name: Symbol, field_value_pairs: Vec<(Symbol, Value)>)
     -> Result<StructVal, ErrorContent>
   {
     let def = {
@@ -197,9 +201,9 @@ impl <'l> Environment<'l> {
         def.clone()
       }
       else {
-        let fields = field_value_pairs.iter().map(|t| t.0.clone()).collect();
+        let fields = field_value_pairs.iter().map(|t| t.0).collect();
         let m = self.current_module_mut();
-        let def = Rc::new(StructDef { module: m.name.clone(), name: name.into(), fields });
+        let def = Rc::new(StructDef { module: m.name, name: name.into(), fields });
         m.structs.insert(def.name.clone(), def.clone());
         def
       }
@@ -209,11 +213,11 @@ impl <'l> Environment<'l> {
     let num_fields = def.fields.len();
     for (found, value) in field_value_pairs {
       if i >= num_fields {
-        return Err(format!("found unexpected field: {}", found).into());
+        return Err(format!("found unexpected field: {}", self.str(found)).into());
       }
-      let expected = &def.fields[i];
-      if expected != &found {
-        return Err(format!("expected field name '{}', but found '{}'", expected, found).into());
+      let expected = def.fields[i];
+      if expected != found {
+        return Err(format!("expected field name '{}', but found '{}'", self.str(expected), self.str(found)).into());
       }
       field_values.push(value);
       i += 1;
@@ -224,33 +228,33 @@ impl <'l> Environment<'l> {
     Ok(Rc::new(RefCell::new(Struct { def, fields : field_values })))
   }
 
-  pub fn add_function(&mut self, name : &str, function : Function) -> Result<(), String> {
+  pub fn add_function(&mut self, name : Symbol, function : Function) -> Result<(), String> {
     // Check if anything with this precise signature is already defined
     for id in iter_modules(&self.scope) {
       let module = &mut self.loaded_modules[id.i];
-      if module.functions.contains_key(name) {
-        return Err(format!("function {} defined more than once.", name))
+      if module.functions.contains_key(&name) {
+        return Err(format!("function {} defined more than once.", self.str(name)))
       }
     }
-    let function_name = self.symbols.get(name);
-    self.current_module_mut().functions.insert(function_name, function);
+    self.current_module_mut().functions.insert(name, function);
     Ok(())
   }
 
-  fn get_function<'m, A>(&'m self, name : &str, module_ids : A)
+  fn get_function<'m, A>(&'m self, name : Symbol, module_ids : A)
     -> Result<&Function, String>
     where A : Iterator<Item = &'m ModuleId>
   {
     for id in module_ids {
       let module = &self.loaded_modules[id.i];
-      if let Some(f) = module.functions.get(name) {
+      if let Some(f) = module.functions.get(&name) {
         return Ok(f)
       }
     }
-    Err(format!("No function called '{}' defined", name))
+    Err(format!("No function called '{}' defined", self.str(name)))
   }
 
-  fn string_to_type(&self, s : &RefStr) -> Result<Type, String> {
+  fn symbol_to_type(&self, symbol : Symbol) -> Result<Type, String> {
+    let s = self.str(symbol);
     if s.as_ref() == NO_TYPE {
       return Ok(Type::Any);
     }
@@ -262,10 +266,10 @@ impl <'l> Environment<'l> {
       "array" => Ok(Type::Array),
       "any" => Ok(Type::Any),
       _ => {
-        if self.struct_lookup(s).is_some() {
+        if self.struct_lookup(symbol).is_some() {
           Ok(Type::Struct{
-            module: self.current_module().name.clone(),
-            name: s.clone(),
+            module: self.current_module().name,
+            name: symbol,
           })
         }
         else {

@@ -17,7 +17,7 @@ pub struct FunctionSignature {
   pub args : Vec<Type>,
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, Copy)]
 pub enum Type {
   Unit,
   Float,
@@ -25,24 +25,24 @@ pub enum Type {
   Bool,
   Array,
   Function,
-  Struct{ module: RefStr, name: RefStr },
+  Struct{ module: Symbol, name: Symbol },
   Any,
-  External(RefStr),
+  External(Symbol),
 }
 
 impl Type {
-  pub fn name(&self) -> RefStr {
+  pub fn name(&self, sym : &mut SymbolTable) -> Symbol {
     use self::Type::*;
     match self {
-      Float => "float".into(),
-      Any => "any".into(),
-      Array => "array".into(),
-      Bool => "bool".into(),
-      String => "string".into(),
-      Function => "function".into(),
-      Struct{ name, .. } => name.clone(),
-      External(e) => e.clone(),
-      Unit => "unit".into(),
+      Float => sym.get("float"),
+      Any => sym.get("any"),
+      Array => sym.get("array"),
+      Bool => sym.get("bool"),
+      String => sym.get("string"),
+      Function => sym.get("function"),
+      Struct{ name, .. } => *name,
+      External(e) => *e,
+      Unit => sym.get("unit"),
     }
   }
 }
@@ -69,63 +69,77 @@ pub struct Expr {
   pub loc : TextLocation,
 }
 
-fn pretty_print(sym : &mut SymbolTable, e: &Expr, f: &mut fmt::Formatter, indent : usize) -> fmt::Result {
-  match &e.tag {
-    ExprTag::Tree(symbol) => {
-      let s = sym.str(*symbol);
-      write!(f, "({}", s)?;
-      if s == "block" {
-        let indent = indent + 2;
-        for c in e.children.iter() {
-          writeln!(f)?;
-          write!(f, "{:indent$}", "", indent=indent)?;
-          pretty_print(sym, c, f, indent)?
-        }
-      }
-      else {
-        for c in e.children.iter() {
-          write!(f, " ")?;
-          pretty_print(sym, c, f, indent)?
-        }
-      }
-      write!(f, ")")
-    }
-    ExprTag::Symbol(x) => write!(f, "{}", x),
-    ExprTag::LiteralString(x) => write!(f, "{}", x),
-    ExprTag::LiteralFloat(x) => write!(f, "{}", x),
-    ExprTag::LiteralBool(x) => write!(f, "{}", x),
-    ExprTag::LiteralUnit => write!(f, "()"),
-  }
+
+fn foo(d: &fmt::Display, mut i: &mut fmt::Write) -> fmt::Result {
+    write!(i, "test {}\t", d)
 }
 
-impl fmt::Display for Expr {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    pretty_print(self, f, 0)
+fn main() {
+    let mut buf = String::new();
+    foo(&5, &mut buf).unwrap();
+    foo(&"this", &mut buf).unwrap();
+    println!("{}", buf)
+}
+
+
+pub fn display_expr(e: &Expr, sym : &mut SymbolTable) -> String {
+  pub fn display_inner(e: &Expr, sym : &mut SymbolTable, w: &mut fmt::Write, indent : usize) -> fmt::Result {
+    match &e.tag {
+      ExprTag::Tree(symbol) => {
+        let s = sym.str(*symbol);
+        write!(w, "({}", s)?;
+        if s == "block" {
+          let indent = indent + 2;
+          for c in e.children.iter() {
+            writeln!(w)?;
+            write!(w, "{:indent$}", "", indent=indent)?;
+            display_inner(c, sym, w, indent)?
+          }
+        }
+        else {
+          for c in e.children.iter() {
+            write!(w, " ")?;
+            display_inner(c, sym, w, indent)?
+          }
+        }
+        write!(w, ")")
+      }
+      ExprTag::Symbol(x) => write!(w, "{}", sym.str(*x)),
+      ExprTag::LiteralString(x) => write!(w, "{}", sym.str(*x)),
+      ExprTag::LiteralFloat(x) => write!(w, "{}", x),
+      ExprTag::LiteralBool(x) => write!(w, "{}", x),
+      ExprTag::LiteralUnit => write!(w, "()"),
+    }
   }
+  let mut buf = String::new();
+  display_inner(e, sym, &mut buf, 0).unwrap();
+  buf
 }
 
 impl Expr {
-  pub fn tree_symbol_unwrap(&self) -> Result<&RefStr, Error> {
+  pub fn tree_symbol_unwrap(&self) -> Result<Symbol, Error> {
     if let ExprTag::Tree(s) = &self.tag {
-      Ok(&s)
+      Ok(*s)
     }
     else {
       error(self, format!("expected a tree, found {:?}", self))
     }
   }
 
-  pub fn symbol_unwrap(&self) -> Result<&RefStr, Error> {
+  pub fn symbol_unwrap(&self) -> Result<Symbol, Error> {
     if let ExprTag::Symbol(s) = &self.tag {
-      Ok(&s)
+      Ok(*s)
     }
     else {
       error(self, format!("expected a symbol, found {:?}", self))
     }
   }
 
+  /* TODO: remove?
   pub fn symbol_to_refstr(&self) -> Result<RefStr, Error> {
     self.symbol_unwrap().map(|s| s.clone())
   }
+  */
 }
 
 impl <'l> Into<TextLocation> for &'l Expr {
@@ -172,9 +186,9 @@ impl SymbolTable {
 
 #[derive(Debug, PartialEq)]
 pub struct StructDef {
-  pub name : RefStr,
-  pub module : RefStr,
-  pub fields : Vec<RefStr>,
+  pub name : Symbol,
+  pub module : Symbol,
+  pub fields : Vec<Symbol>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -190,7 +204,7 @@ pub struct ModuleId {
 
 #[derive(Clone, PartialEq)]
 pub struct FunctionRef {
-  pub name : RefStr,
+  pub name : Symbol,
   pub visible_modules : Vec<ModuleId>,
 }
 
@@ -217,7 +231,7 @@ pub enum Value {
 
 #[derive(Clone)]
 pub struct ExternalVal {
-  pub type_name : RefStr,
+  pub type_name : Symbol,
   pub val : Rc<RefCell<Any>>,
 }
 
@@ -240,7 +254,7 @@ impl Value {
         module: s.borrow().def.module.clone(),
         name: s.borrow().def.name.clone(),
       },
-      External(e) => Type::External(e.type_name.clone()),
+      External(e) => Type::External(e.type_name),
       Unit => Type::Unit,
     }
   }
