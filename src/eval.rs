@@ -39,13 +39,13 @@ pub struct Function {
   pub module_id : ModuleId,
   pub visible_modules : Vec<ModuleId>,
   pub arg_types : Vec<Type>,
-  pub arg_names : Vec<RefStr>,
+  pub arg_names : Vec<Symbol>,
   pub handle : FunctionHandle,
 }
 
 #[derive(Default, Debug)]
 pub struct BlockScope {
-  pub variables : HashMap<RefStr, Value>,
+  pub variables : HashMap<Symbol, Value>,
   pub modules : Vec<ModuleId>,
 }
 
@@ -138,7 +138,7 @@ impl <'l> Environment<'l> {
     self.scope.last_mut().unwrap()
   }
 
-  fn new_variable(&mut self, s : RefStr, v : Value) {
+  fn new_variable(&mut self, s : Symbol, v : Value) {
     self.current_block_scope().variables.insert(s, v);
   }
 
@@ -153,11 +153,11 @@ impl <'l> Environment<'l> {
 
   /// Retrieve the value closest to the end of the vector of hashmaps (the most local scope)
   /// in the environment
-  fn dereference_variable(&mut self, s : &str) -> Option<&mut Value> {
+  fn dereference_variable(&mut self, s : Symbol) -> Option<&mut Value> {
     for block in self.scope.iter_mut().rev() {
-      let map = &mut block.variables;
-      if map.contains_key(s) {
-        return Some(map.get_mut(s).unwrap());
+      let v = block.variables.get_mut(&s);
+      if v.is_some() {
+        return v;
       }
     }
     return None;
@@ -183,6 +183,13 @@ impl <'l> Environment<'l> {
       }
     }
     None
+  }
+
+  fn struct_field_index(&self, def : &StructDef, field_expr : &Expr) -> Result<usize, Error> {
+    let field_name = field_expr.symbol_unwrap()?;
+    def.fields.iter().position(|s| *s == field_name)
+      .ok_or_else(||error_raw(field_expr,
+        format!("field {} does not exist on struct {:?}.", self.str(field_name), def)))
   }
 
   pub fn add_struct(&mut self, def: StructDef) -> Result<(), String> {
@@ -281,7 +288,7 @@ impl <'l> Environment<'l> {
 }
 
 fn call_function(
-  error_source : &Expr, function_name: &str,
+  error_source : &Expr, function_name: Symbol,
   visible_modules: Option<&Vec<ModuleId>>, arg_values: Vec<Value>,
   env : &mut Environment)
   -> Result<Value, Error>
@@ -296,7 +303,7 @@ fn call_function(
   if f.arg_names.len() != arg_values.len() {
     return error(error_source,
       format!("function '{}' expected {} arguments, but received {}",
-        function_name, f.arg_names.len(), arg_values.len()))
+        env.str(function_name), f.arg_names.len(), arg_values.len()))
   }
   match &f.handle {
     FunctionHandle::Ast(expr) => {
@@ -310,7 +317,7 @@ fn call_function(
       };
       let expr = expr.clone();
       let mut new_env = Environment::new(
-        env.symbols, env.loaded_modules, f.module_id, env.interrupt_flag, block);
+        env.sym, env.loaded_modules, f.module_id, env.interrupt_flag, block);
       let r = eval(&expr, &mut new_env)?;
       let es = mem::replace(&mut new_env.exit_state, ExitState::NotExiting);
       if let ExitState::Returning(v) = es {
@@ -330,7 +337,7 @@ fn eval_function_call(expr : &Expr, function_expr: &Expr, args: &[Expr], env : &
   -> Result<Value, Error>
 { 
   fn eval_named_function_call(
-    expr : &Expr, function_name: &str, visible_modules: Option<&Vec<ModuleId>>,
+    expr : &Expr, function_name: Symbol, visible_modules: Option<&Vec<ModuleId>>,
     args: &[Expr], env : &mut Environment)
     -> Result<Value, Error>
   {
@@ -349,7 +356,7 @@ fn eval_function_call(expr : &Expr, function_expr: &Expr, args: &[Expr], env : &
     // Symbol refers to a local variable (containing function reference)
     let r : Result<FunctionRef, String> = v.clone().into();
     let f = r.map_err(|s| error_raw(function_expr, s))?;
-    eval_named_function_call(expr, &f.name, Some(&f.visible_modules), args, env)
+    eval_named_function_call(expr, f.name, Some(&f.visible_modules), args, env)
   }
   else if let Some(name) = symbol {
     // Assume it's a symbol referring to a function
@@ -358,7 +365,7 @@ fn eval_function_call(expr : &Expr, function_expr: &Expr, args: &[Expr], env : &
   else {
     // More complex expression, which must be evaluated to a function reference
     let f = to_value::<FunctionRef>(function_expr, env)?;
-    eval_named_function_call(expr, &f.name, Some(&f.visible_modules), args, env)
+    eval_named_function_call(expr, f.name, Some(&f.visible_modules), args, env)
   }
 }
 
@@ -380,18 +387,12 @@ fn array_index(e : &Expr, array : &Vec<Value>, index : f32) -> Result<usize, Err
   }
 }
 
-fn struct_field_index(def : &StructDef, field_expr : &Expr) -> Result<usize, Error> {
-  let field_name : &str = field_expr.symbol_unwrap()?;
-  def.fields.iter().position(|s| s.as_ref() == field_name)
-  .ok_or_else(||error_raw(field_expr, format!("field {} does not exist on struct {:?}.", field_name, def)))
-}
-
 fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
   // Check if the interrupt flag is set
   // TODO: this is a very slow thing to do for every instruction
   env.check_interrupt().map_err(|s| error_raw(expr, s))?;
 
-  let instr = expr.tree_symbol_unwrap()?.as_ref();
+  let instr = env.str(expr.tree_symbol_unwrap()?);
   let children = expr.children.as_slice();
   match (instr, children) {
     ("call", exprs) => {
@@ -440,13 +441,13 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
         ExprTag::Symbol(var_symbol) => {
           let value = eval(&value_expr, env)?;
           let var =
-            env.dereference_variable(var_symbol)
-            .ok_or_else(|| error_raw(assign_expr, format!("symbol '{}' was not defined", var_symbol)))?;
+            env.dereference_variable(*var_symbol)
+            .ok_or_else(|| error_raw(assign_expr, format!("symbol '{}' was not defined", env.str(var_symbol))))?;
           *var = value;
           return Ok(Value::Unit)
         }
         ExprTag::Tree(symbol) => {
-          match (symbol.as_ref(), assign_expr.children.as_slice()) {
+          match (env.str(symbol), assign_expr.children.as_slice()) {
             ("index", [array_expr, index_expr]) => {
               let v = eval(&value_expr, env)?;
               let array_rc : Array = to_value(array_expr, env)?;
