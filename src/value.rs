@@ -259,7 +259,7 @@ impl Value {
     }
   }
 
-  pub fn type_name(&self) -> RefStr {
+  pub fn type_name(&self, sym : SymbolTable) -> RefStr {
     use self::Value::*;
     match self {
       Float(_) => "float".into(),
@@ -267,8 +267,8 @@ impl Value {
       Bool(_) => "bool".into(),
       String(_) => "string".into(),
       Function(_) => "function".into(),
-      Struct(s) => s.borrow().def.name.clone(),
-      External(e) => e.type_name.clone(),
+      Struct(s) => sym.refstr(s.borrow().def.name),
+      External(e) => sym.refstr(e.type_name),
       Unit => "unit".into(),
     }
   }
