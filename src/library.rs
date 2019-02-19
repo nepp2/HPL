@@ -62,12 +62,12 @@ macro_rules! type_tag {
 type BuiltInFunction = fn(&mut Environment, Vec<Value>) -> Result<Value, ErrorContent>;
 
 fn fun(env : &mut Environment, name : &'static str, arg_types : Vec<Type>, f : BuiltInFunction) {
-  let arg_names : Vec<RefStr> =
+  let arg_names : Vec<Symbol> =
     (0..arg_types.len()).map(|i| ((('a' as usize) + i) as u8 as char)
-    .to_string()).map(|s| env.symbol_cache.symbol(s)).collect();
+    .to_string()).map(|s| env.sym.get(s)).collect();
   let visible_modules = env.visible_modules();
   let f = Function { module_id: env.current_module, visible_modules, arg_names, arg_types, handle: FunctionHandle::BuiltIn(f) };
-  env.add_function(name, f).unwrap();
+  env.add_function(env.sym.get(name), f).unwrap();
 }
 
 pub fn load_library(e : &mut Environment) {
@@ -124,8 +124,8 @@ pub fn load_library(e : &mut Environment) {
     println!("{:?}", vs[0]);
     Ok(Value::Unit)
   });
-  fun(e, "type_name", vec![Type::Any], |_, vs| {
-    Ok(Value::String(vs[0].type_name()))
+  fun(e, "type_name", vec![Type::Any], |e, vs| {
+    Ok(Value::String(vs[0].type_name(&mut e.sym)))
   });
   fun(e, "import_module", vec![Type::String], |e, vs| {
     let name = Into::<Result<RefStr, String>>::into(vs[0].clone())?;
@@ -200,16 +200,16 @@ fn import_module(env : &mut Environment, module_name: &str, load_fresh : bool) -
   fn inner_error(e : Error, name : &str) -> ErrorContent {
     ErrorContent::InnerError(format!("Error when loading module '{}'", name), Box::new(e))
   }
-  if let Some(id) = get_module_id(env.loaded_modules, &module_name) {
+  if let Some(id) = get_module_id(env.loaded_modules, env.sym.get(module_name)) {
     if load_fresh {
-      let module = Module::new(env.symbol_cache.symbol(module_name));
+      let module = Module::new(env.sym.get(module_name));
       env.loaded_modules[id.i] = module;
       load_module(env, module_name, id).map_err(|e| inner_error(e, module_name))?;
     }
     env.import_module(id)?;
   }
   else {
-    let module = Module::new(env.symbol_cache.symbol(module_name));
+    let module = Module::new(env.sym.get(module_name));
     let id = add_module(env.loaded_modules, module);
     load_module(env, module_name, id).map_err(|e| inner_error(e, module_name))?;
     env.import_module(id)?;
@@ -223,14 +223,14 @@ fn load_module(env : &mut Environment, module_name: &str, module_id : ModuleId) 
   let mut code = String::new();
   f.read_to_string(&mut code).unwrap();
 
-  let prelude_id = get_module_id(env.loaded_modules, "prelude").unwrap();
+  let prelude_id = get_module_id(env.loaded_modules, env.sym.get("prelude")).unwrap();
   let initial_scope = BlockScope {
     variables: hashmap![],
     modules: vec![prelude_id, module_id],
   };
 
   let mut new_env = Environment::new(
-    env.symbol_cache, env.loaded_modules,
+    env.sym, env.loaded_modules,
     module_id, env.interrupt_flag, initial_scope);
   eval_string(&code, &mut new_env)?;
   Ok(())
@@ -271,12 +271,12 @@ pub fn create_sdl_view (width : u32, height : u32) -> SdlView {
 
 impl Environment<'_> {
   fn ext_type(&mut self, s : &str) -> Type {
-    Type::External(self.symbol_cache.symbol(s))
+    Type::External(self.sym.get(s))
   }
 
   fn ext_val<V : 'static>(&mut self, s : &str, v : V) -> ExternalVal {
     ExternalVal {
-      type_name: self.symbol_cache.symbol(s),
+      type_name: self.sym.get(s),
       val: Rc::new(RefCell::new(v)),
     }
   }
@@ -322,14 +322,14 @@ fn load_sdl(e : &mut Environment) {
     Ok(Value::Unit)
   });
 
-  fn f<V : Into<Value>>(field_name : &str, v : V) -> (RefStr, Value) {
-    (field_name.into(), v.into())
+  fn f<V : Into<Value>>(e : &mut Environment, field_name : &str, v : V) -> (Symbol, Value) {
+    (e.sym.get(field_name), v.into())
   }
 
-  fn new_struct(e : &mut Environment, name : &str, vals : Vec<(RefStr, Value)>)
+  fn new_struct(e : &mut Environment, name : &str, vals : Vec<(Symbol, Value)>)
     -> Result<Value, ErrorContent>
   {
-    return e.instantiate_struct(name, vals).map(|s| Value::Struct(s));
+    return e.instantiate_struct(e.sym.get(name), vals).map(|s| Value::Struct(s));
   }
 
   fun(e, "poll_sdl_event_string", vec![sdl_view_type.clone()], |_e, mut vs| {
@@ -358,14 +358,14 @@ fn load_sdl(e : &mut Environment) {
         if let Some(kc) = keycode {
 
           return new_struct(e, "sdl_event_keydown", vec![
-            f("key", format!("{}", kc)),
+            f(e, "key", format!("{}", kc)),
           ]);
         }
       }
       Event::KeyUp {keycode, ..} => {
         if let Some(kc) = keycode {
           return new_struct(e, "sdl_event_keyup", vec![
-            f("key", format!("{}", kc)),
+            f(e, "key", format!("{}", kc)),
           ]);
         }
       }
@@ -374,32 +374,32 @@ fn load_sdl(e : &mut Environment) {
       }
       Event::MouseMotion { x, y, .. } => {
           return new_struct(e, "sdl_event_mouse_motion", vec![
-            f("x", x as f32),
-            f("y", y as f32),
+            f(e, "x", x as f32),
+            f(e, "y", y as f32),
           ]);
       }
       Event::MouseButtonDown { x, y, mouse_btn, .. } => {
           return new_struct(e, "sdl_event_mouse_down", vec![
-            f("x", x as f32),
-            f("y", y as f32),
-            f("button", format!("{:?}", mouse_btn)),
+            f(e, "x", x as f32),
+            f(e, "y", y as f32),
+            f(e, "button", format!("{:?}", mouse_btn)),
           ]);
       }
       Event::MouseButtonUp { x, y, mouse_btn, .. } => {
           return new_struct(e, "sdl_event_mouse_up", vec![
-            f("x", x as f32),
-            f("y", y as f32),
-            f("button", format!("{:?}", mouse_btn)),
+            f(e, "x", x as f32),
+            f(e, "y", y as f32),
+            f(e, "button", format!("{:?}", mouse_btn)),
           ]);
       }
       Event::MouseWheel { y, .. } => {
           return new_struct(e, "sdl_event_mouse_wheel", vec![
-            f("y", y as f32),
+            f(e, "y", y as f32),
           ]);
       }
       Event::Window { win_event, .. } => {
         return new_struct(e, "sdl_event_window", vec![
-          f("event", format!("{:?}", win_event)),
+          f(e, "event", format!("{:?}", win_event)),
         ]);
       }
       _ => (),

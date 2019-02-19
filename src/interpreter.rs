@@ -32,7 +32,7 @@ impl Interpreter {
     let mut loaded_modules = vec!();
 
     // load prelude
-    let prelude = add_module(&mut loaded_modules, Module::new("prelude".into()));
+    let prelude = add_module(&mut loaded_modules, Module::new(symbols.get("prelude")));
     {
       let mut f = File::open("code/prelude.code").expect("file not found");
       let mut code = String::new();
@@ -51,7 +51,7 @@ impl Interpreter {
 
     // load top level module
     let top_level_module =
-      add_module(&mut loaded_modules, Module::new("top_level".into()));
+      add_module(&mut loaded_modules, Module::new(symbols.get("top_level")));
 
     Interpreter {
       symbols,

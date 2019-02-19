@@ -191,7 +191,7 @@ pub struct StructDef {
   pub fields : Vec<Symbol>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 pub struct Struct {
   pub def : Rc<StructDef>,
   pub fields : Vec<Value>,
@@ -259,7 +259,7 @@ impl Value {
     }
   }
 
-  pub fn type_name(&self, sym : SymbolTable) -> RefStr {
+  pub fn type_name(&self, sym : &mut SymbolTable) -> RefStr {
     use self::Value::*;
     match self {
       Float(_) => "float".into(),
@@ -272,29 +272,37 @@ impl Value {
       Unit => "unit".into(),
     }
   }
-}
 
-impl fmt::Debug for Value {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+  fn write(&self, w: &mut fmt::Write, sym : &mut SymbolTable) -> fmt::Result {
     match self {
-      Value::Float(x) => write!(f, "{}", x),
-      Value::Array(a) => write!(f, "{:?}", &*a.borrow()),
-      Value::Bool(b) => write!(f, "{}", b),
-      Value::String(s) => write!(f, "{}", s),
-      Value::Function(fr) => write!(f, "{}(..)", fr.name),
-      Value::External(e) => write!(f, "external({})", e.type_name),
+      Value::Float(x) => write!(w, "{}", x),
+      Value::Array(a) => {
+        write!(w, "[")?;
+        let i = a.borrow().iter();
+        if let Some(v) = i.next() { v.write(w, sym)? }
+        for v in i {
+          write!(w, ", ")?;
+          v.write(w, sym)?;
+        }
+        write!(w, "]")
+      }
+      Value::Bool(b) => write!(w, "{}", b),
+      Value::String(s) => write!(w, "{}", s),
+      Value::Function(fr) => write!(w, "{}(..)", sym.str(fr.name)),
+      Value::External(e) => write!(w, "external({})", sym.str(e.type_name)),
       Value::Struct(s) => {
         let Struct { def, fields } = &*s.borrow();
-        let name = &def.name;
-        write!(f, "{} {{ ", name)?;
+        let name = def.name;
+        write!(w, "{} {{ ", sym.str(name))?;
         let end = fields.len() - 1;
         for (i, (n, v)) in def.fields.iter().zip(fields.iter()).enumerate() {
-          let sep = if i == end {""} else {","};
-          write!(f, "{}: {:?}{} ", n, v, sep)?;
+          write!(w, "{}: ", sym.str(*n))?;
+          v.write(w, sym)?;
+          write!(w, "{} ", if i == end {""} else {","})?;
         }
-        write!(f, "}}")
+        write!(w, "}}")
       }
-      Value::Unit => write!(f, "Unit"),
+      Value::Unit => write!(w, "Unit"),
     }
   }
 }
