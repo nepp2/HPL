@@ -15,14 +15,16 @@ mod tests;
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
+use crate::interpreter::Interpreter;
 
 fn load_and_run(path : &str) {
   let path = PathBuf::from(path);
   let mut f = File::open(path).expect("file not found");
   let mut code = String::new();
   f.read_to_string(&mut code).unwrap();
-  let result = interpreter::interpret(&code);
-  println!("{}", watcher::print_result(result));
+  let mut i = Interpreter::simple();
+  let result = i.interpret(&code);
+  println!("{}", watcher::print_result(result, &mut i.sym));
 }
 
 fn main(){

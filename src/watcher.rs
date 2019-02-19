@@ -10,12 +10,12 @@ use std::thread;
 use std::thread::JoinHandle;
 
 use crate::error::Error;
-use crate::value::Value;
-use crate::interpreter;
+use crate::value::{Value, SymbolTable};
+use crate::interpreter::Interpreter;
 
-pub fn print_result(r : Result<Value, Error>) -> String {
+pub fn print_result(r : Result<Value, Error>, sym : &mut SymbolTable) -> String {
   match r {
-    Ok(v) => format!("{:?}", v),
+    Ok(v) => format!("{:?}", v.to_string(sym)),
     Err(e) => format!( "{}", e),
   }
 }
@@ -38,8 +38,9 @@ pub fn load_and_run(path : &str) -> InterpreterTask {
     let mut f = File::open(path).expect("file not found");
     let mut code = String::new();
     f.read_to_string(&mut code).unwrap();
-    let result = interpreter::interpret_with_interrupt(&code, iflag);
-    let s = print_result(result);
+    let mut i = Interpreter::new(iflag);
+    let result = i.interpret(&code);
+    let s = print_result(result, &mut i.sym);
     cflag.store(true, Ordering::Relaxed);
     s
   });

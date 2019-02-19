@@ -45,6 +45,21 @@ impl Type {
       Unit => sym.get("unit"),
     }
   }
+
+  pub fn str(&self) -> &'static str {
+    use self::Type::*;
+    match self {
+      Float => "float",
+      Any => "any",
+      Array => "array",
+      Bool => "bool",
+      String => "string",
+      Function => "function",
+      Struct { .. } => "struct",
+      External(e) => "external",
+      Unit => "unit",
+    }
+  }
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -222,7 +237,7 @@ pub enum Value {
   Float(f32),
   Array(Array),
   Bool(bool),
-  String(RefStr),
+  String(Symbol),
   Function(FunctionRef),
   Struct(StructVal),
   External(ExternalVal),
@@ -251,25 +266,11 @@ impl Value {
       String(_) => Type::String,
       Function(_) => Type::Function,
       Struct(s) => Type::Struct{
-        module: s.borrow().def.module.clone(),
-        name: s.borrow().def.name.clone(),
+        module: s.borrow().def.module,
+        name: s.borrow().def.name,
       },
       External(e) => Type::External(e.type_name),
       Unit => Type::Unit,
-    }
-  }
-
-  pub fn type_name(&self, sym : &mut SymbolTable) -> RefStr {
-    use self::Value::*;
-    match self {
-      Float(_) => "float".into(),
-      Array(_) => "array".into(),
-      Bool(_) => "bool".into(),
-      String(_) => "string".into(),
-      Function(_) => "function".into(),
-      Struct(s) => sym.refstr(s.borrow().def.name),
-      External(e) => sym.refstr(e.type_name),
-      Unit => "unit".into(),
     }
   }
 
@@ -287,7 +288,7 @@ impl Value {
         write!(w, "]")
       }
       Value::Bool(b) => write!(w, "{}", b),
-      Value::String(s) => write!(w, "{}", s),
+      Value::String(s) => write!(w, "{}", sym.str(*s)),
       Value::Function(fr) => write!(w, "{}(..)", sym.str(fr.name)),
       Value::External(e) => write!(w, "external({})", sym.str(e.type_name)),
       Value::Struct(s) => {
@@ -304,6 +305,12 @@ impl Value {
       }
       Value::Unit => write!(w, "Unit"),
     }
+  }
+
+  pub fn to_string(&self, sym : &mut SymbolTable) -> String {
+    let mut s = String::new();
+    self.write(&mut s, sym);
+    s
   }
 }
 
@@ -322,14 +329,9 @@ impl From<Vec<Value>> for Value {
     Value::Array(Rc::new(RefCell::new(v)))
   }
 }
-impl From<&str> for Value {
-  fn from(v : &str) -> Value {
-    Value::String(v.into())
-  }
-}
-impl From<String> for Value {
-  fn from(v : String) -> Value {
-    Value::String(v.into())
+impl From<Symbol> for Value {
+  fn from(v : Symbol) -> Value {
+    Value::String(v)
   }
 }
 
@@ -337,15 +339,15 @@ impl Into<Result<f32, String>> for Value {
   fn into(self) -> Result<f32, String> {
     match self {
       Value::Float(f) => Ok(f), 
-      x => Err(format!("Expected float, found {:?}.", x))
+      x => Err(format!("Expected float, found {:?}.", x.to_type().str()))
     }
   }
 }
-impl Into<Result<RefStr, String>> for Value {
-  fn into(self) -> Result<RefStr, String> {
+impl Into<Result<Symbol, String>> for Value {
+  fn into(self) -> Result<Symbol, String> {
     match self {
       Value::String(s) => Ok(s),
-      x => Err(format!("Expected string, found {:?}.", x))
+      x => Err(format!("Expected string, found {:?}.", x.to_type().str()))
     }
   }
 }
@@ -353,7 +355,7 @@ impl Into<Result<bool, String>> for Value {
   fn into(self) -> Result<bool, String> {
     match self {
       Value::Bool(b) => Ok(b),
-      x => Err(format!("Expected bool, found {:?}.", x))
+      x => Err(format!("Expected bool, found {:?}.", x.to_type().str()))
     }
   }
 }
@@ -361,7 +363,7 @@ impl Into<Result<FunctionRef, String>> for Value {
   fn into(self) -> Result<FunctionRef, String> {
     match self {
       Value::Function(f) => Ok(f),
-      x => Err(format!("Expected function, found {:?}.", x))
+      x => Err(format!("Expected function, found {:?}.", x.to_type().str()))
     }
   }
 }
@@ -369,7 +371,7 @@ impl Into<Result<Array, String>> for Value {
   fn into(self) -> Result<Array, String> {
     match self {
       Value::Array(a) => Ok(a),
-      x => Err(format!("Expected array, found {:?}.", x))
+      x => Err(format!("Expected array, found {:?}.", x.to_type().str()))
     }
   }
 }
@@ -377,7 +379,7 @@ impl Into<Result<StructVal, String>> for Value {
   fn into(self) -> Result<StructVal, String> {
     match self {
       Value::Struct(s) => Ok(s),
-      x => Err(format!("Expected struct, found {:?}.", x))
+      x => Err(format!("Expected struct, found {:?}.", x.to_type().str()))
     }
   }
 }
@@ -386,7 +388,7 @@ impl Into<Result<ExternalVal, String>> for Value {
   fn into(self) -> Result<ExternalVal, String> {
     match self {
       Value::External(v) => Ok(v),
-      x => Err(format!("Expected struct, found {:?}.", x))
+      x => Err(format!("Expected struct, found {:?}.", x.to_type().str()))
     }
   }
 }
@@ -410,9 +412,11 @@ impl Value2 {
     self.tag.clone()
   }
 
-  pub fn type_name(&self) -> RefStr {
-    self.tag.name()
+  /*
+  pub fn type_name(&self, sym : &mut SymbolTable) -> RefStr {
+    self.tag.name(sym)
   }
+  */
 }
 
 const BOOL_TRUE : u64 = 1;

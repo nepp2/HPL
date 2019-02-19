@@ -2,6 +2,7 @@
 use crate::interpreter;
 use crate::interpreter::Interpreter;
 use crate::value::*;
+use crate::error::Error;
 
 #[test]
 fn test_basics() {
@@ -21,11 +22,18 @@ fn test_basics() {
     ("if true { 3 } else { 4 }", Value::from(3.0)),
     ("if false { 3 } else { 4 }", Value::from(4.0)),
     ("let a = 5; a", Value::from(5.0)),
-    (r#""Hello world""#, Value::from("Hello world")),
   ];
   for (code, expected_result) in cases {
     assert_result(code, expected_result);
   }
+}
+
+#[test]
+fn test_string() {
+  let mut i = Interpreter::simple();
+  let code = r#""Hello world""#;
+  let expected = Value::from(i.sym.get("Hello world"));
+  assert_result_with_interpreter(code, expected, &mut i);
 }
 
 #[test]
@@ -47,13 +55,25 @@ fn test_and_or() {
   assert_result(or, Value::from(0.0));
 }
 
-fn assert_result(code : &str, expected_result : Value){
+fn result_string(r : Result<Value, Error>, sym : &mut SymbolTable) -> String {
+  match r {
+    Ok(v) => v.to_string(sym),
+    Err(e) => format!("{}", e),
+  }
+}
+
+fn assert_result_with_interpreter(code : &str, expected_result : Value, i : &mut Interpreter){
   let expected = Ok(expected_result);
-  let result = interpreter::interpret(code);
+  let result = i.interpret(code);
   assert!(
     result == expected,
     "error in code '{}'. Expected result '{:?}'. Actual result was '{:?}'",
-    code, expected, result);
+    code, result_string(expected, &mut i.sym), result_string(result, &mut i.sym));
+}
+
+fn assert_result(code : &str, expected_result : Value){
+  let mut i = Interpreter::simple();
+  assert_result_with_interpreter(code, expected_result, &mut i)
 }
 
 // TODO: multiple dispatch currently not supported
@@ -76,13 +96,13 @@ fn test_dispatch(){
   for (code, expected_result) in cases {
     let mut i = Interpreter::simple();
     let def_result = i.interpret(fundef_code);
-    assert!(def_result.is_ok(), "Error: {:?}", def_result);
+    assert!(def_result.is_ok(), "Error: {:?}", result_string(def_result, &mut i.sym));
     let expected = Ok(expected_result);
     let result = i.interpret(code);
     assert!(
       result == expected,
       "error in code '{}'. Expected result '{:?}'. Actual result was '{:?}'",
-      code, expected, result);
+      code, result_string(expected, &mut i.sym), result_string(result, &mut i.sym));
   }
 }
 

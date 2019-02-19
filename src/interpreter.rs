@@ -16,7 +16,7 @@ use std::collections::HashMap;
 // TODO: this should store the expression id counter for the parser. At the moment, ids will be reused!
 
 pub struct Interpreter {
-  pub symbols : SymbolTable,
+  pub sym : SymbolTable,
   pub loaded_modules : Vec<Module>,
   pub top_level_scope : Option<BlockScope>,
   pub top_level_module : ModuleId,
@@ -28,17 +28,17 @@ pub struct Interpreter {
 impl Interpreter {
 
   pub fn new(mut interrupt_flag : Arc<AtomicBool>) -> Interpreter {
-    let mut symbols = SymbolTable::new();
+    let mut sym = SymbolTable::new();
     let mut loaded_modules = vec!();
 
     // load prelude
-    let prelude = add_module(&mut loaded_modules, Module::new(symbols.get("prelude")));
+    let prelude = add_module(&mut loaded_modules, Module::new(sym.get("prelude")));
     {
       let mut f = File::open("code/prelude.code").expect("file not found");
       let mut code = String::new();
       f.read_to_string(&mut code).unwrap();
       let mut env = Environment::new(
-        &mut symbols,
+        &mut sym,
         &mut loaded_modules,
         prelude, &mut interrupt_flag,
         BlockScope {
@@ -51,10 +51,10 @@ impl Interpreter {
 
     // load top level module
     let top_level_module =
-      add_module(&mut loaded_modules, Module::new(symbols.get("top_level")));
+      add_module(&mut loaded_modules, Module::new(sym.get("top_level")));
 
     Interpreter {
-      symbols,
+      sym,
       loaded_modules,
       top_level_scope: Some(BlockScope {
         variables: HashMap::new(),
@@ -72,7 +72,7 @@ impl Interpreter {
   pub fn interpret(&mut self, code : &str) -> Result<Value, Error> {
     let scope = mem::replace(&mut self.top_level_scope, None).unwrap();
     let mut env = Environment::new(
-      &mut self.symbols,
+      &mut self.sym,
       &mut self.loaded_modules,
       self.top_level_module,
       &mut self.interrupt_flag,
@@ -92,11 +92,3 @@ pub fn interpret_with_interrupt(code : &str, interrupt_flag : Arc<AtomicBool>) -
 pub fn interpret(code : &str) -> Result<Value, Error> {
   interpret_with_interrupt(code, Arc::new(AtomicBool::new(false)))
 }
-
-#[test]
-fn test_interpret() {
-  let code = "(3 + 4) * 10";
-  let result = interpret(code);
-  println!("{:?}", result);
-}
-

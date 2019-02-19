@@ -43,7 +43,7 @@ pub struct Function {
   pub handle : FunctionHandle,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default)]
 pub struct BlockScope {
   pub variables : HashMap<Symbol, Value>,
   pub modules : Vec<ModuleId>,
@@ -683,7 +683,7 @@ pub fn eval(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
         return error(expr, format!("no variable or function in scope called '{}'", env.str(*s)));
       }
     }
-    ExprTag::LiteralString(s) => Ok(Value::String(env.sym.refstr(*s))),
+    ExprTag::LiteralString(s) => Ok(Value::String(*s)),
     ExprTag::LiteralFloat(f) => Ok(Value::Float(*f)),
     ExprTag::LiteralBool(b) => Ok(Value::Bool(*b)),
     ExprTag::LiteralUnit => Ok(Value::Unit),

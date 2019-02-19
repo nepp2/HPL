@@ -120,21 +120,21 @@ pub fn load_library(e : &mut Environment) {
     let v = a.borrow_mut().pop();
     v.ok_or_else(|| format!("can't pop from empty array").into())
   });
-  fun(e, "print", vec![Type::Any], |_, vs| {
-    println!("{:?}", vs[0]);
+  fun(e, "print", vec![Type::Any], |e, vs| {
+    println!("{:?}", vs[0].to_string(&mut e.sym));
     Ok(Value::Unit)
   });
   fun(e, "type_name", vec![Type::Any], |e, vs| {
-    Ok(Value::String(vs[0].type_name(&mut e.sym)))
+    Ok(Value::String(vs[0].to_type().name(&mut e.sym)))
   });
   fun(e, "import_module", vec![Type::String], |e, vs| {
-    let name = Into::<Result<RefStr, String>>::into(vs[0].clone())?;
-    import_module(e, name.as_ref(), false)?;
+    let name = Into::<Result<Symbol, String>>::into(vs[0].clone())?;
+    import_module(e, name, false)?;
     Ok(Value::Unit)
   });
   fun(e, "import_module_fresh", vec![Type::String], |e, vs| {
-    let name = Into::<Result<RefStr, String>>::into(vs[0].clone())?;
-    import_module(e, name.as_ref(), true)?;
+    let name = Into::<Result<Symbol, String>>::into(vs[0].clone())?;
+    import_module(e, name, true)?;
     Ok(Value::Unit)
   });
 
@@ -145,21 +145,26 @@ pub fn load_library(e : &mut Environment) {
     let v = e.ext_val(WATCHER, create_watcher());
     Ok(Value::External(v))
   });
-  fun(e, "watch_module", vec![watcher_type.clone(), Type::String], |_e, mut vs| {
+  fun(e, "watch_module", vec![watcher_type.clone(), Type::String], |e, mut vs| {
     let v = vs[0].get().convert::<ExternalVal>()?;
     let mut v = v.val.borrow_mut();
     let w = v.downcast_mut::<FileWatcher>().unwrap();
-    let module_name = vs[1].get().convert::<RefStr>()?;
-    let path = format!("code/{}.code", module_name);
+    let module_name = vs[1].get().convert::<Symbol>()?;
+    let path = format!("code/{}.code", e.sym.str(module_name));
     w.watcher.watch(path.as_str(), RecursiveMode::Recursive)
       .map_err(|_| format!("failed to watch file '{}'", path))?;
     Ok(Value::Unit)
   });
-  fun(e, "poll_watcher_event", vec![watcher_type], |_e, mut vs| {
+  fun(e, "poll_watcher_event", vec![watcher_type], |e, mut vs| {
     let v = vs[0].get().convert::<ExternalVal>()?;
     let mut v = v.val.borrow_mut();
     let w = v.downcast_mut::<FileWatcher>().unwrap();
-    Ok(poll_watcher_event(w))
+    if let Some(s) = poll_watcher_event(w) {
+      Ok(Value::from(e.sym.get(s)))
+    }
+    else {
+      Ok(Value::Unit)
+    }
   });
   load_sdl(e);
 }
@@ -178,47 +183,47 @@ fn create_watcher() -> FileWatcher {
   FileWatcher { watcher, rx}
 }
 
-fn poll_watcher_event(w : &mut FileWatcher) -> Value {
+fn poll_watcher_event(w : &mut FileWatcher) -> Option<String> {
   match w.rx.try_recv() {
     Ok(event) => {
       match event {
         DebouncedEvent::Write(path) => {
           let module_name = path.file_stem().unwrap().to_str().unwrap();
-          Value::from(module_name)
+          Some(module_name.into())
         }
-        _ => Value::Unit
+        _ => None
       }
     },
     Err(e) => match e {
-      TryRecvError::Disconnected => Value::Unit,
-      TryRecvError::Empty => Value::Unit,
+      TryRecvError::Disconnected => None,
+      TryRecvError::Empty => None,
     },
   }
 }
 
-fn import_module(env : &mut Environment, module_name: &str, load_fresh : bool) -> Result<(), ErrorContent> {
+fn import_module(env : &mut Environment, module_name: Symbol, load_fresh : bool) -> Result<(), ErrorContent> {
   fn inner_error(e : Error, name : &str) -> ErrorContent {
     ErrorContent::InnerError(format!("Error when loading module '{}'", name), Box::new(e))
   }
-  if let Some(id) = get_module_id(env.loaded_modules, env.sym.get(module_name)) {
+  if let Some(id) = get_module_id(env.loaded_modules, module_name) {
     if load_fresh {
-      let module = Module::new(env.sym.get(module_name));
+      let module = Module::new(module_name);
       env.loaded_modules[id.i] = module;
-      load_module(env, module_name, id).map_err(|e| inner_error(e, module_name))?;
+      load_module(env, module_name, id).map_err(|er| inner_error(er, env.sym.str(module_name)))?;
     }
     env.import_module(id)?;
   }
   else {
-    let module = Module::new(env.sym.get(module_name));
+    let module = Module::new(module_name);
     let id = add_module(env.loaded_modules, module);
-    load_module(env, module_name, id).map_err(|e| inner_error(e, module_name))?;
+    load_module(env, module_name, id).map_err(|er| inner_error(er, env.sym.str(module_name)))?;
     env.import_module(id)?;
   }
   Ok(())
 }
 
-fn load_module(env : &mut Environment, module_name: &str, module_id : ModuleId) -> Result<(), Error> {
-  let file_name = format!("code/{}.code", module_name);
+fn load_module(env : &mut Environment, module_name: Symbol, module_id : ModuleId) -> Result<(), Error> {
+  let file_name = format!("code/{}.code", env.sym.str(module_name));
   let mut f = File::open(file_name).expect("file not found");
   let mut code = String::new();
   f.read_to_string(&mut code).unwrap();
@@ -325,6 +330,9 @@ fn load_sdl(e : &mut Environment) {
   fn f<V : Into<Value>>(e : &mut Environment, field_name : &str, v : V) -> (Symbol, Value) {
     (e.sym.get(field_name), v.into())
   }
+  fn s(e : &mut Environment, field_name : &str, v : String) -> (Symbol, Value) {
+    (e.sym.get(field_name), e.sym.get(v).into())
+  }
 
   fn new_struct(e : &mut Environment, name : &str, vals : Vec<(Symbol, Value)>)
     -> Result<Value, ErrorContent>
@@ -332,13 +340,13 @@ fn load_sdl(e : &mut Environment) {
     return e.instantiate_struct(e.sym.get(name), vals).map(|s| Value::Struct(s));
   }
 
-  fun(e, "poll_sdl_event_string", vec![sdl_view_type.clone()], |_e, mut vs| {
+  fun(e, "poll_sdl_event_string", vec![sdl_view_type.clone()], |env, mut vs| {
     let v = vs[0].get().convert::<ExternalVal>()?;
     let mut v = v.val.borrow_mut();
     let view = v.downcast_mut::<SdlView>().unwrap();
     if let Some(e) = view.events.poll_event() {
       let s = format!("{:?}", e);
-      return Ok(Value::String(s.into()));
+      return Ok(Value::String(env.sym.get(s)));
     }
     Ok(Value::Unit)
   });
@@ -356,16 +364,15 @@ fn load_sdl(e : &mut Environment) {
     match event {
       Event::KeyDown {keycode, ..} => {
         if let Some(kc) = keycode {
-
           return new_struct(e, "sdl_event_keydown", vec![
-            f(e, "key", format!("{}", kc)),
+            s(e, "key", format!("{}", kc)),
           ]);
         }
       }
       Event::KeyUp {keycode, ..} => {
         if let Some(kc) = keycode {
           return new_struct(e, "sdl_event_keyup", vec![
-            f(e, "key", format!("{}", kc)),
+            s(e, "key", format!("{}", kc)),
           ]);
         }
       }
@@ -382,14 +389,14 @@ fn load_sdl(e : &mut Environment) {
           return new_struct(e, "sdl_event_mouse_down", vec![
             f(e, "x", x as f32),
             f(e, "y", y as f32),
-            f(e, "button", format!("{:?}", mouse_btn)),
+            s(e, "button", format!("{:?}", mouse_btn)),
           ]);
       }
       Event::MouseButtonUp { x, y, mouse_btn, .. } => {
           return new_struct(e, "sdl_event_mouse_up", vec![
             f(e, "x", x as f32),
             f(e, "y", y as f32),
-            f(e, "button", format!("{:?}", mouse_btn)),
+            s(e, "button", format!("{:?}", mouse_btn)),
           ]);
       }
       Event::MouseWheel { y, .. } => {
@@ -399,7 +406,7 @@ fn load_sdl(e : &mut Environment) {
       }
       Event::Window { win_event, .. } => {
         return new_struct(e, "sdl_event_window", vec![
-          f(e, "event", format!("{:?}", win_event)),
+          s(e, "event", format!("{:?}", win_event)),
         ]);
       }
       _ => (),
