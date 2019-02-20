@@ -440,11 +440,16 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
       match &assign_expr.tag {
         ExprTag::Symbol(var_symbol) => {
           let value = eval(&value_expr, env)?;
-          let var =
-            env.dereference_variable(*var_symbol)
-            .ok_or_else(|| error_raw(assign_expr,
-              format!("symbol '{}' was not defined", env.str(*var_symbol))))?;
-          *var = value;
+          match env.dereference_variable(*var_symbol) {
+            Some(var) => {
+              *var = value;
+            }
+            None => {
+              let var_name = env.str(*var_symbol);
+              return error(assign_expr,
+                format!("symbol '{}' was not defined", var_name));
+            }
+          }
           return Ok(Value::Unit)
         }
         ExprTag::Tree(symbol) => {
@@ -566,7 +571,7 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
       {
         v.into()
       }
-      fn to_range(env : &mut Environment,v : Value) -> Result<(i64, i64), ErrorContent> {
+      fn to_range(env : &mut Environment, v : Value) -> Result<(i64, i64), ErrorContent> {
         let r : StructVal = from_value(v)?;
         let range = r.borrow();
         if env.str(range.def.name) != "range" {
@@ -578,7 +583,10 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
       }
       // TODO: this for loop implementation is wildly slow, for many different reasons.
       let var = exprs[0].symbol_unwrap()?;
-      let (start, end) = to_range(env, eval(&exprs[1], env)?).map_err(|e| error_raw(&exprs[1], e))?;
+      let range_struct = eval(&exprs[1], env)?;
+      let (start, end) =
+        to_range(env, range_struct)
+        .map_err(|e| error_raw(&exprs[1], e))?;
       let body = &exprs[2];
       env.scope.push(Default::default());
       env.new_variable(var.clone(), Value::Unit);

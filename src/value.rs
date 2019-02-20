@@ -56,7 +56,7 @@ impl Type {
       String => "string",
       Function => "function",
       Struct { .. } => "struct",
-      External(e) => "external",
+      External(_) => "external",
       Unit => "unit",
     }
   }
@@ -83,19 +83,6 @@ pub struct Expr {
   pub children : Vec<Expr>,
   pub loc : TextLocation,
 }
-
-
-fn foo(d: &fmt::Display, mut i: &mut fmt::Write) -> fmt::Result {
-    write!(i, "test {}\t", d)
-}
-
-fn main() {
-    let mut buf = String::new();
-    foo(&5, &mut buf).unwrap();
-    foo(&"this", &mut buf).unwrap();
-    println!("{}", buf)
-}
-
 
 pub fn display_expr(e: &Expr, sym : &mut SymbolTable) -> String {
   pub fn display_inner(e: &Expr, sym : &mut SymbolTable, w: &mut fmt::Write, indent : usize) -> fmt::Result {
@@ -279,7 +266,8 @@ impl Value {
       Value::Float(x) => write!(w, "{}", x),
       Value::Array(a) => {
         write!(w, "[")?;
-        let i = a.borrow().iter();
+        let a = a.borrow();
+        let mut i = a.iter();
         if let Some(v) = i.next() { v.write(w, sym)? }
         for v in i {
           write!(w, ", ")?;
@@ -309,7 +297,7 @@ impl Value {
 
   pub fn to_string(&self, sym : &mut SymbolTable) -> String {
     let mut s = String::new();
-    self.write(&mut s, sym);
+    self.write(&mut s, sym).unwrap();
     s
   }
 }

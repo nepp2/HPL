@@ -79,7 +79,7 @@ impl <'l> CStream<'l> {
 
   fn complete_token(&mut self, start_loc : StreamLocation, token_type : TokenType) {
     let loc = self.get_text_location(start_loc);
-    let string : RefStr = self.current_token.into();
+    let string : RefStr = (self.current_token.as_ref() as &str).into();
     let symbol = self.symbols.get(string.clone());
     self.current_token.clear();
     let t = Token {

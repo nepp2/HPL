@@ -67,7 +67,8 @@ fn fun(env : &mut Environment, name : &'static str, arg_types : Vec<Type>, f : B
     .to_string()).map(|s| env.sym.get(s)).collect();
   let visible_modules = env.visible_modules();
   let f = Function { module_id: env.current_module, visible_modules, arg_names, arg_types, handle: FunctionHandle::BuiltIn(f) };
-  env.add_function(env.sym.get(name), f).unwrap();
+  let name_symbol = env.sym.get(name);
+  env.add_function(name_symbol, f).unwrap();
 }
 
 pub fn load_library(e : &mut Environment) {
@@ -337,7 +338,8 @@ fn load_sdl(e : &mut Environment) {
   fn new_struct(e : &mut Environment, name : &str, vals : Vec<(Symbol, Value)>)
     -> Result<Value, ErrorContent>
   {
-    return e.instantiate_struct(e.sym.get(name), vals).map(|s| Value::Struct(s));
+    let name = e.sym.get(name);
+    return e.instantiate_struct(name, vals).map(|s| Value::Struct(s));
   }
 
   fun(e, "poll_sdl_event_string", vec![sdl_view_type.clone()], |env, mut vs| {
@@ -364,50 +366,53 @@ fn load_sdl(e : &mut Environment) {
     match event {
       Event::KeyDown {keycode, ..} => {
         if let Some(kc) = keycode {
-          return new_struct(e, "sdl_event_keydown", vec![
-            s(e, "key", format!("{}", kc)),
-          ]);
+          let fields = vec![s(e, "key", format!("{}", kc))];
+          return new_struct(e, "sdl_event_keydown", fields);
         }
       }
       Event::KeyUp {keycode, ..} => {
         if let Some(kc) = keycode {
-          return new_struct(e, "sdl_event_keyup", vec![
-            s(e, "key", format!("{}", kc)),
-          ]);
+          let fields = vec![s(e, "key", format!("{}", kc))];
+          return new_struct(e, "sdl_event_keyup", fields);
         }
       }
       Event::Quit { .. } => {
         return new_struct(e, "sdl_event_quit", vec![]);
       }
       Event::MouseMotion { x, y, .. } => {
-          return new_struct(e, "sdl_event_mouse_motion", vec![
+          let fields = vec![
             f(e, "x", x as f32),
             f(e, "y", y as f32),
-          ]);
+          ];
+          return new_struct(e, "sdl_event_mouse_motion", fields);
       }
       Event::MouseButtonDown { x, y, mouse_btn, .. } => {
-          return new_struct(e, "sdl_event_mouse_down", vec![
+          let fields = vec![
             f(e, "x", x as f32),
             f(e, "y", y as f32),
             s(e, "button", format!("{:?}", mouse_btn)),
-          ]);
+          ];
+          return new_struct(e, "sdl_event_mouse_down", fields);
       }
       Event::MouseButtonUp { x, y, mouse_btn, .. } => {
-          return new_struct(e, "sdl_event_mouse_up", vec![
+          let fields = vec![
             f(e, "x", x as f32),
             f(e, "y", y as f32),
             s(e, "button", format!("{:?}", mouse_btn)),
-          ]);
+          ];
+          return new_struct(e, "sdl_event_mouse_up", fields);
       }
       Event::MouseWheel { y, .. } => {
-          return new_struct(e, "sdl_event_mouse_wheel", vec![
+          let fields = vec![
             f(e, "y", y as f32),
-          ]);
+          ];
+          return new_struct(e, "sdl_event_mouse_wheel", fields);
       }
       Event::Window { win_event, .. } => {
-        return new_struct(e, "sdl_event_window", vec![
+        let fields = vec![
           s(e, "event", format!("{:?}", win_event)),
-        ]);
+        ];
+        return new_struct(e, "sdl_event_window", fields);
       }
       _ => (),
     }
