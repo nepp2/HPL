@@ -89,9 +89,13 @@ pub fn load_library(e : &mut Environment) {
     let b = vs[0] != vs[1];
     Ok(Value::from(b))
   });
-  fun(e, "prefix_-", vec![Type::Float], |_, vs| {
+  fun(e, "unary_-", vec![Type::Float], |_, vs| {
     let f : Result<f32, String> = vs[0].clone().into();
     Ok(Value::from(-f?))
+  });
+  fun(e, "unary_!", vec![Type::Bool], |_, vs| {
+    let b : Result<bool, String> = vs[0].clone().into();
+    Ok(Value::from(!(b?)))
   });
   fun(e, "sqrt", vec![Type::Float], |_e, mut vs| {
     let f = vs[0].get().convert::<f32>()?;
@@ -100,10 +104,6 @@ pub fn load_library(e : &mut Environment) {
   fun(e, "floor", vec![Type::Float], |_e, mut vs| {
     let v = vs[0].get().convert::<f32>()? as i64;
     Ok(Value::from(v as f32))
-  });
-  fun(e, "prefix_!", vec![Type::Bool], |_, vs| {
-    let b : Result<bool, String> = vs[0].clone().into();
-    Ok(Value::from(!(b?)))
   });
   fun(e, "len", vec![Type::Array], |_, vs| {
     let a = Into::<Result<Array, String>>::into(vs[0].clone())?;

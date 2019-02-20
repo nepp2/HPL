@@ -256,8 +256,11 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
     let t = ps.peek()?;
     // if the next token is a prefix operator
     if t.token_type == TokenType::Syntax && PREFIX_OPERATORS.contains(t.string.as_ref()) {
-      let operator = ps.add_symbol(t.string.clone(), start);
+      let mut op_string = String::new();
+      op_string.push_str("unary_");
+      op_string.push_str(t.string.as_ref());
       ps.expect_type(TokenType::Syntax)?;
+      let operator = ps.add_symbol(op_string, start);
       let expr = parse_expression_term(ps)?;
       let args = vec![operator, expr];
       Ok(ps.add_tree(CALL, args, start))
