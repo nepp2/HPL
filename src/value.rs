@@ -214,6 +214,8 @@ pub type StructVal = Rc<RefCell<Struct>>;
 
 pub type Array = Rc<RefCell<Vec<Value>>>;
 
+pub struct Butts{}
+
 /// Represents a value in the interpreted language.
 /// Currently uses 16 bytes. I think this is because there are 8 byte
 /// RC pointers in the union, and the discriminating value is being
@@ -221,14 +223,26 @@ pub type Array = Rc<RefCell<Vec<Value>>>;
 /// down to 8 bytes total, with some ugly pointer hacks.
 #[derive(Clone, PartialEq)]
 pub enum Value {
-  Float(f32),
+  Float(u64),
   Array(Array),
-  Bool(bool),
-  String(Symbol),
+  Bool(u64),
+  String(u64),
   Function(FunctionRef),
   Struct(StructVal),
   External(ExternalVal),
   Unit,
+}
+
+fn bits_to_f32(b : u64) -> f32 {
+  f32::from_bits(b as u32)
+}
+
+fn bits_to_bool(b : u64) -> bool {
+  b != 0
+}
+
+fn bits_to_symbol(b : u64) -> Symbol {
+  Symbol { id: b }
 }
 
 #[derive(Clone)]
@@ -263,7 +277,9 @@ impl Value {
 
   fn write(&self, w: &mut fmt::Write, sym : &mut SymbolTable) -> fmt::Result {
     match self {
-      Value::Float(x) => write!(w, "{}", x),
+      Value::Float(x) => {
+        write!(w, "{}", bits_to_f32(*x))
+      }
       Value::Array(a) => {
         write!(w, "[")?;
         let a = a.borrow();
@@ -275,8 +291,8 @@ impl Value {
         }
         write!(w, "]")
       }
-      Value::Bool(b) => write!(w, "{}", b),
-      Value::String(s) => write!(w, "{}", sym.str(*s)),
+      Value::Bool(b) => write!(w, "{}", bits_to_bool(*b)),
+      Value::String(s) => write!(w, "{}", sym.str(bits_to_symbol(*s))),
       Value::Function(fr) => write!(w, "{}(..)", sym.str(fr.name)),
       Value::External(e) => write!(w, "external({})", sym.str(e.type_name)),
       Value::Struct(s) => {
@@ -304,12 +320,12 @@ impl Value {
 
 impl From<bool> for Value {
   fn from(v : bool) -> Value {
-    Value::Bool(v)
+    Value::Bool(if v { 1 } else { 0 })
   }
 }
 impl From<f32> for Value {
   fn from(v : f32) -> Value {
-    Value::Float(v)
+    Value::Float(v.to_bits() as u64)
   }
 }
 impl From<Vec<Value>> for Value {
@@ -319,14 +335,14 @@ impl From<Vec<Value>> for Value {
 }
 impl From<Symbol> for Value {
   fn from(v : Symbol) -> Value {
-    Value::String(v)
+    Value::String(v.id)
   }
 }
 
 impl Into<Result<f32, String>> for Value {
   fn into(self) -> Result<f32, String> {
     match self {
-      Value::Float(f) => Ok(f), 
+      Value::Float(f) => Ok(bits_to_f32(f)),
       x => Err(format!("Expected float, found {:?}.", x.to_type().str()))
     }
   }
@@ -334,7 +350,7 @@ impl Into<Result<f32, String>> for Value {
 impl Into<Result<Symbol, String>> for Value {
   fn into(self) -> Result<Symbol, String> {
     match self {
-      Value::String(s) => Ok(s),
+      Value::String(s) => Ok(bits_to_symbol(s)),
       x => Err(format!("Expected string, found {:?}.", x.to_type().str()))
     }
   }
@@ -342,7 +358,7 @@ impl Into<Result<Symbol, String>> for Value {
 impl Into<Result<bool, String>> for Value {
   fn into(self) -> Result<bool, String> {
     match self {
-      Value::Bool(b) => Ok(b),
+      Value::Bool(b) => Ok(bits_to_bool(b)),
       x => Err(format!("Expected bool, found {:?}.", x.to_type().str()))
     }
   }
@@ -400,103 +416,4 @@ impl Value2 {
     self.tag.clone()
   }
 
-  /*
-  pub fn type_name(&self, sym : &mut SymbolTable) -> RefStr {
-    self.tag.name(sym)
-  }
-  */
 }
-
-const BOOL_TRUE : u64 = 1;
-const BOOL_FALSE : u64 = 0;
-
-use self::ValInternal::*;
-
-impl From<bool> for Value2 {
-  fn from(b : bool) -> Value2 {
-    let v = if b { BOOL_TRUE } else { BOOL_FALSE };
-    Value2 { tag: Type::Bool, value: Small(v)}
-  }
-}
-impl From<f32> for Value2 {
-  fn from(f : f32) -> Value2 {
-    let v = f.to_bits() as u64;
-    Value2 { tag: Type::Float, value: Small(v)}
-  }
-}
-
-/*
-impl From<Vec<Value2>> for Value2 {
-  fn from(v : Vec<Value2>) -> Value2 {
-    Value2::Array(Rc::new(RefCell::new(v)))
-  }
-}
-impl From<&str> for Value2 {
-  fn from(v : &str) -> Value2 {
-    Value2::String(v.into())
-  }
-}
-impl From<String> for Value2 {
-  fn from(v : String) -> Value2 {
-    Value2::String(v.into())
-  }
-}
-
-impl Into<Result<f32, String>> for Value2 {
-  fn into(self) -> Result<f32, String> {
-    match self {
-      Value2::Float(f) => Ok(f), 
-      x => Err(format!("Expected float, found {:?}.", x))
-    }
-  }
-}
-impl Into<Result<RefStr, String>> for Value2 {
-  fn into(self) -> Result<RefStr, String> {
-    match self {
-      Value2::String(s) => Ok(s),
-      x => Err(format!("Expected string, found {:?}.", x))
-    }
-  }
-}
-impl Into<Result<bool, String>> for Value2 {
-  fn into(self) -> Result<bool, String> {
-    match self {
-      Value2::Bool(b) => Ok(b),
-      x => Err(format!("Expected bool, found {:?}.", x))
-    }
-  }
-}
-impl Into<Result<FunctionRef, String>> for Value2 {
-  fn into(self) -> Result<FunctionRef, String> {
-    match self {
-      Value2::Function(f) => Ok(f),
-      x => Err(format!("Expected function, found {:?}.", x))
-    }
-  }
-}
-impl Into<Result<Array, String>> for Value2 {
-  fn into(self) -> Result<Array, String> {
-    match self {
-      Value2::Array(a) => Ok(a),
-      x => Err(format!("Expected array, found {:?}.", x))
-    }
-  }
-}
-impl Into<Result<StructVal, String>> for Value2 {
-  fn into(self) -> Result<StructVal, String> {
-    match self {
-      Value2::Struct(s) => Ok(s),
-      x => Err(format!("Expected struct, found {:?}.", x))
-    }
-  }
-}
-
-impl Into<Result<ExternalVal, String>> for Value2 {
-  fn into(self) -> Result<ExternalVal, String> {
-    match self {
-      Value2::External(v) => Ok(v),
-      x => Err(format!("Expected struct, found {:?}.", x))
-    }
-  }
-}
-*/

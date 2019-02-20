@@ -126,7 +126,7 @@ pub fn load_library(e : &mut Environment) {
     Ok(Value::Unit)
   });
   fun(e, "type_name", vec![Type::Any], |e, vs| {
-    Ok(Value::String(vs[0].to_type().name(&mut e.sym)))
+    Ok(Value::from(vs[0].to_type().name(&mut e.sym)))
   });
   fun(e, "import_module", vec![Type::String], |e, vs| {
     let name = Into::<Result<Symbol, String>>::into(vs[0].clone())?;
@@ -348,7 +348,7 @@ fn load_sdl(e : &mut Environment) {
     let view = v.downcast_mut::<SdlView>().unwrap();
     if let Some(e) = view.events.poll_event() {
       let s = format!("{:?}", e);
-      return Ok(Value::String(env.sym.get(s)));
+      return Ok(Value::from(env.sym.get(s)));
     }
     Ok(Value::Unit)
   });
@@ -521,6 +521,7 @@ fn load_sdl(e : &mut Environment) {
     let v = vs[0].get().convert::<ExternalVal>()?;
     let mut v = v.val.borrow_mut();
     let rng = v.downcast_mut::<StdRng>().unwrap();
-    Ok(Value::Float(rng.gen()))
+    let f : f32 = rng.gen();
+    Ok(Value::from(f))
   });
 }

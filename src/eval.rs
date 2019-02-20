@@ -430,11 +430,11 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
     }
     ("&&", [a, b]) => {
       let v = to_value(a, env)? && to_value(b, env)?;
-      Ok(Value::Bool(v))
+      Ok(Value::from(v))
     }
     ("||", [a, b]) => {
       let v = to_value(a, env)? || to_value(b, env)?;
-      Ok(Value::Bool(v))
+      Ok(Value::from(v))
     }
     ("=", [assign_expr, value_expr]) => {
       match &assign_expr.tag {
@@ -691,9 +691,9 @@ pub fn eval(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
         return error(expr, format!("no variable or function in scope called '{}'", env.str(*s)));
       }
     }
-    ExprTag::LiteralString(s) => Ok(Value::String(*s)),
-    ExprTag::LiteralFloat(f) => Ok(Value::Float(*f)),
-    ExprTag::LiteralBool(b) => Ok(Value::Bool(*b)),
+    ExprTag::LiteralString(s) => Ok(Value::from(*s)),
+    ExprTag::LiteralFloat(f) => Ok(Value::from(*f)),
+    ExprTag::LiteralBool(b) => Ok(Value::from(*b)),
     ExprTag::LiteralUnit => Ok(Value::Unit),
   }
 }
