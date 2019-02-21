@@ -581,7 +581,6 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
         let end : f32 = from_value(range.fields[1].clone())?;
         Ok((start as i64, end as i64))
       }
-      // TODO: this for loop implementation is wildly slow, for many different reasons.
       let var = exprs[0].symbol_unwrap()?;
       let range_struct = eval(&exprs[1], env)?;
       let (start, end) =
