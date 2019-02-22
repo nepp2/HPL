@@ -37,6 +37,7 @@ impl fmt::Debug for FunctionHandle {
 #[derive(Debug)]
 pub struct Function {
   pub module_id : ModuleId,
+  pub name : Symbol,
   pub visible_modules : Vec<ModuleId>,
   pub arg_types : Vec<Type>,
   pub arg_names : Vec<Symbol>,
@@ -247,11 +248,10 @@ impl <'l> Environment<'l> {
     Ok(())
   }
 
-  fn get_function<'m, A>(&'m self, name : Symbol, module_ids : A)
+  fn get_function(&self, name : Symbol)
     -> Result<&Function, String>
-    where A : Iterator<Item = &'m ModuleId>
   {
-    for id in module_ids {
+    for id in iter_modules(&self.scope) {
       let module = &self.loaded_modules[id.i];
       if let Some(f) = module.functions.get(&name) {
         return Ok(f)
@@ -287,23 +287,24 @@ impl <'l> Environment<'l> {
   }
 }
 
-fn call_function(
-  error_source : &Expr, function_name: Symbol,
-  visible_modules: Option<&Vec<ModuleId>>, arg_values: Vec<Value>,
-  env : &mut Environment)
+fn eval_function_call(
+  expr: &Expr, function_name_expr: &Expr,
+  args: &[Expr], env: &mut Environment)
   -> Result<Value, Error>
 {
-  let r = if let Some(ids) = visible_modules {
-    env.get_function(function_name, ids.iter())
+  let mut arg_values = vec!();
+  for i in 0..args.len() {
+    let e = &args[i];
+    let v = eval(e, env)?;
+    arg_values.push(v);
   }
-  else {
-    env.get_function(function_name, iter_modules(&env.scope))
-  };
-  let f = r.map_err(|s| error_raw(error_source, s))?;
+  let f = eval_function_expr(function_name_expr, env)?;
   if f.arg_names.len() != arg_values.len() {
-    return error(error_source,
+    let expected_args = f.arg_names.len();
+    let function_name = f.name;
+    return error(expr,
       format!("function '{}' expected {} arguments, but received {}",
-        env.str(function_name), f.arg_names.len(), arg_values.len()))
+        env.str(function_name), expected_args, arg_values.len()))
   }
   match &f.handle {
     FunctionHandle::Ast(expr) => {
@@ -316,8 +317,9 @@ fn call_function(
         modules: f.visible_modules.clone()
       };
       let expr = expr.clone();
+      let module_id = f.module_id;
       let mut new_env = Environment::new(
-        env.sym, env.loaded_modules, f.module_id, env.interrupt_flag, block);
+        env.sym, env.loaded_modules, module_id, env.interrupt_flag, block);
       let r = eval(&expr, &mut new_env)?;
       let es = mem::replace(&mut new_env.exit_state, ExitState::NotExiting);
       if let ExitState::Returning(v) = es {
@@ -328,45 +330,41 @@ fn call_function(
       }
     }
     FunctionHandle::BuiltIn(f) => {
-      f(env, arg_values).map_err(|e| error_raw(error_source, e))
+      f(env, arg_values).map_err(|e| error_raw(expr, e))
     }
   }
 }
 
-fn eval_function_call(expr : &Expr, function_expr: &Expr, args: &[Expr], env : &mut Environment)
-  -> Result<Value, Error>
+fn eval_function_expr<'l>(function_expr: &Expr, env : &'l mut Environment) -> Result<&'l Function, Error>
 { 
-  fn eval_named_function_call(
-    expr : &Expr, function_name: Symbol, visible_modules: Option<&Vec<ModuleId>>,
-    args: &[Expr], env : &mut Environment)
-    -> Result<Value, Error>
-  {
-    let mut arg_values = vec!();
-    for i in 0..args.len() {
-      let e = &args[i];
-      let v = eval(e, env)?;
-      arg_values.push(v);
-    }
-    call_function(expr, function_name, visible_modules, arg_values, env)
-  }
   // Decide whether this is a first class function or a static function reference
   let symbol = function_expr.symbol_unwrap().ok();
   let var = symbol.and_then(|s| env.dereference_variable(s));
-  if let Some(v) = var {
-    // Symbol refers to a local variable (containing function reference)
-    let r : Result<FunctionRef, String> = v.clone().into();
-    let f = r.map_err(|s| error_raw(function_expr, s))?;
-    eval_named_function_call(expr, f.name, Some(&f.visible_modules), args, env)
-  }
-  else if let Some(name) = symbol {
-    // Assume it's a symbol referring to a function
-    eval_named_function_call(expr, name, None, args, env)
-  }
-  else {
-    // More complex expression, which must be evaluated to a function reference
-    let f = to_value::<FunctionRef>(function_expr, env)?;
-    eval_named_function_call(expr, f.name, Some(&f.visible_modules), args, env)
-  }
+  let fr : FunctionRef =
+    if let Some(v) = var {
+      // Symbol refers to a local variable (containing function reference)
+      let r : Result<FunctionRef, String> = v.clone().into();
+      r.map_err(|s| error_raw(function_expr, s))?
+    }
+    else if let Some(name) = symbol {
+      // Assume it's a symbol referring to a function
+      let f =
+        env.get_function(name)
+        .map_err(|s| error_raw(function_expr, s))?;
+      return Ok(f);
+    }
+    else {
+      // More complex expression, which must be evaluated to a function reference
+      to_value::<FunctionRef>(function_expr, env)?
+    };
+  let m = &env.loaded_modules[fr.module.i];
+  let f =
+    m.functions.get(&fr.name)
+      .ok_or_else(||
+        error_raw(function_expr,
+          format!("could not find function '{}' in module '{}'",
+            env.str(fr.name), env.str(m.name))))?;
+  Ok(f)
 }
 
 fn to_value<V>(e : &Expr, env : &mut Environment) -> Result<V, Error>
@@ -620,6 +618,7 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
         arg_types.push(arg_type);
       }
       let f = Function {
+        name,
         module_id: env.current_module,
         visible_modules: env.visible_modules(),
         arg_names, arg_types,
@@ -684,7 +683,8 @@ pub fn eval(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
         .find(|m| m.functions.contains_key(&s))
         .is_some()
       {
-        Ok(Value::Function(FunctionRef{ name: s.clone(), visible_modules: env.visible_modules() }))
+        let f = env.get_function(*s).map_err(|s| error_raw(expr, s))?;
+        Ok(Value::Function(FunctionRef{ name: *s, module: f.module_id }))
       }
       else {
         return error(expr, format!("no variable or function in scope called '{}'", env.str(*s)));

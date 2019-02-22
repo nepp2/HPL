@@ -206,8 +206,8 @@ pub struct ModuleId {
 
 #[derive(Clone, PartialEq)]
 pub struct FunctionRef {
+  pub module : ModuleId,
   pub name : Symbol,
-  pub visible_modules : Vec<ModuleId>,
 }
 
 pub type StructVal = Rc<RefCell<Struct>>;
@@ -265,7 +265,7 @@ impl Value {
       Array(_) => Type::Array,
       Bool(_) => Type::Bool,
       String(_) => Type::String,
-      Function(_) => Type::Function,
+      Function{..} => Type::Function,
       Struct(s) => Type::Struct{
         module: s.borrow().def.module,
         name: s.borrow().def.name,
@@ -293,7 +293,7 @@ impl Value {
       }
       Value::Bool(b) => write!(w, "{}", bits_to_bool(*b)),
       Value::String(s) => write!(w, "{}", sym.str(bits_to_symbol(*s))),
-      Value::Function(fr) => write!(w, "{}(..)", sym.str(fr.name)),
+      Value::Function(f) => write!(w, "{}(..)", sym.str(f.name)),
       Value::External(e) => write!(w, "external({})", sym.str(e.type_name)),
       Value::Struct(s) => {
         let Struct { def, fields } = &*s.borrow();

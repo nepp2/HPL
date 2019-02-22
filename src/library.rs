@@ -66,9 +66,9 @@ fn fun(env : &mut Environment, name : &'static str, arg_types : Vec<Type>, f : B
     (0..arg_types.len()).map(|i| ((('a' as usize) + i) as u8 as char)
     .to_string()).map(|s| env.sym.get(s)).collect();
   let visible_modules = env.visible_modules();
-  let f = Function { module_id: env.current_module, visible_modules, arg_names, arg_types, handle: FunctionHandle::BuiltIn(f) };
-  let name_symbol = env.sym.get(name);
-  env.add_function(name_symbol, f).unwrap();
+  let name = env.sym.get(name);
+  let f = Function { name, module_id: env.current_module, visible_modules, arg_names, arg_types, handle: FunctionHandle::BuiltIn(f) };
+  env.add_function(name, f).unwrap();
 }
 
 pub fn load_library(e : &mut Environment) {
