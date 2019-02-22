@@ -1,24 +1,4 @@
 
-struct array_it {
-  a : array,
-  i : float,
-}
-
-fun array_iterator(a : array) {
-  array_it(a: a, i: 0)
-}
-
-fun array_iterator_next(it : array_it) {
-  if it.i < len(it.a) {
-    let i = it.a[it.i]
-    it.i = it.i + 1
-    i
-  }
-  else {
-    ()
-  }
-}
-
 struct range {
   start : float,
   end : float,

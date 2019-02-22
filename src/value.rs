@@ -25,7 +25,7 @@ pub enum Type {
   Bool,
   Array,
   Function,
-  Struct{ module: Symbol, name: Symbol },
+  Map,
   Any,
   External(Symbol),
 }
@@ -40,7 +40,7 @@ impl Type {
       Bool => sym.get("bool"),
       String => sym.get("string"),
       Function => sym.get("function"),
-      Struct{ name, .. } => *name,
+      Map => sym.get("map"),
       External(e) => *e,
       Unit => sym.get("unit"),
     }
@@ -55,7 +55,7 @@ impl Type {
       Bool => "bool",
       String => "string",
       Function => "function",
-      Struct { .. } => "struct",
+      Map => "map",
       External(_) => "external",
       Unit => "unit",
     }
@@ -186,19 +186,6 @@ impl SymbolTable {
   }
 }
 
-#[derive(Debug, PartialEq)]
-pub struct StructDef {
-  pub name : Symbol,
-  pub module : Symbol,
-  pub fields : Vec<Symbol>,
-}
-
-#[derive(PartialEq)]
-pub struct Struct {
-  pub def : Rc<StructDef>,
-  pub fields : Vec<Value>,
-}
-
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ModuleId {
   pub i : usize
@@ -210,11 +197,9 @@ pub struct FunctionRef {
   pub name : Symbol,
 }
 
-pub type StructVal = Rc<RefCell<Struct>>;
+pub type MapVal = Rc<RefCell<HashMap<Symbol, Value>>>;
 
 pub type Array = Rc<RefCell<Vec<Value>>>;
-
-pub struct Butts{}
 
 /// Represents a value in the interpreted language.
 /// Currently uses 16 bytes. I think this is because there are 8 byte
@@ -228,7 +213,7 @@ pub enum Value {
   Bool(u64),
   String(u64),
   Function(FunctionRef),
-  Struct(StructVal),
+  Map(MapVal),
   External(ExternalVal),
   Unit,
 }
@@ -266,10 +251,7 @@ impl Value {
       Bool(_) => Type::Bool,
       String(_) => Type::String,
       Function{..} => Type::Function,
-      Struct(s) => Type::Struct{
-        module: s.borrow().def.module,
-        name: s.borrow().def.name,
-      },
+      Map(_) => Type::Map,
       External(e) => Type::External(e.type_name),
       Unit => Type::Unit,
     }
@@ -295,12 +277,14 @@ impl Value {
       Value::String(s) => write!(w, "{}", sym.str(bits_to_symbol(*s))),
       Value::Function(f) => write!(w, "{}(..)", sym.str(f.name)),
       Value::External(e) => write!(w, "external({})", sym.str(e.type_name)),
-      Value::Struct(s) => {
-        let Struct { def, fields } = &*s.borrow();
-        let name = def.name;
-        write!(w, "{} {{ ", sym.str(name))?;
-        let end = fields.len() - 1;
-        for (i, (n, v)) in def.fields.iter().zip(fields.iter()).enumerate() {
+      Value::Map(m) => {
+        let map = &*m.borrow();
+        // TODO
+        //let name = def.name;
+        //write!(w, "{} {{ ", sym.str(name))?;
+        write!(w, "{{ ")?;
+        let end = map.len() - 1;
+        for (i, (n, v)) in map.iter().enumerate() {
           write!(w, "{}: ", sym.str(*n))?;
           v.write(w, sym)?;
           write!(w, "{} ", if i == end {""} else {","})?;
@@ -379,11 +363,11 @@ impl Into<Result<Array, String>> for Value {
     }
   }
 }
-impl Into<Result<StructVal, String>> for Value {
-  fn into(self) -> Result<StructVal, String> {
+impl Into<Result<MapVal, String>> for Value {
+  fn into(self) -> Result<MapVal, String> {
     match self {
-      Value::Struct(s) => Ok(s),
-      x => Err(format!("Expected struct, found {:?}.", x.to_type().str()))
+      Value::Map(s) => Ok(s),
+      x => Err(format!("Expected map, found {:?}.", x.to_type().str()))
     }
   }
 }
@@ -395,25 +379,4 @@ impl Into<Result<ExternalVal, String>> for Value {
       x => Err(format!("Expected struct, found {:?}.", x.to_type().str()))
     }
   }
-}
-
-// ### VALUE 2 ###
-
-#[derive(Clone, PartialEq)]
-pub enum ValInternal {
-  Small(u64),
-  Big(Rc<RefCell<Vec<u8>>>),
-}
-
-#[derive(Clone, PartialEq)]
-pub struct Value2 {
-  tag : Type,
-  value : ValInternal,
-}
-
-impl Value2 {
-  pub fn to_type(&self) -> Type {
-    self.tag.clone()
-  }
-
 }

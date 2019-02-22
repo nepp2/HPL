@@ -65,10 +65,7 @@ pub fn add_module(loaded_modules : &mut Vec<Module>, m : Module) -> ModuleId {
 #[derive(Debug)]
 pub struct Module {
   pub name : Symbol,
-  // TODO: is this needed?
-  // pub modules : Vec<ModuleId>,
   pub functions : HashMap<Symbol, Function>,
-  pub structs : HashMap<Symbol, Rc<StructDef>>,
 }
 
 impl Module {
@@ -76,7 +73,6 @@ impl Module {
     Module {
       name,
       functions: Default::default(),
-      structs: Default::default(),
     }
   }
 }
@@ -172,70 +168,6 @@ impl <'l> Environment<'l> {
     &mut self.loaded_modules[self.current_module.i]
   }
 
-  pub fn current_module(&self) -> &Module {
-    &self.loaded_modules[self.current_module.i]
-  }
-
-  pub fn struct_lookup(&self, name : Symbol) -> Option<&Rc<StructDef>> {
-    for id in iter_modules(&self.scope) {
-      let m = &self.loaded_modules[id.i];
-      if let Some(s) = m.structs.get(&name) {
-        return Some(s);
-      }
-    }
-    None
-  }
-
-  fn struct_field_index(&self, def : &StructDef, field_expr : &Expr) -> Result<usize, Error> {
-    let field_name = field_expr.symbol_unwrap()?;
-    def.fields.iter().position(|s| *s == field_name)
-      .ok_or_else(||error_raw(field_expr,
-        format!("field {} does not exist on struct {:?}.", self.str(field_name), def)))
-  }
-
-  pub fn add_struct(&mut self, def: StructDef) -> Result<(), String> {
-    if self.struct_lookup(def.name).is_some() {
-      return Err(format!("A struct called {} has already been defined.", self.sym.str(def.name)));
-    }
-    self.current_module_mut().structs.insert(def.name.clone(), Rc::new(def));
-    Ok(())
-  }
-
-  pub fn instantiate_struct(&mut self, name: Symbol, field_value_pairs: Vec<(Symbol, Value)>)
-    -> Result<StructVal, ErrorContent>
-  {
-    let def = {
-      if let Some(def) = self.struct_lookup(name) {
-        def.clone()
-      }
-      else {
-        let fields = field_value_pairs.iter().map(|t| t.0).collect();
-        let m = self.current_module_mut();
-        let def = Rc::new(StructDef { module: m.name, name: name.into(), fields });
-        m.structs.insert(def.name.clone(), def.clone());
-        def
-      }
-    };
-    let mut field_values = vec![];
-    let mut i = 0;
-    let num_fields = def.fields.len();
-    for (found, value) in field_value_pairs {
-      if i >= num_fields {
-        return Err(format!("found unexpected field: {}", self.str(found)).into());
-      }
-      let expected = def.fields[i];
-      if expected != found {
-        return Err(format!("expected field name '{}', but found '{}'", self.str(expected), self.str(found)).into());
-      }
-      field_values.push(value);
-      i += 1;
-    }
-    if i < num_fields {
-      return Err(format!("some fields were not initialised: {:?}", &def.fields[i..num_fields]).into());
-    }
-    Ok(Rc::new(RefCell::new(Struct { def, fields : field_values })))
-  }
-
   pub fn add_function(&mut self, name : Symbol, function : Function) -> Result<(), String> {
     // Check if anything with this precise signature is already defined
     for id in iter_modules(&self.scope) {
@@ -246,6 +178,16 @@ impl <'l> Environment<'l> {
     }
     self.current_module_mut().functions.insert(name, function);
     Ok(())
+  }
+
+  pub fn map_instantiate(&mut self, name : Symbol, mut map : HashMap<Symbol, Value>) -> MapVal {
+    map.insert(self.sym.get("type_name"), Value::from(name));
+    Rc::new(RefCell::new(map))
+  }
+
+  fn map_field_access(&self, m : &MapVal, field_name : Symbol) -> Result<Value, String> {
+    m.borrow_mut().get(&field_name).map(|v| v.clone())
+      .ok_or_else(|| format!("map does not contain field '{}'", self.str(field_name)))
   }
 
   fn get_function(&self, name : Symbol)
@@ -272,16 +214,9 @@ impl <'l> Environment<'l> {
       "bool" => Ok(Type::Bool),
       "array" => Ok(Type::Array),
       "any" => Ok(Type::Any),
+      "map" => Ok(Type::Map),
       _ => {
-        if self.struct_lookup(symbol).is_some() {
-          Ok(Type::Struct{
-            module: self.current_module().name,
-            name: symbol,
-          })
-        }
-        else {
-          Err(format!("{:?} is not a valid type", s))
-        }
+        Err(format!("{:?} is not a valid type", s))
       }
     }
   }
@@ -463,9 +398,9 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
             }
             (".", [struct_expr, field_expr]) => {
               let v = eval(&value_expr, env)?;
-              let structure : StructVal = to_value(struct_expr, env)?;
-              let index = env.struct_field_index(&structure.borrow().def, field_expr)?;
-              structure.borrow_mut().fields[index] = v;
+              let map_val : MapVal = to_value(struct_expr, env)?;
+              let field_name = field_expr.symbol_unwrap()?;
+              map_val.borrow_mut().insert(field_name, v);
               return Ok(Value::Unit)
             }
             _ => return error(assign_expr, format!("can't assign to {:?}", assign_expr)),
@@ -509,6 +444,7 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
       if exprs.len() < 1 {
         return error(expr, "malformed struct definition");
       }
+      /* TODO: no longer does anything
       let name_expr = &exprs[0];
       let name = name_expr.symbol_unwrap()?;
       // TODO: check for duplicates?
@@ -521,6 +457,7 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
       let module = env.current_module().name.clone();
       let def = StructDef { module, name, fields };
       env.add_struct(def).map_err(|s| error_raw(name_expr, s))?;
+      */
       Ok(Value::Unit)
     }
     ("struct_instantiate", exprs) => {
@@ -530,20 +467,21 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
       let name_expr = &exprs[0];
       let field_exprs = &exprs[1..];
       let name = name_expr.symbol_unwrap()?;
-      let field_value_pairs =
-        field_exprs.iter().tuples().map(|(field, value)| {
-          let field_name = field.symbol_unwrap()?;
-          let field_value = eval(value, env)?;
-          Ok((field_name, field_value))
-        })
-        .collect::<Result<Vec<(Symbol, Value)>, Error>>()?;
-      let s = env.instantiate_struct(name, field_value_pairs).map_err(|s| error_raw(expr, s))?;
-      Ok(Value::Struct(s))
+      let mut map = HashMap::new();
+      map.insert(env.sym.get("type_name"), Value::from(name));
+      for (field, value) in field_exprs.iter().tuples() {
+        let field_name = field.symbol_unwrap()?;
+        let field_value = eval(value, env)?;
+        map.insert(field_name, field_value);
+      }
+      Ok(Value::Map(env.map_instantiate(name, map)))
     }
-    (".", [expr, name_expr]) => {
-      let s : StructVal = to_value(expr, env)?;
-      let index = env.struct_field_index(&s.borrow().def, name_expr)?;
-      let v = s.borrow().fields[index].clone();
+    (".", [expr, field_expr]) => {
+      let m : MapVal = to_value(expr, env)?;
+      let field_name = field_expr.symbol_unwrap()?;
+      let v =
+        m.borrow_mut().get(&field_name).map(|v| v.clone())
+        .ok_or_else(|| error_raw(field_expr, format!("map does not contain field '{}'", env.str(field_name))))?;
       Ok(v)
     }
     ("while", exprs) => {
@@ -570,13 +508,10 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
         v.into()
       }
       fn to_range(env : &mut Environment, v : Value) -> Result<(i64, i64), ErrorContent> {
-        let r : StructVal = from_value(v)?;
-        let range = r.borrow();
-        if env.str(range.def.name) != "range" {
-          return Err(format!("expected range struct in for loop").into());
-        }
-        let start : f32 = from_value(range.fields[0].clone())?;
-        let end : f32 = from_value(range.fields[1].clone())?;
+        let r : MapVal = from_value(v)?;
+        let (start, end) = (env.sym.get("start"), env.sym.get("end"));
+        let start : f32 = from_value(env.map_field_access(&r, start)?)?;
+        let end : f32 = from_value(env.map_field_access(&r, end)?)?;
         Ok((start as i64, end as i64))
       }
       let var = exprs[0].symbol_unwrap()?;
