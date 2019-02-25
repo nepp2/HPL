@@ -4,7 +4,6 @@ use crate::value::*;
 use crate::eval::{
   Environment, FunctionHandle, Function, eval_string,
   add_module, get_module_id, Module, BlockScope};
-use std::mem;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -21,20 +20,6 @@ use sdl2::event::Event;
 use sdl2::pixels::Color;
 use sdl2::rect::{Rect, Point};
 use sdl2::video::{Window};
-
-impl Value {
-  fn convert<T>(self) -> Result<T, String>
-    where Value: Into<Result<T, String>>
-  {
-    let r : Result<T, String> = self.into();
-    return r;
-  }
-
-  /// Return the borrowed value and replace it in-place with Unit
-  fn get(&mut self) -> Value {
-    mem::replace(self, Value::Unit)
-  }
-}
 
 macro_rules! binary {
   ($env:expr, $n:expr, $a:ident, $b:ident, $c:ident, $f:expr) => {

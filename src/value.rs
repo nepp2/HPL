@@ -2,9 +2,9 @@
 use std::fmt;
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::collections::HashSet;
 use std::collections::HashMap;
 use std::any::Any;
+use std::mem;
 
 use crate::error::{Error, TextLocation, error, ErrorContent};
 
@@ -78,7 +78,6 @@ pub type ExprId = usize;
 /// Expression
 #[derive(Debug, Clone)]
 pub struct Expr {
-  pub id : ExprId,
   pub tag : ExprTag,
   pub children : Vec<Expr>,
   pub loc : TextLocation,
@@ -250,15 +249,38 @@ pub fn homoiconise(e : &Expr, sym : &mut SymbolTable) -> Value {
     let children : Vec<Value> = e.children.iter().map(|e| homoiconise(e, sym)).collect();
     m.insert(sym.get("children"), Value::from(children));
   }
+  m.insert(sym.get("start_line"), Value::from(e.loc.start.line as f32));
+  m.insert(sym.get("start_col"), Value::from(e.loc.start.col as f32));
+  m.insert(sym.get("end_line"), Value::from(e.loc.end.line as f32));
+  m.insert(sym.get("end_col"), Value::from(e.loc.end.col as f32));
   Value::Map(Rc::new(RefCell::new(m)))
-  /*
-  pub struct Expr {
-    pub id : ExprId,
-    pub tag : ExprTag,
-    pub children : Vec<Expr>,
-    pub loc : TextLocation,
+}
+
+pub fn dehomoiconise(v : Value, sym : &mut SymbolTable) -> Result<Expr, ErrorContent> {
+  let m = v.convert::<MapVal>()?;
+  let tag = m.borrow().get(&sym.get("tag")).unwrap().clone().convert::<Symbol>()?;
+  match sym.str(tag) {
+    "expr" => {
+
+    },
+    "symbol" => {
+
+    },
+    "literal_string" => {
+
+    },
+    "literal_float" => {
+
+    },
+    "literal_bool" => {
+
+    },
+    "literal_unit" => {
+
+    },
+    _ => (),
   }
-  */
+  panic!()
 }
 
 fn bits_to_f32(b : u64) -> f32 {
@@ -342,6 +364,18 @@ impl Value {
     let mut s = String::new();
     self.write(&mut s, sym).unwrap();
     s
+  }
+
+  pub fn convert<T>(self) -> Result<T, String>
+    where Value: Into<Result<T, String>>
+  {
+    let r : Result<T, String> = self.into();
+    return r;
+  }
+
+  /// Return the borrowed value and replace it in-place with Unit
+  pub fn get(&mut self) -> Value {
+    mem::replace(self, Value::Unit)
   }
 }
 

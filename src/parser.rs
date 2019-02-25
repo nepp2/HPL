@@ -25,13 +25,12 @@ struct ParseState<'l> {
   tokens : Vec<Token>,
   pos : usize,
   sym : &'l mut SymbolTable,
-  expr_id_gen : ExprId, // TODO: this should be cached in the interpreter. At the moment, ids will be reused!
 }
 
 impl <'l> ParseState<'l> {
 
   fn new(tokens : Vec<Token>, sym : &mut SymbolTable,) -> ParseState {
-    ParseState { tokens, pos: 0, sym, expr_id_gen: 0 }
+    ParseState { tokens, pos: 0, sym }
   }
 
   fn has_tokens(&self) -> bool {
@@ -128,9 +127,7 @@ impl <'l> ParseState<'l> {
   }
 
   fn add_expr(&mut self, tag : ExprTag, children : Vec<Expr>, loc : TextLocation) -> Expr {
-    let id = self.expr_id_gen;
-    self.expr_id_gen += 1;
-    Expr { id, tag, children, loc }
+    Expr { tag, children, loc }
   }
 
   fn add_leaf(&mut self, tag : ExprTag, start : TextMarker) -> Expr {
