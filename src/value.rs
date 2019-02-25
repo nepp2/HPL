@@ -72,9 +72,6 @@ pub enum ExprTag {
   LiteralUnit,
 }
 
-/// Used to look up expressions in the abstract syntax tree
-pub type ExprId = usize;
-
 /// Expression
 #[derive(Debug, Clone)]
 pub struct Expr {
@@ -217,7 +214,7 @@ pub enum Value {
   Unit,
 }
 
-pub fn homoiconise(e : &Expr, sym : &mut SymbolTable) -> Value {
+pub fn expr_to_value(e : &Expr, sym : &mut SymbolTable) -> Value {
   use self::ExprTag::*;
   let mut m = HashMap::new();
   match e.tag {
@@ -246,7 +243,7 @@ pub fn homoiconise(e : &Expr, sym : &mut SymbolTable) -> Value {
     }
   }
   if e.children.len() > 0 {
-    let children : Vec<Value> = e.children.iter().map(|e| homoiconise(e, sym)).collect();
+    let children : Vec<Value> = e.children.iter().map(|e| expr_to_value(e, sym)).collect();
     m.insert(sym.get("children"), Value::from(children));
   }
   m.insert(sym.get("start_line"), Value::from(e.loc.start.line as f32));
@@ -256,31 +253,55 @@ pub fn homoiconise(e : &Expr, sym : &mut SymbolTable) -> Value {
   Value::Map(Rc::new(RefCell::new(m)))
 }
 
-pub fn dehomoiconise(v : Value, sym : &mut SymbolTable) -> Result<Expr, ErrorContent> {
-  let m = v.convert::<MapVal>()?;
-  let tag = m.borrow().get(&sym.get("tag")).unwrap().clone().convert::<Symbol>()?;
-  match sym.str(tag) {
-    "expr" => {
+pub fn value_to_expr(v : Value, sym : &mut SymbolTable) -> Result<Expr, ErrorContent> {
+  fn get(m : &HashMap<Symbol, Value>, s : &str, sym : &mut SymbolTable) -> Result<Value, ErrorContent> {
+    m.get(&sym.get(s)).map(|v| v.clone()).ok_or_else(|| format!("expected key '{}' in map", s).into())
+  }
 
+  let m = v.convert::<MapVal>()?;
+  let m = m.borrow();
+  let tag = get(&m, "tag", sym)?.convert::<Symbol>()?;
+  let start_line = get(&m, "start_line", sym)?.convert::<f32>()? as usize;
+  let start_col = get(&m, "start_col", sym)?.convert::<f32>()? as usize;
+  let end_line = get(&m, "end_line", sym)?.convert::<f32>()? as usize;
+  let end_col = get(&m, "end_col", sym)?.convert::<f32>()? as usize;
+  let expr_tag = match sym.str(tag) {
+    "expr" => {
+      let s = get(&m, "value", sym)?.convert::<Symbol>()?;
+      ExprTag::Tree(s)
     },
     "symbol" => {
-
+      let s = get(&m, "value", sym)?.convert::<Symbol>()?;
+      ExprTag::Symbol(s)
     },
     "literal_string" => {
-
+      let s = get(&m, "value", sym)?.convert::<Symbol>()?;
+      ExprTag::LiteralString(s)
     },
     "literal_float" => {
-
+      let f = get(&m, "value", sym)?.convert::<f32>()?;
+      ExprTag::LiteralFloat(f)
     },
     "literal_bool" => {
-
+      let b = get(&m, "end_col", sym)?.convert::<bool>()?;
+      ExprTag::LiteralBool(b)
     },
     "literal_unit" => {
-
+      ExprTag::LiteralUnit
     },
-    _ => (),
+    _ => return Err(format!("found unexpected expr tag '{}'", sym.str(tag)).into()),
+  };
+  let mut children = vec![];
+  if let Some(c) = m.get(&sym.get("children")) {
+    let a = c.clone().convert::<Array>()?;
+    for v in a.borrow().iter() {
+      children.push(value_to_expr(v.clone(), sym)?);
+    }
   }
-  panic!()
+  let e = Expr {
+    tag: expr_tag, children, loc: TextLocation::new((start_line, start_col), (end_line, end_col))
+  };
+  Ok(e)
 }
 
 fn bits_to_f32(b : u64) -> f32 {

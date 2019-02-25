@@ -2,7 +2,7 @@
 use crate::error::{Error, ErrorContent};
 use crate::value::*;
 use crate::eval::{
-  Environment, FunctionHandle, Function, eval_string,
+  Environment, FunctionHandle, Function, eval_string, eval,
   add_module, get_module_id, Module, BlockScope};
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -99,6 +99,11 @@ pub fn load_library(e : &mut Environment) {
     let b = Into::<Result<Symbol, String>>::into(vs[1].clone())?;
     let c = e.sym.get(format!("{}{}", e.sym.str(a), e.sym.str(b)));
     Ok(Value::from(c))
+  });
+  fun(e, "eval", vec![Type::Map], |env, vs| {
+    let v = vs[0].clone();
+    let expr = value_to_expr(v, env.sym)?;
+    eval(&expr, env).map_err(|e| ErrorContent::InnerError(format!("error in eval"), Box::new(e)))
   });
   fun(e, "add", vec![Type::Array, Type::Any], |_, vs| {
     let a = Into::<Result<Array, String>>::into(vs[0].clone())?;

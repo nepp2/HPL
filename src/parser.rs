@@ -1,6 +1,6 @@
 use crate::lexer;
 use crate::lexer::{Token, TokenType};
-use crate::value::{RefStr, SymbolTable, Symbol, Expr, ExprTag, ExprId};
+use crate::value::{RefStr, SymbolTable, Expr, ExprTag};
 use crate::error::{Error, TextLocation, TextMarker, error};
 use std::collections::HashSet;
 use std::f32;

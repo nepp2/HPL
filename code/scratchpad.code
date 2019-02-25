@@ -2,7 +2,6 @@
 
 let code = quote {
   let a = 300
-  print(a)
 
   fun blah(a, b, c) {
     let val = a + b
@@ -14,9 +13,11 @@ let code = quote {
     }
   }
 
-  print(400)
+  blah(30, a, 50)
 }
 
 print_expr(code)
 
-let a = "sdfsfd"
+let r = eval(code)
+
+println(r)

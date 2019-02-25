@@ -25,8 +25,7 @@ fun print_expr_inner(e, indent) {
       }
     }
     else {
-      print(e.value)
-    }
+      print(e.value)    }
     print(separator)
     if e.children == () { return }
     let n = len(e.children)-1;

@@ -356,7 +356,7 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
       val
     }
     ("quote", [e]) => {
-      let v = homoiconise(e, env.sym);
+      let v = expr_to_value(e, env.sym);
       Ok(v)
     }
     ("let", exprs) => {
