@@ -92,10 +92,10 @@ impl <'l> CStream<'l> {
     self.tokens.push(t);
   }
 
-  fn error(&mut self, start_loc : StreamLocation, message : String) {
+  fn raise_error(&mut self, start_loc : StreamLocation, message : String) -> Error {
     let location = self.get_text_location(start_loc);
     self.current_token.clear();
-    self.errors.push(error_raw(location, message));
+    error_raw(location, message)
   }
 
   fn advance_line(&mut self) {
@@ -146,7 +146,7 @@ impl <'l> CStream<'l> {
     self.iter_char_while(condition, &mut |cs : &mut CStream| { cs.append_char() });
   }
 
-  fn parse_number(&mut self) -> bool {
+  fn parse_number(&mut self) -> Result<bool, Error> {
     if self.is_number() {
       let start_loc = self.loc;
       self.append_char_while(&CStream::is_number);
@@ -156,14 +156,14 @@ impl <'l> CStream<'l> {
       }
       if self.has_chars() && self.is_symbol_start_char() {
         self.append_char_while(&CStream::is_symbol_middle_char);
-        self.error(start_loc, "Malformed floating point literal".to_string());
+        return Err(self.raise_error(start_loc, "Malformed floating point literal".to_string()));
       }
       else{
         self.complete_token(start_loc, TokenType::FloatLiteral);
       }
-      true
+      Ok(true)
     }
-    else { false }
+    else { Ok(false) }
   }
 
   fn is_symbol_start_char(&self) -> bool {
@@ -240,10 +240,10 @@ impl <'l> CStream<'l> {
     return false;
   }
 
-  fn unknown_token(&mut self) {
+  fn unknown_token(&mut self) -> Error {
     let start_loc = self.loc;
     let _ = self.pop(); 
-    self.error(start_loc, "Unknown token".to_string());
+    self.raise_error(start_loc, "Unknown token".to_string())
   }
 
   fn parse_comment(&mut self) -> bool {
@@ -280,40 +280,52 @@ impl <'l> CStream<'l> {
     return false;
   }
 
-  fn parse_string_literal(&mut self) -> bool {
+  fn parse_string_literal(&mut self) -> Result<bool, Error> {
     if self.peek() != '"' {
-      return false;
+      return Ok(false);
     }
     self.skip_char();
     let start_loc = self.loc;
-    self.append_char_while(&|cs : &CStream| {
-      let c = cs.peek();
-      c != '\n' && c != '"'
-    });
-    if self.peek() == '"' {
+    while self.has_chars() {
+      let c = self.peek();
+      if c == '"' { break; }
+      if c == '\n' { self.advance_line() }
+      self.append_char();
+    }
+    if self.has_chars() {
       self.skip_char();
       self.complete_token(start_loc, TokenType::StringLiteral);
-      return true;
+      return Ok(true);
     }
     else {
-      self.error(start_loc, "malformed string literal".to_string());
-      return false;
+      return Err(self.raise_error(start_loc, "malformed string literal".to_string()));
     }
   }
 }
 
 pub fn lex(code : &str, symbols : &mut SymbolTable) -> Result<Vec<Token>, Vec<Error>> {
+
+  fn lex_with_errors(cs : &mut CStream) -> Result<(), Error> {
+    while cs.has_chars() {
+      if cs.handle_newline() {}
+      else if cs.skip_space() {}
+      else if cs.parse_symbol_or_keyword() {}
+      else if cs.parse_string_literal()? {}
+      else if cs.parse_number()? {}
+      else if cs.parse_comment() {}
+      else if cs.parse_syntax() {}
+      else {
+        return Err(cs.unknown_token());
+      }
+    }
+    Ok(())
+  }
+
   let mut cs = CStream::new(code.chars().collect(), symbols);
   while cs.has_chars() {
-    if cs.handle_newline() {}
-    else if cs.skip_space() {}
-    else if cs.parse_symbol_or_keyword() {}
-    else if cs.parse_string_literal() {}
-    else if cs.parse_number() {}
-    else if cs.parse_comment() {}
-    else if cs.parse_syntax() {}
-    else {
-      cs.unknown_token();
+    match lex_with_errors(&mut cs) {
+      Ok(_) => (),
+      Err(e) => cs.errors.push(e),
     }
   }
   if cs.errors.is_empty() {
