@@ -7,7 +7,7 @@ lazy_static! {
   static ref KEYWORDS : HashSet<&'static str> =
     vec!["fun", "if", "else", "type", "while", "struct", "for",
     "break", "return", "let", "true", "false", "region", "quote",
-    "import"].into_iter().collect();
+    "import", "in"].into_iter().collect();
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -288,9 +288,24 @@ impl <'l> CStream<'l> {
     let start_loc = self.loc;
     while self.has_chars() {
       let c = self.peek();
-      if c == '"' { break; }
-      if c == '\n' { self.advance_line() }
-      self.append_char();
+      if c == '\\' {
+        // slash pattern, e.g. \n for newline
+        self.skip_char();
+        let c = self.peek();
+        match c {
+          '\\' => self.current_token.push('\\'),
+          'n' => self.current_token.push('\n'),
+          't' => self.current_token.push('\t'),
+          '"' => self.current_token.push('"'),
+          _ => return Err(self.raise_error(start_loc, format!("unexpected pattern '\\{}' in string literal", c))),
+        }
+        self.skip_char();
+      }
+      else {
+        if c == '"' { break; }
+        if c == '\n' { self.advance_line() }
+        self.append_char();
+      }
     }
     if self.has_chars() {
       self.skip_char();

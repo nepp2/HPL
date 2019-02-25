@@ -7,3 +7,46 @@ struct range {
 fun range(start, end) {
   range(start: start, end: end)
 }
+
+fun println(a) {
+  print(a)
+  print("\n")
+}
+
+fun print_expr_inner(e, indent) {
+  if e.tag == "expr" {
+    let separator = " "
+    print("(")
+    if e.value == "block" {
+      indent = indent + 1
+      separator = "\n"
+      for i in range(0, indent) {
+        separator = concat(separator, "   ")
+      }
+    }
+    else {
+      print(e.value)
+    }
+    print(separator)
+    if e.children == () { return }
+    let n = len(e.children)-1;
+    let i = 0;
+    while true {
+      print_expr_inner(e.children[i], indent)
+      if i >= n {
+        break
+      }
+      print(separator)
+      i = i + 1
+    }
+    print(")")
+  }
+  else{
+    print(e.value)
+  }
+}
+
+fun print_expr(e) {
+  print_expr_inner(e, 0)
+  println("")
+}

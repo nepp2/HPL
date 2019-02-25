@@ -1,8 +1,22 @@
 
 
 let code = quote {
-  let a = 3
+  let a = 300
   print(a)
+
+  fun blah(a, b, c) {
+    let val = a + b
+    if val > c {
+      val
+    }
+    else{
+      c
+    }
+  }
+
+  print(400)
 }
 
-print(code)
+print_expr(code)
+
+let a = "sdfsfd"

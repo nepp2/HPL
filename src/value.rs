@@ -223,7 +223,8 @@ pub fn homoiconise(e : &Expr, sym : &mut SymbolTable) -> Value {
   let mut m = HashMap::new();
   match e.tag {
     Tree(s) => {
-      m.insert(sym.get("tag"), Value::from(s));
+      m.insert(sym.get("tag"), Value::from(sym.get("expr")));
+      m.insert(sym.get("value"), Value::from(s));
     }
     Symbol(s) => {
       m.insert(sym.get("tag"), Value::from(sym.get("symbol")));

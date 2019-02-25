@@ -55,7 +55,6 @@ macro_rules! binary {
 macro_rules! type_tag {
   (f32) => { Type::Float };
   (bool) => { Type::Bool };
-  (RefStr) => { Type::String };
   (()) => { Type::Unit };
 }
 
@@ -110,6 +109,12 @@ pub fn load_library(e : &mut Environment) {
     let len = a.borrow().len() as f32;
     Ok(Value::from(len))
   });
+  fun(e, "concat", vec![Type::String, Type::String], |e, vs| {
+    let a = Into::<Result<Symbol, String>>::into(vs[0].clone())?;
+    let b = Into::<Result<Symbol, String>>::into(vs[1].clone())?;
+    let c = e.sym.get(format!("{}{}", e.sym.str(a), e.sym.str(b)));
+    Ok(Value::from(c))
+  });
   fun(e, "add", vec![Type::Array, Type::Any], |_, vs| {
     let a = Into::<Result<Array, String>>::into(vs[0].clone())?;
     let v = vs[1].clone();
@@ -122,7 +127,7 @@ pub fn load_library(e : &mut Environment) {
     v.ok_or_else(|| format!("can't pop from empty array").into())
   });
   fun(e, "print", vec![Type::Any], |e, vs| {
-    println!("{:?}", vs[0].to_string(&mut e.sym));
+    print!("{}", vs[0].to_string(&mut e.sym));
     Ok(Value::Unit)
   });
   fun(e, "type_name", vec![Type::Any], |e, vs| {
