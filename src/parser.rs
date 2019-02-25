@@ -509,7 +509,14 @@ fn parse_region(ps : &mut ParseState) -> Result<Expr, Error> {
   ps.expect_string("{")?;
   let exprs = parse_block_exprs(ps)?;
   ps.expect_string("}")?;
-  Ok(ps.add_tree(BLOCK, exprs, start))
+  Ok(ps.add_tree("region", exprs, start))
+}
+
+fn parse_quote(ps : &mut ParseState) -> Result<Expr, Error> {
+  let start = ps.peek_marker();
+  ps.expect_string("quote")?;
+  let e = parse_expression(ps)?;
+  Ok(ps.add_tree("quote", vec![e], start))
 }
 
 fn parse_import(ps : &mut ParseState) -> Result<Expr, Error> {
@@ -535,6 +542,7 @@ fn parse_return(ps : &mut ParseState) -> Result<Expr, Error> {
 fn parse_keyword_term(ps : &mut ParseState) -> Result<Expr, Error> {
   match ps.peek()?.string.as_ref() {
     "region" => parse_region(ps),
+    "quote" => parse_quote(ps),
     "let" => parse_let(ps),
     "fun" => parse_fun(ps),
     "import" => parse_import(ps),

@@ -1,4 +1,8 @@
 
-import_module("live_gameloop")
 
-live_gameloop("tetris")
+let code = quote {
+  let a = 3
+  print(a)
+}
+
+print(code)

@@ -218,6 +218,48 @@ pub enum Value {
   Unit,
 }
 
+pub fn homoiconise(e : &Expr, sym : &mut SymbolTable) -> Value {
+  use self::ExprTag::*;
+  let mut m = HashMap::new();
+  match e.tag {
+    Tree(s) => {
+      m.insert(sym.get("tag"), Value::from(s));
+    }
+    Symbol(s) => {
+      m.insert(sym.get("tag"), Value::from(sym.get("symbol")));
+      m.insert(sym.get("value"), Value::from(s));
+    }
+    LiteralString(s) => {
+      m.insert(sym.get("tag"), Value::from(sym.get("literal_string")));
+      m.insert(sym.get("value"), Value::from(s));
+    }
+    LiteralFloat(f) => {
+      m.insert(sym.get("tag"), Value::from(sym.get("literal_float")));
+      m.insert(sym.get("value"), Value::from(f));
+    }
+    LiteralBool(b) => {
+      m.insert(sym.get("tag"), Value::from(sym.get("literal_bool")));
+      m.insert(sym.get("value"), Value::from(b));
+    }
+    LiteralUnit => {
+      m.insert(sym.get("tag"), Value::from(sym.get("literal_unit")));
+    }
+  }
+  if e.children.len() > 0 {
+    let children : Vec<Value> = e.children.iter().map(|e| homoiconise(e, sym)).collect();
+    m.insert(sym.get("children"), Value::from(children));
+  }
+  Value::Map(Rc::new(RefCell::new(m)))
+  /*
+  pub struct Expr {
+    pub id : ExprId,
+    pub tag : ExprTag,
+    pub children : Vec<Expr>,
+    pub loc : TextLocation,
+  }
+  */
+}
+
 fn bits_to_f32(b : u64) -> f32 {
   f32::from_bits(b as u32)
 }

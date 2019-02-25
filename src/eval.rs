@@ -355,6 +355,10 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
       env.scope.pop();
       val
     }
+    ("quote", [e]) => {
+      let v = homoiconise(e, env.sym);
+      Ok(v)
+    }
     ("let", exprs) => {
       let name = exprs[0].symbol_unwrap()?;
       let v = eval(&exprs[1], env)?;
