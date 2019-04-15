@@ -1,0 +1,1 @@
+{"rustc":18321205956227587961,"features":"[]","target":9257340903029104376,"profile":5610272061840549257,"path":1036222786711178230,"deps":[["libloading v0.5.0","libloading",2297158251293082097]],"local":[{"MtimeBased":[[1555349704,43495700],".fingerprint\\c_bind_test-3851826796cda478\\dep-bin-c_bind_test-3851826796cda478"]}],"rustflags":[],"edition":"Edition2018"}
