@@ -1,4 +1,4 @@
 
 /target
-/c_bind_test/target
+c_bind_test/target
 **/*.rs.bk
