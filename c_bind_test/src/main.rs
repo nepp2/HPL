@@ -1,6 +1,9 @@
 
 extern crate libloading as lib;
+extern crate libffi;
 use std::any::Any;
+
+/*
 
 pub trait RegisterFn<FN, ARG, RET> {
     fn to_fn(&mut self, f: FN) -> Box<FnAny>;
@@ -31,14 +34,15 @@ where
       Box::new(fun)
     }
 }
+*/
+//let ffi = ForeignFunctionInterface{};
+//let f = ffi.to_fn(func);
 
 fn call_dynamic() -> lib::Result<isize> {
   let lib = lib::Library::new("sdl2.dll")?;
-  let ffi = ForeignFunctionInterface{};
   unsafe {
-    let func : lib::Symbol<unsafe extern fn(u32) -> isize> = lib.get(b"SDL_Init")?;
-    let f = ffi.to_fn(func);
-    Ok(func(0))
+    let func : lib::Symbol<unsafe extern fn([u64 ; 5]) -> isize> = lib.get(b"SDL_Init")?;
+    Ok(func([1, 2, 3, 4, 5]))
   }
 }
 
