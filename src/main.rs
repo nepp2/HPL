@@ -11,6 +11,7 @@ mod value;
 mod library;
 mod watcher;
 mod tests;
+mod llvm;
 
 use std::fs::File;
 use std::io::Read;
@@ -29,5 +30,7 @@ fn load_and_run(path : &str) {
 
 fn main(){
   //load_and_run("code/scratchpad.code");
-  watcher::watch("code/scratchpad.code");
+  //watcher::watch("code/scratchpad.code");
+
+  llvm::run_repl();
 }

@@ -1,7 +1,7 @@
 use crate::lexer;
 use crate::lexer::{Token, TokenType};
 use crate::value::{RefStr, SymbolTable, Expr, ExprTag};
-use crate::error::{Error, TextLocation, TextMarker, error};
+use crate::error::{Error, ErrorContent, TextLocation, TextMarker, error};
 use std::collections::HashSet;
 use std::f32;
 use std::str::FromStr;
@@ -18,6 +18,7 @@ static FOR : &str = "for";
 static STRUCT_DEFINE : &str = "struct_define";
 static STRUCT_INSTANTIATE : &str = "struct_instantiate";
 static BLOCK : &str = "block";
+static EXPECTED_TOKEN_ERROR : &str = "Expected token. Found nothing.";
 pub static NO_TYPE : &str = "_";
 
 // TODO: this might be better implemented with a ring buffer (or just a backwards vec)
@@ -43,7 +44,7 @@ impl <'l> ParseState<'l> {
     }
     else {
       let m = self.tokens[self.pos-1].loc.end;
-      error(TextLocation::new(m, m), "Expected token. Found nothing.")
+      error(TextLocation::new(m, m), EXPECTED_TOKEN_ERROR)
     }
   }
 
@@ -639,4 +640,42 @@ pub fn parse(tokens : Vec<Token>, symbols : &mut SymbolTable) -> Result<Expr, Er
     return error(t.loc, format!("Unexpected token '{}' of type '{:?}'", t.string, t.token_type));
   }
   return Ok(e);
+}
+
+pub enum ReplParseResult {
+  Complete(Vec<Expr>),
+  Incomplete,
+}
+
+pub fn repl_parse(tokens : Vec<Token>, symbols : &mut SymbolTable) -> Result<ReplParseResult, Error> {
+  use ReplParseResult::*;
+  let mut ps = ParseState::new(tokens, symbols);
+  let mut exprs = vec!();
+  'outer: loop {
+    'inner: loop {
+      if !ps.has_tokens() {
+        break 'outer;
+      }
+      if ps.peek()?.string.as_ref() == ";" {
+        ps.skip();
+      }
+      else {
+        break 'inner;
+      }
+    }
+    match parse_expression(&mut ps) {
+      Ok(e) => {
+        exprs.push(e);
+      }
+      Err(e) => {
+        if let ErrorContent::Message(m) = &e.message {
+          if m.as_str() == EXPECTED_TOKEN_ERROR {
+            return Ok(Incomplete);
+          }
+        }
+        return Err(e);
+      }
+    }
+  }
+  Ok(Complete(exprs))
 }

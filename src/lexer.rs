@@ -15,6 +15,7 @@ pub enum TokenType {
   Symbol, Syntax, FloatLiteral, Keyword, StringLiteral
 }
 
+#[derive(Clone)]
 pub struct Token {
   pub symbol : Symbol,
   pub string : RefStr,

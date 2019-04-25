@@ -10,11 +10,12 @@ unicode-normalization = "0.1.5"
 ropey = "0.6.3"
 clipboard = "0.4.6"
 rand = "0.6.4"
-rustyline = "3.0.0"
+rustyline = "4.0.0"
 notify = "4.0.4"
 lazy_static = "1.2.0"
 itertools = "0.7.3"
 maplit = "1.0.1"
+llvm-sys = "80"
 
 [dependencies.rusttype]
 version = "0.5.2"
