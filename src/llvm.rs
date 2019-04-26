@@ -63,7 +63,7 @@ pub struct Ctx {
 }
 
 impl Ctx {
-  pub fn new(sym : &mut SymbolTable) -> Ctx {
+  pub fn new() -> Ctx {
     Ctx {
       context: Context::get_global(),
       builder: Builder::create(),
@@ -138,6 +138,9 @@ pub fn run_repl() {
 
   let mut rl = Editor::<()>::new();
 
+  let mut ctx = Ctx::new();
+  let mut mod_provider = SimpleModuleProvider::new("top_level");
+
   'main: loop {
     let mut input_line = rl.readline("repl> ").unwrap();
 
@@ -176,6 +179,7 @@ pub fn run_repl() {
     }
 
     for e in ast {
+      codegen_expression(&e, &mut ctx, &mut mod_provider, &mut sym).unwrap();
       println!("{}", display_expr(&e, &mut sym));
       continue;
     }
