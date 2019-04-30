@@ -54,7 +54,7 @@ use inkwell::context::{Context, ContextRef};
 use inkwell::module::Module;
 use inkwell::passes::PassManager;
 use inkwell::types::{BasicTypeEnum, AnyTypeEnum};
-use inkwell::values::{BasicValueEnum, AnyValueEnum, FloatValue, FunctionValue, PointerValue, GenericValue};
+use inkwell::values::{BasicValueEnum, AnyValueEnum, FloatValue, FunctionValue, PointerValue, GenericValue, BasicValue};
 use inkwell::{OptimizationLevel, FloatPredicate};
 
 pub struct Ctx {
@@ -74,19 +74,19 @@ impl Ctx {
 }
 
 fn dump_module(module : &Module) {
-  println!("{}", module.print_to_string())
+  println!("{}", module.print_to_string().to_string())
 }
 
 fn codegen_float(e : &Expr, ctx: &mut Ctx, module: &mut Module, sym : &mut SymbolTable) -> Result<FloatValue, Error> {
   let v = codegen_expression(e, ctx, module, sym)?;
   match v {
-    BasicValueEnum::FloatValue(f) => Ok(f),
+    Some(BasicValueEnum::FloatValue(f)) => Ok(f),
     t => error(e, format!("Expected float, found {:?}", t)),
   }
 }
 
-fn codegen_expression(expr : &Expr, ctx: &mut Ctx, module: &mut Module, sym : &mut SymbolTable) -> Result<BasicValueEnum, Error> {
-  match &expr.tag {
+fn codegen_expression(expr : &Expr, ctx: &mut Ctx, module: &mut Module, sym : &mut SymbolTable) -> Result<Option<BasicValueEnum>, Error> {
+  let v : BasicValueEnum = match &expr.tag {
     ExprTag::Tree(_) => {
       let instr = sym.str(expr.tree_symbol_unwrap()?);
       let children = expr.children.as_slice();
@@ -96,35 +96,44 @@ fn codegen_expression(expr : &Expr, ctx: &mut Ctx, module: &mut Module, sym : &m
           let rhs_value = codegen_float(b, ctx, module, sym)?;
           let op_str = sym.str(op.symbol_unwrap()?);
           match op_str {
-            "+" => Ok(ctx.builder.build_float_add(lhs_value, rhs_value, "add_result").into()),
-            "-" => Ok(ctx.builder.build_float_sub(lhs_value, rhs_value, "sub_result").into()),
-            "*" => Ok(ctx.builder.build_float_mul(lhs_value, rhs_value, "mul_result").into()),
-            "/" => Ok(ctx.builder.build_float_div(lhs_value, rhs_value, "div_result").into()),
-            _ => panic!(),
+            "+" => ctx.builder.build_float_add(lhs_value, rhs_value, "add_result").into(),
+            "-" => ctx.builder.build_float_sub(lhs_value, rhs_value, "sub_result").into(),
+            "*" => ctx.builder.build_float_mul(lhs_value, rhs_value, "mul_result").into(),
+            "/" => ctx.builder.build_float_div(lhs_value, rhs_value, "div_result").into(),
+            _ => return error(expr, "unsupported operation"),
           }
         }
+        ("block", exprs) => {
+          let expr_count = exprs.len();
+          if expr_count > 0 {
+            for i in 0..(expr_count-1) {
+              codegen_expression(&exprs[i], ctx, module, sym)?;
+            }
+            return codegen_expression(&exprs[expr_count-1], ctx, module, sym);
+          }
+          return Ok(None);
+        }
         ("fun", exprs) => {
-          let name = exprs[0].symbol_unwrap()?;
+          let name = sym.refstr(exprs[0].symbol_unwrap()?);
           let args_exprs = exprs[1].children.as_slice();
           let function_body = &exprs[2];
 
-          let mut arg_names = vec!();
-          let mut arg_types = vec!();
-          for (arg, type_expr) in args_exprs.iter().tuples() {
-            arg_names.push(arg.symbol_unwrap()?);
-            let arg_type = ctx.context.f64_type();
-            arg_types.push(arg_type);
+          let mut args = vec!();
+          for (arg, _) in args_exprs.iter().tuples() {
+            args.push(sym.refstr(arg.symbol_unwrap()?));
           }
-          panic!()
+          codegen_function(expr, function_body, name.as_ref(), args, ctx, module, sym)?;
+          return Ok(None);
         }
-        _ => panic!(),
+        _ => return error(expr, "unsupported expression"),
       }
     }
     ExprTag::LiteralFloat(f) => {
-      Ok(ctx.context.f64_type().const_float(*f as f64).into())
+      ctx.context.f64_type().const_float(*f as f64).into()
     }
-    _ => panic!(),
-  }
+    _ => return error(expr, "unsupported expression"),
+  };
+  Ok(Some(v))
 }
 
 fn codegen_function(
@@ -176,7 +185,11 @@ fn codegen_function(
   // clear local variables
   ctx.named_values.clear();
 
-  ctx.builder.build_return(Some(&body_val));
+  // emit return (via stupid API)
+  match body_val {
+    Some(b) => { ctx.builder.build_return(Some(&b)); }
+    None => { ctx.builder.build_return(None); }
+  }
 
   // return the whole thing after verification and optimization
   if function.verify(true) {
@@ -185,11 +198,20 @@ fn codegen_function(
     Ok(function)
   }
   else {
+    // This library uses copy semantics for a resource can be deleted, because it is usually not deleted.
+    // As a result, it's possible to get use-after-free bugs, so this operation is unsafe. I'm sure this
+    // design could be improved.
     unsafe {
         function.delete();
     }
     error(expr, "invalid generated function.")
   }
+}
+
+fn run_expression(expr : &Expr, ctx: &mut Ctx, module: &mut Module, sym : &mut SymbolTable) {
+  codegen_function(expr, expr, "top_level", vec!(), ctx, module, sym).unwrap();
+  println!("{}", display_expr(expr, sym));
+  dump_module(module);
 }
 
 pub fn run_repl() {
@@ -198,13 +220,11 @@ pub fn run_repl() {
   let mut rl = Editor::<()>::new();
 
   let mut ctx = Ctx::new();
-  let mut mod_provider = Module::create("top_level");
+  let mut module = Module::create("top_level");
 
-  'main: loop {
+  loop {
     let mut input_line = rl.readline("repl> ").unwrap();
 
-    // the constructed AST
-    let mut ast = Vec::new();
     loop {
       let lex_result =
         lexer::lex(input_line.as_str(), &mut sym)
@@ -213,34 +233,28 @@ pub fn run_repl() {
         Ok(tokens) => tokens,
         Err(e) => {
           println!("Error occured: {}", e);
-          continue 'main;
+          break;
         }
       };
       let parsing_result = parser::repl_parse(tokens, &mut sym);
       match parsing_result {
-        Ok(Complete(exprs)) => {
-          ast.extend(exprs.into_iter());
+        Ok(Complete(e)) => {
           // we have parsed a full expression
           rl.add_history_entry(input_line);
+          run_expression(&e, &mut ctx, &mut module, &mut sym);
           break;
         }
         Ok(Incomplete) => {
-          // wait for more tokens
+          // get more tokens
+          let next_line = rl.readline(". ").unwrap();
+          input_line.push_str("\n");
+          input_line.push_str(next_line.as_str());
         }
         Err(e) => {
           println!("Error occured: {}", e);
-          continue 'main;
+          break;
         }
       }
-      let next_line = rl.readline(". ").unwrap();
-      input_line.push_str("\n");
-      input_line.push_str(next_line.as_str());
-    }
-
-    for e in ast {
-      codegen_expression(&e, &mut ctx, &mut mod_provider, &mut sym).unwrap();
-      println!("{}", display_expr(&e, &mut sym));
-      continue;
     }
   }
 }

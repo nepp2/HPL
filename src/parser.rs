@@ -643,39 +643,24 @@ pub fn parse(tokens : Vec<Token>, symbols : &mut SymbolTable) -> Result<Expr, Er
 }
 
 pub enum ReplParseResult {
-  Complete(Vec<Expr>),
+  Complete(Expr),
   Incomplete,
 }
 
 pub fn repl_parse(tokens : Vec<Token>, symbols : &mut SymbolTable) -> Result<ReplParseResult, Error> {
   use ReplParseResult::*;
   let mut ps = ParseState::new(tokens, symbols);
-  let mut exprs = vec!();
-  'outer: loop {
-    'inner: loop {
-      if !ps.has_tokens() {
-        break 'outer;
-      }
-      if ps.peek()?.string.as_ref() == ";" {
-        ps.skip();
-      }
-      else {
-        break 'inner;
-      }
+  match parse_block(&mut ps) {
+    Ok(e) => {
+      return Ok(Complete(e));
     }
-    match parse_expression(&mut ps) {
-      Ok(e) => {
-        exprs.push(e);
-      }
-      Err(e) => {
-        if let ErrorContent::Message(m) = &e.message {
-          if m.as_str() == EXPECTED_TOKEN_ERROR {
-            return Ok(Incomplete);
-          }
+    Err(e) => {
+      if let ErrorContent::Message(m) = &e.message {
+        if m.as_str() == EXPECTED_TOKEN_ERROR {
+          return Ok(Incomplete);
         }
-        return Err(e);
       }
+      return Err(e);
     }
   }
-  Ok(Complete(exprs))
 }
