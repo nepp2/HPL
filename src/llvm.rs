@@ -81,11 +81,26 @@ fn dump_module(module : &Module) {
   println!("{}", module.print_to_string().to_string())
 }
 
-fn codegen_float(e : &Expr, jit: &mut Jit) -> Result<FloatValue, Error> {
+fn f(e : &Expr, jit: &mut Jit) -> Result<FloatValue, Error> {
   let v = codegen_expression(e, jit)?;
   match v {
     Some(BasicValueEnum::FloatValue(f)) => Ok(f),
     t => error(e, format!("Expected float, found {:?}", t)),
+  }
+}
+
+fn codegen_op(exprs : &[&Expr], jit: &mut Jit) -> Result<Option<BasicValueEnum>, Error> {
+  match exprs {
+    [op, a, b] => {
+      let fv = match op {
+        "+" => jit.builder.build_float_add(f(a, jit)?, f(b, jit)?, "add_result"),
+        "-" => jit.builder.build_float_sub(f(a, jit)?, f(b, jit)?, "sub_result"),
+        "*" => jit.builder.build_float_mul(f(a, jit)?, f(b, jit)?, "mul_result"),
+        "/" => jit.builder.build_float_div(f(a, jit)?, f(b, jit)?, "div_result"),
+        _ => return Ok(None);
+      };
+      Ok(fv.into())
+    }
   }
 }
 
@@ -96,6 +111,16 @@ fn codegen_expression(expr : &Expr, jit: &mut Jit) -> Result<Option<BasicValueEn
       let children = expr.children.as_slice();
       match (instr, children) {
         ("call", [op, a, b]) => {
+          let lhs_value = f(a, jit)?;
+          let rhs_value = f(b, jit)?;
+          match name {
+            [op, a, b] => {
+              "+" => jit.builder.build_float_add(lhs_value, rhs_value, "add_result").into(),
+              "-" => jit.builder.build_float_sub(lhs_value, rhs_value, "sub_result").into(),
+              "*" => jit.builder.build_float_mul(lhs_value, rhs_value, "mul_result").into(),
+              "/" => jit.builder.build_float_div(lhs_value, rhs_value, "div_result").into(),
+            }
+          }
           let lhs_value = codegen_float(a, jit)?;
           let rhs_value = codegen_float(b, jit)?;
           let op_str = jit.sym.str(op.symbol_unwrap()?);
@@ -104,7 +129,29 @@ fn codegen_expression(expr : &Expr, jit: &mut Jit) -> Result<Option<BasicValueEn
             "-" => jit.builder.build_float_sub(lhs_value, rhs_value, "sub_result").into(),
             "*" => jit.builder.build_float_mul(lhs_value, rhs_value, "mul_result").into(),
             "/" => jit.builder.build_float_div(lhs_value, rhs_value, "div_result").into(),
-            _ => return error(expr, "unsupported operation"),
+            _ => {
+
+              let function = match jit.module.get_function(name) {
+                  Some(function) => function,
+                  None => return error("unknown function referenced")
+              };
+
+              if function.count_params() as usize != args.len() {
+                  return error("incorrect number of arguments passed")
+              }
+
+              let mut args_value = Vec::new();
+              for arg in args.iter() {
+                  let (arg_value, _) = try!(arg.codegen(context, module_provider));
+                  args_value.push(arg_value);
+              }
+
+              Ok((context.builder.build_call(function.to_ref(),
+                                              args_value.as_mut_slice(),
+                                              "calltmp"),
+                  false))
+              return error(expr, "unsupported operation")
+            },
           }
         }
         ("block", exprs) => {
@@ -131,6 +178,14 @@ fn codegen_expression(expr : &Expr, jit: &mut Jit) -> Result<Option<BasicValueEn
           return Ok(None);
         }
         _ => return error(expr, "unsupported expression"),
+      }
+    }
+    ExprTag::Symbol(s) => {
+      if let Some(value) = jit.named_values.get(jit.sym.str(*s)) {
+        *value
+      }
+      else {
+        return error(expr, "unknown variable name")
       }
     }
     ExprTag::LiteralFloat(f) => {
@@ -218,7 +273,6 @@ fn codegen_function(
   }
 }
 
-
 fn run_expression(expr : &Expr, jit: &mut Jit) -> Result<(), Error> {
   let f = codegen_function(expr, expr, "top_level", vec!(), jit)?;
   println!("{}", display_expr(expr, jit.sym));
@@ -265,7 +319,7 @@ pub fn run_repl() {
 
   loop {
     let mut input_line = rl.readline("repl> ").unwrap();
-    
+
     loop {
       let lex_result =
         lexer::lex(input_line.as_str(), &mut jit.sym)
