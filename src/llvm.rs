@@ -39,7 +39,7 @@ use std::io::Write;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 
-use crate::error::{Error, error};
+use crate::error::{Error, error, error_raw};
 use crate::value::{SymbolTable, display_expr, RefStr, Expr, ExprTag};
 use crate::lexer;
 use crate::parser;
@@ -56,19 +56,23 @@ use inkwell::passes::PassManager;
 use inkwell::types::{BasicTypeEnum, AnyTypeEnum};
 use inkwell::values::{BasicValueEnum, AnyValueEnum, FloatValue, FunctionValue, PointerValue, GenericValue, BasicValue};
 use inkwell::{OptimizationLevel, FloatPredicate};
+use inkwell::execution_engine::ExecutionEngine;
 
-pub struct Ctx {
-  context: ContextRef,
-  builder: Builder,
+pub struct Jit<'l> {
+  context: &'l mut ContextRef,
+  builder: &'l mut Builder,
   named_values: HashMap<RefStr, BasicValueEnum>,
+  module : &'l mut Module,
+  pm : &'l mut PassManager,
+  sym : &'l mut SymbolTable,
 }
 
-impl Ctx {
-  pub fn new() -> Ctx {
-    Ctx {
-      context: Context::get_global(),
-      builder: Builder::create(),
+impl <'l> Jit<'l> {
+  pub fn new(context: &'l mut ContextRef, builder: &'l mut Builder, module : &'l mut Module, pm : &'l mut PassManager, sym : &'l mut SymbolTable) -> Jit<'l> {
+    Jit {
+      context, builder, module, pm,
       named_values: HashMap::new(),
+      sym,
     }
   }
 }
@@ -77,29 +81,29 @@ fn dump_module(module : &Module) {
   println!("{}", module.print_to_string().to_string())
 }
 
-fn codegen_float(e : &Expr, ctx: &mut Ctx, module: &mut Module, sym : &mut SymbolTable) -> Result<FloatValue, Error> {
-  let v = codegen_expression(e, ctx, module, sym)?;
+fn codegen_float(e : &Expr, jit: &mut Jit) -> Result<FloatValue, Error> {
+  let v = codegen_expression(e, jit)?;
   match v {
     Some(BasicValueEnum::FloatValue(f)) => Ok(f),
     t => error(e, format!("Expected float, found {:?}", t)),
   }
 }
 
-fn codegen_expression(expr : &Expr, ctx: &mut Ctx, module: &mut Module, sym : &mut SymbolTable) -> Result<Option<BasicValueEnum>, Error> {
+fn codegen_expression(expr : &Expr, jit: &mut Jit) -> Result<Option<BasicValueEnum>, Error> {
   let v : BasicValueEnum = match &expr.tag {
     ExprTag::Tree(_) => {
-      let instr = sym.str(expr.tree_symbol_unwrap()?);
+      let instr = jit.sym.str(expr.tree_symbol_unwrap()?);
       let children = expr.children.as_slice();
       match (instr, children) {
         ("call", [op, a, b]) => {
-          let lhs_value = codegen_float(a, ctx, module, sym)?;
-          let rhs_value = codegen_float(b, ctx, module, sym)?;
-          let op_str = sym.str(op.symbol_unwrap()?);
+          let lhs_value = codegen_float(a, jit)?;
+          let rhs_value = codegen_float(b, jit)?;
+          let op_str = jit.sym.str(op.symbol_unwrap()?);
           match op_str {
-            "+" => ctx.builder.build_float_add(lhs_value, rhs_value, "add_result").into(),
-            "-" => ctx.builder.build_float_sub(lhs_value, rhs_value, "sub_result").into(),
-            "*" => ctx.builder.build_float_mul(lhs_value, rhs_value, "mul_result").into(),
-            "/" => ctx.builder.build_float_div(lhs_value, rhs_value, "div_result").into(),
+            "+" => jit.builder.build_float_add(lhs_value, rhs_value, "add_result").into(),
+            "-" => jit.builder.build_float_sub(lhs_value, rhs_value, "sub_result").into(),
+            "*" => jit.builder.build_float_mul(lhs_value, rhs_value, "mul_result").into(),
+            "/" => jit.builder.build_float_div(lhs_value, rhs_value, "div_result").into(),
             _ => return error(expr, "unsupported operation"),
           }
         }
@@ -107,29 +111,30 @@ fn codegen_expression(expr : &Expr, ctx: &mut Ctx, module: &mut Module, sym : &m
           let expr_count = exprs.len();
           if expr_count > 0 {
             for i in 0..(expr_count-1) {
-              codegen_expression(&exprs[i], ctx, module, sym)?;
+              codegen_expression(&exprs[i], jit)?;
             }
-            return codegen_expression(&exprs[expr_count-1], ctx, module, sym);
+            return codegen_expression(&exprs[expr_count-1], jit);
           }
           return Ok(None);
         }
         ("fun", exprs) => {
-          let name = sym.refstr(exprs[0].symbol_unwrap()?);
+          let name = jit.sym.refstr(exprs[0].symbol_unwrap()?);
           let args_exprs = exprs[1].children.as_slice();
           let function_body = &exprs[2];
-
           let mut args = vec!();
           for (arg, _) in args_exprs.iter().tuples() {
-            args.push(sym.refstr(arg.symbol_unwrap()?));
+            args.push(jit.sym.refstr(arg.symbol_unwrap()?));
           }
-          codegen_function(expr, function_body, name.as_ref(), args, ctx, module, sym)?;
+          let current_block = jit.builder.get_insert_block().unwrap();
+          codegen_function(expr, function_body, name.as_ref(), args, jit)?;
+          jit.builder.position_at_end(&current_block);
           return Ok(None);
         }
         _ => return error(expr, "unsupported expression"),
       }
     }
     ExprTag::LiteralFloat(f) => {
-      ctx.context.f64_type().const_float(*f as f64).into()
+      jit.context.f64_type().const_float(*f as f64).into()
     }
     _ => return error(expr, "unsupported expression"),
   };
@@ -141,77 +146,96 @@ fn codegen_function(
   body : &Expr,
   name : &str,
   args : Vec<RefStr>,
-  ctx: &mut Ctx,
-  module: &mut Module,
-  sym : &mut SymbolTable)
+  jit: &mut Jit)
     -> Result<FunctionValue, Error>
 {
+  /* TODO: is this needed?
   // check if declaration with this name was already done
   if module.get_function(name).is_some() {
     return error(expr, format!("function '{}' already defined", name));
   };
+  */
 
   // we have no global variables, so we can clear all the
   // previously defined named values as they come from other functions
-  ctx.named_values.clear();
+  jit.named_values.clear();
 
-  let ret_type = ctx.context.f64_type();
-  let args_types = std::iter::repeat(ret_type)
+  let f64_type = jit.context.f64_type();
+  let args_types = std::iter::repeat(f64_type)
     .take(args.len())
     .map(|f| f.into())
     .collect::<Vec<BasicTypeEnum>>();
   let args_types = args_types.as_slice();
 
-  let fn_type = ctx.context.f64_type().fn_type(args_types, false);
-  let function = module.add_function(name, fn_type, None);
+  let fn_type = jit.context.f64_type().fn_type(args_types, false);
+  let function = jit.module.add_function(name, fn_type, None);
 
   // set arguments names
   for (i, arg) in function.get_param_iter().enumerate() {
     arg.into_float_value().set_name(args[i].as_ref());
   }
 
-  let entry = ctx.context.append_basic_block(&function, "entry");
+  let entry = jit.context.append_basic_block(&function, "entry");
 
-  ctx.builder.position_at_end(&entry);
+  jit.builder.position_at_end(&entry);
 
   // set function parameters
   for (param, arg) in function.get_param_iter().zip(&args) {
-    ctx.named_values.insert(arg.clone(), param);
+    jit.named_values.insert(arg.clone(), param);
   }
 
   // compile body
-  let body_val = codegen_expression(body, ctx, module, sym)?;
+  let body_val = codegen_expression(body, jit)?;
 
   // clear local variables
-  ctx.named_values.clear();
+  jit.named_values.clear();
 
   // emit return (via stupid API)
   match body_val {
-    Some(b) => { ctx.builder.build_return(Some(&b)); }
-    None => { ctx.builder.build_return(None); }
+    Some(b) => {
+      jit.builder.build_return(Some(&b));
+    }
+    None => {
+      let f = jit.context.f64_type().const_float(-1.0);
+      jit.builder.build_return(Some(&f));
+    }
   }
 
   // return the whole thing after verification and optimization
   if function.verify(true) {
-    // TODO: make this line work later
-    // ctx.pass_manager.run_on_function(&function);
+    jit.pm.run_on_function(&function);
     Ok(function)
   }
   else {
     // This library uses copy semantics for a resource can be deleted, because it is usually not deleted.
     // As a result, it's possible to get use-after-free bugs, so this operation is unsafe. I'm sure this
     // design could be improved.
+    dump_module(&jit.module);
     unsafe {
-        function.delete();
+      function.delete();
     }
     error(expr, "invalid generated function.")
   }
 }
 
-fn run_expression(expr : &Expr, ctx: &mut Ctx, module: &mut Module, sym : &mut SymbolTable) {
-  codegen_function(expr, expr, "top_level", vec!(), ctx, module, sym).unwrap();
-  println!("{}", display_expr(expr, sym));
-  dump_module(module);
+
+fn run_expression(expr : &Expr, jit: &mut Jit) -> Result<(), Error> {
+  let f = codegen_function(expr, expr, "top_level", vec!(), jit)?;
+  println!("{}", display_expr(expr, jit.sym));
+  dump_module(&jit.module);
+
+  fn execute(expr : &Expr, f : FunctionValue, ee : &ExecutionEngine) -> Result<f64, Error> {
+    let function_name = f.get_name().to_str().unwrap();
+    unsafe {
+      let jit_function = ee.get_function::<unsafe extern "C" fn() -> f64>(function_name).map_err(|e| error_raw(expr, format!("{:?}", e)))?;
+      Ok(jit_function.call())
+    }
+  }
+  let ee = jit.module.create_jit_execution_engine(OptimizationLevel::None).map_err(|e| error_raw(expr, e.to_string()))?;
+  let result = execute(expr, f, &ee);
+  ee.remove_module(jit.module).unwrap();
+  println!("result: {}", result?);
+  Ok(())
 }
 
 pub fn run_repl() {
@@ -219,15 +243,32 @@ pub fn run_repl() {
 
   let mut rl = Editor::<()>::new();
 
-  let mut ctx = Ctx::new();
+  let mut context = Context::get_global();
+  let mut builder = Builder::create();
+
+  let mut expressions = vec![];
+
   let mut module = Module::create("top_level");
+
+  let mut pm = PassManager::create_for_function(&module);
+  pm.add_instruction_combining_pass();
+  pm.add_reassociate_pass();
+  pm.add_gvn_pass();
+  pm.add_cfg_simplification_pass();
+  pm.add_basic_alias_analysis_pass();
+  pm.add_promote_memory_to_register_pass();
+  pm.add_instruction_combining_pass();
+  pm.add_reassociate_pass();
+  pm.initialize();
+
+  let mut jit = Jit::new(&mut context, &mut builder, &mut module, &mut pm, &mut sym);
 
   loop {
     let mut input_line = rl.readline("repl> ").unwrap();
-
+    
     loop {
       let lex_result =
-        lexer::lex(input_line.as_str(), &mut sym)
+        lexer::lex(input_line.as_str(), &mut jit.sym)
         .map_err(|mut es| es.remove(0));
       let tokens = match lex_result {
         Ok(tokens) => tokens,
@@ -236,12 +277,20 @@ pub fn run_repl() {
           break;
         }
       };
-      let parsing_result = parser::repl_parse(tokens, &mut sym);
+      let parsing_result = parser::repl_parse(tokens, &mut jit.sym);
       match parsing_result {
         Ok(Complete(e)) => {
           // we have parsed a full expression
           rl.add_history_entry(input_line);
-          run_expression(&e, &mut ctx, &mut module, &mut sym);
+          match run_expression(&e, &mut jit) {
+            Ok(_) => {
+              // record the expression
+              expressions.push(e);
+            }
+            Err(err) => {
+              println!("error: {:?}", err);
+            }
+          }
           break;
         }
         Ok(Incomplete) => {
