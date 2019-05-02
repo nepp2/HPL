@@ -2,7 +2,7 @@
 use std::fmt;
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::any::Any;
 use std::mem;
 
@@ -17,7 +17,7 @@ pub struct FunctionSignature {
   pub args : Vec<Type>,
 }
 
-#[derive(Clone, PartialEq, Debug, Copy)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum Type {
   Unit,
   Float,
@@ -27,11 +27,11 @@ pub enum Type {
   Function,
   Map,
   Any,
-  External(Symbol),
+  External(RefStr),
 }
 
 impl Type {
-  pub fn name(&self, sym : &mut SymbolTable) -> Symbol {
+  pub fn name(&self, sym : &mut SymbolTable) -> RefStr {
     use self::Type::*;
     match self {
       Float => sym.get("float"),
@@ -41,7 +41,7 @@ impl Type {
       String => sym.get("string"),
       Function => sym.get("function"),
       Map => sym.get("map"),
-      External(e) => *e,
+      External(e) => e.clone(),
       Unit => sym.get("unit"),
     }
   }
@@ -64,9 +64,9 @@ impl Type {
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum ExprTag {
-  Tree(Symbol),
-  Symbol(Symbol),
-  LiteralString(Symbol),
+  Tree(RefStr),
+  Symbol(RefStr),
+  LiteralString(RefStr),
   LiteralFloat(f32),
   LiteralBool(bool),
   LiteralUnit,
@@ -80,53 +80,52 @@ pub struct Expr {
   pub loc : TextLocation,
 }
 
-pub fn display_expr(e: &Expr, sym : &mut SymbolTable) -> String {
-  pub fn display_inner(e: &Expr, sym : &mut SymbolTable, w: &mut fmt::Write, indent : usize) -> fmt::Result {
+pub fn display_expr(e: &Expr) -> String {
+  pub fn display_inner(e: &Expr, w: &mut fmt::Write, indent : usize) -> fmt::Result {
     match &e.tag {
-      ExprTag::Tree(symbol) => {
-        let s = sym.str(*symbol);
+      ExprTag::Tree(s) => {
         write!(w, "({}", s)?;
-        if s == "block" {
+        if s.as_ref() == "block" {
           let indent = indent + 2;
           for c in e.children.iter() {
             writeln!(w)?;
             write!(w, "{:indent$}", "", indent=indent)?;
-            display_inner(c, sym, w, indent)?
+            display_inner(c, w, indent)?
           }
         }
         else {
           for c in e.children.iter() {
             write!(w, " ")?;
-            display_inner(c, sym, w, indent)?
+            display_inner(c, w, indent)?
           }
         }
         write!(w, ")")
       }
-      ExprTag::Symbol(x) => write!(w, "{}", sym.str(*x)),
-      ExprTag::LiteralString(x) => write!(w, "{}", sym.str(*x)),
+      ExprTag::Symbol(x) => write!(w, "{}", x),
+      ExprTag::LiteralString(x) => write!(w, "{}", x),
       ExprTag::LiteralFloat(x) => write!(w, "{}", x),
       ExprTag::LiteralBool(x) => write!(w, "{}", x),
       ExprTag::LiteralUnit => write!(w, "()"),
     }
   }
   let mut buf = String::new();
-  display_inner(e, sym, &mut buf, 0).unwrap();
+  display_inner(e, &mut buf, 0).unwrap();
   buf
 }
 
 impl Expr {
-  pub fn tree_symbol_unwrap(&self) -> Result<Symbol, Error> {
+  pub fn tree_symbol_unwrap(&self) -> Result<RefStr, Error> {
     if let ExprTag::Tree(s) = &self.tag {
-      Ok(*s)
+      Ok(s.clone())
     }
     else {
       error(self, format!("expected a tree, found {:?}", self))
     }
   }
 
-  pub fn symbol_unwrap(&self) -> Result<Symbol, Error> {
+  pub fn symbol_unwrap(&self) -> Result<RefStr, Error> {
     if let ExprTag::Symbol(s) = &self.tag {
-      Ok(*s)
+      Ok(s.clone())
     }
     else {
       error(self, format!("expected a symbol, found {:?}", self))
@@ -146,13 +145,9 @@ impl <'l> Into<TextLocation> for &'l Expr {
   }
 }
 
-#[derive(Clone, Copy, PartialEq, Debug, Eq, Hash)]
-pub struct Symbol { id : u64 }
-
 #[derive(Default)]
 pub struct SymbolTable {
-  symbol_map : HashMap<RefStr, Symbol>,
-  symbols : Vec<RefStr>,  
+  symbols : HashSet<RefStr>,
 }
 
 impl SymbolTable {
@@ -160,25 +155,15 @@ impl SymbolTable {
     Default::default()
   }
 
-  pub fn get<S : AsRef<str> + Into<RefStr>>(&mut self, s : S) -> Symbol {
-    if let Some(symbol) = self.symbol_map.get(s.as_ref()) {
-      *symbol
+  pub fn get<T : AsRef<str> + Into<RefStr>>(&mut self, s : T) -> RefStr {
+    if let Some(symbol) = self.symbols.get(s.as_ref()) {
+      symbol.clone()
     }
     else{
-      let symbol = Symbol { id : self.symbols.len() as u64 };
       let string : RefStr = s.into();
-      self.symbols.push(string.clone());
-      self.symbol_map.insert(string, symbol);
-      symbol
+      self.symbols.insert(string.clone());
+      string
     }
-  }
-
-  pub fn refstr(&self, symbol : Symbol) -> RefStr {
-    self.symbols[symbol.id as usize].clone()
-  }
-
-  pub fn str(&self, symbol : Symbol) -> &str {
-    self.symbols[symbol.id as usize].as_ref()
   }
 }
 
@@ -190,10 +175,10 @@ pub struct ModuleId {
 #[derive(Clone, PartialEq)]
 pub struct FunctionRef {
   pub module : ModuleId,
-  pub name : Symbol,
+  pub name : RefStr,
 }
 
-pub type MapVal = Rc<RefCell<HashMap<Symbol, Value>>>;
+pub type MapVal = Rc<RefCell<HashMap<RefStr, Value>>>;
 
 pub type Array = Rc<RefCell<Vec<Value>>>;
 
@@ -207,7 +192,7 @@ pub enum Value {
   Float(u64),
   Array(Array),
   Bool(u64),
-  String(u64),
+  String(RefStr),
   Function(FunctionRef),
   Map(MapVal),
   External(ExternalVal),
@@ -217,26 +202,26 @@ pub enum Value {
 pub fn expr_to_value(e : &Expr, sym : &mut SymbolTable) -> Value {
   use self::ExprTag::*;
   let mut m = HashMap::new();
-  match e.tag {
+  match &e.tag {
     Tree(s) => {
       m.insert(sym.get("tag"), Value::from(sym.get("expr")));
-      m.insert(sym.get("value"), Value::from(s));
+      m.insert(sym.get("value"), Value::from(s.clone()));
     }
     Symbol(s) => {
       m.insert(sym.get("tag"), Value::from(sym.get("symbol")));
-      m.insert(sym.get("value"), Value::from(s));
+      m.insert(sym.get("value"), Value::from(s.clone()));
     }
     LiteralString(s) => {
       m.insert(sym.get("tag"), Value::from(sym.get("literal_string")));
-      m.insert(sym.get("value"), Value::from(s));
+      m.insert(sym.get("value"), Value::from(s.clone()));
     }
     LiteralFloat(f) => {
       m.insert(sym.get("tag"), Value::from(sym.get("literal_float")));
-      m.insert(sym.get("value"), Value::from(f));
+      m.insert(sym.get("value"), Value::from(f.clone()));
     }
     LiteralBool(b) => {
       m.insert(sym.get("tag"), Value::from(sym.get("literal_bool")));
-      m.insert(sym.get("value"), Value::from(b));
+      m.insert(sym.get("value"), Value::from(b.clone()));
     }
     LiteralUnit => {
       m.insert(sym.get("tag"), Value::from(sym.get("literal_unit")));
@@ -254,28 +239,28 @@ pub fn expr_to_value(e : &Expr, sym : &mut SymbolTable) -> Value {
 }
 
 pub fn value_to_expr(v : Value, sym : &mut SymbolTable) -> Result<Expr, ErrorContent> {
-  fn get(m : &HashMap<Symbol, Value>, s : &str, sym : &mut SymbolTable) -> Result<Value, ErrorContent> {
+  fn get(m : &HashMap<RefStr, Value>, s : &str, sym : &mut SymbolTable) -> Result<Value, ErrorContent> {
     m.get(&sym.get(s)).map(|v| v.clone()).ok_or_else(|| format!("expected key '{}' in map", s).into())
   }
 
   let m = v.convert::<MapVal>()?;
   let m = m.borrow();
-  let tag = get(&m, "tag", sym)?.convert::<Symbol>()?;
+  let tag = get(&m, "tag", sym)?.convert::<RefStr>()?;
   let start_line = get(&m, "start_line", sym)?.convert::<f32>()? as usize;
   let start_col = get(&m, "start_col", sym)?.convert::<f32>()? as usize;
   let end_line = get(&m, "end_line", sym)?.convert::<f32>()? as usize;
   let end_col = get(&m, "end_col", sym)?.convert::<f32>()? as usize;
-  let expr_tag = match sym.str(tag) {
+  let expr_tag = match tag.as_ref() {
     "expr" => {
-      let s = get(&m, "value", sym)?.convert::<Symbol>()?;
+      let s = get(&m, "value", sym)?.convert::<RefStr>()?;
       ExprTag::Tree(s)
     },
     "symbol" => {
-      let s = get(&m, "value", sym)?.convert::<Symbol>()?;
+      let s = get(&m, "value", sym)?.convert::<RefStr>()?;
       ExprTag::Symbol(s)
     },
     "literal_string" => {
-      let s = get(&m, "value", sym)?.convert::<Symbol>()?;
+      let s = get(&m, "value", sym)?.convert::<RefStr>()?;
       ExprTag::LiteralString(s)
     },
     "literal_float" => {
@@ -289,7 +274,7 @@ pub fn value_to_expr(v : Value, sym : &mut SymbolTable) -> Result<Expr, ErrorCon
     "literal_unit" => {
       ExprTag::LiteralUnit
     },
-    _ => return Err(format!("found unexpected expr tag '{}'", sym.str(tag)).into()),
+    _ => return Err(format!("found unexpected expr tag '{}'", tag).into()),
   };
   let mut children = vec![];
   if let Some(c) = m.get(&sym.get("children")) {
@@ -312,13 +297,9 @@ fn bits_to_bool(b : u64) -> bool {
   b != 0
 }
 
-fn bits_to_symbol(b : u64) -> Symbol {
-  Symbol { id: b }
-}
-
 #[derive(Clone)]
 pub struct ExternalVal {
-  pub type_name : Symbol,
+  pub type_name : RefStr,
   pub val : Rc<RefCell<Any>>,
 }
 
@@ -338,7 +319,7 @@ impl Value {
       String(_) => Type::String,
       Function{..} => Type::Function,
       Map(_) => Type::Map,
-      External(e) => Type::External(e.type_name),
+      External(e) => Type::External(e.type_name.clone()),
       Unit => Type::Unit,
     }
   }
@@ -360,9 +341,9 @@ impl Value {
         write!(w, "]")
       }
       Value::Bool(b) => write!(w, "{}", bits_to_bool(*b)),
-      Value::String(s) => write!(w, "{}", sym.str(bits_to_symbol(*s))),
-      Value::Function(f) => write!(w, "{}(..)", sym.str(f.name)),
-      Value::External(e) => write!(w, "external({})", sym.str(e.type_name)),
+      Value::String(s) => write!(w, "{}", s),
+      Value::Function(f) => write!(w, "{}(..)", f.name),
+      Value::External(e) => write!(w, "external({})", e.type_name),
       Value::Map(m) => {
         let map = &*m.borrow();
         // TODO
@@ -371,7 +352,7 @@ impl Value {
         write!(w, "{{ ")?;
         let end = map.len() - 1;
         for (i, (n, v)) in map.iter().enumerate() {
-          write!(w, "{}: ", sym.str(*n))?;
+          write!(w, "{}: ", *n)?;
           v.write(w, sym)?;
           write!(w, "{} ", if i == end {""} else {","})?;
         }
@@ -415,9 +396,9 @@ impl From<Vec<Value>> for Value {
     Value::Array(Rc::new(RefCell::new(v)))
   }
 }
-impl From<Symbol> for Value {
-  fn from(v : Symbol) -> Value {
-    Value::String(v.id)
+impl From<RefStr> for Value {
+  fn from(v : RefStr) -> Value {
+    Value::String(v)
   }
 }
 
@@ -429,10 +410,10 @@ impl Into<Result<f32, String>> for Value {
     }
   }
 }
-impl Into<Result<Symbol, String>> for Value {
-  fn into(self) -> Result<Symbol, String> {
+impl Into<Result<RefStr, String>> for Value {
+  fn into(self) -> Result<RefStr, String> {
     match self {
-      Value::String(s) => Ok(bits_to_symbol(s)),
+      Value::String(s) => Ok(s),
       x => Err(format!("Expected string, found {:?}.", x.to_type().str()))
     }
   }

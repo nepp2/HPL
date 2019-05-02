@@ -1,6 +1,6 @@
 
 use std::collections::HashSet;
-use crate::value::{SymbolTable, Symbol, RefStr};
+use crate::value::{SymbolTable, RefStr};
 use crate::error::{Error, TextLocation, TextMarker, error_raw};
 
 lazy_static! {
@@ -17,8 +17,7 @@ pub enum TokenType {
 
 #[derive(Clone)]
 pub struct Token {
-  pub symbol : Symbol,
-  pub string : RefStr,
+  pub symbol : RefStr,
   pub token_type : TokenType,
   pub loc : TextLocation,
 }
@@ -81,11 +80,9 @@ impl <'l> CStream<'l> {
 
   fn complete_token(&mut self, start_loc : StreamLocation, token_type : TokenType) {
     let loc = self.get_text_location(start_loc);
-    let string : RefStr = (self.current_token.as_ref() as &str).into();
-    let symbol = self.symbols.get(string.clone());
+    let symbol = self.symbols.get(self.current_token.as_ref());
     self.current_token.clear();
     let t = Token {
-      string,
       symbol,
       token_type: token_type,
       loc : loc,

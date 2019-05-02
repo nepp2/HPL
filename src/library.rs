@@ -46,12 +46,12 @@ macro_rules! type_tag {
 type BuiltInFunction = fn(&mut Environment, Vec<Value>) -> Result<Value, ErrorContent>;
 
 fn fun(env : &mut Environment, name : &'static str, arg_types : Vec<Type>, f : BuiltInFunction) {
-  let arg_names : Vec<Symbol> =
+  let arg_names : Vec<RefStr> =
     (0..arg_types.len()).map(|i| ((('a' as usize) + i) as u8 as char)
     .to_string()).map(|s| env.sym.get(s)).collect();
   let visible_modules = env.visible_modules();
   let name = env.sym.get(name);
-  let f = Function { name, module_id: env.current_module, visible_modules, arg_names, arg_types, handle: FunctionHandle::BuiltIn(f) };
+  let f = Function { name: name.clone(), module_id: env.current_module, visible_modules, arg_names, arg_types, handle: FunctionHandle::BuiltIn(f) };
   env.add_function(name, f).unwrap();
 }
 
@@ -95,9 +95,9 @@ pub fn load_library(e : &mut Environment) {
     Ok(Value::from(len))
   });
   fun(e, "concat", vec![Type::String, Type::String], |e, vs| {
-    let a = Into::<Result<Symbol, String>>::into(vs[0].clone())?;
-    let b = Into::<Result<Symbol, String>>::into(vs[1].clone())?;
-    let c = e.sym.get(format!("{}{}", e.sym.str(a), e.sym.str(b)));
+    let a = Into::<Result<RefStr, String>>::into(vs[0].clone())?;
+    let b = Into::<Result<RefStr, String>>::into(vs[1].clone())?;
+    let c = e.sym.get(format!("{}{}", a, b));
     Ok(Value::from(c))
   });
   fun(e, "eval", vec![Type::Map], |env, vs| {
@@ -124,12 +124,12 @@ pub fn load_library(e : &mut Environment) {
     Ok(Value::from(vs[0].to_type().name(&mut e.sym)))
   });
   fun(e, "import_module", vec![Type::String], |e, vs| {
-    let name = Into::<Result<Symbol, String>>::into(vs[0].clone())?;
+    let name = Into::<Result<RefStr, String>>::into(vs[0].clone())?;
     import_module(e, name, false)?;
     Ok(Value::Unit)
   });
   fun(e, "import_module_fresh", vec![Type::String], |e, vs| {
-    let name = Into::<Result<Symbol, String>>::into(vs[0].clone())?;
+    let name = Into::<Result<RefStr, String>>::into(vs[0].clone())?;
     import_module(e, name, true)?;
     Ok(Value::Unit)
   });
@@ -145,8 +145,8 @@ pub fn load_library(e : &mut Environment) {
     let v = vs[0].get().convert::<ExternalVal>()?;
     let mut v = v.val.borrow_mut();
     let w = v.downcast_mut::<FileWatcher>().unwrap();
-    let module_name = vs[1].get().convert::<Symbol>()?;
-    let path = format!("code/{}.code", e.sym.str(module_name));
+    let module_name = vs[1].get().convert::<RefStr>()?;
+    let path = format!("code/{}.code", module_name);
     w.watcher.watch(path.as_str(), RecursiveMode::Recursive)
       .map_err(|_| format!("failed to watch file '{}'", path))?;
     Ok(Value::Unit)
@@ -197,34 +197,34 @@ fn poll_watcher_event(w : &mut FileWatcher) -> Option<String> {
   }
 }
 
-fn import_module(env : &mut Environment, module_name: Symbol, load_fresh : bool) -> Result<(), ErrorContent> {
+fn import_module(env : &mut Environment, module_name: RefStr, load_fresh : bool) -> Result<(), ErrorContent> {
   fn inner_error(e : Error, name : &str) -> ErrorContent {
     ErrorContent::InnerError(format!("Error when loading module '{}'", name), Box::new(e))
   }
-  if let Some(id) = get_module_id(env.loaded_modules, module_name) {
+  if let Some(id) = get_module_id(env.loaded_modules, module_name.as_ref()) {
     if load_fresh {
-      let module = Module::new(module_name);
+      let module = Module::new(module_name.clone());
       env.loaded_modules[id.i] = module;
-      load_module(env, module_name, id).map_err(|er| inner_error(er, env.sym.str(module_name)))?;
+      load_module(env, module_name.as_ref(), id).map_err(|er| inner_error(er, &module_name))?;
     }
     env.import_module(id)?;
   }
   else {
-    let module = Module::new(module_name);
+    let module = Module::new(module_name.clone());
     let id = add_module(env.loaded_modules, module);
-    load_module(env, module_name, id).map_err(|er| inner_error(er, env.sym.str(module_name)))?;
+    load_module(env, module_name.as_ref(), id).map_err(|er| inner_error(er, &module_name))?;
     env.import_module(id)?;
   }
   Ok(())
 }
 
-fn load_module(env : &mut Environment, module_name: Symbol, module_id : ModuleId) -> Result<(), Error> {
-  let file_name = format!("code/{}.code", env.sym.str(module_name));
+fn load_module(env : &mut Environment, module_name: &str, module_id : ModuleId) -> Result<(), Error> {
+  let file_name = format!("code/{}.code", module_name);
   let mut f = File::open(file_name).expect("file not found");
   let mut code = String::new();
   f.read_to_string(&mut code).unwrap();
 
-  let prelude_id = get_module_id(env.loaded_modules, env.sym.get("prelude")).unwrap();
+  let prelude_id = get_module_id(env.loaded_modules, "prelude").unwrap();
   let initial_scope = BlockScope {
     variables: hashmap![],
     modules: vec![prelude_id, module_id],
@@ -323,14 +323,14 @@ fn load_sdl(e : &mut Environment) {
     Ok(Value::Unit)
   });
 
-  fn f<V : Into<Value>>(e : &mut Environment, field_name : &str, v : V) -> (Symbol, Value) {
+  fn f<V : Into<Value>>(e : &mut Environment, field_name : &str, v : V) -> (RefStr, Value) {
     (e.sym.get(field_name), v.into())
   }
-  fn s(e : &mut Environment, field_name : &str, v : String) -> (Symbol, Value) {
+  fn s(e : &mut Environment, field_name : &str, v : String) -> (RefStr, Value) {
     (e.sym.get(field_name), e.sym.get(v).into())
   }
 
-  fn new_map(e : &mut Environment, name : &str, mut map : Vec<(Symbol, Value)>) -> Result<Value, ErrorContent>
+  fn new_map(e : &mut Environment, name : &str, mut map : Vec<(RefStr, Value)>) -> Result<Value, ErrorContent>
   {
     let name = e.sym.get(name);
     let map = map.into_iter().collect();

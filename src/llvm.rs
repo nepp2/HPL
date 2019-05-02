@@ -116,11 +116,11 @@ impl <'l> TypeChecker<'l> {
   fn to_ast(&mut self, expr : &Expr) -> Result<AstNode, Error> {
     match &expr.tag {
       ExprTag::Tree(_) => {
-        let instr = self.sym.str(expr.tree_symbol_unwrap()?);
+        let instr = expr.tree_symbol_unwrap()?;
         let children = expr.children.as_slice();
-        match (instr, children) {
+        match (instr.as_ref(), children) {
           ("call", exprs) => {
-            let function_name = self.sym.refstr(exprs[0].symbol_unwrap()?);
+            let function_name = exprs[0].symbol_unwrap()?;
             if exprs.len() == 3 {
               let tag = match function_name.as_ref() {
                 "+" | "-" | "*" | "/" => Some(Type::Float),
@@ -170,14 +170,14 @@ impl <'l> TypeChecker<'l> {
             Ok(ast(expr, tag, Content::Block(nodes)))
           }
           ("fun", exprs) => {
-            let name = self.sym.refstr(exprs[0].symbol_unwrap()?);
+            let name = exprs[0].symbol_unwrap()?;
             let args_exprs = exprs[1].children.as_slice();
             let function_body = &exprs[2];
             let mut args = vec!();
             for (name_expr, type_expr) in args_exprs.iter().tuples() {
-              let name = self.sym.refstr(name_expr.symbol_unwrap()?);
+              let name = name_expr.symbol_unwrap()?;
               let type_tag =
-                Type::from_string(self.sym.str(type_expr.symbol_unwrap()?))
+                Type::from_string(type_expr.symbol_unwrap()?.as_ref())
                 .ok_or_else(|| error_raw(type_expr, "unrecognised type"))?;
               args.push((name, type_tag));
             }
@@ -193,9 +193,8 @@ impl <'l> TypeChecker<'l> {
         }
       }
       ExprTag::Symbol(s) => {
-        let s = self.sym.refstr(*s);
         if let Some(t) = self.variables.get(s.as_ref()) {
-          Ok(ast(expr, *t, Content::VariableReference(s)))
+          Ok(ast(expr, *t, Content::VariableReference(s.clone())))
         }
         else {
           error(expr, "unknown variable name")
@@ -490,7 +489,7 @@ fn run_expression(expr : &Expr, jit: &mut Jit, functions : &mut HashMap<RefStr, 
   let mut type_checker = TypeChecker { variables: HashMap::new(), functions: functions, sym: jit.sym };
   let ast = type_checker.to_ast(expr)?;
   let f = codegen_function(&ast, &ast, "top_level", vec!(), jit)?;
-  println!("{}", display_expr(expr, jit.sym));
+  println!("{}", display_expr(expr));
   dump_module(&jit.module);
 
   fn execute<T : std::fmt::Debug>(expr : &Expr, f : FunctionValue, ee : &ExecutionEngine) -> Result<(), Error> {
