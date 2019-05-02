@@ -89,19 +89,46 @@ fn f(e : &Expr, jit: &mut Jit) -> Result<FloatValue, Error> {
   }
 }
 
-fn codegen_op(exprs : &[&Expr], jit: &mut Jit) -> Result<Option<BasicValueEnum>, Error> {
+fn codegen_op(exprs : &[Expr], jit: &mut Jit) -> Result<Option<BasicValueEnum>, Error> {
   match exprs {
     [op, a, b] => {
-      let fv = match op {
-        "+" => jit.builder.build_float_add(f(a, jit)?, f(b, jit)?, "add_result"),
-        "-" => jit.builder.build_float_sub(f(a, jit)?, f(b, jit)?, "sub_result"),
-        "*" => jit.builder.build_float_mul(f(a, jit)?, f(b, jit)?, "mul_result"),
-        "/" => jit.builder.build_float_div(f(a, jit)?, f(b, jit)?, "div_result"),
-        _ => return Ok(None);
+      let op = jit.sym.str(op.symbol_unwrap()?);
+      let build_op = match op {
+        "+" => Builder::build_float_add::<FloatValue>,
+        "-" => Builder::build_float_sub::<FloatValue>,
+        "*" => Builder::build_float_mul::<FloatValue>,
+        "/" => Builder::build_float_div::<FloatValue>,
+        _ => return Ok(None),
       };
-      Ok(fv.into())
+      let a = f(a, jit)?;
+      let b = f(b, jit)?;
+      let fv = build_op(&jit.builder, a, b, "op_result");
+      Ok(Some(fv.into()))
     }
+    _ => Ok(None),
   }
+}
+
+fn codegen_call(expr : &Expr, exprs : &[Expr], jit: &mut Jit) -> Result<Option<BasicValueEnum>, Error> {
+  if let Some(op_result) = codegen_op(exprs, jit)? {
+    return Ok(Some(op_result));
+  }
+  let name_symbol = &exprs[0];
+  let function_name = jit.sym.str(name_symbol.symbol_unwrap()?);
+  let f =
+    jit.module.get_function(function_name)
+    .ok_or_else(|| error_raw(name_symbol, format!("could not find function with name '{}'", function_name)))?;
+  if f.count_params() as usize != (exprs.len() - 1) {
+      return error(expr, "incorrect number of arguments passed");
+  }
+  let mut args = vec!();
+  for e in &exprs[1..] {
+    let v =
+      codegen_expression(e, jit)?
+      .ok_or_else(|| error_raw(e, "expected value expression"))?;
+    args.push(v);
+  }
+  Ok(jit.builder.build_call(f, args.as_slice(), "tmp").try_as_basic_value().left())
 }
 
 fn codegen_expression(expr : &Expr, jit: &mut Jit) -> Result<Option<BasicValueEnum>, Error> {
@@ -110,49 +137,8 @@ fn codegen_expression(expr : &Expr, jit: &mut Jit) -> Result<Option<BasicValueEn
       let instr = jit.sym.str(expr.tree_symbol_unwrap()?);
       let children = expr.children.as_slice();
       match (instr, children) {
-        ("call", [op, a, b]) => {
-          let lhs_value = f(a, jit)?;
-          let rhs_value = f(b, jit)?;
-          match name {
-            [op, a, b] => {
-              "+" => jit.builder.build_float_add(lhs_value, rhs_value, "add_result").into(),
-              "-" => jit.builder.build_float_sub(lhs_value, rhs_value, "sub_result").into(),
-              "*" => jit.builder.build_float_mul(lhs_value, rhs_value, "mul_result").into(),
-              "/" => jit.builder.build_float_div(lhs_value, rhs_value, "div_result").into(),
-            }
-          }
-          let lhs_value = codegen_float(a, jit)?;
-          let rhs_value = codegen_float(b, jit)?;
-          let op_str = jit.sym.str(op.symbol_unwrap()?);
-          match op_str {
-            "+" => jit.builder.build_float_add(lhs_value, rhs_value, "add_result").into(),
-            "-" => jit.builder.build_float_sub(lhs_value, rhs_value, "sub_result").into(),
-            "*" => jit.builder.build_float_mul(lhs_value, rhs_value, "mul_result").into(),
-            "/" => jit.builder.build_float_div(lhs_value, rhs_value, "div_result").into(),
-            _ => {
-
-              let function = match jit.module.get_function(name) {
-                  Some(function) => function,
-                  None => return error("unknown function referenced")
-              };
-
-              if function.count_params() as usize != args.len() {
-                  return error("incorrect number of arguments passed")
-              }
-
-              let mut args_value = Vec::new();
-              for arg in args.iter() {
-                  let (arg_value, _) = try!(arg.codegen(context, module_provider));
-                  args_value.push(arg_value);
-              }
-
-              Ok((context.builder.build_call(function.to_ref(),
-                                              args_value.as_mut_slice(),
-                                              "calltmp"),
-                  false))
-              return error(expr, "unsupported operation")
-            },
-          }
+        ("call", exprs) => {
+          return codegen_call(expr, exprs, jit);
         }
         ("block", exprs) => {
           let expr_count = exprs.len();
@@ -225,51 +211,60 @@ fn codegen_function(
   let fn_type = jit.context.f64_type().fn_type(args_types, false);
   let function = jit.module.add_function(name, fn_type, None);
 
-  // set arguments names
-  for (i, arg) in function.get_param_iter().enumerate() {
-    arg.into_float_value().set_name(args[i].as_ref());
-  }
-
-  let entry = jit.context.append_basic_block(&function, "entry");
-
-  jit.builder.position_at_end(&entry);
-
-  // set function parameters
-  for (param, arg) in function.get_param_iter().zip(&args) {
-    jit.named_values.insert(arg.clone(), param);
-  }
-
-  // compile body
-  let body_val = codegen_expression(body, jit)?;
-
-  // clear local variables
-  jit.named_values.clear();
-
-  // emit return (via stupid API)
-  match body_val {
-    Some(b) => {
-      jit.builder.build_return(Some(&b));
+  // this exists to catch errors and delete the function if needed
+  fn generate(expr : &Expr, body : &Expr, function : FunctionValue, args : Vec<RefStr>, jit : &mut Jit) -> Result<(), Error> {
+    // set arguments names
+    for (i, arg) in function.get_param_iter().enumerate() {
+      arg.into_float_value().set_name(args[i].as_ref());
     }
-    None => {
-      let f = jit.context.f64_type().const_float(-1.0);
-      jit.builder.build_return(Some(&f));
+
+    let entry = jit.context.append_basic_block(&function, "entry");
+
+    jit.builder.position_at_end(&entry);
+
+    // set function parameters
+    for (param, arg) in function.get_param_iter().zip(&args) {
+      jit.named_values.insert(arg.clone(), param);
+    }
+
+    // compile body
+    let body_val = codegen_expression(body, jit)?;
+
+    // clear local variables
+    jit.named_values.clear();
+
+    // emit return (via stupid API)
+    match body_val {
+      Some(b) => {
+        jit.builder.build_return(Some(&b));
+      }
+      None => {
+        let f = jit.context.f64_type().const_float(-1.0);
+        jit.builder.build_return(Some(&f));
+      }
+    }
+
+    // return the whole thing after verification and optimization
+    if function.verify(true) {
+      jit.pm.run_on_function(&function);
+      Ok(())
+    }
+    else {
+      error(expr, "invalid generated function.")
     }
   }
 
-  // return the whole thing after verification and optimization
-  if function.verify(true) {
-    jit.pm.run_on_function(&function);
-    Ok(function)
-  }
-  else {
-    // This library uses copy semantics for a resource can be deleted, because it is usually not deleted.
-    // As a result, it's possible to get use-after-free bugs, so this operation is unsafe. I'm sure this
-    // design could be improved.
-    dump_module(&jit.module);
-    unsafe {
-      function.delete();
+  match generate(expr, body, function, args, jit) {
+    Ok(_) => Ok(function),
+    Err(e) => {
+      // This library uses copy semantics for a resource can be deleted, because it is usually not deleted.
+      // As a result, it's possible to get use-after-free bugs, so this operation is unsafe. I'm sure this
+      // design could be improved.
+      unsafe {
+        function.delete();
+      }
+      Err(e)
     }
-    error(expr, "invalid generated function.")
   }
 }
 
