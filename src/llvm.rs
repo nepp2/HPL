@@ -35,6 +35,8 @@ from Jauhien Piatlicki.]
 
 use std::io;
 use std::io::Write;
+use std::rc::Rc;
+use std::any::Any;
 
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
@@ -61,6 +63,11 @@ use inkwell::execution_engine::ExecutionEngine;
 #[derive(Clone, Copy, PartialEq)]
 enum Type {
   Void, Float, Bool
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Val {
+  Void, Float(f64), Bool(bool)
 }
 
 impl Type {
@@ -130,7 +137,7 @@ impl <'l> TypeChecker<'l> {
               if let Some(tag) = tag {
                 let a = self.to_ast(&exprs[1])?;
                 let b = self.to_ast(&exprs[2])?;
-                return Ok(ast(expr, tag, Content::IntrinsicCall(function_name, vec!(a, b))))
+                return Ok(ast(expr, tag, Content::IntrinsicCall(function_name.clone(), vec!(a, b))))
               }
             }
             if let Some(t) = self.functions.get(function_name.as_ref()) {
@@ -138,7 +145,7 @@ impl <'l> TypeChecker<'l> {
               let args =
                 exprs[1..].iter().map(|e| self.to_ast(e))
                 .collect::<Result<Vec<AstNode>, Error>>()?;
-              return Ok(ast(expr, t, Content::FunctionCall(function_name, args)));
+              return Ok(ast(expr, t, Content::FunctionCall(function_name.clone(), args)));
             }
             error(expr, "unknown function")
           }
@@ -179,7 +186,7 @@ impl <'l> TypeChecker<'l> {
               let type_tag =
                 Type::from_string(type_expr.symbol_unwrap()?.as_ref())
                 .ok_or_else(|| error_raw(type_expr, "unrecognised type"))?;
-              args.push((name, type_tag));
+              args.push((name.clone(), type_tag));
             }
             let mut type_checker = TypeChecker { variables : args.iter().cloned().collect(), functions: self.functions, sym: self.sym };
             let body = type_checker.to_ast(function_body)?;
@@ -187,7 +194,7 @@ impl <'l> TypeChecker<'l> {
               return error(expr, "function with that name already defined");
             }
             self.functions.insert(name.clone(), body.type_tag);
-            Ok(ast(expr, Type::Void, Content::FunctionDefinition(name, args, Box::new(body))))
+            Ok(ast(expr, Type::Void, Content::FunctionDefinition(name.clone(), args, Box::new(body))))
           }
           _ => return error(expr, "unsupported expression"),
         }
@@ -485,56 +492,74 @@ fn codegen_function(
   }
 }
 
-fn run_expression(expr : &Expr, jit: &mut Jit, functions : &mut HashMap<RefStr, Type>) -> Result<(), Error> {
+struct Interpreter {
+  sym : SymbolTable,
+  context : ContextRef,
+  builder : Builder,
+  module : Module,
+  functions : HashMap<RefStr, Type>,
+  pass_manager : PassManager,
+}
+
+impl Interpreter {
+  pub fn new() -> Interpreter {
+    let sym = SymbolTable::new();
+    let context = Context::get_global();
+    let builder = Builder::create();
+    let module = Module::create("top_level");
+    let functions = HashMap::new();
+    let pm = PassManager::create_for_function(&module);
+    pm.add_instruction_combining_pass();
+    pm.add_reassociate_pass();
+    pm.add_gvn_pass();
+    pm.add_cfg_simplification_pass();
+    pm.add_basic_alias_analysis_pass();
+    pm.add_promote_memory_to_register_pass();
+    pm.add_instruction_combining_pass();
+    pm.add_reassociate_pass();
+    pm.initialize();
+
+    Interpreter { sym, context, builder, module, functions, pass_manager: pm }
+  }
+
+  fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
+    let mut jit = Jit::new(&mut self.context, &mut self.builder, &mut self.module, &mut self.pass_manager, &mut self.sym);
+    run_expression(expr, &mut jit, &mut self.functions)
+  }
+}
+
+//pub val : Rc<RefCell<Any>>,
+
+fn run_expression(expr : &Expr, jit: &mut Jit, functions : &mut HashMap<RefStr, Type>) -> Result<Val, Error> {
   let mut type_checker = TypeChecker { variables: HashMap::new(), functions: functions, sym: jit.sym };
   let ast = type_checker.to_ast(expr)?;
   let f = codegen_function(&ast, &ast, "top_level", vec!(), jit)?;
   println!("{}", display_expr(expr));
   dump_module(&jit.module);
 
-  fn execute<T : std::fmt::Debug>(expr : &Expr, f : FunctionValue, ee : &ExecutionEngine) -> Result<(), Error> {
+  fn execute<T>(expr : &Expr, f : FunctionValue, ee : &ExecutionEngine) -> Result<T, Error> {
     let function_name = f.get_name().to_str().unwrap();
     let v = unsafe {
       let jit_function = ee.get_function::<unsafe extern "C" fn() -> T>(function_name).map_err(|e| error_raw(expr, format!("{:?}", e)))?;
       jit_function.call()
     };
-    println!("result: {:?}", v);
-    Ok(())
+    Ok(v)
   }
   let ee = jit.module.create_jit_execution_engine(OptimizationLevel::None).map_err(|e| error_raw(expr, e.to_string()))?;
   let result = match ast.type_tag {
-    Type::Bool => execute::<bool>(expr, f, &ee),
-    Type::Float => execute::<f64>(expr, f, &ee),
-    Type::Void => execute::<()>(expr, f, &ee),
+    Type::Bool => execute::<bool>(expr, f, &ee).map(Val::Bool),
+    Type::Float => execute::<f64>(expr, f, &ee).map(Val::Float),
+    Type::Void => execute::<()>(expr, f, &ee).map(|_| Val::Void),
   };
   ee.remove_module(jit.module).unwrap();
   result
 }
 
 pub fn run_repl() {
-  let mut sym = SymbolTable::new();
 
   let mut rl = Editor::<()>::new();
-
-  let mut context = Context::get_global();
-  let mut builder = Builder::create();
-
-  let mut module = Module::create("top_level");
-
-  let mut functions = HashMap::new();
-
-  let mut pm = PassManager::create_for_function(&module);
-  pm.add_instruction_combining_pass();
-  pm.add_reassociate_pass();
-  pm.add_gvn_pass();
-  pm.add_cfg_simplification_pass();
-  pm.add_basic_alias_analysis_pass();
-  pm.add_promote_memory_to_register_pass();
-  pm.add_instruction_combining_pass();
-  pm.add_reassociate_pass();
-  pm.initialize();
-
-  let mut jit = Jit::new(&mut context, &mut builder, &mut module, &mut pm, &mut sym);
+  let mut i = Interpreter::new();
+  let mut jit = Jit::new(&mut i.context, &mut i.builder, &mut i.module, &mut i.pass_manager, &mut i.sym);
 
   loop {
     let mut input_line = rl.readline("repl> ").unwrap();
@@ -555,9 +580,9 @@ pub fn run_repl() {
         Ok(Complete(e)) => {
           // we have parsed a full expression
           rl.add_history_entry(input_line);
-          match run_expression(&e, &mut jit, &mut functions) {
-            Ok(_) => {
-              // yay
+          match run_expression(&e, &mut jit, &mut i.functions) {
+            Ok(value) => {
+              println!("{:?}", value)
             }
             Err(err) => {
               println!("error: {:?}", err);

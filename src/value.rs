@@ -114,18 +114,18 @@ pub fn display_expr(e: &Expr) -> String {
 }
 
 impl Expr {
-  pub fn tree_symbol_unwrap(&self) -> Result<RefStr, Error> {
+  pub fn tree_symbol_unwrap(&self) -> Result<&RefStr, Error> {
     if let ExprTag::Tree(s) = &self.tag {
-      Ok(s.clone())
+      Ok(s)
     }
     else {
       error(self, format!("expected a tree, found {:?}", self))
     }
   }
 
-  pub fn symbol_unwrap(&self) -> Result<RefStr, Error> {
+  pub fn symbol_unwrap(&self) -> Result<&RefStr, Error> {
     if let ExprTag::Symbol(s) = &self.tag {
-      Ok(s.clone())
+      Ok(s)
     }
     else {
       error(self, format!("expected a symbol, found {:?}", self))

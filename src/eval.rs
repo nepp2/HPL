@@ -198,8 +198,7 @@ impl <'l> Environment<'l> {
     Err(format!("No function called '{}' defined", name))
   }
 
-  fn symbol_to_type(&self, symbol : RefStr) -> Result<Type, String> {
-    let s = symbol.as_ref();
+  fn string_to_type(&self, s : &str) -> Result<Type, String> {
     if s == NO_TYPE {
       return Ok(Type::Any);
     }
@@ -270,7 +269,7 @@ fn eval_function_expr<'l>(function_expr: &Expr, env : &'l mut Environment) -> Re
 { 
   // Decide whether this is a first class function or a static function reference
   let symbol = function_expr.symbol_unwrap().ok();
-  let var = symbol.and_then(|s| env.dereference_variable(s.as_ref()));
+  let var = symbol.and_then(|s| env.dereference_variable(s));
   let fr : FunctionRef =
     if let Some(v) = var {
       // Symbol refers to a local variable (containing function reference)
@@ -280,7 +279,7 @@ fn eval_function_expr<'l>(function_expr: &Expr, env : &'l mut Environment) -> Re
     else if let Some(name) = symbol {
       // Assume it's a symbol referring to a function
       let f =
-        env.get_function(name)
+        env.get_function(&name)
         .map_err(|s| error_raw(function_expr, s))?;
       return Ok(f);
     }
@@ -378,9 +377,8 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
               *var = value;
             }
             None => {
-              let var_name = *var_symbol;
               return error(assign_expr,
-                format!("symbol '{}' was not defined", var_name));
+                format!("symbol '{}' was not defined", var_symbol));
             }
           }
           return Ok(Value::Unit)
@@ -400,7 +398,7 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
               let v = eval(&value_expr, env)?;
               let map_val : MapVal = to_value(struct_expr, env)?;
               let field_name = field_expr.symbol_unwrap()?;
-              map_val.borrow_mut().insert(field_name, v);
+              map_val.borrow_mut().insert(field_name.clone(), v);
               return Ok(Value::Unit)
             }
             _ => return error(assign_expr, format!("can't assign to {:?}", assign_expr)),
@@ -468,19 +466,19 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
       let field_exprs = &exprs[1..];
       let name = name_expr.symbol_unwrap()?;
       let mut map = HashMap::new();
-      map.insert(env.sym.get("type_name"), Value::from(name));
+      map.insert(env.sym.get("type_name"), Value::from(name.clone()));
       for (field, value) in field_exprs.iter().tuples() {
         let field_name = field.symbol_unwrap()?;
         let field_value = eval(value, env)?;
-        map.insert(field_name, field_value);
+        map.insert(field_name.clone(), field_value);
       }
-      Ok(Value::Map(env.map_instantiate(name, map)))
+      Ok(Value::Map(env.map_instantiate(name.clone(), map)))
     }
     (".", [expr, field_expr]) => {
       let m : MapVal = to_value(expr, env)?;
       let field_name = field_expr.symbol_unwrap()?;
       let v =
-        m.borrow_mut().get(&field_name).map(|v| v.clone())
+        m.borrow_mut().get(field_name).map(|v| v.clone())
         .ok_or_else(|| error_raw(field_expr, format!("map does not contain field '{}'", field_name)))?;
       Ok(v)
     }
@@ -546,20 +544,20 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
       let mut arg_names = vec!();
       let mut arg_types = vec!();
       for (arg, type_expr) in args_exprs.iter().tuples() {
-        arg_names.push(arg.symbol_unwrap()?);
+        arg_names.push(arg.symbol_unwrap()?.clone());
         let arg_type =
-          env.symbol_to_type(type_expr.symbol_unwrap()?)
+          env.string_to_type(type_expr.symbol_unwrap()?)
           .map_err(|s| error_raw(type_expr, s))?;
         arg_types.push(arg_type);
       }
       let f = Function {
-        name,
+        name: name.clone(),
         module_id: env.current_module,
         visible_modules: env.visible_modules(),
         arg_names, arg_types,
         handle: FunctionHandle::Ast(Rc::new(function_body.clone())),
       };
-      env.add_function(name, f).map_err(|s| error_raw(expr, s))?;
+      env.add_function(name.clone(), f).map_err(|s| error_raw(expr, s))?;
       Ok(Value::Unit)
     }
     ("literal_array", exprs) => {
@@ -619,13 +617,13 @@ pub fn eval(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
         .is_some()
       {
         let f = env.get_function(s).map_err(|s| error_raw(expr, s))?;
-        Ok(Value::Function(FunctionRef{ name: *s, module: f.module_id }))
+        Ok(Value::Function(FunctionRef{ name: s.clone(), module: f.module_id }))
       }
       else {
         return error(expr, format!("no variable or function in scope called '{}'", s));
       }
     }
-    ExprTag::LiteralString(s) => Ok(Value::from(*s)),
+    ExprTag::LiteralString(s) => Ok(Value::from(s.clone())),
     ExprTag::LiteralFloat(f) => Ok(Value::from(*f)),
     ExprTag::LiteralBool(b) => Ok(Value::from(*b)),
     ExprTag::LiteralUnit => Ok(Value::Unit),
