@@ -10,8 +10,9 @@ mod interpreter;
 mod value;
 mod library;
 mod watcher;
-mod tests;
 mod llvm;
+mod tests;
+mod test_llvm;
 
 use std::fs::File;
 use std::io::Read;

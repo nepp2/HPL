@@ -61,12 +61,12 @@ use inkwell::{OptimizationLevel, FloatPredicate};
 use inkwell::execution_engine::ExecutionEngine;
 
 #[derive(Clone, Copy, PartialEq)]
-enum Type {
+pub enum Type {
   Void, Float, Bool
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-enum Val {
+pub enum Val {
   Void, Float(f64), Bool(bool)
 }
 
@@ -492,7 +492,7 @@ fn codegen_function(
   }
 }
 
-struct Interpreter {
+pub struct Interpreter {
   sym : SymbolTable,
   context : ContextRef,
   builder : Builder,
@@ -522,7 +522,15 @@ impl Interpreter {
     Interpreter { sym, context, builder, module, functions, pass_manager: pm }
   }
 
-  fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
+  pub fn run(&mut self, code : &str) -> Result<Val, Error> {
+    let tokens =
+        lexer::lex(code, &mut self.sym)
+        .map_err(|mut es| es.remove(0))?;
+    let expr = parser::parse(tokens, &mut self.sym)?;
+    self.run_expression(&expr)
+  }
+
+  pub fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
     let mut jit = Jit::new(&mut self.context, &mut self.builder, &mut self.module, &mut self.pass_manager, &mut self.sym);
     run_expression(expr, &mut jit, &mut self.functions)
   }
