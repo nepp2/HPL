@@ -137,30 +137,31 @@ impl <'l> TypeChecker<'l> {
         match (instr.as_ref(), children) {
           ("call", exprs) => {
             let function_name = exprs[0].symbol_unwrap()?;
-            if exprs.len() == 3 {
-              let tag = match function_name.as_ref() {
-                "+" | "-" | "*" | "/" => Some(Type::Float),
-                ">" | ">="| "<" | "<=" | "==" => Some(Type::Bool),
-                _ => None,
-              };
-              if let Some(tag) = tag {
-                let a = self.to_ast(&exprs[1])?;
-                let b = self.to_ast(&exprs[2])?;
-                return Ok(ast(expr, tag, Content::IntrinsicCall(function_name.clone(), vec!(a, b))))
-              }
+            let op_tag = match function_name.as_ref() {
+              "+" | "-" | "*" | "/" | "unary_-" => Some(Type::Float),
+              ">" | ">="| "<" | "<=" | "==" | "unary_!" => Some(Type::Bool),
+              _ => None,
+            };
+            if let Some(op_tag) = op_tag {
+              let args =
+                exprs[1..].iter()
+                .map(|e| self.to_ast(e))
+                .collect::<Result<Vec<AstNode>, Error>>()?;
+              return Ok(ast(expr, op_tag, Content::IntrinsicCall(function_name.clone(), args)))
             }
-            if let Some(t) = self.functions.get(function_name.as_ref()) {
-              let t = *t;
+            if let Some(return_type) = self.functions.get(function_name.as_ref()) {
+              let return_type = *return_type;
               let args =
                 exprs[1..].iter().map(|e| self.to_ast(e))
                 .collect::<Result<Vec<AstNode>, Error>>()?;
-              return Ok(ast(expr, t, Content::FunctionCall(function_name.clone(), args)));
+              return Ok(ast(expr, return_type, Content::FunctionCall(function_name.clone(), args)));
             }
             error(expr, "unknown function")
           }
           ("let", exprs) => {
             let name = exprs[0].symbol_unwrap()?;
             let v = Box::new(self.to_ast(&exprs[1])?);
+            self.variables.insert(name.clone(), v.type_tag);
             Ok(ast(expr, Type::Void, Content::VariableInitialise(name.clone(), v)))
           }
           ("if", exprs) => {
@@ -278,6 +279,7 @@ fn codegen_int(n : &AstNode, jit: &mut Jit) -> Result<IntValue, Error> {
 
 macro_rules! codegen_type {
   (FloatValue, $e:ident, $jit:ident) => { codegen_float($e, $jit) };
+  (IntValue, $e:ident, $jit:ident) => { codegen_int($e, $jit) };
 }
 
 macro_rules! binary_op {
@@ -286,6 +288,16 @@ macro_rules! binary_op {
       let a = codegen_type!($type_name, $a, $jit)?;
       let b = codegen_type!($type_name, $b, $jit)?;
       let fv = ($jit).builder.$op_name(a, b, "op_result");
+      fv.into()
+    }
+  }
+}
+
+macro_rules! unary_op {
+  ($op_name:ident, $type_name:ident, $a:ident, $jit:ident) => {
+    {
+      let a = codegen_type!($type_name, $a, $jit)?;
+      let fv = ($jit).builder.$op_name(a, "op_result");
       fv.into()
     }
   }
@@ -316,7 +328,6 @@ impl <'l> Jit<'l> {
       builder.position_at_end(&current_block);
       pointer
     }
-
     if self.named_values.contains_key(&name) {
       return Err("variable with this name already defined".into());
     }
@@ -359,6 +370,13 @@ fn codegen_expression(ast : &AstNode, jit: &mut Jit) -> Result<Option<BasicValue
           "==" => compare_op!(build_float_compare, FloatPredicate::OEQ, FloatValue, a, b, jit),
           _ => return error(ast.loc, "encountered unrecognised intrinsic"),
         }        
+      }
+      else if let [a] = args.as_slice() {
+        match name.as_ref() {
+          "unary_-" => unary_op!(build_float_neg, FloatValue, a, jit),
+          "unary_!" => unary_op!(build_not, IntValue, a, jit),
+          _ => return error(ast.loc, "encountered unrecognised intrinsic"),
+        }
       }
       else {
         return error(ast.loc, "encountered unrecognised intrinsic");
@@ -445,7 +463,7 @@ fn codegen_expression(ast : &AstNode, jit: &mut Jit) -> Result<Option<BasicValue
         jit.builder.build_load(*ptr, name)
       }
       else {
-        return error(ast.loc, "unknown variable name")
+        return error(ast.loc, format!("unknown variable name '{}'.", name));
       }
     }
     Content::Literal(v) => {
@@ -652,7 +670,7 @@ pub fn run_repl() {
               println!("{:?}", value)
             }
             Err(err) => {
-              println!("error: {:?}", err);
+              println!("error: {}", err);
             }
           }
           break;
