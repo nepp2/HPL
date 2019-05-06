@@ -41,7 +41,7 @@ use std::any::Any;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 
-use crate::error::{Error, error, error_raw, TextLocation};
+use crate::error::{Error, error, error_raw, TextLocation, ErrorContent};
 use crate::value::{SymbolTable, display_expr, RefStr, Expr, ExprTag};
 use crate::lexer;
 use crate::parser;
@@ -55,8 +55,8 @@ use inkwell::builder::Builder;
 use inkwell::context::{Context, ContextRef};
 use inkwell::module::Module;
 use inkwell::passes::PassManager;
-use inkwell::types::{BasicTypeEnum, AnyTypeEnum};
-use inkwell::values::{BasicValueEnum, FloatValue, IntValue, FunctionValue };
+use inkwell::types::{BasicTypeEnum, BasicType};
+use inkwell::values::{BasicValueEnum, FloatValue, IntValue, FunctionValue, PointerValue };
 use inkwell::{OptimizationLevel, FloatPredicate};
 use inkwell::execution_engine::ExecutionEngine;
 
@@ -86,11 +86,20 @@ impl Type {
       }
     }
   }
+
+  fn to_basic_type(&self, c : &Context) -> Option<BasicTypeEnum> {
+    match self {
+      Void => None,
+      Float => Some(c.f64_type().into()),
+      Bool => Some(c.bool_type().into()),
+    }
+  }
 }
 
 enum Content {
-  Literal(f64),
+  Literal(Val),
   VariableReference(RefStr),
+  VariableInitialise(RefStr, Box<AstNode>),
   IfThen(Box<(AstNode, AstNode)>),
   IfThenElse(Box<(AstNode, AstNode, AstNode)>),
   Block(Vec<AstNode>),
@@ -148,6 +157,11 @@ impl <'l> TypeChecker<'l> {
               return Ok(ast(expr, t, Content::FunctionCall(function_name.clone(), args)));
             }
             error(expr, "unknown function")
+          }
+          ("let", exprs) => {
+            let name = exprs[0].symbol_unwrap()?;
+            let v = Box::new(self.to_ast(&exprs[1])?);
+            Ok(ast(expr, Type::Void, Content::VariableInitialise(name.clone(), v)))
           }
           ("if", exprs) => {
             if exprs.len() > 3 {
@@ -208,8 +222,16 @@ impl <'l> TypeChecker<'l> {
         }
       }
       ExprTag::LiteralFloat(f) => {
-        Ok(ast(expr, Type::Float, Content::Literal(*f as f64)))
+        let v = Val::Float(*f as f64);
+        Ok(ast(expr, Type::Float, Content::Literal(v)))
       }
+      ExprTag::LiteralBool(b) => {
+        let v = Val::Bool(*b);
+        Ok(ast(expr, Type::Bool, Content::Literal(v)))
+      },
+      ExprTag::LiteralUnit => {
+        Ok(ast(expr, Type::Void, Content::Literal(Val::Void)))
+      },
       _ => error(expr, "unsupported expression"),
     }
   }
@@ -218,7 +240,7 @@ impl <'l> TypeChecker<'l> {
 pub struct Jit<'l> {
   context: &'l mut ContextRef,
   builder: &'l mut Builder,
-  named_values: HashMap<RefStr, BasicValueEnum>,
+  named_values: HashMap<RefStr, PointerValue>,
   module : &'l mut Module,
   pm : &'l mut PassManager,
   sym : &'l mut SymbolTable,
@@ -277,6 +299,31 @@ macro_rules! compare_op {
       let fv = ($jit).builder.$op_name($pred, a, b, "cpm_result");
       fv.into()
     }
+  }
+}
+
+impl <'l> Jit<'l> {
+  fn init_variable(&mut self, name : RefStr, value : BasicValueEnum) -> Result<(), ErrorContent> {
+    fn create_entry_block_alloca(builder : &Builder, t : BasicTypeEnum, name : &str) -> PointerValue {
+      let current_block = builder.get_insert_block().unwrap();
+      let function = current_block.get_parent().unwrap();
+      let entry = function.get_entry_basic_block().unwrap();
+      match entry.get_first_instruction() {
+        Some(fi) => builder.position_before(&fi),
+        None => builder.position_at_end(&entry),
+      }
+      let pointer = builder.build_alloca(t, name);
+      builder.position_at_end(&current_block);
+      pointer
+    }
+
+    if self.named_values.contains_key(&name) {
+      return Err("variable with this name already defined".into());
+    }
+    let pointer = create_entry_block_alloca(&self.builder, value.get_type(), &name);
+    self.builder.build_store(pointer, value);
+    self.named_values.insert(name, pointer);
+    Ok(())
   }
 }
 
@@ -386,16 +433,27 @@ fn codegen_expression(ast : &AstNode, jit: &mut Jit) -> Result<Option<BasicValue
       jit.builder.position_at_end(&current_block);
       return Ok(None);
     }
-    Content::VariableReference(s) => {
-      if let Some(value) = jit.named_values.get(s) {
-        *value
+    Content::VariableInitialise(name, value_node) => {
+      let value = codegen_expression(value_node, jit)?
+        .ok_or_else(|| error_raw(value_node.loc, "expected value for initialiser, found void"))?;
+      jit.init_variable(name.clone(), value)
+        .map_err(|c| error_raw(ast.loc, c))?; 
+      return Ok(None);
+    }
+    Content::VariableReference(name) => {
+      if let Some(ptr) = jit.named_values.get(name) {
+        jit.builder.build_load(*ptr, name)
       }
       else {
         return error(ast.loc, "unknown variable name")
       }
     }
-    Content::Literal(f) => {
-      jit.context.f64_type().const_float(*f).into()
+    Content::Literal(v) => {
+      match v {
+        Val::Float(f) => jit.context.f64_type().const_float(*f).into(),
+        Val::Bool(b) => jit.context.bool_type().const_int(if *b { 1 } else { 0 }, false).into(),
+        Val::Void => return Ok(None),
+      }
     }
     _ => return error(ast.loc, "unsupported expression"),
   };
@@ -447,8 +505,9 @@ fn codegen_function(
     jit.builder.position_at_end(&entry);
 
     // set function parameters
-    for (param, arg) in function.get_param_iter().zip(&args) {
-      jit.named_values.insert(arg.clone(), param);
+    for (arg_value, arg_name) in function.get_param_iter().zip(&args) {
+      jit.init_variable(arg_name.clone(), arg_value)
+        .map_err(|c| error_raw(function_node.loc, c))?;
     }
 
     // compile body
