@@ -109,13 +109,24 @@ fn test_dispatch(){
 fn test_scope(){
   let code = "
     let a = 4
-    let b = 0
-    if true {
+    let b = if true {
       let a = 5
-      b = b + a
+      a
     }
-    b = b + a
-    b
+    else {
+      10
+    }
+    a + b
+  ";
+  assert_result(code, Val::Float(9.0));
+}
+
+#[test]
+fn test_assignment(){
+  let code = "
+    let a = 4
+    a = a + 5
+    a
   ";
   assert_result(code, Val::Float(9.0));
 }
