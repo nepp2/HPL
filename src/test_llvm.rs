@@ -138,7 +138,7 @@ fn test_struct() {
       x : float
       y : float
     }
-    fun foo(a, b) {
+    fun foo(a : vec2, b : vec2) {
       vec2(x: a.x + b.x, y: a.y + b.y)
     }
     let a = vec2(x: 10, y: 1)

@@ -33,6 +33,8 @@ from Jauhien Piatlicki.]
 
 */
 
+// TODO: Carlos says I should have more comments than the occasional TODO
+
 use std::io;
 use std::rc::Rc;
 use std::any::Any;
@@ -55,19 +57,25 @@ use inkwell::builder::Builder;
 use inkwell::context::{Context, ContextRef};
 use inkwell::module::Module;
 use inkwell::passes::PassManager;
-use inkwell::types::{BasicTypeEnum, BasicType};
-use inkwell::values::{BasicValueEnum, FloatValue, IntValue, FunctionValue, PointerValue };
+use inkwell::types::{BasicTypeEnum, BasicType, StructType};
+use inkwell::values::{BasicValueEnum, BasicValue, FloatValue, IntValue, FunctionValue, PointerValue };
 use inkwell::{OptimizationLevel, FloatPredicate};
 use inkwell::execution_engine::ExecutionEngine;
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum Type {
-  Void, Float, Bool
+  Void,
+  Float,
+  Bool,
+  Struct(Rc<StructDefinition>)
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum Val {
-  Void, Float(f64), Bool(bool)
+  Void,
+  Float(f64),
+  Bool(bool),
+  Struct(RefStr),
 }
 
 impl Type {
@@ -86,13 +94,28 @@ impl Type {
       }
     }
   }
+}
 
-  fn to_basic_type(&self, c : &Context) -> Option<BasicTypeEnum> {
-    match self {
-      Void => None,
-      Float => Some(c.f64_type().into()),
-      Bool => Some(c.bool_type().into()),
-    }
+#[derive(Clone, Debug)]
+struct StructDefinition {
+  name : RefStr,
+  fields : Vec<(RefStr, Type)>,
+}
+
+struct FunctionDefinition {
+  name : RefStr,
+  args : Vec<RefStr>,
+  signature : Rc<FunctionSignature>
+}
+
+struct FunctionSignature {
+  return_type : Type,
+  args : Vec<Type>,
+}
+
+impl PartialEq for StructDefinition {
+  fn eq(&self, rhs : &Self) -> bool {
+    self.name == rhs.name
   }
 }
 
@@ -104,7 +127,10 @@ enum Content {
   IfThen(Box<(AstNode, AstNode)>),
   IfThenElse(Box<(AstNode, AstNode, AstNode)>),
   Block(Vec<AstNode>),
-  FunctionDefinition(RefStr, Vec<(RefStr, Type)>, Box<AstNode>),
+  FunctionDefinition(Rc<FunctionDefinition>, Box<AstNode>),
+  StructDefinition(Rc<StructDefinition>),
+  StructInstantiate(Rc<StructDefinition>, Vec<AstNode>),
+  FieldAccess(Box<(AstNode, RefStr)>, usize),
   FunctionCall(RefStr, Vec<AstNode>),
   IntrinsicCall(RefStr, Vec<AstNode>),
   While(Box<(AstNode, AstNode)>),
@@ -127,7 +153,8 @@ fn ast(expr : &Expr, type_tag : Type, content : Content) -> AstNode {
 
 struct TypeChecker<'l> {
   variables: HashMap<RefStr, Type>,
-  functions: &'l mut HashMap<RefStr, Type>,
+  functions: &'l mut HashMap<RefStr, Rc<FunctionDefinition>>,
+  struct_types : &'l mut HashMap<RefStr, Rc<StructDefinition>>,
   scope_map: Vec<HashMap<RefStr, RefStr>>,
   sym: &'l mut SymbolTable,
 }
@@ -136,13 +163,15 @@ impl <'l> TypeChecker<'l> {
 
   fn new(
     args : HashMap<RefStr, Type>,
-    functions : &'l mut HashMap<RefStr, Type>,
+    functions : &'l mut HashMap<RefStr, Rc<FunctionDefinition>>,
+    struct_types : &'l mut HashMap<RefStr, Rc<StructDefinition>>,
     sym : &'l mut SymbolTable)
       -> TypeChecker<'l>
   {
     TypeChecker {
       variables : args,
       functions,
+      struct_types,
       sym,
       scope_map: vec!(HashMap::new())
     }
@@ -170,6 +199,17 @@ impl <'l> TypeChecker<'l> {
     unique_name.clone()
   }
 
+  fn to_type(&mut self, expr : &Expr) -> Result<Type, Error> {
+    let s = expr.symbol_unwrap()?;
+    if let Some(t) = Type::from_string(s) {
+      return Ok(t);
+    }
+    if let Some(t) = self.struct_types.get(s) {
+      return Ok(Type::Struct(t.clone()));
+    }
+    error(expr, "no type with this name exists")
+  }
+
   fn to_ast(&mut self, expr : &Expr) -> Result<AstNode, Error> {
     match &expr.tag {
       ExprTag::Tree(_) => {
@@ -190,8 +230,8 @@ impl <'l> TypeChecker<'l> {
                 .collect::<Result<Vec<AstNode>, Error>>()?;
               return Ok(ast(expr, op_tag, Content::IntrinsicCall(function_name.clone(), args)))
             }
-            if let Some(return_type) = self.functions.get(function_name.as_ref()) {
-              let return_type = *return_type;
+            if let Some(def) = self.functions.get(function_name.as_ref()) {
+              let return_type = def.signature.return_type.clone();
               let args =
                 exprs[1..].iter().map(|e| self.to_ast(e))
                 .collect::<Result<Vec<AstNode>, Error>>()?;
@@ -199,11 +239,21 @@ impl <'l> TypeChecker<'l> {
             }
             error(expr, "unknown function")
           }
+          ("&&", [a, b]) => {
+            let a = self.to_ast(a)?;
+            let b = self.to_ast(b)?;
+            Ok(ast(expr, Type::Bool, Content::IntrinsicCall(instr.clone(), vec!(a, b))))
+          }
+          ("||", [a, b]) => {
+            let a = self.to_ast(a)?;
+            let b = self.to_ast(b)?;
+            Ok(ast(expr, Type::Bool, Content::IntrinsicCall(instr.clone(), vec!(a, b))))
+          }
           ("let", exprs) => {
             let name = exprs[0].symbol_unwrap()?;
             let scoped_name = self.create_scoped_variable_name(name.clone());
             let v = Box::new(self.to_ast(&exprs[1])?);
-            self.variables.insert(scoped_name.clone(), v.type_tag);
+            self.variables.insert(scoped_name.clone(), v.type_tag.clone());
             Ok(ast(expr, Type::Void, Content::VariableInitialise(scoped_name, v)))
           }
           ("=", [assign_expr, value_expr]) => {
@@ -227,7 +277,7 @@ impl <'l> TypeChecker<'l> {
               if then_branch.type_tag != else_branch.type_tag {
                 return error(expr, "if/else branch type mismatch");
               }
-              Ok(ast(expr, then_branch.type_tag, Content::IfThenElse(Box::new((condition, then_branch, else_branch)))))
+              Ok(ast(expr, then_branch.type_tag.clone(), Content::IfThenElse(Box::new((condition, then_branch, else_branch)))))
             }
             else {
               Ok(ast(expr, Type::Void, Content::IfThen(Box::new((condition, then_branch)))))
@@ -237,28 +287,108 @@ impl <'l> TypeChecker<'l> {
             self.scope_map.push(HashMap::new());
             let nodes = exprs.iter().map(|e| self.to_ast(e)).collect::<Result<Vec<AstNode>, Error>>()?;
             self.scope_map.pop();
-            let tag = nodes.last().map(|n| n.type_tag).unwrap_or(Type::Void);
+            let tag = nodes.last().map(|n| n.type_tag.clone()).unwrap_or(Type::Void);
             Ok(ast(expr, tag, Content::Block(nodes)))
           }
           ("fun", exprs) => {
             let name = exprs[0].symbol_unwrap()?;
             let args_exprs = exprs[1].children.as_slice();
             let function_body = &exprs[2];
-            let mut args = vec!();
+            let mut arg_names = vec!();
+            let mut arg_types = vec!();
             for (name_expr, type_expr) in args_exprs.iter().tuples() {
               let name = name_expr.symbol_unwrap()?;
-              let type_tag =
-                Type::from_string(type_expr.symbol_unwrap()?.as_ref())
-                .ok_or_else(|| error_raw(type_expr, "unrecognised type"))?;
-              args.push((name.clone(), type_tag));
+              let type_tag = self.to_type(type_expr)?;
+              arg_names.push(name.clone());
+              arg_types.push(type_tag);
             }
-            let mut type_checker = TypeChecker::new(args.iter().cloned().collect(), self.functions, self.sym);
+            let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
+            let mut type_checker =
+              TypeChecker::new(args, self.functions, self.struct_types, self.sym);
             let body = type_checker.to_ast(function_body)?;
             if self.functions.contains_key(name.as_ref()) {
               return error(expr, "function with that name already defined");
             }
-            self.functions.insert(name.clone(), body.type_tag);
-            Ok(ast(expr, Type::Void, Content::FunctionDefinition(name.clone(), args, Box::new(body))))
+            let signature = Rc::new(FunctionSignature {
+              return_type: body.type_tag.clone(),
+              args: arg_types,
+            });
+            let def = Rc::new(FunctionDefinition {
+              name: name.clone(),
+              args: arg_names,
+              signature,
+            });
+            self.functions.insert(name.clone(), def.clone());
+            Ok(ast(expr, Type::Void, Content::FunctionDefinition(def, Box::new(body))))
+          }
+          ("struct_define", exprs) => {
+            if exprs.len() < 1 {
+              return error(expr, "malformed struct definition");
+            }
+            let name_expr = &exprs[0];
+            let name = name_expr.symbol_unwrap()?;
+            if self.struct_types.contains_key(name) {
+              return error(expr, "struct with this name already defined");
+            }
+            // TODO: check for duplicates?
+            let field_exprs = &exprs[1..];
+            let mut fields = vec![];
+            // TODO: record the field types, and check them!
+            for (field_name_expr, type_expr) in field_exprs.iter().tuples() {
+              let field_name = field_name_expr.symbol_unwrap()?.clone();
+              let type_tag = self.to_type(type_expr)?;
+              fields.push((field_name, type_tag));
+            }
+            let def = Rc::new(StructDefinition { name: name.clone(), fields });
+            self.struct_types.insert(name.clone(), def.clone());
+            Ok(ast(expr, Type::Void, Content::StructDefinition(def)))
+          }
+          ("struct_instantiate", exprs) => {
+            if exprs.len() < 1 || exprs.len() % 2 == 0 {
+              return error(expr, format!("malformed struct instantiation {:?}", expr));
+            }
+            let name_expr = &exprs[0];
+            let field_exprs = &exprs[1..];
+            let name = name_expr.symbol_unwrap()?;
+            let fields =
+              field_exprs.iter().tuples().map(|(name, value)| {
+                let value = self.to_ast(value)?;
+                Ok((name, value))
+              })
+              .collect::<Result<Vec<(&Expr, AstNode)>, Error>>()?;
+            let def =
+              self.struct_types.get(name)
+              .ok_or_else(|| error_raw(name_expr, "no struct with this name exists"))?;
+            let field_iter = fields.iter().zip(def.fields.iter());
+            for ((field, value), (expected_name, expected_type)) in field_iter {
+              let name = field.symbol_unwrap()?;
+              if name != expected_name {
+                return error(*field, "incorrect field name");
+              }
+              if &value.type_tag != expected_type {
+                return error(value.loc, "type mismatch");
+              }
+            }
+            if fields.len() > def.fields.len() {
+              let extra_field = fields[def.fields.len()].0;
+              return error(extra_field, "too many fields");
+            }
+            let c = Content::StructInstantiate(def.clone(), fields.into_iter().map(|v| v.1).collect());
+            Ok(ast(expr, Type::Struct(def.clone()), c))
+          }
+          (".", [struct_expr, field_expr]) => {
+            let struct_val = self.to_ast(struct_expr)?;
+            let field_name = field_expr.symbol_unwrap()?;
+            let def = match &struct_val.type_tag {
+              Type::Struct(def) => def,
+              _ => return error(struct_expr, format!("expected struct, found {:?}", struct_val.type_tag)),
+            };
+            let (field_index, (_, field_type)) =
+              def.fields.iter().enumerate().find(|(_, (n, _))| n==field_name)
+              .ok_or_else(|| error_raw(field_expr, "struct does not have field with this name"))?;
+            let field_type = field_type.clone();
+            let c = Content::FieldAccess(Box::new((struct_val, field_name.clone())), field_index);
+            Ok(ast(expr, field_type, c))
           }
           _ => return error(expr, "unsupported expression"),
         }
@@ -269,7 +399,7 @@ impl <'l> TypeChecker<'l> {
         }
         let name = self.get_scoped_variable_name(s);
         if let Some(t) = self.variables.get(name.as_ref()) {
-          Ok(ast(expr, *t, Content::VariableReference(name)))
+          Ok(ast(expr, t.clone(), Content::VariableReference(name)))
         }
         else {
           error(expr, "unknown variable name")
@@ -337,10 +467,13 @@ struct LoopLabels {
   exit : BasicBlock,
 }
 
+enum ShortCircuitOp { And, Or }
+
 pub struct Jit<'l> {
   context: &'l mut ContextRef,
   builder: Builder,
   variables: HashMap<RefStr, PointerValue>,
+  struct_types: HashMap<RefStr, StructType>,
 
   /// A stack of values indicating the entry and exit labels for each loop
   loop_labels: Vec<LoopLabels>,
@@ -355,6 +488,7 @@ impl <'l> Jit<'l> {
     Jit {
       context, builder: Builder::create(), module, pm,
       variables: HashMap::new(),
+      struct_types: HashMap::new(),
       loop_labels: vec!(),
     }
   }
@@ -363,23 +497,24 @@ impl <'l> Jit<'l> {
     Jit::new(self.context, self.module, self.pm)
   }
 
-  fn init_variable(&mut self, name : RefStr, value : BasicValueEnum) -> Result<(), ErrorContent> {
-    fn create_entry_block_alloca(builder : &Builder, t : BasicTypeEnum, name : &str) -> PointerValue {
-      let current_block = builder.get_insert_block().unwrap();
-      let function = current_block.get_parent().unwrap();
-      let entry = function.get_entry_basic_block().unwrap();
-      match entry.get_first_instruction() {
-        Some(fi) => builder.position_before(&fi),
-        None => builder.position_at_end(&entry),
-      }
-      let pointer = builder.build_alloca(t, name);
-      builder.position_at_end(&current_block);
-      pointer
+  fn create_entry_block_alloca(&self, t : BasicTypeEnum, name : &str) -> PointerValue {
+    let current_block = self.builder.get_insert_block().unwrap();
+    let function = current_block.get_parent().unwrap();
+    let entry = function.get_entry_basic_block().unwrap();
+    match entry.get_first_instruction() {
+      Some(fi) => self.builder.position_before(&fi),
+      None => self.builder.position_at_end(&entry),
     }
+    let pointer = self.builder.build_alloca(t, name);
+    self.builder.position_at_end(&current_block);
+    pointer
+  }
+
+  fn init_variable(&mut self, name : RefStr, value : BasicValueEnum) -> Result<(), ErrorContent> {
     if self.variables.contains_key(&name) {
       return Err("variable with this name already defined".into());
     }
-    let pointer = create_entry_block_alloca(&self.builder, value.get_type(), &name);
+    let pointer = self.create_entry_block_alloca(value.get_type(), &name);
     self.builder.build_store(pointer, value);
     self.variables.insert(name, pointer);
     Ok(())
@@ -399,6 +534,39 @@ impl <'l> Jit<'l> {
       Some(BasicValueEnum::IntValue(i)) => Ok(i),
       t => error(n.loc, format!("Expected int, found {:?}", t)),
     }
+  }
+
+  fn codegen_short_circuit_op(&mut self, a : &AstNode, b : &AstNode, op : ShortCircuitOp) -> Result<BasicValueEnum, Error> {
+    use ShortCircuitOp::*;
+    let short_circuit_outcome = match op {
+      And => self.context.bool_type().const_int(0, false),
+      Or => self.context.bool_type().const_int(1, false),
+    };
+    // create basic blocks
+    let a_block = self.builder.get_insert_block().unwrap();
+    let f = a_block.get_parent().unwrap();
+    let b_block = self.context.append_basic_block(&f, "b_block");
+    let end_block = self.context.append_basic_block(&f, "end");
+    // compute a
+    let a_value = self.codegen_int(a)?;
+    let a_end_block = self.builder.get_insert_block().unwrap();
+    match op {
+      And => self.builder.build_conditional_branch(a_value, &b_block, &end_block),
+      Or => self.builder.build_conditional_branch(a_value, &end_block, &b_block),
+    };
+    // maybe compute b
+    self.builder.position_at_end(&b_block);
+    let b_value = self.codegen_int(b)?;
+    let b_end_block = self.builder.get_insert_block().unwrap();
+    self.builder.build_unconditional_branch(&end_block);
+    // end block
+    self.builder.position_at_end(&end_block);
+    let phi = self.builder.build_phi(self.context.bool_type(), "result");
+    phi.add_incoming(&[
+      (&short_circuit_outcome, &a_end_block),
+      (&b_value, &b_end_block),
+    ]);
+    return Ok(phi.as_basic_value());
   }
 
   fn codegen_expression(&mut self, ast : &AstNode) -> Result<Option<BasicValueEnum>, Error> {
@@ -431,6 +599,8 @@ impl <'l> Jit<'l> {
             "<" => compare_op!(build_float_compare, FloatPredicate::OLT, FloatValue, a, b, self),
             "<=" => compare_op!(build_float_compare, FloatPredicate::OLE, FloatValue, a, b, self),
             "==" => compare_op!(build_float_compare, FloatPredicate::OEQ, FloatValue, a, b, self),
+            "&&" => self.codegen_short_circuit_op(a, b, ShortCircuitOp::And)?,
+            "||" => self.codegen_short_circuit_op(a, b, ShortCircuitOp::Or)?,
             _ => return error(ast.loc, "encountered unrecognised intrinsic"),
           }        
         }
@@ -544,13 +714,28 @@ impl <'l> Jit<'l> {
         }
         return Ok(None);
       }
-      Content::FunctionDefinition(name, arg_nodes, body) => {
-        let mut args = vec!();
-        for (arg, _) in arg_nodes.iter() {
-          args.push(arg.clone());
-        }
-        self.child().codegen_function(ast, body, name.as_ref(), args)?;
+      Content::FunctionDefinition(def, body) => {
+        self.child().codegen_function(ast, body, &def.name, &def.args)?;
         return Ok(None);
+      }
+      Content::StructDefinition(_def) => {
+        // TODO: is nothing required here?
+        return Ok(None);
+      }
+      Content::StructInstantiate(def, args) => {
+        let t = self.struct_type(def).as_basic_type_enum();
+        let ptr = self.create_entry_block_alloca(t, &def.name);
+        let struct_val = self.builder.build_load(ptr, "struct_load").into_struct_value();
+        for (i, a) in args.iter().enumerate() {
+          let v = self.codegen_expression(a)?.unwrap();
+          self.builder.build_insert_value(struct_val, v, i as u32, &def.fields[i].0);
+        }
+        struct_val.as_basic_value_enum()
+      }
+      Content::FieldAccess(x, field_index) => {
+        let (struct_val_node, field_name) = (&x.0, &x.1);
+        let v = *self.codegen_expression(struct_val_node)?.unwrap().as_struct_value();
+        self.builder.build_extract_value(v, *field_index as u32, field_name).unwrap()
       }
       Content::Assignment(ns) => {
         let (assign_node, value_node) = (&ns.0, &ns.1);
@@ -581,6 +766,7 @@ impl <'l> Jit<'l> {
           Val::Float(f) => self.context.f64_type().const_float(*f).into(),
           Val::Bool(b) => self.context.bool_type().const_int(if *b { 1 } else { 0 }, false).into(),
           Val::Void => return Ok(None),
+          Val::Struct(_) => panic!(),
         }
       }
     };
@@ -601,12 +787,35 @@ impl <'l> Jit<'l> {
     }
   }
 
+  fn to_basic_type(&mut self, t : &Type) -> Option<BasicTypeEnum> {
+    match t {
+      Type::Void => None,
+      Type::Float => Some(self.context.f64_type().into()),
+      Type::Bool => Some(self.context.bool_type().into()),
+      Type::Struct(def) => Some(self.struct_type(def).as_basic_type_enum()),
+    }
+  }
+
+  fn struct_type(&mut self, def : &StructDefinition) -> StructType {
+    if let Some(t) = self.struct_types.get(&def.name) {
+      return *t;
+    }
+    let types =
+      def.fields.iter().map(|(_, t)| {
+        self.to_basic_type(t).unwrap()
+      })
+      .collect::<Vec<BasicTypeEnum>>();
+    let t = self.context.struct_type(&types, false);
+    self.struct_types.insert(def.name.clone(), t);
+    return t;
+  }
+
   fn codegen_function(
     mut self,
     function_node : &AstNode,
     body : &AstNode,
     name : &str,
-    args : Vec<RefStr>)
+    args : &[RefStr])
       -> Result<FunctionValue, Error>
   {
     /* TODO: is this needed?
@@ -617,21 +826,22 @@ impl <'l> Jit<'l> {
     */
 
     let f64_type = self.context.f64_type();
-    let args_types = std::iter::repeat(f64_type)
+    let arg_types = std::iter::repeat(f64_type)
       .take(args.len())
       .map(|f| f.into())
       .collect::<Vec<BasicTypeEnum>>();
-    let args_types = args_types.as_slice();
+    let arg_types = arg_types.as_slice();
 
-    let fn_type = match body.type_tag {
-      Type::Bool => self.context.bool_type().fn_type(args_types, false),
-      Type::Float => self.context.f64_type().fn_type(args_types, false),
-      Type::Void => self.context.void_type().fn_type(args_types, false),
+    let fn_type = match &body.type_tag {
+      Type::Bool => self.context.bool_type().fn_type(arg_types, false),
+      Type::Float => self.context.f64_type().fn_type(arg_types, false),
+      Type::Void => self.context.void_type().fn_type(arg_types, false),
+      Type::Struct(def) => self.struct_type(def).fn_type(arg_types, false),
     };
     let function = self.module.add_function(name, fn_type, None);
 
     // this exists to catch errors and delete the function if needed
-    fn generate(function_node : &AstNode, body : &AstNode, function : FunctionValue, args : Vec<RefStr>, jit : &mut Jit) -> Result<(), Error> {
+    fn generate(function_node : &AstNode, body : &AstNode, function : FunctionValue, args : &[RefStr], jit : &mut Jit) -> Result<(), Error> {
       // set arguments names
       for (i, arg) in function.get_param_iter().enumerate() {
         arg.into_float_value().set_name(args[i].as_ref());
@@ -642,7 +852,7 @@ impl <'l> Jit<'l> {
       jit.builder.position_at_end(&entry);
 
       // set function parameters
-      for (arg_value, arg_name) in function.get_param_iter().zip(&args) {
+      for (arg_value, arg_name) in function.get_param_iter().zip(args) {
         jit.init_variable(arg_name.clone(), arg_value)
           .map_err(|c| error_raw(function_node.loc, c))?;
       }
@@ -690,7 +900,8 @@ pub struct Interpreter {
   sym : SymbolTable,
   context : ContextRef,
   module : Module,
-  functions : HashMap<RefStr, Type>,
+  functions : HashMap<RefStr, Rc<FunctionDefinition>>,
+  struct_types : HashMap<RefStr, Rc<StructDefinition>>,
   pass_manager : PassManager,
 }
 
@@ -700,7 +911,9 @@ impl Interpreter {
     let context = Context::get_global();
     let module = Module::create("top_level");
     let functions = HashMap::new();
+    let struct_types = HashMap::new();
     let pm = PassManager::create_for_function(&module);
+    /*
     pm.add_instruction_combining_pass();
     pm.add_reassociate_pass();
     pm.add_gvn_pass();
@@ -709,9 +922,10 @@ impl Interpreter {
     pm.add_promote_memory_to_register_pass();
     pm.add_instruction_combining_pass();
     pm.add_reassociate_pass();
+    */
     pm.initialize();
 
-    Interpreter { sym, context, module, functions, pass_manager: pm }
+    Interpreter { sym, context, module, functions, struct_types, pass_manager: pm }
   }
 
   pub fn function_jit(&mut self) -> Jit {
@@ -731,14 +945,12 @@ impl Interpreter {
   }
 }
 
-//pub val : Rc<RefCell<Any>>,
-
 fn run_expression(expr : &Expr, i: &mut Interpreter) -> Result<Val, Error> {
-  let mut type_checker = TypeChecker::new(HashMap::new(), &mut i.functions, &mut i.sym);
+  let mut type_checker = TypeChecker::new(HashMap::new(), &mut i.functions, &mut i.struct_types, &mut i.sym);
   let ast = type_checker.to_ast(expr)?;
   let f = {
     let jit = i.function_jit();
-    jit.codegen_function(&ast, &ast, "top_level", vec!())?
+    jit.codegen_function(&ast, &ast, "top_level", &[])?
   };
   println!("{}", display_expr(expr));
   dump_module(&i.module);
@@ -756,6 +968,7 @@ fn run_expression(expr : &Expr, i: &mut Interpreter) -> Result<Val, Error> {
     Type::Bool => execute::<bool>(expr, f, &ee).map(Val::Bool),
     Type::Float => execute::<f64>(expr, f, &ee).map(Val::Float),
     Type::Void => execute::<()>(expr, f, &ee).map(|_| Val::Void),
+    Type::Struct(_) => error(expr, "can't return a struct from a top-level function"),
   };
   ee.remove_module(&i.module).unwrap();
   result
