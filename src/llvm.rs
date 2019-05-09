@@ -359,7 +359,8 @@ impl <'l> Jit<'l> {
         return Ok(None);
       }
       Content::FunctionDefinition(def, body) => {
-        self.child().codegen_function(ast, body, &def.name, &def.args)?;
+        self.child().codegen_function(
+          ast, body, &def.name, &def.args, &def.signature.args)?;
         return Ok(None);
       }
       Content::StructDefinition(_def) => {
@@ -369,17 +370,25 @@ impl <'l> Jit<'l> {
       Content::StructInstantiate(def, args) => {
         let t = self.struct_type(def).as_basic_type_enum();
         let ptr = self.create_entry_block_alloca(t, &def.name);
-        let struct_val = self.builder.build_load(ptr, "struct_load").into_struct_value();
         for (i, a) in args.iter().enumerate() {
           let v = self.codegen_expression(a)?.unwrap();
-          self.builder.build_insert_value(struct_val, v, i as u32, &def.fields[i].0);
+          let element_ptr = unsafe {
+            self.builder.build_struct_gep(ptr, i as u32, &def.fields[i].0)
+          };
+          self.builder.build_store(element_ptr, v);
         }
+        let struct_val = self.builder.build_load(ptr, "struct_load").into_struct_value();
         struct_val.as_basic_value_enum()
       }
       Content::FieldAccess(x, field_index) => {
         let (struct_val_node, field_name) = (&x.0, &x.1);
-        let v = *self.codegen_expression(struct_val_node)?.unwrap().as_struct_value();
-        self.builder.build_extract_value(v, *field_index as u32, field_name).unwrap()
+        let v = self.codegen_expression(struct_val_node)?.unwrap();
+        let struct_val = *v.as_struct_value();
+        // TODO: uncertain about the use of `extractvalue`. I could use getelementptr instead,
+        // but then I'd have to evaluate structs as pointers instead of register values.
+        // This seems appealing, but might get complicated when passing them into functions,
+        // and returning them from functions.
+        self.builder.build_extract_value(struct_val, *field_index as u32, field_name).unwrap()
       }
       Content::Assignment(ns) => {
         let (assign_node, value_node) = (&ns.0, &ns.1);
@@ -440,6 +449,18 @@ impl <'l> Jit<'l> {
     }
   }
 
+  fn name_basic_type(t : &BasicValueEnum, s : &str) {
+    use BasicValueEnum::*;
+    match t {
+      ArrayValue(v) => v.set_name(s),
+      IntValue(v) => v.set_name(s),
+      FloatValue(v) => v.set_name(s),
+      PointerValue(v) => v.set_name(s),
+      StructValue(v) => v.set_name(s),
+      VectorValue(v) => v.set_name(s),
+    }
+  }
+
   fn struct_type(&mut self, def : &StructDefinition) -> StructType {
     if let Some(t) = self.struct_types.get(&def.name) {
       return *t;
@@ -459,7 +480,8 @@ impl <'l> Jit<'l> {
     function_node : &AstNode,
     body : &AstNode,
     name : &str,
-    args : &[RefStr])
+    args : &[RefStr],
+    arg_types : &[Type])
       -> Result<FunctionValue, Error>
   {
     /* TODO: is this needed?
@@ -468,11 +490,8 @@ impl <'l> Jit<'l> {
       return error(node, format!("function '{}' already defined", name));
     };
     */
-
-    let f64_type = self.context.f64_type();
-    let arg_types = std::iter::repeat(f64_type)
-      .take(args.len())
-      .map(|f| f.into())
+    let arg_types =
+      arg_types.iter().map(|t| self.to_basic_type(t).unwrap())
       .collect::<Vec<BasicTypeEnum>>();
     let arg_types = arg_types.as_slice();
 
@@ -491,7 +510,7 @@ impl <'l> Jit<'l> {
     {
       // set arguments names
       for (i, arg) in function.get_param_iter().enumerate() {
-        arg.into_float_value().set_name(args[i].as_ref());
+        Jit::name_basic_type(&arg, args[i].as_ref());
       }
 
       let entry = jit.context.append_basic_block(&function, "entry");
@@ -562,16 +581,16 @@ impl Interpreter {
     let struct_types = HashMap::new();
     let pm = PassManager::create_for_function(&module);
 
-    // TODO: enable optimisation again
+    // TODO: decide what to do about optimisation
 
-   // pm.add_instruction_combining_pass();
-    //pm.add_reassociate_pass();
-    //pm.add_gvn_pass();
-    //pm.add_cfg_simplification_pass();
-    //pm.add_basic_alias_analysis_pass();
-    //pm.add_promote_memory_to_register_pass();
-    //pm.add_instruction_combining_pass();
-    //pm.add_reassociate_pass();
+    pm.add_instruction_combining_pass();
+    pm.add_reassociate_pass();
+    pm.add_gvn_pass();
+    pm.add_cfg_simplification_pass();
+    pm.add_basic_alias_analysis_pass();
+    pm.add_promote_memory_to_register_pass();
+    pm.add_instruction_combining_pass();
+    pm.add_reassociate_pass();
     
     pm.initialize();
 
@@ -601,7 +620,7 @@ fn run_expression(expr : &Expr, i: &mut Interpreter) -> Result<Val, Error> {
   let ast = type_checker.to_ast(expr)?;
   let f = {
     let jit = i.function_jit();
-    jit.codegen_function(&ast, &ast, "top_level", &[])?
+    jit.codegen_function(&ast, &ast, "top_level", &[], &[])?
   };
   println!("{}", display_expr(expr));
   dump_module(&i.module);
@@ -626,6 +645,7 @@ fn run_expression(expr : &Expr, i: &mut Interpreter) -> Result<Val, Error> {
     Type::Struct(_) =>
       error(expr, "can't return a struct from a top-level function"),
   };
+  unsafe { f.delete(); }
   ee.remove_module(&i.module).unwrap();
   result
 }

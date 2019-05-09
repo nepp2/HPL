@@ -48,12 +48,14 @@ pub struct StructDefinition {
   pub fields : Vec<(RefStr, Type)>,
 }
 
+#[derive(Debug)]
 pub struct FunctionDefinition {
   pub name : RefStr,
   pub args : Vec<RefStr>,
   pub signature : Rc<FunctionSignature>
 }
 
+#[derive(Debug)]
 pub struct FunctionSignature {
   pub return_type : Type,
   pub args : Vec<Type>,
@@ -65,6 +67,7 @@ impl PartialEq for StructDefinition {
   }
 }
 
+#[derive(Debug)]
 pub enum Content {
   Literal(Val),
   VariableReference(RefStr),
@@ -83,6 +86,7 @@ pub enum Content {
   Break,
 }
 
+#[derive(Debug)]
 pub struct AstNode {
   pub type_tag : Type,
   pub content : Content,
@@ -247,6 +251,9 @@ impl <'l> TypeChecker<'l> {
             for (name_expr, type_expr) in args_exprs.iter().tuples() {
               let name = name_expr.symbol_unwrap()?;
               let type_tag = self.to_type(type_expr)?;
+              if type_tag == Type::Void {
+                return error(expr, "functions args cannot be void");
+              }
               arg_names.push(name.clone());
               arg_types.push(type_tag);
             }
