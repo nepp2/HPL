@@ -35,12 +35,9 @@ from Jauhien Piatlicki.]
 
 // TODO: Carlos says I should have more comments than the occasional TODO
 
-use std::io;
 use std::rc::Rc;
-use std::any::Any;
 use std::fmt::Write;
 
-use rustyline::error::ReadlineError;
 use rustyline::Editor;
 
 use crate::error::{Error, error, error_raw, TextLocation, ErrorContent};
@@ -58,7 +55,8 @@ use inkwell::context::{Context, ContextRef};
 use inkwell::module::Module;
 use inkwell::passes::PassManager;
 use inkwell::types::{BasicTypeEnum, BasicType, StructType};
-use inkwell::values::{BasicValueEnum, BasicValue, FloatValue, IntValue, FunctionValue, PointerValue };
+use inkwell::values::{
+  BasicValueEnum, BasicValue, FloatValue, IntValue, FunctionValue, PointerValue };
 use inkwell::{OptimizationLevel, FloatPredicate};
 use inkwell::execution_engine::ExecutionEngine;
 
@@ -75,7 +73,6 @@ pub enum Val {
   Void,
   Float(f64),
   Bool(bool),
-  Struct(RefStr),
 }
 
 impl Type {
@@ -97,7 +94,7 @@ impl Type {
 }
 
 #[derive(Clone, Debug)]
-struct StructDefinition {
+pub struct StructDefinition {
   name : RefStr,
   fields : Vec<(RefStr, Type)>,
 }
@@ -277,7 +274,9 @@ impl <'l> TypeChecker<'l> {
               if then_branch.type_tag != else_branch.type_tag {
                 return error(expr, "if/else branch type mismatch");
               }
-              Ok(ast(expr, then_branch.type_tag.clone(), Content::IfThenElse(Box::new((condition, then_branch, else_branch)))))
+              let t = then_branch.type_tag.clone();
+              let c = Content::IfThenElse(Box::new((condition, then_branch, else_branch)));
+              Ok(ast(expr, t, c))
             }
             else {
               Ok(ast(expr, Type::Void, Content::IfThen(Box::new((condition, then_branch)))))
@@ -510,7 +509,9 @@ impl <'l> Jit<'l> {
     pointer
   }
 
-  fn init_variable(&mut self, name : RefStr, value : BasicValueEnum) -> Result<(), ErrorContent> {
+  fn init_variable(&mut self, name : RefStr, value : BasicValueEnum)
+    -> Result<(), ErrorContent>
+  {
     if self.variables.contains_key(&name) {
       return Err("variable with this name already defined".into());
     }
@@ -536,7 +537,9 @@ impl <'l> Jit<'l> {
     }
   }
 
-  fn codegen_short_circuit_op(&mut self, a : &AstNode, b : &AstNode, op : ShortCircuitOp) -> Result<BasicValueEnum, Error> {
+  fn codegen_short_circuit_op(&mut self, a : &AstNode, b : &AstNode, op : ShortCircuitOp)
+    -> Result<BasicValueEnum, Error>
+  {
     use ShortCircuitOp::*;
     let short_circuit_outcome = match op {
       And => self.context.bool_type().const_int(0, false),
@@ -764,9 +767,9 @@ impl <'l> Jit<'l> {
       Content::Literal(v) => {
         match v {
           Val::Float(f) => self.context.f64_type().const_float(*f).into(),
-          Val::Bool(b) => self.context.bool_type().const_int(if *b { 1 } else { 0 }, false).into(),
+          Val::Bool(b) =>
+            self.context.bool_type().const_int(if *b { 1 } else { 0 }, false).into(),
           Val::Void => return Ok(None),
-          Val::Struct(_) => panic!(),
         }
       }
     };
@@ -840,8 +843,11 @@ impl <'l> Jit<'l> {
     };
     let function = self.module.add_function(name, fn_type, None);
 
-    // this exists to catch errors and delete the function if needed
-    fn generate(function_node : &AstNode, body : &AstNode, function : FunctionValue, args : &[RefStr], jit : &mut Jit) -> Result<(), Error> {
+    // this function is here because Rust doesn't have a proper try/catch yet
+    fn generate(
+      function_node : &AstNode, body : &AstNode, function : FunctionValue,
+      args : &[RefStr], jit : &mut Jit) -> Result<(), Error>
+    {
       // set arguments names
       for (i, arg) in function.get_param_iter().enumerate() {
         arg.into_float_value().set_name(args[i].as_ref());
@@ -884,9 +890,10 @@ impl <'l> Jit<'l> {
       Ok(_) => Ok(function),
       Err(e) => {
         dump_module(self.module);
-        // This library uses copy semantics for a resource can be deleted, because it is usually not deleted.
-        // As a result, it's possible to get use-after-free bugs, so this operation is unsafe. I'm sure this
-        // design could be improved.
+        // This library uses copy semantics for a resource can be deleted,
+        // because it is usually not deleted. As a result, it's possible to
+        // get use-after-free bugs, so this operation is unsafe. I'm sure
+        // this design could be improved.
         unsafe {
           function.delete();
         }
@@ -913,7 +920,9 @@ impl Interpreter {
     let functions = HashMap::new();
     let struct_types = HashMap::new();
     let pm = PassManager::create_for_function(&module);
-    /*
+
+    /* TODO: enable optimisation again
+
     pm.add_instruction_combining_pass();
     pm.add_reassociate_pass();
     pm.add_gvn_pass();
@@ -946,7 +955,8 @@ impl Interpreter {
 }
 
 fn run_expression(expr : &Expr, i: &mut Interpreter) -> Result<Val, Error> {
-  let mut type_checker = TypeChecker::new(HashMap::new(), &mut i.functions, &mut i.struct_types, &mut i.sym);
+  let mut type_checker = 
+    TypeChecker::new(HashMap::new(), &mut i.functions, &mut i.struct_types, &mut i.sym);
   let ast = type_checker.to_ast(expr)?;
   let f = {
     let jit = i.function_jit();
@@ -958,17 +968,22 @@ fn run_expression(expr : &Expr, i: &mut Interpreter) -> Result<Val, Error> {
   fn execute<T>(expr : &Expr, f : FunctionValue, ee : &ExecutionEngine) -> Result<T, Error> {
     let function_name = f.get_name().to_str().unwrap();
     let v = unsafe {
-      let jit_function = ee.get_function::<unsafe extern "C" fn() -> T>(function_name).map_err(|e| error_raw(expr, format!("{:?}", e)))?;
+      let jit_function =
+        ee.get_function::<unsafe extern "C" fn() -> T>(function_name)
+        .map_err(|e| error_raw(expr, format!("{:?}", e)))?;
       jit_function.call()
     };
     Ok(v)
   }
-  let ee = i.module.create_jit_execution_engine(OptimizationLevel::None).map_err(|e| error_raw(expr, e.to_string()))?;
+  let ee =
+    i.module.create_jit_execution_engine(OptimizationLevel::None)
+    .map_err(|e| error_raw(expr, e.to_string()))?;
   let result = match ast.type_tag {
     Type::Bool => execute::<bool>(expr, f, &ee).map(Val::Bool),
     Type::Float => execute::<f64>(expr, f, &ee).map(Val::Float),
     Type::Void => execute::<()>(expr, f, &ee).map(|_| Val::Void),
-    Type::Struct(_) => error(expr, "can't return a struct from a top-level function"),
+    Type::Struct(_) =>
+      error(expr, "can't return a struct from a top-level function"),
   };
   ee.remove_module(&i.module).unwrap();
   result

@@ -225,7 +225,7 @@ fn test_brace_syntax_quirks(){
     let b = a()
   ";
   // TODO: fix this problem
-  // assert_result(code, Value::Unit);
+  assert_result(code, Val::Void);
 }
 
 #[test]

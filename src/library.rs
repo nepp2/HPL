@@ -6,7 +6,6 @@ use crate::eval::{
   add_module, get_module_id, Module, BlockScope};
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use rand::prelude::*;
 use std::fs::File;
@@ -141,7 +140,7 @@ pub fn load_library(e : &mut Environment) {
     let v = e.ext_val(WATCHER, create_watcher());
     Ok(Value::External(v))
   });
-  fun(e, "watch_module", vec![watcher_type.clone(), Type::String], |e, mut vs| {
+  fun(e, "watch_module", vec![watcher_type.clone(), Type::String], |_e, mut vs| {
     let v = vs[0].get().convert::<ExternalVal>()?;
     let mut v = v.val.borrow_mut();
     let w = v.downcast_mut::<FileWatcher>().unwrap();
@@ -330,7 +329,7 @@ fn load_sdl(e : &mut Environment) {
     (e.sym.get(field_name), e.sym.get(v).into())
   }
 
-  fn new_map(e : &mut Environment, name : &str, mut map : Vec<(RefStr, Value)>) -> Result<Value, ErrorContent>
+  fn new_map(e : &mut Environment, name : &str, map : Vec<(RefStr, Value)>) -> Result<Value, ErrorContent>
   {
     let name = e.sym.get(name);
     let map = map.into_iter().collect();

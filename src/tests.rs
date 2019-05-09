@@ -1,5 +1,4 @@
 
-use crate::interpreter;
 use crate::interpreter::Interpreter;
 use crate::value::*;
 use crate::error::Error;
@@ -205,17 +204,6 @@ fn test_for_loop() {
     t
   ";
   assert_result(range_code, Value::from(10.0));
-}
-
-#[test]
-fn test_brace_syntax_quirks(){
-  // This test demonstrates a problem with the struct initialisation syntax
-  let code = "
-    struct a { }
-    let b = a()
-  ";
-  // TODO: fix this problem
-  // assert_result(code, Value::Unit);
 }
 
 #[test]

@@ -1,4 +1,3 @@
-use crate::lexer;
 use crate::lexer::{Token, TokenType};
 use crate::value::{RefStr, SymbolTable, Expr, ExprTag};
 use crate::error::{Error, ErrorContent, TextLocation, TextMarker, error};
