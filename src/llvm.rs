@@ -186,19 +186,19 @@ impl <'l> Jit<'l> {
       Or => self.context.bool_type().const_int(1, false),
     };
     // create basic blocks
-    let a_block = self.builder.get_insert_block().unwrap();
-    let f = a_block.get_parent().unwrap();
-    let b_block = self.context.append_basic_block(&f, "b_block");
+    let a_start_block = self.builder.get_insert_block().unwrap();
+    let f = a_start_block.get_parent().unwrap();
+    let b_start_block = self.context.append_basic_block(&f, "b_block");
     let end_block = self.context.append_basic_block(&f, "end");
     // compute a
     let a_value = self.codegen_int(a)?;
     let a_end_block = self.builder.get_insert_block().unwrap();
     match op {
-      And => self.builder.build_conditional_branch(a_value, &b_block, &end_block),
-      Or => self.builder.build_conditional_branch(a_value, &end_block, &b_block),
+      And => self.builder.build_conditional_branch(a_value, &b_start_block, &end_block),
+      Or => self.builder.build_conditional_branch(a_value, &end_block, &b_start_block),
     };
     // maybe compute b
-    self.builder.position_at_end(&b_block);
+    self.builder.position_at_end(&b_start_block);
     let b_value = self.codegen_int(b)?;
     let b_end_block = self.builder.get_insert_block().unwrap();
     self.builder.build_unconditional_branch(&end_block);
@@ -317,21 +317,22 @@ impl <'l> Jit<'l> {
         // create basic blocks
         let block = self.builder.get_insert_block().unwrap();
         let f = block.get_parent().unwrap();
-        let then_block = self.context.append_basic_block(&f, "then");
-        let else_block = self.context.append_basic_block(&f, "else");
+        let then_start_block = self.context.append_basic_block(&f, "then");
+        let else_start_block = self.context.append_basic_block(&f, "else");
         let end_block = self.context.append_basic_block(&f, "endif");
         // conditional branch
         let cond_value = self.codegen_int(cond_node)?;
-        self.builder.build_conditional_branch(cond_value, &then_block, &else_block);
+        self.builder.build_conditional_branch(
+          cond_value, &then_start_block, &else_start_block);
         // then block
-        self.builder.position_at_end(&then_block);
+        self.builder.position_at_end(&then_start_block);
         let then_value = self.codegen_expression(then_node)?;
-        let then_block = self.builder.get_insert_block().unwrap();
+        let then_end_block = self.builder.get_insert_block().unwrap();
         self.builder.build_unconditional_branch(&end_block);
         // else block
-        self.builder.position_at_end(&else_block);
+        self.builder.position_at_end(&else_start_block);
         let else_value = self.codegen_expression(else_node)?;
-        let else_block = self.builder.get_insert_block().unwrap();
+        let else_end_block = self.builder.get_insert_block().unwrap();
         self.builder.build_unconditional_branch(&end_block);
         // end block
         self.builder.position_at_end(&end_block);
@@ -340,8 +341,8 @@ impl <'l> Jit<'l> {
           let v2 = else_value.unwrap();
           let phi = self.builder.build_phi(v1.get_type(), "if_result");
           phi.add_incoming(&[
-            (&v1, &then_block),
-            (&v2, &else_block),
+            (&v1, &then_end_block),
+            (&v2, &else_end_block),
           ]);
           return Ok(Some(phi.as_basic_value()))
         }
