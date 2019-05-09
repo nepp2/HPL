@@ -14,7 +14,8 @@ pub enum Type {
   Void,
   Float,
   Bool,
-  Struct(Rc<StructDefinition>)
+  Struct(Rc<StructDefinition>),
+  Ptr(Box<Type>),
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -83,6 +84,8 @@ pub enum Content {
   FunctionCall(RefStr, Vec<AstNode>),
   IntrinsicCall(RefStr, Vec<AstNode>),
   While(Box<(AstNode, AstNode)>),
+  ExplicitReturn(Option<Box<AstNode>>),
+  Deref(Box<AstNode>),
   Break,
 }
 
@@ -354,7 +357,8 @@ impl <'l> TypeChecker<'l> {
         }
         let name = self.get_scoped_variable_name(s);
         if let Some(t) = self.variables.get(name.as_ref()) {
-          Ok(ast(expr, t.clone(), Content::VariableReference(name)))
+          let ref_type = Type::Ptr(Box::new(t.clone()));
+          Ok(ast(expr, ref_type, Content::VariableReference(name)))
         }
         else {
           error(expr, "unknown variable name")

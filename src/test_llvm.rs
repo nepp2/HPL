@@ -125,12 +125,23 @@ fn test_scope(){
 
 #[test]
 fn test_assignment(){
-  let code = "
+  let a = "
     let a = 4
     a = a + 5
     a
   ";
-  assert_result(code, Val::Float(9.0));
+  let b = "
+    struct vec2 {
+      x : float
+      y : float
+    }
+    let a = vec2(x: 5, y: 50)
+    a.x = a.x + 10
+    a.y = 500
+    a.x + a.y
+  ";
+  assert_result(a, Val::Float(9.0));
+  assert_result(b, Val::Float(515.0));
 }
 
 #[test]

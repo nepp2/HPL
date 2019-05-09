@@ -49,12 +49,13 @@ use crate::typecheck::{
 
 use std::collections::HashMap;
 
+use inkwell::AddressSpace;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::{Context, ContextRef};
 use inkwell::module::Module;
 use inkwell::passes::PassManager;
-use inkwell::types::{BasicTypeEnum, BasicType, StructType};
+use inkwell::types::{BasicTypeEnum, BasicType, StructType, PointerType, FunctionType};
 use inkwell::values::{
   BasicValueEnum, BasicValue, FloatValue, IntValue, FunctionValue, PointerValue };
 use inkwell::{OptimizationLevel, FloatPredicate};
@@ -101,10 +102,43 @@ macro_rules! compare_op {
   }
 }
 
+#[derive(PartialEq)]
+enum Storage {
+  Register,
+  Stack,
+}
+
+use Storage::*;
+
+#[derive(PartialEq)]
+struct JitVal {
+  storage : Storage,
+  value : BasicValueEnum,
+}
+
+fn reg(value : BasicValueEnum) -> JitVal {
+  JitVal { storage: Register, value }
+}
+
+fn stack(value : BasicValueEnum) -> JitVal {
+  JitVal { storage: Stack, value }
+}
+
 struct LoopLabels {
   condition : BasicBlock,
   exit : BasicBlock,
 }
+
+/*
+impl From<Option<BasicValueEnum>> for JitVal {
+  fn from(v : Option<BasicValueEnum>) -> JitVal {
+    match v {
+      Some(v) => JitVal::Register(v),
+      None => JitVal::Void,
+    }
+  }
+}
+*/
 
 enum ShortCircuitOp { And, Or }
 
@@ -161,18 +195,31 @@ impl <'l> Jit<'l> {
     Ok(())
   }
 
-  fn codegen_float(&mut self, n : &AstNode) -> Result<FloatValue, Error> {
-  let v = self.codegen_expression(n)?;
-  match v {
-    Some(BasicValueEnum::FloatValue(f)) => Ok(f),
-    t => error(n.loc, format!("Expected float, found {:?}", t)),
+  fn coerce(&mut self, v : JitVal) -> BasicValueEnum {
+    panic!()
   }
-}
+
+  fn try_coerce(&mut self, v : JitVal) -> Option<BasicValueEnum> {
+    panic!()
+  }
+
+  fn codegen_value(&mut self, n : &AstNode) -> Result<BasicValueEnum, Error> {
+    // Ok(self.coerce(self.codegen_expression(n)?))
+    panic!()
+  }
+
+  fn codegen_float(&mut self, n : &AstNode) -> Result<FloatValue, Error> {
+    let v = self.codegen_value(n)?;
+    match v {
+      BasicValueEnum::FloatValue(f) => Ok(f),
+      t => error(n.loc, format!("Expected float, found {:?}", t)),
+    }
+  }
 
   fn codegen_int(&mut self, n : &AstNode) -> Result<IntValue, Error> {
-    let v = self.codegen_expression(n)?;
+    let v = self.codegen_value(n)?;
     match v {
-      Some(BasicValueEnum::IntValue(i)) => Ok(i),
+      BasicValueEnum::IntValue(i) => Ok(i),
       t => error(n.loc, format!("Expected int, found {:?}", t)),
     }
   }
@@ -212,7 +259,7 @@ impl <'l> Jit<'l> {
     return Ok(phi.as_basic_value());
   }
 
-  fn codegen_expression(&mut self, ast : &AstNode) -> Result<Option<BasicValueEnum>, Error> {
+  fn codegen_expression(&mut self, ast : &AstNode) -> Result<Option<JitVal>, Error> {
     let v : BasicValueEnum = match &ast.content {
       Content::FunctionCall(name, args) => {
         let f =
@@ -223,12 +270,11 @@ impl <'l> Jit<'l> {
         }
         let mut arg_vals = vec!();
         for a in args.iter() {
-          let v =
-            self.codegen_expression(a)?
-            .ok_or_else(|| error_raw(a.loc, "expected value expression"))?;
+          let v = self.codegen_value(a)?;
           arg_vals.push(v);
         }
-        return Ok(self.builder.build_call(f, arg_vals.as_slice(), "tmp").try_as_basic_value().left())
+        let r = self.builder.build_call(f, arg_vals.as_slice(), "tmp").try_as_basic_value().left();
+        return Ok(r.map(stack));
       }
       Content::IntrinsicCall(name, args) => {
         if let [a, b] = args.as_slice() {
@@ -284,10 +330,10 @@ impl <'l> Jit<'l> {
       }
       Content::Break => {
         if let Some(labels) = self.loop_labels.last() {
+          self.builder.build_unconditional_branch(&labels.exit);
           // create a dummy block to hold instructions after the break
           let f = self.builder.get_insert_block().unwrap().get_parent().unwrap();
           let dummy_block = self.context.append_basic_block(&f, "dummy_block");
-          self.builder.build_unconditional_branch(&labels.exit);
           self.builder.position_at_end(&dummy_block);
           return Ok(None);
         }
@@ -337,16 +383,18 @@ impl <'l> Jit<'l> {
         // end block
         self.builder.position_at_end(&end_block);
         if then_value.is_some() && else_value.is_some() {
-          let v1 = then_value.unwrap();
-          let v2 = else_value.unwrap();
+          let v1 = self.coerce(then_value.unwrap());
+          let v2 = self.coerce(else_value.unwrap());
           let phi = self.builder.build_phi(v1.get_type(), "if_result");
           phi.add_incoming(&[
             (&v1, &then_end_block),
             (&v2, &else_end_block),
           ]);
-          return Ok(Some(phi.as_basic_value()))
+          phi.as_basic_value()
         }
-        return Ok(None);
+        else {
+          return Ok(None);
+        }
       }
       Content::Block(nodes) => {
         let node_count = nodes.len();
@@ -371,24 +419,22 @@ impl <'l> Jit<'l> {
         let t = self.struct_type(def).as_basic_type_enum();
         let ptr = self.create_entry_block_alloca(t, &def.name);
         for (i, a) in args.iter().enumerate() {
-          let v = self.codegen_expression(a)?.unwrap();
+          let v = self.codegen_value(a)?;
           let element_ptr = unsafe {
             self.builder.build_struct_gep(ptr, i as u32, &def.fields[i].0)
           };
           self.builder.build_store(element_ptr, v);
         }
-        let struct_val = self.builder.build_load(ptr, "struct_load").into_struct_value();
-        struct_val.as_basic_value_enum()
+        self.builder.build_load(ptr, "struct_value")
       }
       Content::FieldAccess(x, field_index) => {
         let (struct_val_node, field_name) = (&x.0, &x.1);
         let v = self.codegen_expression(struct_val_node)?.unwrap();
-        let struct_val = *v.as_struct_value();
-        // TODO: uncertain about the use of `extractvalue`. I could use getelementptr instead,
-        // but then I'd have to evaluate structs as pointers instead of register values.
-        // This seems appealing, but might get complicated when passing them into functions,
-        // and returning them from functions.
-        self.builder.build_extract_value(struct_val, *field_index as u32, field_name).unwrap()
+        let ptr = *v.as_pointer_value();
+        let field_ptr = unsafe {
+          self.builder.build_struct_gep(ptr, *field_index as u32, field_name)
+        };
+        self.builder.build_load(field_ptr, field_name)
       }
       Content::Assignment(ns) => {
         let (assign_node, value_node) = (&ns.0, &ns.1);
@@ -408,11 +454,25 @@ impl <'l> Jit<'l> {
       }
       Content::VariableReference(name) => {
         if let Some(ptr) = self.variables.get(name) {
-          self.builder.build_load(*ptr, name)
+          ptr.as_basic_value_enum()
         }
         else {
           return error(ast.loc, format!("unknown variable name '{}'.", name));
         }
+      }
+      Content::Deref(n) => {
+        let ptr =
+          self.codegen_pointer(n)?
+          .ok_or_else(|| error_raw(n.loc, "cannot dereference this construct"))?;
+        self.builder.build_load(ptr, "deref")
+      }
+      Content::ExplicitReturn(n) => {
+        self.codegen_return(n.as_ref().map(|b| b as &AstNode))?;
+        // create a dummy block to hold instructions after the return
+        let f = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+        let dummy_block = self.context.append_basic_block(&f, "dummy_block");
+        self.builder.position_at_end(&dummy_block);
+        return Ok(None);
       }
       Content::Literal(v) => {
         match v {
@@ -436,16 +496,12 @@ impl <'l> Jit<'l> {
           return error(ast.loc, format!("unknown variable name '{}'.", name));
         }
       }
-      _ => Ok(None)
-    }
-  }
+      /*
+      Content::FieldAccess(c, field_index) => {
 
-  fn to_basic_type(&mut self, t : &Type) -> Option<BasicTypeEnum> {
-    match t {
-      Type::Void => None,
-      Type::Float => Some(self.context.f64_type().into()),
-      Type::Bool => Some(self.context.bool_type().into()),
-      Type::Struct(def) => Some(self.struct_type(def).as_basic_type_enum()),
+      }
+      */
+      _ => Ok(None)
     }
   }
 
@@ -461,6 +517,55 @@ impl <'l> Jit<'l> {
     }
   }
 
+  fn to_basic_type(&mut self, t : &Type) -> Option<BasicTypeEnum> {
+    match t {
+      Type::Void => None,
+      Type::Float => Some(self.context.f64_type().into()),
+      Type::Bool => Some(self.context.bool_type().into()),
+      Type::Struct(def) => Some(self.struct_type(def).as_basic_type_enum()),
+      Type::Ptr(t) => {
+        let bt = self.to_basic_type(t);
+        Some(self.pointer_to_type(bt).into())
+      }
+    }
+  }
+
+  fn pointer_to_type(&self, t : Option<BasicTypeEnum>) -> PointerType {
+    if let Some(t) = t {
+    use BasicTypeEnum::*;
+      match t {
+        ArrayType(t) => t.ptr_type(AddressSpace::Local),
+        IntType(t) => t.ptr_type(AddressSpace::Local),
+        FloatType(t) => t.ptr_type(AddressSpace::Local),
+        PointerType(t) => t.ptr_type(AddressSpace::Local),
+        StructType(t) => t.ptr_type(AddressSpace::Local),
+        VectorType(t) => t.ptr_type(AddressSpace::Local),
+      }
+    }
+    else {
+      self.context.void_type().ptr_type(AddressSpace::Local)
+    }
+  }
+
+  fn function_type(&self, return_type : Option<BasicTypeEnum>, arg_types : &[BasicTypeEnum])
+    -> FunctionType
+  {
+    if let Some(return_type) = return_type {
+      use BasicTypeEnum::*;
+      match return_type {
+        ArrayType(t) => t.fn_type(arg_types, false),
+        IntType(t) => t.fn_type(arg_types, false),
+        FloatType(t) => t.fn_type(arg_types, false),
+        PointerType(t) => t.fn_type(arg_types, false),
+        StructType(t) => t.fn_type(arg_types, false),
+        VectorType(t) => t.fn_type(arg_types, false),
+      }
+    }
+    else {
+      self.context.void_type().fn_type(arg_types, false)
+    }
+  }
+
   fn struct_type(&mut self, def : &StructDefinition) -> StructType {
     if let Some(t) = self.struct_types.get(&def.name) {
       return *t;
@@ -473,6 +578,17 @@ impl <'l> Jit<'l> {
     let t = self.context.struct_type(&types, false);
     self.struct_types.insert(def.name.clone(), t);
     return t;
+  }
+
+  fn codegen_return(&mut self, value_node : Option<&AstNode>) -> Result<(), Error> {
+    if let Some(value_node) = value_node {
+      let v = self.codegen_expression(value_node)?;
+      self.builder.build_return(v.as_ref().map(|v| v as &BasicValue));
+    }
+    else {
+      self.builder.build_return(None);
+    }
+    Ok(())
   }
 
   fn codegen_function(
@@ -495,12 +611,8 @@ impl <'l> Jit<'l> {
       .collect::<Vec<BasicTypeEnum>>();
     let arg_types = arg_types.as_slice();
 
-    let fn_type = match &body.type_tag {
-      Type::Bool => self.context.bool_type().fn_type(arg_types, false),
-      Type::Float => self.context.f64_type().fn_type(arg_types, false),
-      Type::Void => self.context.void_type().fn_type(arg_types, false),
-      Type::Struct(def) => self.struct_type(def).fn_type(arg_types, false),
-    };
+    let return_type = self.to_basic_type(&body.type_tag);
+    let fn_type = self.function_type(return_type, arg_types);
     let function = self.module.add_function(name, fn_type, None);
 
     // this function is here because Rust doesn't have a proper try/catch yet
@@ -523,18 +635,8 @@ impl <'l> Jit<'l> {
           .map_err(|c| error_raw(function_node.loc, c))?;
       }
 
-      // compile body
-      let body_val = jit.codegen_expression(body)?;
-
-      // emit return (via stupid API)
-      match body_val {
-        Some(b) => {
-          jit.builder.build_return(Some(&b));
-        }
-        None => {
-          jit.builder.build_return(None);
-        }
-      }
+      // compile body and emit return
+      jit.codegen_return(Some(body))?;
 
       // return the whole thing after verification and optimization
       if function.verify(true) {
@@ -642,6 +744,8 @@ fn run_expression(expr : &Expr, i: &mut Interpreter) -> Result<Val, Error> {
     Type::Bool => execute::<bool>(expr, f, &ee).map(Val::Bool),
     Type::Float => execute::<f64>(expr, f, &ee).map(Val::Float),
     Type::Void => execute::<()>(expr, f, &ee).map(|_| Val::Void),
+    Type::Ptr(_) => 
+      error(expr, "can't return a pointer from a top-level function"),
     Type::Struct(_) =>
       error(expr, "can't return a struct from a top-level function"),
   };
