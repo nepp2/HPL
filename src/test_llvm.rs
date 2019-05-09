@@ -1,6 +1,8 @@
 
 use crate::error::Error;
-use crate::llvm::{Interpreter, Val};
+use crate::llvm::Interpreter;
+use crate::typecheck::Val;
+
 
 #[test]
 fn test_basics() {
@@ -133,7 +135,14 @@ fn test_assignment(){
 
 #[test]
 fn test_struct() {
-  let code = "
+  let a = "
+    struct boo {
+      b : bool
+    }
+    let a = boo(b: true)
+    a.b
+  ";
+  let b = "
     struct vec2 {
       x : float
       y : float
@@ -146,7 +155,8 @@ fn test_struct() {
     let c = foo(a, b)
     c.y
   ";
-  assert_result(code, Val::Float(21.0));
+  assert_result(a, Val::Bool(true));
+  assert_result(b, Val::Float(21.0));
 }
 
 #[test]
