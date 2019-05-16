@@ -35,8 +35,6 @@ from Jauhien Piatlicki.]
 
 // TODO: Carlos says I should have more comments than the occasional TODO
 
-use std::rc::Rc;
-
 use rustyline::Editor;
 
 use crate::error::{Error, error, error_raw, ErrorContent};
@@ -47,7 +45,11 @@ use crate::parser::ReplParseResult::{Complete, Incomplete};
 use crate::typecheck::{
   AstNode, Content, Type, Val, StructDefinition, FunctionDefinition, TypeChecker};
 
+
+use std::rc::Rc;
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::Read;
 
 use inkwell::AddressSpace;
 use inkwell::basic_block::BasicBlock;
@@ -693,26 +695,47 @@ impl <'l> Jit<'l> {
   }
 }
 
+struct JitModule {
+  module : Module,
+  top_level_function : FunctionValue,
+}
+
 pub struct Interpreter {
   sym : SymbolTable,
   context : ContextRef,
-  module : Module,
+  modules : Vec<JitModule>,
   functions : HashMap<RefStr, Rc<FunctionDefinition>>,
   struct_types : HashMap<RefStr, Rc<StructDefinition>>,
-  pass_manager : PassManager,
 }
 
 impl Interpreter {
   pub fn new() -> Interpreter {
     let sym = SymbolTable::new();
     let context = Context::get_global();
-    let module = Module::create("top_level");
+    let modules = vec!();
     let functions = HashMap::new();
     let struct_types = HashMap::new();
+    let mut i = Interpreter { sym, context, modules, functions, struct_types };
+    // load prelude
+    {
+      let mut f = File::open("code/prelude_llvm.code").expect("file not found");
+      let mut code = String::new();
+      f.read_to_string(&mut code).unwrap();
+      let r = i.parse_string(&code)
+        .and_then(|expr| { i.load_module(&expr, "prelude") } );
+      match r {
+        Ok(jm) => i.modules.push(r),
+        Err(e) => println!("Error loading prelude: {}", e),
+      }
+    }
+    return i;
+  }
+
+  fn load_module(&mut self, expr : &Expr, name : &str) -> Result<(), Error> {
+    let mut module = Module::create(name);
     let pm = PassManager::create_for_function(&module);
 
     // TODO: decide what to do about optimisation
-
     pm.add_instruction_combining_pass();
     pm.add_reassociate_pass();
     pm.add_gvn_pass();
@@ -720,22 +743,27 @@ impl Interpreter {
     pm.add_basic_alias_analysis_pass();
     pm.add_promote_memory_to_register_pass();
     pm.add_instruction_combining_pass();
-    pm.add_reassociate_pass();
-    
+    pm.add_reassociate_pass();  
     pm.initialize();
 
-    Interpreter { sym, context, module, functions, struct_types, pass_manager: pm }
+    let mut type_checker = 
+      TypeChecker::new(HashMap::new(), &mut self.functions, &mut self.struct_types, &mut self.sym);
+    let ast = type_checker.to_ast(expr)?;
+    let jit = Jit::new(&mut self.context, &mut module, &mut pm);
+
+    let f = jit.codegen_function(&ast, &ast, "top_level", &[], &[])?;
+    Ok(JitModule{ module, top_level_function: f})
   }
 
-  pub fn function_jit(&mut self) -> Jit {
-    Jit::new(&mut self.context, &mut self.module, &mut self.pass_manager)
-  }
-
-  pub fn run(&mut self, code : &str) -> Result<Val, Error> {
+  fn parse_string(&mut self, code : &str) -> Result<Expr, Error> {
     let tokens =
-        lexer::lex(code, &mut self.sym)
-        .map_err(|mut es| es.remove(0))?;
-    let expr = parser::parse(tokens, &mut self.sym)?;
+      lexer::lex(code, &mut self.sym)
+      .map_err(|mut es| es.remove(0))?;
+    parser::parse(tokens, &mut self.sym)
+  }
+
+  pub fn run(&mut self, code : &str) -> Result<Val, Error> {;
+    let expr = self.parse_string(code)?;
     self.run_expression(&expr)
   }
 
