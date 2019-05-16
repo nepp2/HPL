@@ -76,7 +76,7 @@ macro_rules! binary_op {
       let a = codegen_type!($type_name, $a, $jit)?;
       let b = codegen_type!($type_name, $b, $jit)?;
       let fv = ($jit).builder.$op_name(a, b, "op_result");
-      fv.into()
+      reg(fv.into())
     }
   }
 }
@@ -86,7 +86,7 @@ macro_rules! unary_op {
     {
       let a = codegen_type!($type_name, $a, $jit)?;
       let fv = ($jit).builder.$op_name(a, "op_result");
-      fv.into()
+      reg(fv.into())
     }
   }
 }
@@ -97,18 +97,18 @@ macro_rules! compare_op {
       let a = codegen_type!($type_name, $a, $jit)?;
       let b = codegen_type!($type_name, $b, $jit)?;
       let fv = ($jit).builder.$op_name($pred, a, b, "cpm_result");
-      fv.into()
+      reg(fv.into())
     }
   }
 }
 
+/// Indicates whether a value is a pointer to the stack,
+/// or stored directly in a register.
 #[derive(PartialEq)]
 enum Storage {
   Register,
   Stack,
 }
-
-use Storage::*;
 
 #[derive(PartialEq)]
 struct JitVal {
@@ -117,11 +117,11 @@ struct JitVal {
 }
 
 fn reg(value : BasicValueEnum) -> JitVal {
-  JitVal { storage: Register, value }
+  JitVal { storage: Storage::Register, value }
 }
 
-fn stack(value : BasicValueEnum) -> JitVal {
-  JitVal { storage: Stack, value }
+fn stack(ptr : PointerValue) -> JitVal {
+  JitVal { storage: Storage::Stack, value: ptr.as_basic_value_enum() }
 }
 
 struct LoopLabels {
@@ -140,6 +140,7 @@ impl From<Option<BasicValueEnum>> for JitVal {
 }
 */
 
+#[derive(Copy, Clone)]
 enum ShortCircuitOp { And, Or }
 
 pub struct Jit<'l> {
@@ -195,17 +196,8 @@ impl <'l> Jit<'l> {
     Ok(())
   }
 
-  fn coerce(&mut self, v : JitVal) -> BasicValueEnum {
-    panic!()
-  }
-
-  fn try_coerce(&mut self, v : JitVal) -> Option<BasicValueEnum> {
-    panic!()
-  }
-
   fn codegen_value(&mut self, n : &AstNode) -> Result<BasicValueEnum, Error> {
-    // Ok(self.coerce(self.codegen_expression(n)?))
-    panic!()
+    Ok(self.codegen_expression_to_register(n)?.unwrap())
   }
 
   fn codegen_float(&mut self, n : &AstNode) -> Result<FloatValue, Error> {
@@ -224,8 +216,26 @@ impl <'l> Jit<'l> {
     }
   }
 
+  fn codegen_expression_to_register(&mut self, ast : &AstNode) -> Result<Option<BasicValueEnum>, Error> {
+    if let Some(v) = self.codegen_expression(ast)? {
+      let reg_val = match v.storage {
+        Storage::Stack => {
+          let ptr = *v.value.as_pointer_value();
+          self.builder.build_load(ptr, "assignment_value")
+        }
+        Storage::Register => {
+          v.value
+        }
+      };
+      Ok(Some(reg_val))
+    }
+    else {
+      Ok(None)
+    }
+  }
+
   fn codegen_short_circuit_op(&mut self, a : &AstNode, b : &AstNode, op : ShortCircuitOp)
-    -> Result<BasicValueEnum, Error>
+    -> Result<JitVal, Error>
   {
     use ShortCircuitOp::*;
     let short_circuit_outcome = match op {
@@ -256,11 +266,11 @@ impl <'l> Jit<'l> {
       (&short_circuit_outcome, &a_end_block),
       (&b_value, &b_end_block),
     ]);
-    return Ok(phi.as_basic_value());
+    return Ok(reg(phi.as_basic_value()));
   }
 
   fn codegen_expression(&mut self, ast : &AstNode) -> Result<Option<JitVal>, Error> {
-    let v : BasicValueEnum = match &ast.content {
+    let v : JitVal = match &ast.content {
       Content::FunctionCall(name, args) => {
         let f =
           self.module.get_function(name)
@@ -274,7 +284,7 @@ impl <'l> Jit<'l> {
           arg_vals.push(v);
         }
         let r = self.builder.build_call(f, arg_vals.as_slice(), "tmp").try_as_basic_value().left();
-        return Ok(r.map(stack));
+        return Ok(r.map(reg));
       }
       Content::IntrinsicCall(name, args) => {
         if let [a, b] = args.as_slice() {
@@ -372,25 +382,25 @@ impl <'l> Jit<'l> {
           cond_value, &then_start_block, &else_start_block);
         // then block
         self.builder.position_at_end(&then_start_block);
-        let then_value = self.codegen_expression(then_node)?;
+        let then_value = self.codegen_expression_to_register(then_node)?;
         let then_end_block = self.builder.get_insert_block().unwrap();
         self.builder.build_unconditional_branch(&end_block);
         // else block
         self.builder.position_at_end(&else_start_block);
-        let else_value = self.codegen_expression(else_node)?;
+        let else_value = self.codegen_expression_to_register(else_node)?;
         let else_end_block = self.builder.get_insert_block().unwrap();
         self.builder.build_unconditional_branch(&end_block);
         // end block
         self.builder.position_at_end(&end_block);
         if then_value.is_some() && else_value.is_some() {
-          let v1 = self.coerce(then_value.unwrap());
-          let v2 = self.coerce(else_value.unwrap());
+          let v1 = then_value.unwrap();
+          let v2 = else_value.unwrap();
           let phi = self.builder.build_phi(v1.get_type(), "if_result");
           phi.add_incoming(&[
             (&v1, &then_end_block),
             (&v2, &else_end_block),
           ]);
-          phi.as_basic_value()
+          reg(phi.as_basic_value())
         }
         else {
           return Ok(None);
@@ -425,36 +435,54 @@ impl <'l> Jit<'l> {
           };
           self.builder.build_store(element_ptr, v);
         }
-        self.builder.build_load(ptr, "struct_value")
+        stack(ptr)
       }
       Content::FieldAccess(x, field_index) => {
         let (struct_val_node, field_name) = (&x.0, &x.1);
         let v = self.codegen_expression(struct_val_node)?.unwrap();
-        let ptr = *v.as_pointer_value();
-        let field_ptr = unsafe {
-          self.builder.build_struct_gep(ptr, *field_index as u32, field_name)
-        };
-        self.builder.build_load(field_ptr, field_name)
+        match v.storage {
+          Storage::Register => {
+            // if the struct is in a register, dereference the field into a register
+            let reg_val =
+              self.builder.build_extract_value(
+                *v.value.as_struct_value(), *field_index as u32, field_name).unwrap();
+            reg(reg_val)
+          }
+          Storage::Stack => {
+            // if this is a pointer to the struct, get a pointer to the field
+            let ptr = *v.value.as_pointer_value();
+            let field_ptr = unsafe {
+              self.builder.build_struct_gep(ptr, *field_index as u32, field_name)
+            };
+            stack(field_ptr)
+          }
+        }
       }
       Content::Assignment(ns) => {
         let (assign_node, value_node) = (&ns.0, &ns.1);
-        let ptr =
-          self.codegen_pointer(assign_node)?.
-          ok_or_else(|| error_raw(assign_node.loc, "cannot assign to this construct"))?;
-        let value = self.codegen_expression(value_node)?.unwrap();
-        self.builder.build_store(ptr, value);
+        let assign_location = self.codegen_expression(assign_node)?.unwrap();
+        let ptr = match assign_location.storage {
+          Storage::Stack => {
+            *assign_location.value.as_pointer_value()
+          }
+          Storage::Register => {
+            return error(assign_node.loc, "cannot assign to this construct");
+          }
+        };
+        let reg_val = self.codegen_expression_to_register(value_node)?.unwrap();
+        self.builder.build_store(ptr, reg_val);
         return Ok(None);
       }
       Content::VariableInitialise(name, value_node) => {
-        let value = self.codegen_expression(value_node)?
+        let v = self.codegen_expression_to_register(value_node)?
           .ok_or_else(|| error_raw(value_node.loc, "expected value for initialiser, found void"))?;
-        self.init_variable(name.clone(), value)
+        self.init_variable(name.clone(), v)
           .map_err(|c| error_raw(ast.loc, c))?; 
         return Ok(None);
       }
       Content::VariableReference(name) => {
         if let Some(ptr) = self.variables.get(name) {
-          ptr.as_basic_value_enum()
+          stack(*ptr)
         }
         else {
           return error(ast.loc, format!("unknown variable name '{}'.", name));
@@ -464,7 +492,7 @@ impl <'l> Jit<'l> {
         let ptr =
           self.codegen_pointer(n)?
           .ok_or_else(|| error_raw(n.loc, "cannot dereference this construct"))?;
-        self.builder.build_load(ptr, "deref")
+        reg(self.builder.build_load(ptr, "deref"))
       }
       Content::ExplicitReturn(n) => {
         self.codegen_return(n.as_ref().map(|b| b as &AstNode))?;
@@ -476,9 +504,9 @@ impl <'l> Jit<'l> {
       }
       Content::Literal(v) => {
         match v {
-          Val::Float(f) => self.context.f64_type().const_float(*f).into(),
+          Val::Float(f) => reg(self.context.f64_type().const_float(*f).into()),
           Val::Bool(b) =>
-            self.context.bool_type().const_int(if *b { 1 } else { 0 }, false).into(),
+            reg(self.context.bool_type().const_int(if *b { 1 } else { 0 }, false).into()),
           Val::Void => return Ok(None),
         }
       }
@@ -582,7 +610,7 @@ impl <'l> Jit<'l> {
 
   fn codegen_return(&mut self, value_node : Option<&AstNode>) -> Result<(), Error> {
     if let Some(value_node) = value_node {
-      let v = self.codegen_expression(value_node)?;
+      let v = self.codegen_expression_to_register(value_node)?;
       self.builder.build_return(v.as_ref().map(|v| v as &BasicValue));
     }
     else {

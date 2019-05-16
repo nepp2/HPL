@@ -96,6 +96,17 @@ pub struct AstNode {
   pub loc : TextLocation,
 }
 
+impl AstNode {
+  fn assert_type(&self, expected : Type) -> Result<(), Error> {
+    if self.type_tag == expected {
+      Ok(())
+    }
+    else {
+      error(self.loc, format!("expected type {:?}, found type {:?}", expected, self.type_tag))
+    }
+  }
+}
+
 fn ast(expr : &Expr, type_tag : Type, content : Content) -> AstNode {
   AstNode {
     type_tag,
@@ -214,6 +225,21 @@ impl <'l> TypeChecker<'l> {
             let b = self.to_ast(value_expr)?;
             Ok(ast(expr, Type::Void, Content::Assignment(Box::new((a, b)))))
           }
+          ("return", exprs) => {
+            if exprs.len() > 1 {
+              return error(expr, format!("malformed return expression"));
+            }
+            let (return_val, type_tag) =
+              if exprs.len() == 1 {
+                let v = self.to_ast(&exprs[0])?;
+                let t = v.type_tag.clone();
+                (Some(Box::new(v)), t)
+              }
+              else {
+                (None, Type::Void)
+              };
+            Ok(ast(expr, type_tag, Content::ExplicitReturn(return_val)))
+          }
           ("while", [condition_node, body_node]) => {
             let condition = self.to_ast(condition_node)?;
             let body = self.to_ast(body_node)?;
@@ -224,6 +250,7 @@ impl <'l> TypeChecker<'l> {
               return error(expr, "malformed if expression");
             }
             let condition = self.to_ast(&exprs[0])?;
+            condition.assert_type(Type::Bool)?;
             let then_branch = self.to_ast(&exprs[1])?;
             if exprs.len() == 3 {
               let else_branch = self.to_ast(&exprs[2])?;
@@ -357,8 +384,7 @@ impl <'l> TypeChecker<'l> {
         }
         let name = self.get_scoped_variable_name(s);
         if let Some(t) = self.variables.get(name.as_ref()) {
-          let ref_type = Type::Ptr(Box::new(t.clone()));
-          Ok(ast(expr, ref_type, Content::VariableReference(name)))
+          Ok(ast(expr, t.clone(), Content::VariableReference(name)))
         }
         else {
           error(expr, "unknown variable name")

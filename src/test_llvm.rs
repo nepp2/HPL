@@ -244,7 +244,7 @@ fn test_brace_syntax_quirks(){
 #[test]
 fn test_return(){
   let code = "
-    fun foo(v) {
+    fun foo(v : bool) {
       if v {
         return 10
       }
