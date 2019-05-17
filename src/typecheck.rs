@@ -13,6 +13,7 @@ use itertools::Itertools;
 pub enum Type {
   Void,
   Float,
+  U64,
   Bool,
   Struct(Rc<StructDefinition>),
   Ptr(Box<Type>),
@@ -30,6 +31,8 @@ impl Type {
     match s {
       "float" => Some(Type::Float),
       "bool" => Some(Type::Bool),
+      "ptr" => Some(Type::Ptr(Box::new(Type::Void))),
+      "u64" => Some(Type::U64),
       "()" => Some(Type::Void),
       other => {
         if other == parser::NO_TYPE {
@@ -78,6 +81,7 @@ pub enum Content {
   IfThenElse(Box<(AstNode, AstNode, AstNode)>),
   Block(Vec<AstNode>),
   FunctionDefinition(Rc<FunctionDefinition>, Box<AstNode>),
+  CFunctionPrototype(Rc<FunctionDefinition>),
   StructDefinition(Rc<StructDefinition>),
   StructInstantiate(Rc<StructDefinition>, Vec<AstNode>),
   FieldAccess(Box<(AstNode, RefStr)>, usize),
@@ -271,6 +275,37 @@ impl <'l> TypeChecker<'l> {
             self.scope_map.pop();
             let tag = nodes.last().map(|n| n.type_tag.clone()).unwrap_or(Type::Void);
             Ok(ast(expr, tag, Content::Block(nodes)))
+          }
+          ("cfun", exprs) => {
+            let name = exprs[0].symbol_unwrap()?;
+            let args_exprs = exprs[1].children.as_slice();
+            let return_type_expr = &exprs[2];
+            let mut arg_names = vec!();
+            let mut arg_types = vec!();
+            for (name_expr, type_expr) in args_exprs.iter().tuples() {
+              let name = name_expr.symbol_unwrap()?;
+              let type_tag = self.to_type(type_expr)?;
+              if type_tag == Type::Void {
+                return error(expr, "functions args cannot be void");
+              }
+              arg_names.push(name.clone());
+              arg_types.push(type_tag);
+            }
+            let return_type = self.to_type(return_type_expr)?;
+            if self.functions.contains_key(name.as_ref()) {
+              return error(expr, "function with that name already defined");
+            }
+            let signature = Rc::new(FunctionSignature {
+              return_type,
+              args: arg_types,
+            });
+            let def = Rc::new(FunctionDefinition {
+              name: name.clone(),
+              args: arg_names,
+              signature,
+            });
+            self.functions.insert(name.clone(), def.clone());
+            Ok(ast(expr, Type::Void, Content::CFunctionPrototype(def)))
           }
           ("fun", exprs) => {
             let name = exprs[0].symbol_unwrap()?;

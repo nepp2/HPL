@@ -1,2 +1,2 @@
 
-ccall fn malloc(bytes : usize) : ptr
+cfun malloc(bytes : u64) : ptr

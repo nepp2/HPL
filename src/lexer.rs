@@ -5,7 +5,7 @@ use crate::error::{Error, TextLocation, TextMarker, error_raw};
 
 lazy_static! {
   static ref KEYWORDS : HashSet<&'static str> =
-    vec!["fun", "if", "else", "type", "while", "struct", "for",
+    vec!["fun", "cfun", "if", "else", "type", "while", "struct", "for",
     "break", "return", "let", "true", "false", "region", "quote",
     "import", "in"].into_iter().collect();
 }

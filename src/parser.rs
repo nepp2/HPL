@@ -10,6 +10,7 @@ static INDEX : &str = "index";
 static LITERAL_ARRAY : &str = "literal_array";
 static ARGS : &str = "args";
 static FUN : &str = "fun";
+static CFUN : &str = "cfun";
 static LET : &str = "let";
 static IF : &str = "if";
 static WHILE : &str = "while";
@@ -369,7 +370,7 @@ fn parse_type(ps : &mut ParseState) -> Result<Expr, Error> {
 
 fn parse_fun(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
-  ps.expect_token("fun", TokenType::Keyword)?;
+  ps.expect_token(FUN, TokenType::Keyword)?;
   let fun_name = parse_simple_symbol(ps)?;
   let mut arguments = vec!();
   let args_start = ps.peek_marker();
@@ -399,9 +400,39 @@ fn parse_fun(ps : &mut ParseState) -> Result<Expr, Error> {
   Ok(fun_expr)
 }
 
+fn parse_cfun(ps : &mut ParseState) -> Result<Expr, Error> {
+  let start = ps.peek_marker();
+  ps.expect_token(CFUN, TokenType::Keyword)?;
+  let fun_name = parse_simple_symbol(ps)?;
+  let mut arguments = vec!();
+  let args_start = ps.peek_marker();
+  ps.expect_syntax("(")?;
+  loop {
+    if ps.peek()?.token_type != TokenType::Symbol {
+      break;
+    }
+    arguments.push(parse_simple_symbol(ps)?);
+    ps.expect_syntax(":")?;
+    arguments.push(parse_type(ps)?);
+    if !ps.accept_syntax(",") {
+      break;
+    }
+  }
+  ps.expect_syntax(")")?;
+  let args_expr = ps.add_tree(ARGS, arguments, args_start);
+  let return_type = if ps.accept_syntax(":") {
+    parse_type(ps)?
+  }
+  else {
+    ps.add_symbol(NO_TYPE, start)
+  };
+  let cfun_expr = ps.add_tree(CFUN, vec![fun_name, args_expr, return_type], start);
+  Ok(cfun_expr)
+}
+
 fn parse_let(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
-  ps.expect_token("let", TokenType::Keyword)?;
+  ps.expect_token(LET, TokenType::Keyword)?;
   let var_name = parse_simple_symbol(ps)?;
   ps.expect_syntax("=")?;
   let initialiser = parse_expression(ps)?;
@@ -546,6 +577,7 @@ fn parse_keyword_term(ps : &mut ParseState) -> Result<Expr, Error> {
     "quote" => parse_quote(ps),
     "let" => parse_let(ps),
     "fun" => parse_fun(ps),
+    "cfun" => parse_cfun(ps),
     "if" => parse_if(ps),
     "for" => parse_for(ps),
     "break" => {

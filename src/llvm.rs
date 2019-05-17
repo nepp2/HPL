@@ -418,6 +418,10 @@ impl <'l> Jit<'l> {
         }
         return Ok(None);
       }
+      Content::CFunctionPrototype(def) => {
+        self.codegen_c_prototype(&def);
+        return Ok(None);
+      }
       Content::FunctionDefinition(def, body) => {
         self.child().codegen_function(
           ast, body, &def.name, &def.args, &def.signature.args)?;
@@ -551,6 +555,7 @@ impl <'l> Jit<'l> {
     match t {
       Type::Void => None,
       Type::Float => Some(self.context.f64_type().into()),
+      Type::U64 => Some(self.context.i64_type().into()),
       Type::Bool => Some(self.context.bool_type().into()),
       Type::Struct(def) => Some(self.struct_type(def).as_basic_type_enum()),
       Type::Ptr(t) => {
@@ -619,6 +624,24 @@ impl <'l> Jit<'l> {
       self.builder.build_return(None);
     }
     Ok(())
+  }
+
+  fn codegen_c_prototype(&mut self, def: &FunctionDefinition) -> FunctionValue
+  {
+    let arg_types =
+      def.signature.args.iter().map(|t| self.to_basic_type(t).unwrap())
+      .collect::<Vec<BasicTypeEnum>>();
+    let arg_types = arg_types.as_slice();
+
+    let return_type = self.to_basic_type(&def.signature.return_type);
+    let fn_type = self.function_type(return_type, arg_types);
+    let function = self.module.add_function(&def.name, fn_type, None);
+
+    // set arguments names
+    for (i, arg) in function.get_param_iter().enumerate() {
+      Jit::name_basic_type(&arg, def.args[i].as_ref());
+    }
+    function
   }
 
   fn codegen_function(
@@ -695,15 +718,12 @@ impl <'l> Jit<'l> {
   }
 }
 
-struct JitModule {
-  module : Module,
-  top_level_function : FunctionValue,
-}
 
 pub struct Interpreter {
   sym : SymbolTable,
   context : ContextRef,
-  modules : Vec<JitModule>,
+  module : Module,
+  pass_manager : PassManager,
   functions : HashMap<RefStr, Rc<FunctionDefinition>>,
   struct_types : HashMap<RefStr, Rc<StructDefinition>>,
 }
@@ -712,29 +732,11 @@ impl Interpreter {
   pub fn new() -> Interpreter {
     let sym = SymbolTable::new();
     let context = Context::get_global();
-    let modules = vec!();
     let functions = HashMap::new();
     let struct_types = HashMap::new();
-    let mut i = Interpreter { sym, context, modules, functions, struct_types };
-    // load prelude
-    {
-      let mut f = File::open("code/prelude_llvm.code").expect("file not found");
-      let mut code = String::new();
-      f.read_to_string(&mut code).unwrap();
-      let r = i.parse_string(&code)
-        .and_then(|expr| { i.load_module(&expr, "prelude") } );
-      match r {
-        Ok(jm) => i.modules.push(r),
-        Err(e) => println!("Error loading prelude: {}", e),
-      }
-    }
-    return i;
-  }
 
-  fn load_module(&mut self, expr : &Expr, name : &str) -> Result<(), Error> {
-    let mut module = Module::create(name);
+    let module = Module::create("top_level");
     let pm = PassManager::create_for_function(&module);
-
     // TODO: decide what to do about optimisation
     pm.add_instruction_combining_pass();
     pm.add_reassociate_pass();
@@ -746,13 +748,25 @@ impl Interpreter {
     pm.add_reassociate_pass();  
     pm.initialize();
 
-    let mut type_checker = 
-      TypeChecker::new(HashMap::new(), &mut self.functions, &mut self.struct_types, &mut self.sym);
-    let ast = type_checker.to_ast(expr)?;
-    let jit = Jit::new(&mut self.context, &mut module, &mut pm);
+    let mut i = Interpreter { sym, context, module, pass_manager: pm, functions, struct_types };
+    // load prelude
+    if let Err(e) = i.load_prelude() {
+      println!("error loading prelude, {}", e);
+    }
+    return i;
+  }
 
-    let f = jit.codegen_function(&ast, &ast, "top_level", &[], &[])?;
-    Ok(JitModule{ module, top_level_function: f})
+  fn load_prelude(&mut self) -> Result<(), Error> {
+    let mut f = File::open("code/prelude_llvm.code").expect("file not found");
+    let mut code = String::new();
+    f.read_to_string(&mut code).unwrap();
+    let expr = self.parse_string(&code)?;
+    self.run_expression(&expr)?;
+    Ok(())
+  }
+
+  fn function_jit(&mut self) -> Jit {
+    Jit::new(&mut self.context, &mut self.module, &mut self.pass_manager)
   }
 
   fn parse_string(&mut self, code : &str) -> Result<Expr, Error> {
