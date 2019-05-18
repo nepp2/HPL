@@ -305,7 +305,7 @@ fn to_value<V>(e : &Expr, env : &mut Environment) -> Result<V, Error>
   r.map_err(|s| error_raw(e, s))
 }
 
-fn array_index(e : &Expr, array : &Vec<Value>, index : f32) -> Result<usize, Error> {
+fn array_index(e : &Expr, array : &Vec<Value>, index : f64) -> Result<usize, Error> {
   let i = index as usize;
   if index >= 0.0 && i < array.len() {
     Ok(i)
@@ -508,8 +508,8 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
       fn to_range(env : &mut Environment, v : Value) -> Result<(i64, i64), ErrorContent> {
         let r : MapVal = from_value(v)?;
         let (start, end) = (env.sym.get("start"), env.sym.get("end"));
-        let start : f32 = from_value(env.map_field_access(&r, start)?)?;
-        let end : f32 = from_value(env.map_field_access(&r, end)?)?;
+        let start : f64 = from_value(env.map_field_access(&r, start)?)?;
+        let end : f64 = from_value(env.map_field_access(&r, end)?)?;
         Ok((start as i64, end as i64))
       }
       let var = exprs[0].symbol_unwrap()?;
@@ -522,7 +522,7 @@ fn eval_tree(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
       env.new_variable(var.clone(), Value::Unit);
       env.loop_depth += 1;
       for i in start..end {
-        let v : Value = (i as f32).into();
+        let v : Value = (i as f64).into();
         let var_ref = env.dereference_variable(var.as_ref()).unwrap();
         *var_ref = v;
         eval(body, env)?;
@@ -624,7 +624,8 @@ pub fn eval(expr : &Expr, env : &mut Environment) -> Result<Value, Error> {
       }
     }
     ExprTag::LiteralString(s) => Ok(Value::from(s.clone())),
-    ExprTag::LiteralFloat(f) => Ok(Value::from(*f)),
+    ExprTag::LiteralFloat(f) => Ok(Value::from(*f as f64)),
+    ExprTag::LiteralInt(i) => Ok(Value::from(*i as f64)),
     ExprTag::LiteralBool(b) => Ok(Value::from(*b)),
     ExprTag::LiteralUnit => Ok(Value::Unit),
   }

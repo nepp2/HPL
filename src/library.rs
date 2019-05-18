@@ -37,7 +37,7 @@ macro_rules! binary {
 }
 
 macro_rules! type_tag {
-  (f32) => { Type::Float };
+  (f64) => { Type::Float };
   (bool) => { Type::Bool };
   (()) => { Type::Unit };
 }
@@ -55,15 +55,15 @@ fn fun(env : &mut Environment, name : &'static str, arg_types : Vec<Type>, f : B
 }
 
 pub fn load_library(e : &mut Environment) {
-  binary!(e, "+", f32, f32, f32, |a, b| a + b);
-  binary!(e, "-", f32, f32, f32, |a, b| a - b);
-  binary!(e, "*", f32, f32, f32, |a, b| a * b);
-  binary!(e, "/", f32, f32, f32, |a, b| a / b);
-  binary!(e, "%", f32, f32, f32, |a, b| a % b);
-  binary!(e, ">", f32, f32, bool, |a, b| a > b);
-  binary!(e, "<", f32, f32, bool, |a, b| a < b);
-  binary!(e, "<=", f32, f32, bool, |a, b| a <= b);
-  binary!(e, ">=", f32, f32, bool, |a, b| a >= b);
+  binary!(e, "+", f64, f64, f64, |a, b| a + b);
+  binary!(e, "-", f64, f64, f64, |a, b| a - b);
+  binary!(e, "*", f64, f64, f64, |a, b| a * b);
+  binary!(e, "/", f64, f64, f64, |a, b| a / b);
+  binary!(e, "%", f64, f64, f64, |a, b| a % b);
+  binary!(e, ">", f64, f64, bool, |a, b| a > b);
+  binary!(e, "<", f64, f64, bool, |a, b| a < b);
+  binary!(e, "<=", f64, f64, bool, |a, b| a <= b);
+  binary!(e, ">=", f64, f64, bool, |a, b| a >= b);
   fun(e, "==", vec![Type::Any, Type::Any], |_, vs| {
     let b = vs[0] == vs[1];
     Ok(Value::from(b))
@@ -73,7 +73,7 @@ pub fn load_library(e : &mut Environment) {
     Ok(Value::from(b))
   });
   fun(e, "unary_-", vec![Type::Float], |_, vs| {
-    let f : Result<f32, String> = vs[0].clone().into();
+    let f : Result<f64, String> = vs[0].clone().into();
     Ok(Value::from(-f?))
   });
   fun(e, "unary_!", vec![Type::Bool], |_, vs| {
@@ -81,16 +81,16 @@ pub fn load_library(e : &mut Environment) {
     Ok(Value::from(!(b?)))
   });
   fun(e, "sqrt", vec![Type::Float], |_e, mut vs| {
-    let f = vs[0].get().convert::<f32>()?;
+    let f = vs[0].get().convert::<f64>()?;
     Ok(Value::from(f.sqrt()))
   });
   fun(e, "floor", vec![Type::Float], |_e, mut vs| {
-    let v = vs[0].get().convert::<f32>()? as i64;
-    Ok(Value::from(v as f32))
+    let v = vs[0].get().convert::<f64>()? as i64;
+    Ok(Value::from(v as f64))
   });
   fun(e, "len", vec![Type::Array], |_, vs| {
     let a = Into::<Result<Array, String>>::into(vs[0].clone())?;
-    let len = a.borrow().len() as f32;
+    let len = a.borrow().len() as f64;
     Ok(Value::from(len))
   });
   fun(e, "concat", vec![Type::String, Type::String], |e, vs| {
@@ -236,10 +236,10 @@ fn load_module(env : &mut Environment, module_name: &str, module_id : ModuleId) 
   Ok(())
 }
 
-fn dpi_ratio(w : &Window) -> f32 {
+fn dpi_ratio(w : &Window) -> f64 {
   let (dw, _) = w.drawable_size();
   let (w, _) = w.size();
-  (w as f32) / (dw as f32)
+  (w as f64) / (dw as f64)
 }
 
 pub type Canvas = sdl2::render::Canvas<sdl2::video::Window>;
@@ -247,7 +247,7 @@ pub type Canvas = sdl2::render::Canvas<sdl2::video::Window>;
 pub struct SdlView {
   pub sdl : Sdl,
   pub video : VideoSubsystem, 
-  pub dpi_ratio : f32,
+  pub dpi_ratio : f64,
   pub canvas : Canvas,
   pub events : EventPump,
 }
@@ -302,8 +302,8 @@ fn load_sdl(e : &mut Environment) {
   let sdl_view_type = e.ext_type(SDL_VIEW);
 
   fun(e, "create_sdl_view", vec![Type::Float, Type::Float], |e, mut vs| {
-    let a = vs[0].get().convert::<f32>()? as u32;
-    let b = vs[1].get().convert::<f32>()? as u32;
+    let a = vs[0].get().convert::<f64>()? as u32;
+    let b = vs[1].get().convert::<f64>()? as u32;
     let v = e.ext_val(SDL_VIEW, create_sdl_view(a, b));
     Ok(Value::External(v))
   });
@@ -311,7 +311,7 @@ fn load_sdl(e : &mut Environment) {
   fun(e, "set_window_pos", vec![sdl_view_type.clone(), Type::Any, Type::Any], |_, mut vs| {
     fn to_pos(v : Value) -> Result<WindowPos, String> {
       if v == Value::Unit { Ok(WindowPos::Centered) }
-      else { Ok(WindowPos::Positioned(v.convert::<f32>()? as i32)) }
+      else { Ok(WindowPos::Positioned(v.convert::<f64>()? as i32)) }
     }
     let v = vs[0].get().convert::<ExternalVal>()?;
     let mut v = v.val.borrow_mut();
@@ -375,30 +375,30 @@ fn load_sdl(e : &mut Environment) {
       }
       Event::MouseMotion { x, y, .. } => {
           let fields = vec![
-            f(e, "x", x as f32),
-            f(e, "y", y as f32),
+            f(e, "x", x as f64),
+            f(e, "y", y as f64),
           ];
           return new_map(e, "sdl_event_mouse_motion", fields);
       }
       Event::MouseButtonDown { x, y, mouse_btn, .. } => {
           let fields = vec![
-            f(e, "x", x as f32),
-            f(e, "y", y as f32),
+            f(e, "x", x as f64),
+            f(e, "y", y as f64),
             s(e, "button", format!("{:?}", mouse_btn)),
           ];
           return new_map(e, "sdl_event_mouse_down", fields);
       }
       Event::MouseButtonUp { x, y, mouse_btn, .. } => {
           let fields = vec![
-            f(e, "x", x as f32),
-            f(e, "y", y as f32),
+            f(e, "x", x as f64),
+            f(e, "y", y as f64),
             s(e, "button", format!("{:?}", mouse_btn)),
           ];
           return new_map(e, "sdl_event_mouse_up", fields);
       }
       Event::MouseWheel { y, .. } => {
           let fields = vec![
-            f(e, "y", y as f32),
+            f(e, "y", y as f64),
           ];
           return new_map(e, "sdl_event_mouse_wheel", fields);
       }
@@ -423,10 +423,10 @@ fn load_sdl(e : &mut Environment) {
 
   fun(e, "set_draw_color", vec![sdl_view_type.clone(), Type::Float, Type::Float, Type::Float, Type::Float], |_e, mut vs| {
     let v = vs[0].get().convert::<ExternalVal>()?;
-    let r = vs[1].get().convert::<f32>()? as u8;
-    let g = vs[2].get().convert::<f32>()? as u8;
-    let b = vs[3].get().convert::<f32>()? as u8;
-    let a = vs[4].get().convert::<f32>()? as u8;
+    let r = vs[1].get().convert::<f64>()? as u8;
+    let g = vs[2].get().convert::<f64>()? as u8;
+    let b = vs[3].get().convert::<f64>()? as u8;
+    let a = vs[4].get().convert::<f64>()? as u8;
     let mut v = v.val.borrow_mut();
     let view = v.downcast_mut::<SdlView>().unwrap();
     view.canvas.set_draw_color(Color::RGBA(r, g, b, a));
@@ -435,10 +435,10 @@ fn load_sdl(e : &mut Environment) {
 
   fun(e, "draw_line", vec![sdl_view_type.clone(), Type::Float, Type::Float, Type::Float, Type::Float], |_e, mut vs| {
     let v = vs[0].get().convert::<ExternalVal>()?;
-    let x1 = vs[1].get().convert::<f32>()? as i32;
-    let y1 = vs[2].get().convert::<f32>()? as i32;
-    let x2 = vs[3].get().convert::<f32>()? as i32;
-    let y2 = vs[4].get().convert::<f32>()? as i32;
+    let x1 = vs[1].get().convert::<f64>()? as i32;
+    let y1 = vs[2].get().convert::<f64>()? as i32;
+    let x2 = vs[3].get().convert::<f64>()? as i32;
+    let y2 = vs[4].get().convert::<f64>()? as i32;
     let mut v = v.val.borrow_mut();
     let view = v.downcast_mut::<SdlView>().unwrap();
     view.canvas.draw_line(Point::new(x1, y1), Point::new(x2, y2)).unwrap();
@@ -447,10 +447,10 @@ fn load_sdl(e : &mut Environment) {
 
   fun(e, "draw_rect", vec![sdl_view_type.clone(), Type::Float, Type::Float, Type::Float, Type::Float], |_e, mut vs| {
     let v = vs[0].get().convert::<ExternalVal>()?;
-    let x = vs[1].get().convert::<f32>()? as i32;
-    let y = vs[2].get().convert::<f32>()? as i32;
-    let w = vs[3].get().convert::<f32>()? as u32;
-    let h = vs[4].get().convert::<f32>()? as u32;
+    let x = vs[1].get().convert::<f64>()? as i32;
+    let y = vs[2].get().convert::<f64>()? as i32;
+    let w = vs[3].get().convert::<f64>()? as u32;
+    let h = vs[4].get().convert::<f64>()? as u32;
     let mut v = v.val.borrow_mut();
     let view = v.downcast_mut::<SdlView>().unwrap();
     view.canvas.draw_rect(Rect::new(x, y, w, h)).unwrap();
@@ -459,10 +459,10 @@ fn load_sdl(e : &mut Environment) {
 
   fun(e, "fill_rect", vec![sdl_view_type.clone(), Type::Float, Type::Float, Type::Float, Type::Float], |_e, mut vs| {
     let v = vs[0].get().convert::<ExternalVal>()?;
-    let x = vs[1].get().convert::<f32>()? as i32;
-    let y = vs[2].get().convert::<f32>()? as i32;
-    let w = vs[3].get().convert::<f32>()? as u32;
-    let h = vs[4].get().convert::<f32>()? as u32;
+    let x = vs[1].get().convert::<f64>()? as i32;
+    let y = vs[2].get().convert::<f64>()? as i32;
+    let w = vs[3].get().convert::<f64>()? as u32;
+    let h = vs[4].get().convert::<f64>()? as u32;
     let mut v = v.val.borrow_mut();
     let view = v.downcast_mut::<SdlView>().unwrap();
     view.canvas.fill_rect(Rect::new(x, y, w, h)).unwrap();
@@ -478,7 +478,7 @@ fn load_sdl(e : &mut Environment) {
   });
 
   fun(e, "sleep", vec![Type::Float], |_e, mut vs| {
-    let millis = vs[0].get().convert::<f32>()?;
+    let millis = vs[0].get().convert::<f64>()?;
     let micros = millis * 1000.0;
     Duration::from_micros(micros as u64);
     return Ok(Value::Unit);
@@ -498,7 +498,7 @@ fn load_sdl(e : &mut Environment) {
     let instant = v.downcast_mut::<Instant>().unwrap();
     let new_now = Instant::now();
     let duration = new_now.duration_since(*instant);
-    let f = duration.subsec_micros() as f32 / 1000.0;
+    let f = duration.subsec_micros() as f64 / 1000.0;
     Ok(Value::from(f))
   });
 
@@ -515,7 +515,7 @@ fn load_sdl(e : &mut Environment) {
     let v = vs[0].get().convert::<ExternalVal>()?;
     let mut v = v.val.borrow_mut();
     let rng = v.downcast_mut::<StdRng>().unwrap();
-    let f : f32 = rng.gen();
+    let f : f64 = rng.gen();
     Ok(Value::from(f))
   });
 }

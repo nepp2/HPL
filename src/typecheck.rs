@@ -13,7 +13,7 @@ use itertools::Itertools;
 pub enum Type {
   Void,
   Float,
-  U64,
+  I64,
   Bool,
   Struct(Rc<StructDefinition>),
   Ptr(Box<Type>),
@@ -23,6 +23,7 @@ pub enum Type {
 pub enum Val {
   Void,
   Float(f64),
+  I64(i64),
   Bool(bool),
 }
 
@@ -32,7 +33,7 @@ impl Type {
       "float" => Some(Type::Float),
       "bool" => Some(Type::Bool),
       "ptr" => Some(Type::Ptr(Box::new(Type::Void))),
-      "u64" => Some(Type::U64),
+      "i64" => Some(Type::I64),
       "()" => Some(Type::Void),
       other => {
         if other == parser::NO_TYPE {
@@ -428,6 +429,10 @@ impl <'l> TypeChecker<'l> {
       ExprTag::LiteralFloat(f) => {
         let v = Val::Float(*f as f64);
         Ok(ast(expr, Type::Float, Content::Literal(v)))
+      }
+      ExprTag::LiteralInt(v) => {
+        let v = Val::I64(*v as i64);
+        Ok(ast(expr, Type::I64, Content::Literal(v)))
       }
       ExprTag::LiteralBool(b) => {
         let v = Val::Bool(*b);

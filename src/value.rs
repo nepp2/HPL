@@ -67,7 +67,8 @@ pub enum ExprTag {
   Tree(RefStr),
   Symbol(RefStr),
   LiteralString(RefStr),
-  LiteralFloat(f32),
+  LiteralFloat(f64),
+  LiteralInt(i64),
   LiteralBool(bool),
   LiteralUnit,
 }
@@ -104,6 +105,7 @@ pub fn display_expr(e: &Expr) -> String {
       ExprTag::Symbol(x) => write!(w, "{}", x),
       ExprTag::LiteralString(x) => write!(w, "{}", x),
       ExprTag::LiteralFloat(x) => write!(w, "{}", x),
+      ExprTag::LiteralInt(x) => write!(w, "{}", x),
       ExprTag::LiteralBool(x) => write!(w, "{}", x),
       ExprTag::LiteralUnit => write!(w, "()"),
     }
@@ -219,6 +221,9 @@ pub fn expr_to_value(e : &Expr, sym : &mut SymbolTable) -> Value {
       m.insert(sym.get("tag"), Value::from(sym.get("literal_float")));
       m.insert(sym.get("value"), Value::from(f.clone()));
     }
+    LiteralInt(i) => {
+      panic!()
+    }
     LiteralBool(b) => {
       m.insert(sym.get("tag"), Value::from(sym.get("literal_bool")));
       m.insert(sym.get("value"), Value::from(b.clone()));
@@ -231,10 +236,10 @@ pub fn expr_to_value(e : &Expr, sym : &mut SymbolTable) -> Value {
     let children : Vec<Value> = e.children.iter().map(|e| expr_to_value(e, sym)).collect();
     m.insert(sym.get("children"), Value::from(children));
   }
-  m.insert(sym.get("start_line"), Value::from(e.loc.start.line as f32));
-  m.insert(sym.get("start_col"), Value::from(e.loc.start.col as f32));
-  m.insert(sym.get("end_line"), Value::from(e.loc.end.line as f32));
-  m.insert(sym.get("end_col"), Value::from(e.loc.end.col as f32));
+  m.insert(sym.get("start_line"), Value::from(e.loc.start.line as f64));
+  m.insert(sym.get("start_col"), Value::from(e.loc.start.col as f64));
+  m.insert(sym.get("end_line"), Value::from(e.loc.end.line as f64));
+  m.insert(sym.get("end_col"), Value::from(e.loc.end.col as f64));
   Value::Map(Rc::new(RefCell::new(m)))
 }
 
@@ -246,10 +251,10 @@ pub fn value_to_expr(v : Value, sym : &mut SymbolTable) -> Result<Expr, ErrorCon
   let m = v.convert::<MapVal>()?;
   let m = m.borrow();
   let tag = get(&m, "tag", sym)?.convert::<RefStr>()?;
-  let start_line = get(&m, "start_line", sym)?.convert::<f32>()? as usize;
-  let start_col = get(&m, "start_col", sym)?.convert::<f32>()? as usize;
-  let end_line = get(&m, "end_line", sym)?.convert::<f32>()? as usize;
-  let end_col = get(&m, "end_col", sym)?.convert::<f32>()? as usize;
+  let start_line = get(&m, "start_line", sym)?.convert::<f64>()? as usize;
+  let start_col = get(&m, "start_col", sym)?.convert::<f64>()? as usize;
+  let end_line = get(&m, "end_line", sym)?.convert::<f64>()? as usize;
+  let end_col = get(&m, "end_col", sym)?.convert::<f64>()? as usize;
   let expr_tag = match tag.as_ref() {
     "expr" => {
       let s = get(&m, "value", sym)?.convert::<RefStr>()?;
@@ -264,7 +269,7 @@ pub fn value_to_expr(v : Value, sym : &mut SymbolTable) -> Result<Expr, ErrorCon
       ExprTag::LiteralString(s)
     },
     "literal_float" => {
-      let f = get(&m, "value", sym)?.convert::<f32>()?;
+      let f = get(&m, "value", sym)?.convert::<f64>()?;
       ExprTag::LiteralFloat(f)
     },
     "literal_bool" => {
@@ -289,8 +294,8 @@ pub fn value_to_expr(v : Value, sym : &mut SymbolTable) -> Result<Expr, ErrorCon
   Ok(e)
 }
 
-fn bits_to_f32(b : u64) -> f32 {
-  f32::from_bits(b as u32)
+fn bits_to_f64(b : u64) -> f64 {
+  f64::from_bits(b)
 }
 
 fn bits_to_bool(b : u64) -> bool {
@@ -327,7 +332,7 @@ impl Value {
   fn write(&self, w: &mut fmt::Write, sym : &mut SymbolTable) -> fmt::Result {
     match self {
       Value::Float(x) => {
-        write!(w, "{}", bits_to_f32(*x))
+        write!(w, "{}", bits_to_f64(*x))
       }
       Value::Array(a) => {
         write!(w, "[")?;
@@ -386,8 +391,8 @@ impl From<bool> for Value {
     Value::Bool(if v { 1 } else { 0 })
   }
 }
-impl From<f32> for Value {
-  fn from(v : f32) -> Value {
+impl From<f64> for Value {
+  fn from(v : f64) -> Value {
     Value::Float(v.to_bits() as u64)
   }
 }
@@ -402,10 +407,10 @@ impl From<RefStr> for Value {
   }
 }
 
-impl Into<Result<f32, String>> for Value {
-  fn into(self) -> Result<f32, String> {
+impl Into<Result<f64, String>> for Value {
+  fn into(self) -> Result<f64, String> {
     match self {
-      Value::Float(f) => Ok(bits_to_f32(f)),
+      Value::Float(f) => Ok(bits_to_f64(f)),
       x => Err(format!("Expected float, found {:?}.", x.to_type().str()))
     }
   }

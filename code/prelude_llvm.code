@@ -1,2 +1,2 @@
 
-cfun malloc(bytes : u64) : ptr
+cfun malloc(bytes : i64) : ptr

@@ -300,13 +300,14 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
   pratt_parse(ps, 0)
 }
 
-fn parse_float(ps : &mut ParseState) -> Result<f32, Error> {
-  let t = ps.pop_type(TokenType::FloatLiteral)?;
-  if let Ok(f) = f32::from_str(&t.symbol) {
-    Ok(f)
+fn parse_literal<T : FromStr>(ps : &mut ParseState) -> Result<T, Error> {
+  let t = ps.peek()?;
+  if let Ok(v) = T::from_str(&t.symbol) {
+    ps.skip();
+    Ok(v)
   }
   else {
-    error(t.loc, format!("Failed to parse float from '{}'", t.symbol))
+    error(t.loc, format!("Failed to parse literal from '{}'", t.symbol))
   }
 }
 
@@ -632,8 +633,13 @@ fn parse_expression_term(ps : &mut ParseState) -> Result<Expr, Error> {
     }
     TokenType::FloatLiteral => {
       let start = ps.peek_marker();
-      let f = ExprTag::LiteralFloat(parse_float(ps)?);
+      let f = ExprTag::LiteralFloat(parse_literal(ps)?);
       Ok(ps.add_leaf(f, start))
+    }
+    TokenType::IntLiteral => {
+      let start = ps.peek_marker();
+      let i = ExprTag::LiteralInt(parse_literal(ps)?);
+      Ok(ps.add_leaf(i, start))
     }
   }
 }

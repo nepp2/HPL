@@ -12,7 +12,7 @@ lazy_static! {
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum TokenType {
-  Symbol, Syntax, FloatLiteral, Keyword, StringLiteral
+  Symbol, Syntax, FloatLiteral, IntLiteral, Keyword, StringLiteral
 }
 
 #[derive(Clone)]
@@ -148,16 +148,21 @@ impl <'l> CStream<'l> {
     if self.is_number() {
       let start_loc = self.loc;
       self.append_char_while(&CStream::is_number);
-      if self.has_chars() && self.peek() == '.' {
-        self.append_char();
-        self.append_char_while(&CStream::is_number);
-      }
+      let literal_type =
+        if self.has_chars() && self.peek() == '.' {
+          self.append_char();
+          self.append_char_while(&CStream::is_number);
+          TokenType::FloatLiteral
+        }
+        else {
+          TokenType::IntLiteral
+        };
       if self.has_chars() && self.is_symbol_start_char() {
         self.append_char_while(&CStream::is_symbol_middle_char);
-        return Err(self.raise_error(start_loc, "Malformed floating point literal".to_string()));
+        return Err(self.raise_error(start_loc, "Malformed literal".to_string()));
       }
       else{
-        self.complete_token(start_loc, TokenType::FloatLiteral);
+        self.complete_token(start_loc, literal_type);
       }
       Ok(true)
     }

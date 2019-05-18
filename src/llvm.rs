@@ -511,6 +511,7 @@ impl <'l> Jit<'l> {
       Content::Literal(v) => {
         match v {
           Val::Float(f) => reg(self.context.f64_type().const_float(*f).into()),
+          Val::I64(i) => reg(self.context.i64_type().const_int(*i as u64, false).into()),
           Val::Bool(b) =>
             reg(self.context.bool_type().const_int(if *b { 1 } else { 0 }, false).into()),
           Val::Void => return Ok(None),
@@ -555,7 +556,7 @@ impl <'l> Jit<'l> {
     match t {
       Type::Void => None,
       Type::Float => Some(self.context.f64_type().into()),
-      Type::U64 => Some(self.context.i64_type().into()),
+      Type::I64 => Some(self.context.i64_type().into()),
       Type::Bool => Some(self.context.bool_type().into()),
       Type::Struct(def) => Some(self.struct_type(def).as_basic_type_enum()),
       Type::Ptr(t) => {
@@ -813,6 +814,7 @@ fn run_expression(expr : &Expr, i: &mut Interpreter) -> Result<Val, Error> {
   let result = match ast.type_tag {
     Type::Bool => execute::<bool>(expr, f, &ee).map(Val::Bool),
     Type::Float => execute::<f64>(expr, f, &ee).map(Val::Float),
+    Type::I64 => execute::<i64>(expr, f, &ee).map(Val::I64),
     Type::Void => execute::<()>(expr, f, &ee).map(|_| Val::Void),
     Type::Ptr(_) => 
       error(expr, "can't return a pointer from a top-level function"),
