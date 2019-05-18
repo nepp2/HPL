@@ -60,7 +60,7 @@ use inkwell::passes::PassManager;
 use inkwell::types::{BasicTypeEnum, BasicType, StructType, PointerType, FunctionType};
 use inkwell::values::{
   BasicValueEnum, BasicValue, FloatValue, IntValue, FunctionValue, PointerValue };
-use inkwell::{OptimizationLevel, FloatPredicate};
+use inkwell::{OptimizationLevel, FloatPredicate, IntPredicate};
 use inkwell::execution_engine::ExecutionEngine;
 
 fn dump_module(module : &Module) {
@@ -290,18 +290,27 @@ impl <'l> Jit<'l> {
       }
       Content::IntrinsicCall(name, args) => {
         if let [a, b] = args.as_slice() {
-          match name.as_ref() {
-            "+" => binary_op!(build_float_add, FloatValue, a, b, self),
-            "-" => binary_op!(build_float_sub, FloatValue, a, b, self),
-            "*" => binary_op!(build_float_mul, FloatValue, a, b, self),
-            "/" => binary_op!(build_float_div, FloatValue, a, b, self),
-            ">" => compare_op!(build_float_compare, FloatPredicate::OGT, FloatValue, a, b, self),
-            ">=" => compare_op!(build_float_compare, FloatPredicate::OGE, FloatValue, a, b, self),
-            "<" => compare_op!(build_float_compare, FloatPredicate::OLT, FloatValue, a, b, self),
-            "<=" => compare_op!(build_float_compare, FloatPredicate::OLE, FloatValue, a, b, self),
-            "==" => compare_op!(build_float_compare, FloatPredicate::OEQ, FloatValue, a, b, self),
-            "&&" => self.codegen_short_circuit_op(a, b, ShortCircuitOp::And)?,
-            "||" => self.codegen_short_circuit_op(a, b, ShortCircuitOp::Or)?,
+          match (&a.type_tag, name.as_ref()) {
+          (Type::Float, "+") => binary_op!(build_float_add, FloatValue, a, b, self),
+            (Type::Float, "-") => binary_op!(build_float_sub, FloatValue, a, b, self),
+            (Type::Float, "*") => binary_op!(build_float_mul, FloatValue, a, b, self),
+            (Type::Float, "/") => binary_op!(build_float_div, FloatValue, a, b, self),
+            (Type::Float, ">") => compare_op!(build_float_compare, FloatPredicate::OGT, FloatValue, a, b, self),
+            (Type::Float, ">=") => compare_op!(build_float_compare, FloatPredicate::OGE, FloatValue, a, b, self),
+            (Type::Float, "<") => compare_op!(build_float_compare, FloatPredicate::OLT, FloatValue, a, b, self),
+            (Type::Float, "<=") => compare_op!(build_float_compare, FloatPredicate::OLE, FloatValue, a, b, self),
+            (Type::Float, "==") => compare_op!(build_float_compare, FloatPredicate::OEQ, FloatValue, a, b, self),
+            (Type::I64, "+") => binary_op!(build_int_add, IntValue, a, b, self),
+            (Type::I64, "-") => binary_op!(build_int_sub, IntValue, a, b, self),
+            (Type::I64, "*") => binary_op!(build_int_mul, IntValue, a, b, self),
+            //(Type::I64, "/") => binary_op!(build_int_div, IntValue, a, b, self),
+            (Type::I64, ">") => compare_op!(build_int_compare, IntPredicate::SGT, IntValue, a, b, self),
+            (Type::I64, ">=") => compare_op!(build_int_compare, IntPredicate::SGE, IntValue, a, b, self),
+            (Type::I64, "<") => compare_op!(build_int_compare, IntPredicate::SLT, IntValue, a, b, self),
+            (Type::I64, "<=") => compare_op!(build_int_compare, IntPredicate::SLE, IntValue, a, b, self),
+            (Type::I64, "==") => compare_op!(build_int_compare, IntPredicate::EQ, IntValue, a, b, self),
+            (Type::Bool, "&&") => self.codegen_short_circuit_op(a, b, ShortCircuitOp::And)?,
+            (Type::Bool, "||") => self.codegen_short_circuit_op(a, b, ShortCircuitOp::Or)?,
             _ => return error(ast.loc, "encountered unrecognised intrinsic"),
           }        
         }

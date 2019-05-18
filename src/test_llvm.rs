@@ -9,18 +9,19 @@ fn test_basics() {
   let cases = vec![
     ("", Val::Void),
     ("()", Val::Void),
-    ("4 + 5", Val::Float(9.0)),
-    ("4 - 5", Val::Float(-1.0)),
-    ("4 * 5", Val::Float(20.0)),
+    ("4 + 5", Val::I64(9)),
+    ("4. + 5.5", Val::Float(9.5)),
+    ("4 - 5", Val::I64(-1)),
+    ("4 * 5", Val::I64(20)),
     ("20 > 5", Val::Bool(true)),
     ("20 < 5", Val::Bool(false)),
     ("5 <= 5", Val::Bool(true)),
     ("5 >= 5", Val::Bool(true)),
     ("5 == 5", Val::Bool(true)),
-    ("-(4 - 5)", Val::Float(1.0)),
-    ("4 + {let a = 5; let b = 4; a}", Val::Float(9.0)),
-    ("if true { 3 } else { 4 }", Val::Float(3.0)),
-    ("if false { 3 } else { 4 }", Val::Float(4.0)),
+    ("-(4 - 5)", Val::I64(1)),
+    ("4 + {let a = 5; let b = 4; a}", Val::I64(9)),
+    ("if true { 3 } else { 4 }", Val::I64(3)),
+    ("if false { 3 } else { 4 }", Val::I64(4)),
     ("let a = 5; a", Val::Float(5.0)),
   ];
   for (code, expected_result) in cases {
@@ -52,8 +53,8 @@ fn test_and_or() {
     true || {a = 1; true}
     a
   ";
-  assert_result(and, Val::Float(0.0));
-  assert_result(or, Val::Float(0.0));
+  assert_result(and, Val::I64(0));
+  assert_result(or, Val::I64(0));
 }
 
 fn result_string(r : Result<Val, Error>) -> String {
@@ -90,7 +91,7 @@ fn test_dispatch(){
     }
   ";
   let cases = vec![
-    ("add(-3, 5)", Val::Float(2.0)),
+    ("add(-3, 5)", Val::I64(2)),
     ("add(true, false)", Val::Bool(false)),
     ("add(false, false)", Val::Bool(true)),
   ];
@@ -120,7 +121,7 @@ fn test_scope(){
     }
     a + b
   ";
-  assert_result(code, Val::Float(9.0));
+  assert_result(code, Val::I64(9));
 }
 
 #[test]
@@ -131,35 +132,35 @@ fn test_assignment(){
     a
   ";
   let b = "
-    struct vec2 {
-      x : float
-      y : float
+    struct point {
+      x : i64
+      y : i64
     }
-    let a = vec2(x: 5, y: 50)
+    let a = point(x: 5, y: 50)
     a.x = a.x + 10
     a.y = 500
     a.x + a.y
   ";
-  assert_result(a, Val::Float(9.0));
-  assert_result(b, Val::Float(515.0));
+  assert_result(a, Val::I64(9));
+  assert_result(b, Val::I64(515));
 }
 
 #[test]
 fn test_struct() {
   let code = "
-    struct vec2 {
-      x : float
-      y : float
+    struct point {
+      x : i64
+      y : i64
     }
-    fun foo(a : vec2, b : vec2) {
-      vec2(x: a.x + b.x, y: a.y + b.y)
+    fun foo(a : point, b : point) {
+      point(x: a.x + b.x, y: a.y + b.y)
     }
-    let a = vec2(x: 10, y: 1)
-    let b = vec2(x: 2, y: 20)
+    let a = point(x: 10, y: 1)
+    let b = point(x: 2, y: 20)
     let c = foo(a, b)
     c.y
   ";
-  assert_result(code, Val::Float(21.0));
+  assert_result(code, Val::I64(21));
 }
 
 #[test]
@@ -169,7 +170,7 @@ fn test_arrays() {
     a[1][1] = 50
     a[1][1] + a[2]
   ";
-  assert_result(code, Val::Float(56.0));
+  assert_result(code, Val::I64(56));
 }
 
 #[test]
@@ -184,7 +185,7 @@ fn test_while() {
     }
     x
   ";
-  assert_result(a, Val::Float(5.0));
+  assert_result(a, Val::I64(5));
   let b = "
     let x = 1
     while x < 10 {
@@ -192,7 +193,7 @@ fn test_while() {
     }
     x
   ";
-  assert_result(b, Val::Float(13.0));
+  assert_result(b, Val::I64(13));
 }
 
 #[test]
@@ -212,7 +213,7 @@ fn test_first_class_function() {
     }
     fold(a, 0, foo)
   ";
-  assert_result(code, Val::Float(10.0));
+  assert_result(code, Val::I64(10));
 }
 
 #[test]
@@ -227,7 +228,7 @@ fn test_for_loop() {
     }
     t
   ";
-  assert_result(range_code, Val::Float(10.0));
+  assert_result(range_code, Val::I64(10));
 }
 
 #[test]
@@ -252,7 +253,7 @@ fn test_return(){
     }
     foo(true) + foo(false)
   ";
-  assert_result(code, Val::Float(30.0));
+  assert_result(code, Val::I64(30));
 }
 
 /*

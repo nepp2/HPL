@@ -179,6 +179,31 @@ impl <'l> TypeChecker<'l> {
     error(expr, "no type with this name exists")
   }
 
+  fn match_intrinsic(name : &str, args : &[AstNode]) -> Option<Type> {
+    match args {
+      [a, b] => match (&a.type_tag, &b.type_tag) {
+        (Type::Float, Type::Float) => match name {
+          "+" | "-" | "*" | "/" => Some(Type::Float),
+          ">" | ">="| "<" | "<=" | "==" => Some(Type::Bool),
+          _ => None,
+        }
+        (Type::I64, Type::I64) => match name {
+          "+" | "-" | "*" | "/" => Some(Type::I64),
+          ">" | ">="| "<" | "<=" | "==" => Some(Type::Bool),
+          _ => None,
+        }
+        _ => None
+      }
+      [a] => match (&a.type_tag, name) {
+        (Type::Float, "unary_-") => Some(Type::Float),
+        (Type::I64, "unary_-") => Some(Type::I64),
+        (Type::Bool, "unary_!") => Some(Type::Bool),
+        _ => None,
+      }
+      _ => None,
+    }
+  }
+
   pub fn to_ast(&mut self, expr : &Expr) -> Result<AstNode, Error> {
     match &expr.tag {
       ExprTag::Tree(_) => {
@@ -187,23 +212,15 @@ impl <'l> TypeChecker<'l> {
         match (instr.as_ref(), children) {
           ("call", exprs) => {
             let function_name = exprs[0].symbol_unwrap()?;
-            let op_tag = match function_name.as_ref() {
-              "+" | "-" | "*" | "/" | "unary_-" => Some(Type::Float),
-              ">" | ">="| "<" | "<=" | "==" | "unary_!" => Some(Type::Bool),
-              _ => None,
-            };
+            let args =
+                  exprs[1..].iter().map(|e| self.to_ast(e))
+                  .collect::<Result<Vec<AstNode>, Error>>()?;
+            let op_tag = TypeChecker::match_intrinsic(function_name.as_ref(), args.as_slice());
             if let Some(op_tag) = op_tag {
-              let args =
-                exprs[1..].iter()
-                .map(|e| self.to_ast(e))
-                .collect::<Result<Vec<AstNode>, Error>>()?;
               return Ok(ast(expr, op_tag, Content::IntrinsicCall(function_name.clone(), args)))
             }
             if let Some(def) = self.functions.get(function_name.as_ref()) {
               let return_type = def.signature.return_type.clone();
-              let args =
-                exprs[1..].iter().map(|e| self.to_ast(e))
-                .collect::<Result<Vec<AstNode>, Error>>()?;
               return Ok(ast(expr, return_type, Content::FunctionCall(function_name.clone(), args)));
             }
             error(expr, "unknown function")
