@@ -124,7 +124,11 @@ pub struct TypeChecker<'l> {
   variables: HashMap<RefStr, Type>,
   functions: &'l mut HashMap<RefStr, Rc<FunctionDefinition>>,
   struct_types : &'l mut HashMap<RefStr, Rc<StructDefinition>>,
+
+  /// Tracks which variables are available, when.
+  /// Used to rename variables with clashing names.
   scope_map: Vec<HashMap<RefStr, RefStr>>,
+
   sym: &'l mut SymbolTable,
 }
 
