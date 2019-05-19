@@ -15,7 +15,6 @@ mod library;
 mod watcher;
 mod typecheck;
 mod llvm;
-mod tests;
 mod test_llvm;
 
 use std::fs::File;

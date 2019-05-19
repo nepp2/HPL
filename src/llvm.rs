@@ -146,7 +146,7 @@ impl From<Option<BasicValueEnum>> for JitVal {
 enum ShortCircuitOp { And, Or }
 
 pub struct Jit<'l> {
-  context: &'l mut ContextRef,
+  context: &'l mut Context,
   builder: Builder,
   variables: HashMap<RefStr, PointerValue>,
   struct_types: HashMap<RefStr, StructType>,
@@ -160,9 +160,10 @@ pub struct Jit<'l> {
 
 impl <'l> Jit<'l> {
 
-  pub fn new(context: &'l mut ContextRef, module : &'l mut Module, pm : &'l mut PassManager) -> Jit<'l> {
+  pub fn new(context: &'l mut Context, module : &'l mut Module, pm : &'l mut PassManager) -> Jit<'l> {
+    let builder = context.create_builder();
     Jit {
-      context, builder: Builder::create(), module, pm,
+      context, builder, module, pm,
       variables: HashMap::new(),
       struct_types: HashMap::new(),
       loop_labels: vec!(),
@@ -315,9 +316,10 @@ impl <'l> Jit<'l> {
           }        
         }
         else if let [a] = args.as_slice() {
-          match name.as_ref() {
-            "unary_-" => unary_op!(build_float_neg, FloatValue, a, self),
-            "unary_!" => unary_op!(build_not, IntValue, a, self),
+          match (&a.type_tag, name.as_ref()) {
+            (Type::Float, "unary_-") => unary_op!(build_float_neg, FloatValue, a, self),
+            (Type::I64, "unary_-") => unary_op!(build_int_neg, IntValue, a, self),
+            (Type::Bool, "unary_!") => unary_op!(build_not, IntValue, a, self),
             _ => return error(ast.loc, "encountered unrecognised intrinsic"),
           }
         }
@@ -731,7 +733,7 @@ impl <'l> Jit<'l> {
 
 pub struct Interpreter {
   sym : SymbolTable,
-  context : ContextRef,
+  context : Context,
   module : Module,
   pass_manager : PassManager,
   functions : HashMap<RefStr, Rc<FunctionDefinition>>,
@@ -741,11 +743,11 @@ pub struct Interpreter {
 impl Interpreter {
   pub fn new() -> Interpreter {
     let sym = SymbolTable::new();
-    let context = Context::get_global();
+    let context = Context::create();
     let functions = HashMap::new();
     let struct_types = HashMap::new();
 
-    let module = Module::create("top_level");
+    let module = context.create_module("top_level");
     let pm = PassManager::create_for_function(&module);
     // TODO: decide what to do about optimisation
     pm.add_instruction_combining_pass();
@@ -759,10 +761,12 @@ impl Interpreter {
     pm.initialize();
 
     let mut i = Interpreter { sym, context, module, pass_manager: pm, functions, struct_types };
+    
     // load prelude
     if let Err(e) = i.load_prelude() {
       println!("error loading prelude, {}", e);
     }
+    
     return i;
   }
 

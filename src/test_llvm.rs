@@ -22,20 +22,11 @@ fn test_basics() {
     ("4 + {let a = 5; let b = 4; a}", Val::I64(9)),
     ("if true { 3 } else { 4 }", Val::I64(3)),
     ("if false { 3 } else { 4 }", Val::I64(4)),
-    ("let a = 5; a", Val::Float(5.0)),
+    ("let a = 5; a", Val::I64(5)),
   ];
   for (code, expected_result) in cases {
     assert_result(code, expected_result);
   }
-}
-
-#[test]
-fn test_string() {
-  let mut i = Interpreter::new();
-  let code = r#""Hello world""#;
-  // TODO let expected = Val::from(i.sym.get("Hello world"));
-  let expected = Val::Void;
-  assert_result_with_interpreter(code, expected, &mut i);
 }
 
 #[test]
@@ -79,7 +70,7 @@ fn assert_result(code : &str, expected_result : Val){
 }
 
 // TODO: multiple dispatch currently not supported
-// #[test]
+//#[test]
 fn test_dispatch(){
   let fundef_code = "
     fun add(a : float, b : float) {
@@ -164,13 +155,17 @@ fn test_struct() {
 }
 
 #[test]
-fn test_arrays() {
+fn test_return(){
   let code = "
-    let a = [0, [1, 2, 3], 6]
-    a[1][1] = 50
-    a[1][1] + a[2]
+    fun foo(v : bool) {
+      if v {
+        return 10
+      }
+      20
+    }
+    foo(true) + foo(false)
   ";
-  assert_result(code, Val::I64(56));
+  assert_result(code, Val::I64(30));
 }
 
 #[test]
@@ -194,6 +189,40 @@ fn test_while() {
     x
   ";
   assert_result(b, Val::I64(13));
+}
+
+/*
+fn test_global() {
+  let mut i = Interpreter::new();
+  let a = "let foo = 5";
+  let b = "foo";
+  assert_result_with_interpreter(&mut i, a, Val::Void);
+  assert_result_with_interpreter(&mut i, b, Val::I64(5));
+}
+
+
+Features to add:
+
+  * non-native types (can fold strings and arrays into this?)
+  * consider making new-lines significant in some cases (relating to semi-colons)
+
+#[test]
+fn test_arrays() {
+  let code = "
+    let a = [0, [1, 2, 3], 6]
+    a[1][1] = 50
+    a[1][1] + a[2]
+  ";
+  assert_result(code, Val::I64(56));
+}
+
+#[test]
+fn test_string() {
+  let mut i = Interpreter::new();
+  let code = r#""Hello world""#;
+  // TODO let expected = Val::from(i.sym.get("Hello world"));
+  let expected = Val::Void;
+  assert_result_with_interpreter(code, expected, &mut i);
 }
 
 #[test]
@@ -241,27 +270,5 @@ fn test_brace_syntax_quirks(){
   // TODO: fix this problem
   assert_result(code, Val::Void);
 }
-
-#[test]
-fn test_return(){
-  let code = "
-    fun foo(v : bool) {
-      if v {
-        return 10
-      }
-      20
-    }
-    foo(true) + foo(false)
-  ";
-  assert_result(code, Val::I64(30));
-}
-
-/*
-
-Features to add:
-
-  * non-native types (can fold strings and arrays into this?)
-  * explicit returns (not sure what to do about semi-colons)
-  * consider making new-lines significant in some cases (relating to semi-colons)
 
 */
