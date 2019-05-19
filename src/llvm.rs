@@ -149,7 +149,7 @@ pub struct Jit<'l> {
   is_top_level : bool,
   context: &'l mut Context,
   builder: Builder,
-  variables: HashMap<RefStr, PointerValue>,
+  variables: &'l mut HashMap<RefStr, PointerValue>,
   struct_types: HashMap<RefStr, StructType>,
 
   /// A stack of values indicating the entry and exit labels for each loop
@@ -161,19 +161,25 @@ pub struct Jit<'l> {
 
 impl <'l> Jit<'l> {
 
-  pub fn new(is_top_level : bool, context: &'l mut Context, module : &'l mut Module, pm : &'l mut PassManager) -> Jit<'l> {
+  pub fn new(is_top_level : bool, context: &'l mut Context,
+    module : &'l mut Module, pm : &'l mut PassManager,
+    variables: &'l mut HashMap<RefStr, PointerValue>)
+      -> Jit<'l>
+  {
     let builder = context.create_builder();
     Jit {
       is_top_level,
       context, builder, module, pm,
-      variables: HashMap::new(),
+      variables,
       struct_types: HashMap::new(),
       loop_labels: vec!(),
     }
   }
 
-  pub fn child_function_jit(&mut self) -> Jit {
-    Jit::new(false, self.context, self.module, self.pm)
+  pub fn child_function_jit<'lc>(&'lc mut self, variables : &'lc mut HashMap<RefStr, PointerValue>)
+    -> Jit<'lc>
+  {
+    Jit::new(false, self.context, self.module, self.pm, variables)
   }
 
   fn create_entry_block_alloca(&self, t : BasicTypeEnum, name : &str) -> PointerValue {
@@ -197,7 +203,9 @@ impl <'l> Jit<'l> {
     }
 
     let pointer = if self.is_top_level {
-      self.module.add_global(value.get_type(), Some(AddressSpace::Local), &name).as_pointer_value()
+      let gv = self.module.add_global(value.get_type(), Some(AddressSpace::Local), &name);
+      gv.set_initializer(&value);
+      gv.as_pointer_value()
     }
     else {
       self.create_entry_block_alloca(value.get_type(), &name)
@@ -442,7 +450,8 @@ impl <'l> Jit<'l> {
         return Ok(None);
       }
       Content::FunctionDefinition(def, body) => {
-        self.child_function_jit().codegen_function(
+        let mut variables = HashMap::new();
+        self.child_function_jit(&mut variables).codegen_function(
           ast, body, &def.name, &def.args, &def.signature.args)?;
         return Ok(None);
       }
@@ -514,10 +523,13 @@ impl <'l> Jit<'l> {
         }
       }
       Content::Deref(n) => {
+        /*
         let ptr =
           self.codegen_pointer(n)?
           .ok_or_else(|| error_raw(n.loc, "cannot dereference this construct"))?;
         reg(self.builder.build_load(ptr, "deref"))
+        */
+        panic!();
       }
       Content::ExplicitReturn(n) => {
         self.codegen_return(n.as_ref().map(|b| b as &AstNode))?;
@@ -538,25 +550,6 @@ impl <'l> Jit<'l> {
       }
     };
     Ok(Some(v))
-  }
-
-  fn codegen_pointer(&mut self, ast : &AstNode) -> Result<Option<PointerValue>, Error> {
-    match &ast.content {
-      Content::VariableReference(name) => {
-        if let Some(ptr) = self.variables.get(name) {
-          Ok(Some(*ptr))
-        }
-        else {
-          return error(ast.loc, format!("unknown variable name '{}'.", name));
-        }
-      }
-      /*
-      Content::FieldAccess(c, field_index) => {
-
-      }
-      */
-      _ => Ok(None)
-    }
   }
 
   fn name_basic_type(t : &BasicValueEnum, s : &str) {
@@ -746,6 +739,7 @@ pub struct Interpreter {
   pass_manager : PassManager,
   functions : HashMap<RefStr, Rc<FunctionDefinition>>,
   struct_types : HashMap<RefStr, Rc<StructDefinition>>,
+  global_variables: HashMap<RefStr, PointerValue>
 }
 
 impl Interpreter {
@@ -754,6 +748,7 @@ impl Interpreter {
     let context = Context::create();
     let functions = HashMap::new();
     let struct_types = HashMap::new();
+    let global_variables = HashMap::new();
 
     let module = context.create_module("top_level");
     let pm = PassManager::create_for_function(&module);
@@ -768,7 +763,9 @@ impl Interpreter {
     pm.add_reassociate_pass();  
     pm.initialize();
 
-    let mut i = Interpreter { sym, context, module, pass_manager: pm, functions, struct_types };
+    let mut i = 
+      Interpreter { sym, context, module, pass_manager: pm,
+        functions, struct_types, global_variables };
     
     // load prelude
     if let Err(e) = i.load_prelude() {
@@ -788,7 +785,7 @@ impl Interpreter {
   }
 
   fn top_level_jit(&mut self) -> Jit {
-    Jit::new(true, &mut self.context, &mut self.module, &mut self.pass_manager)
+    Jit::new(true, &mut self.context, &mut self.module, &mut self.pass_manager, &mut self.global_variables)
   }
 
   fn parse_string(&mut self, code : &str) -> Result<Expr, Error> {
@@ -844,6 +841,7 @@ fn run_expression(expr : &Expr, i: &mut Interpreter) -> Result<Val, Error> {
   };
   unsafe { f.delete(); }
   ee.remove_module(&i.module).unwrap();
+  println!("{:?}", i.global_variables);
   result
 }
 
