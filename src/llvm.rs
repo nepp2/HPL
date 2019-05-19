@@ -54,7 +54,7 @@ use std::io::Read;
 use inkwell::AddressSpace;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
-use inkwell::context::{Context, ContextRef};
+use inkwell::context::{Context};
 use inkwell::module::Module;
 use inkwell::passes::PassManager;
 use inkwell::types::{BasicTypeEnum, BasicType, StructType, PointerType, FunctionType};
@@ -146,6 +146,7 @@ impl From<Option<BasicValueEnum>> for JitVal {
 enum ShortCircuitOp { And, Or }
 
 pub struct Jit<'l> {
+  is_top_level : bool,
   context: &'l mut Context,
   builder: Builder,
   variables: HashMap<RefStr, PointerValue>,
@@ -160,9 +161,10 @@ pub struct Jit<'l> {
 
 impl <'l> Jit<'l> {
 
-  pub fn new(context: &'l mut Context, module : &'l mut Module, pm : &'l mut PassManager) -> Jit<'l> {
+  pub fn new(is_top_level : bool, context: &'l mut Context, module : &'l mut Module, pm : &'l mut PassManager) -> Jit<'l> {
     let builder = context.create_builder();
     Jit {
+      is_top_level,
       context, builder, module, pm,
       variables: HashMap::new(),
       struct_types: HashMap::new(),
@@ -170,8 +172,8 @@ impl <'l> Jit<'l> {
     }
   }
 
-  pub fn child(&mut self) -> Jit {
-    Jit::new(self.context, self.module, self.pm)
+  pub fn child_function_jit(&mut self) -> Jit {
+    Jit::new(false, self.context, self.module, self.pm)
   }
 
   fn create_entry_block_alloca(&self, t : BasicTypeEnum, name : &str) -> PointerValue {
@@ -193,7 +195,13 @@ impl <'l> Jit<'l> {
     if self.variables.contains_key(&name) {
       return Err("variable with this name already defined".into());
     }
-    let pointer = self.create_entry_block_alloca(value.get_type(), &name);
+
+    let pointer = if self.is_top_level {
+      self.module.add_global(value.get_type(), Some(AddressSpace::Local), &name).as_pointer_value()
+    }
+    else {
+      self.create_entry_block_alloca(value.get_type(), &name)
+    };
     self.builder.build_store(pointer, value);
     self.variables.insert(name, pointer);
     Ok(())
@@ -434,7 +442,7 @@ impl <'l> Jit<'l> {
         return Ok(None);
       }
       Content::FunctionDefinition(def, body) => {
-        self.child().codegen_function(
+        self.child_function_jit().codegen_function(
           ast, body, &def.name, &def.args, &def.signature.args)?;
         return Ok(None);
       }
@@ -779,8 +787,8 @@ impl Interpreter {
     Ok(())
   }
 
-  fn function_jit(&mut self) -> Jit {
-    Jit::new(&mut self.context, &mut self.module, &mut self.pass_manager)
+  fn top_level_jit(&mut self) -> Jit {
+    Jit::new(true, &mut self.context, &mut self.module, &mut self.pass_manager)
   }
 
   fn parse_string(&mut self, code : &str) -> Result<Expr, Error> {
@@ -805,7 +813,7 @@ fn run_expression(expr : &Expr, i: &mut Interpreter) -> Result<Val, Error> {
     TypeChecker::new(HashMap::new(), &mut i.functions, &mut i.struct_types, &mut i.sym);
   let ast = type_checker.to_ast(expr)?;
   let f = {
-    let jit = i.function_jit();
+    let jit = i.top_level_jit();
     jit.codegen_function(&ast, &ast, "top_level", &[], &[])?
   };
   println!("{}", display_expr(expr));

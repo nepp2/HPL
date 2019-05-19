@@ -2,7 +2,6 @@ use crate::lexer::{Token, TokenType};
 use crate::value::{RefStr, SymbolTable, Expr, ExprTag};
 use crate::error::{Error, ErrorContent, TextLocation, TextMarker, error};
 use std::collections::HashSet;
-use std::f32;
 use std::str::FromStr;
 
 static CALL : &str = "call";

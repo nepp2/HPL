@@ -221,7 +221,7 @@ pub fn expr_to_value(e : &Expr, sym : &mut SymbolTable) -> Value {
       m.insert(sym.get("tag"), Value::from(sym.get("literal_float")));
       m.insert(sym.get("value"), Value::from(f.clone()));
     }
-    LiteralInt(i) => {
+    LiteralInt(_i) => {
       panic!()
     }
     LiteralBool(b) => {

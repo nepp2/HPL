@@ -55,7 +55,7 @@ fn result_string(r : Result<Val, Error>) -> String {
   }
 }
 
-fn assert_result_with_interpreter(code : &str, expected_result : Val, i : &mut Interpreter){
+fn assert_result_with_interpreter(i : &mut Interpreter, code : &str, expected_result : Val){
   let expected = Ok(expected_result);
   let result = i.run(code);
   assert!(
@@ -66,37 +66,7 @@ fn assert_result_with_interpreter(code : &str, expected_result : Val, i : &mut I
 
 fn assert_result(code : &str, expected_result : Val){
   let mut i = Interpreter::new();
-  assert_result_with_interpreter(code, expected_result, &mut i)
-}
-
-// TODO: multiple dispatch currently not supported
-//#[test]
-fn test_dispatch(){
-  let fundef_code = "
-    fun add(a : float, b : float) {
-      a + b
-    }
-
-    fun add(a : bool, b : bool) {
-      a == b
-    }
-  ";
-  let cases = vec![
-    ("add(-3, 5)", Val::I64(2)),
-    ("add(true, false)", Val::Bool(false)),
-    ("add(false, false)", Val::Bool(true)),
-  ];
-  for (code, expected_result) in cases {
-    let mut i = Interpreter::new();
-    let def_result = i.run(fundef_code);
-    assert!(def_result.is_ok(), "Error: {:?}", result_string(def_result));
-    let expected = Ok(expected_result);
-    let result = i.run(code);
-    assert!(
-      result == expected,
-      "error in code '{}'. Expected result '{:?}'. Actual result was '{:?}'",
-      code, result_string(expected), result_string(result));
-  }
+  assert_result_with_interpreter(&mut i, code, expected_result)
 }
 
 #[test]
@@ -191,7 +161,7 @@ fn test_while() {
   assert_result(b, Val::I64(13));
 }
 
-/*
+#[test]
 fn test_global() {
   let mut i = Interpreter::new();
   let a = "let foo = 5";
@@ -200,6 +170,7 @@ fn test_global() {
   assert_result_with_interpreter(&mut i, b, Val::I64(5));
 }
 
+/*
 
 Features to add:
 
@@ -269,6 +240,36 @@ fn test_brace_syntax_quirks(){
   ";
   // TODO: fix this problem
   assert_result(code, Val::Void);
+}
+
+// TODO: unclear if multiple dispatch will be supported again
+#[test]
+fn test_dispatch(){
+  let fundef_code = "
+    fun add(a : float, b : float) {
+      a + b
+    }
+
+    fun add(a : bool, b : bool) {
+      a == b
+    }
+  ";
+  let cases = vec![
+    ("add(-3, 5)", Val::I64(2)),
+    ("add(true, false)", Val::Bool(false)),
+    ("add(false, false)", Val::Bool(true)),
+  ];
+  for (code, expected_result) in cases {
+    let mut i = Interpreter::new();
+    let def_result = i.run(fundef_code);
+    assert!(def_result.is_ok(), "Error: {:?}", result_string(def_result));
+    let expected = Ok(expected_result);
+    let result = i.run(code);
+    assert!(
+      result == expected,
+      "error in code '{}'. Expected result '{:?}'. Actual result was '{:?}'",
+      code, result_string(expected), result_string(result));
+  }
 }
 
 */
