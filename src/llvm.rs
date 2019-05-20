@@ -57,7 +57,7 @@ use inkwell::builder::Builder;
 use inkwell::context::{Context};
 use inkwell::module::Module;
 use inkwell::passes::PassManager;
-use inkwell::types::{BasicTypeEnum, BasicType, StructType, PointerType, FunctionType};
+use inkwell::types::{BasicTypeEnum, BasicType, StructType, PointerType, FunctionType, AnyTypeEnum};
 use inkwell::values::{
   BasicValueEnum, BasicValue, FloatValue, IntValue, FunctionValue, PointerValue };
 use inkwell::{OptimizationLevel, FloatPredicate, IntPredicate};
@@ -154,6 +154,21 @@ fn const_null(t : BasicTypeEnum) -> BasicValueEnum {
   }
 }
 
+fn basic_type(t : AnyTypeEnum) -> Option<BasicTypeEnum> {
+  use AnyTypeEnum::*;
+  let bt = match t {
+    FloatType(t) => t.as_basic_type_enum(),
+    IntType(t) => t.as_basic_type_enum(),
+    ArrayType(t) => t.as_basic_type_enum(),
+    PointerType(t) => t.as_basic_type_enum(),
+    StructType(t) => t.as_basic_type_enum(),
+    VectorType(t) => t.as_basic_type_enum(),
+    VoidType(t) => return None,
+    FunctionType(t) => return None,
+  };
+  Some(bt)
+}
+
 #[derive(Copy, Clone)]
 enum ShortCircuitOp { And, Or }
 
@@ -213,7 +228,7 @@ impl <'l> Jit<'l> {
     }
     let pointer = match var_scope {
       VarScope::Global => {
-        let gv = self.module.add_global(value.get_type(), Some(AddressSpace::Local), &name);
+        let gv = self.module.add_global(value.get_type(), Some(AddressSpace::Global), &name);
         let null = const_null(value.get_type());
         gv.set_initializer(&null);
         gv.set_constant(false);
@@ -749,7 +764,6 @@ pub struct Interpreter {
   sym : SymbolTable,
   context : Context,
   modules : Vec<Module>,
-  pass_manager : PassManager,
   functions : HashMap<RefStr, Rc<FunctionDefinition>>,
   struct_types : HashMap<RefStr, Rc<StructDefinition>>,
   global_var_types: HashMap<RefStr, Type>,
@@ -765,22 +779,11 @@ impl Interpreter {
     let global_var_types = HashMap::new();
     let global_var_pointers = HashMap::new();
 
-    let module = context.create_module("top_level");
-    let pm = PassManager::create_for_function(&module);
-    // TODO: decide what to do about optimisation
-    pm.add_instruction_combining_pass();
-    pm.add_reassociate_pass();
-    pm.add_gvn_pass();
-    pm.add_cfg_simplification_pass();
-    pm.add_basic_alias_analysis_pass();
-    pm.add_promote_memory_to_register_pass();
-    pm.add_instruction_combining_pass();
-    pm.add_reassociate_pass();  
-    pm.initialize();
+    let modules = vec!();
 
     let mut i = 
       Interpreter {
-        sym, context, module, pass_manager: pm,
+        sym, context, modules,
         functions, struct_types,
         global_var_types, global_var_pointers };
     
@@ -793,20 +796,8 @@ impl Interpreter {
   }
 
   fn load_module(&mut self, code : &str) -> Result<(), Error> {
-    let module_name = format!("command_{}", self.modules.len());
-    let module = self.context.create_module(&module_name);
-    let pm = PassManager::create_for_function(&module);
-    // TODO: decide what to do about optimisation
-    pm.add_instruction_combining_pass();
-    pm.add_reassociate_pass();
-    pm.add_gvn_pass();
-    pm.add_cfg_simplification_pass();
-    pm.add_basic_alias_analysis_pass();
-    pm.add_promote_memory_to_register_pass();
-    pm.add_instruction_combining_pass();
-    pm.add_reassociate_pass();  
-    pm.initialize();
-
+    let expr = self.parse_string(code)?;
+    self.run_expression(&expr)?;
     Ok(())
   }
 
@@ -814,13 +805,12 @@ impl Interpreter {
     let mut f = File::open("code/prelude_llvm.code").expect("file not found");
     let mut code = String::new();
     f.read_to_string(&mut code).unwrap();
-    let expr = self.parse_string(&code)?;
-    self.run_expression(&expr)?;
+    self.load_module(&code)?;
     Ok(())
   }
 
-  fn top_level_jit(&mut self) -> Jit {
-    Jit::new(&mut self.context, &mut self.module, &mut self.pass_manager, &mut self.global_var_pointers)
+  fn top_level_jit<'l>(&'l mut self, module : &'l mut Module, pm : &'l mut PassManager) -> Jit<'l> {
+    Jit::new(&mut self.context, module, pm, &mut self.global_var_pointers)
   }
 
   fn parse_string(&mut self, code : &str) -> Result<Expr, Error> {
@@ -836,52 +826,65 @@ impl Interpreter {
   }
 
   pub fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
-    run_expression(expr, self)
-  }
-}
-
-fn run_expression(expr : &Expr, i: &mut Interpreter) -> Result<Val, Error> {
-  let mut type_checker = 
-    TypeChecker::new(true, HashMap::new(), &mut i.functions, &mut i.struct_types, &mut i.global_var_types, &mut i.sym);
-  let ast = type_checker.to_ast(expr)?;
-  let f = {
-    let jit = i.top_level_jit();
-    jit.codegen_function(&ast, &ast, "top_level", &[], &[])?
-  };
-  println!("{}", display_expr(expr));
-  dump_module(&i.module);
-
-  fn execute<T>(expr : &Expr, f : FunctionValue, ee : &ExecutionEngine) -> Result<T, Error> {
-    let function_name = f.get_name().to_str().unwrap();
-    let v = unsafe {
-      let jit_function =
-        ee.get_function::<unsafe extern "C" fn() -> T>(function_name)
-        .map_err(|e| error_raw(expr, format!("{:?}", e)))?;
-      jit_function.call()
+    let mut type_checker = 
+      TypeChecker::new(true, HashMap::new(), &mut self.functions, &mut self.struct_types, &mut self.global_var_types, &mut self.sym);
+    let ast = type_checker.to_ast(expr)?;
+    let module_name = format!("module_{}", self.modules.len());
+    let mut module = self.context.create_module(&module_name);
+    let mut pm = PassManager::create_for_function(&module);
+    // TODO: decide what to do about optimisation
+    pm.add_instruction_combining_pass();
+    pm.add_reassociate_pass();
+    pm.add_gvn_pass();
+    pm.add_cfg_simplification_pass();
+    pm.add_basic_alias_analysis_pass();
+    pm.add_promote_memory_to_register_pass();
+    pm.add_instruction_combining_pass();
+    pm.add_reassociate_pass();  
+    pm.initialize();
+    for (name, gvp) in self.global_var_pointers.iter() {
+      let t = basic_type(gvp.get_type().get_element_type()).unwrap();
+      let gv = module.add_global(t, Some(AddressSpace::Global), &name);
+      gv.set_constant(false);
+    }
+    let f = {
+      let jit = self.top_level_jit(&mut module, &mut pm);
+      jit.codegen_function(&ast, &ast, "top_level", &[], &[])?
     };
-    Ok(v)
+    println!("{}", display_expr(expr));
+    dump_module(&module);
+
+    fn execute<T>(expr : &Expr, f : FunctionValue, ee : &ExecutionEngine) -> Result<T, Error> {
+      let function_name = f.get_name().to_str().unwrap();
+      let v = unsafe {
+        let jit_function =
+          ee.get_function::<unsafe extern "C" fn() -> T>(function_name)
+          .map_err(|e| error_raw(expr, format!("{:?}", e)))?;
+        jit_function.call()
+      };
+      Ok(v)
+    }
+    let ee =
+      module.create_jit_execution_engine(OptimizationLevel::None)
+      .map_err(|e| error_raw(expr, e.to_string()))?;
+    let result = match ast.type_tag {
+      Type::Bool => execute::<bool>(expr, f, &ee).map(Val::Bool),
+      Type::Float => execute::<f64>(expr, f, &ee).map(Val::Float),
+      Type::I64 => execute::<i64>(expr, f, &ee).map(Val::I64),
+      Type::Void => execute::<()>(expr, f, &ee).map(|_| Val::Void),
+      Type::Ptr(_) => 
+        error(expr, "can't return a pointer from a top-level function"),
+      Type::Struct(_) =>
+        error(expr, "can't return a struct from a top-level function"),
+    };
+    unsafe { f.delete(); }
+    // TODO: ee.remove_module(&i.module).unwrap();
+    self.modules.push(module);
+    result
   }
-  let ee =
-    i.module.create_jit_execution_engine(OptimizationLevel::None)
-    .map_err(|e| error_raw(expr, e.to_string()))?;
-  let result = match ast.type_tag {
-    Type::Bool => execute::<bool>(expr, f, &ee).map(Val::Bool),
-    Type::Float => execute::<f64>(expr, f, &ee).map(Val::Float),
-    Type::I64 => execute::<i64>(expr, f, &ee).map(Val::I64),
-    Type::Void => execute::<()>(expr, f, &ee).map(|_| Val::Void),
-    Type::Ptr(_) => 
-      error(expr, "can't return a pointer from a top-level function"),
-    Type::Struct(_) =>
-      error(expr, "can't return a struct from a top-level function"),
-  };
-  unsafe { f.delete(); }
-  ee.remove_module(&i.module).unwrap();
-  println!("{:?}", i.global_var_types);
-  result
 }
 
 pub fn run_repl() {
-
   let mut rl = Editor::<()>::new();
   let mut i = Interpreter::new();
 
@@ -904,7 +907,7 @@ pub fn run_repl() {
         Ok(Complete(e)) => {
           // we have parsed a full expression
           rl.add_history_entry(input_line);
-          match run_expression(&e, &mut i) {
+          match i.run_expression(&e) {
             Ok(value) => {
               println!("{:?}", value)
             }
