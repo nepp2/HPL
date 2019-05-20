@@ -72,11 +72,14 @@ impl PartialEq for StructDefinition {
   }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum VarScope { Local, Global }
+
 #[derive(Debug)]
 pub enum Content {
   Literal(Val),
   VariableReference(RefStr),
-  VariableInitialise(RefStr, Box<AstNode>),
+  VariableInitialise(RefStr, Box<AstNode>, VarScope),
   Assignment(Box<(AstNode, AstNode)>),
   IfThen(Box<(AstNode, AstNode)>),
   IfThenElse(Box<(AstNode, AstNode, AstNode)>),
@@ -121,9 +124,11 @@ fn ast(expr : &Expr, type_tag : Type, content : Content) -> AstNode {
 }
 
 pub struct TypeChecker<'l> {
+  is_top_level : bool,
   variables: HashMap<RefStr, Type>,
   functions: &'l mut HashMap<RefStr, Rc<FunctionDefinition>>,
   struct_types : &'l mut HashMap<RefStr, Rc<StructDefinition>>,
+  global_variables : &'l mut HashMap<RefStr, Type>,
 
   /// Tracks which variables are available, when.
   /// Used to rename variables with clashing names.
@@ -135,16 +140,20 @@ pub struct TypeChecker<'l> {
 impl <'l> TypeChecker<'l> {
 
   pub fn new(
-    args : HashMap<RefStr, Type>,
+    is_top_level : bool,
+    variables : HashMap<RefStr, Type>,
     functions : &'l mut HashMap<RefStr, Rc<FunctionDefinition>>,
     struct_types : &'l mut HashMap<RefStr, Rc<StructDefinition>>,
+    global_variables : &'l mut HashMap<RefStr, Type>,
     sym : &'l mut SymbolTable)
       -> TypeChecker<'l>
   {
     TypeChecker {
-      variables : args,
+      is_top_level,
+      variables,
       functions,
       struct_types,
+      global_variables,
       sym,
       scope_map: vec!(HashMap::new())
     }
@@ -241,10 +250,21 @@ impl <'l> TypeChecker<'l> {
           }
           ("let", exprs) => {
             let name = exprs[0].symbol_unwrap()?;
-            let scoped_name = self.create_scoped_variable_name(name.clone());
             let v = Box::new(self.to_ast(&exprs[1])?);
-            self.variables.insert(scoped_name.clone(), v.type_tag.clone());
-            Ok(ast(expr, Type::Void, Content::VariableInitialise(scoped_name, v)))
+            // The first scope is used for function arguments. The second
+            // is the top level of the function.
+            let c = if self.is_top_level && self.scope_map.len() == 2 {
+              // global variable
+              self.global_variables.insert(name.clone(), v.type_tag.clone());
+              Content::VariableInitialise(name.clone(), v, VarScope::Global)
+            }
+            else {
+              // local variable
+              let scoped_name = self.create_scoped_variable_name(name.clone());
+              self.variables.insert(scoped_name.clone(), v.type_tag.clone());
+              Content::VariableInitialise(scoped_name, v, VarScope::Local)
+            };
+            Ok(ast(expr, Type::Void, c))
           }
           ("=", [assign_expr, value_expr]) => {
             let a = self.to_ast(assign_expr)?;
@@ -345,8 +365,9 @@ impl <'l> TypeChecker<'l> {
               arg_types.push(type_tag);
             }
             let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
+            let mut globals = HashMap::new(); // hide globals from child functions
             let mut type_checker =
-              TypeChecker::new(args, self.functions, self.struct_types, self.sym);
+              TypeChecker::new(false, args, self.functions, self.struct_types, &mut globals, self.sym);
             let body = type_checker.to_ast(function_body)?;
             if self.functions.contains_key(name.as_ref()) {
               return error(expr, "function with that name already defined");
@@ -440,7 +461,10 @@ impl <'l> TypeChecker<'l> {
           return Ok(ast(expr, Type::Void, Content::Break));
         }
         let name = self.get_scoped_variable_name(s);
-        if let Some(t) = self.variables.get(name.as_ref()) {
+        let var_type =
+          self.variables.get(name.as_ref())
+          .or_else(|| self.global_variables.get(name.as_ref()));
+        if let Some(t) = var_type {
           Ok(ast(expr, t.clone(), Content::VariableReference(name)))
         }
         else {
