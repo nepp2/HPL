@@ -55,7 +55,7 @@ use inkwell::AddressSpace;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::{Context};
-use inkwell::module::Module;
+use inkwell::module::{Module, Linkage};
 use inkwell::passes::PassManager;
 use inkwell::types::{BasicTypeEnum, BasicType, StructType, PointerType, FunctionType, AnyTypeEnum};
 use inkwell::values::{
@@ -174,37 +174,45 @@ enum ShortCircuitOp { And, Or }
 
 pub struct Jit<'l> {
   context: &'l mut Context,
+  module : &'l mut Module,
   builder: Builder,
+  functions: &'l mut HashMap<RefStr, FunctionValue>,
+  function_defs: &'l HashMap<RefStr, Rc<FunctionDefinition>>,
   variables: &'l mut HashMap<RefStr, PointerValue>,
   struct_types: HashMap<RefStr, StructType>,
 
   /// A stack of values indicating the entry and exit labels for each loop
   loop_labels: Vec<LoopLabels>,
 
-  module : &'l mut Module,
   pm : &'l mut PassManager,
 }
 
 impl <'l> Jit<'l> {
 
-  pub fn new(context: &'l mut Context,
-    module : &'l mut Module, pm : &'l mut PassManager,
-    variables: &'l mut HashMap<RefStr, PointerValue>)
+  pub fn new(
+    context: &'l mut Context,
+    module : &'l mut Module,
+    functions: &'l mut HashMap<RefStr, FunctionValue>,
+    function_defs: &'l HashMap<RefStr, Rc<FunctionDefinition>>,
+    variables: &'l mut HashMap<RefStr, PointerValue>,
+    pm : &'l mut PassManager,
+  )
       -> Jit<'l>
   {
     let builder = context.create_builder();
     Jit {
-      context, builder, module, pm,
-      variables,
+      context, module, builder,
+      functions, function_defs, variables,
       struct_types: HashMap::new(),
       loop_labels: vec!(),
+      pm,
     }
   }
 
   pub fn child_function_jit<'lc>(&'lc mut self, variables : &'lc mut HashMap<RefStr, PointerValue>)
     -> Jit<'lc>
   {
-    Jit::new(self.context, self.module, self.pm, variables)
+    Jit::new(self.context, self.module, self.functions, self.function_defs, variables, self.pm)
   }
 
   fn create_entry_block_alloca(&self, t : BasicTypeEnum, name : &str) -> PointerValue {
@@ -316,22 +324,40 @@ impl <'l> Jit<'l> {
     return Ok(reg(phi.as_basic_value()));
   }
 
+  fn codegen_function_call(&mut self, ast : &AstNode, name : &RefStr, args : &[AstNode])
+    -> Result<Option<JitVal>, Error>
+  {
+    let f =
+      *self.functions.get(name)
+      .ok_or_else(|| error_raw(ast.loc, format!("could not find function with name '{}'", name)))?;
+    if f.count_params() as usize != args.len() {
+        return error(ast.loc, "incorrect number of arguments passed");
+    }
+    // insert a prototype if needed
+    let f =
+      if self.module.get_function(name).is_none() {
+        let def = self.function_defs.get(name).unwrap();
+        self.codegen_prototype(&def.name, &def.signature.return_type, &def.args, &def.signature.args)
+      }
+      else {
+        f
+      };
+
+    let mut arg_vals = vec!();
+    for a in args.iter() {
+      let v = self.codegen_value(a)?;
+      arg_vals.push(v);
+    }
+    let call = self.builder.build_call(f, arg_vals.as_slice(), "tmp");
+    println!("{:?}", call);
+    let r = call.try_as_basic_value().left();
+    return Ok(r.map(reg));
+  }
+
   fn codegen_expression(&mut self, ast : &AstNode) -> Result<Option<JitVal>, Error> {
     let v : JitVal = match &ast.content {
       Content::FunctionCall(name, args) => {
-        let f =
-          self.module.get_function(name)
-          .ok_or_else(|| error_raw(ast.loc, format!("could not find function with name '{}'", name)))?;
-        if f.count_params() as usize != args.len() {
-            return error(ast.loc, "incorrect number of arguments passed");
-        }
-        let mut arg_vals = vec!();
-        for a in args.iter() {
-          let v = self.codegen_value(a)?;
-          arg_vals.push(v);
-        }
-        let r = self.builder.build_call(f, arg_vals.as_slice(), "tmp").try_as_basic_value().left();
-        return Ok(r.map(reg));
+        return self.codegen_function_call(ast, name, args);
       }
       Content::IntrinsicCall(name, args) => {
         if let [a, b] = args.as_slice() {
@@ -474,13 +500,14 @@ impl <'l> Jit<'l> {
         return Ok(None);
       }
       Content::CFunctionPrototype(def) => {
-        self.codegen_c_prototype(&def);
+        let f = self.codegen_prototype(&def.name, &def.signature.return_type, &def.args, &def.signature.args);
+        self.functions.insert(def.name.clone(), f);
         return Ok(None);
       }
       Content::FunctionDefinition(def, body) => {
         let mut variables = HashMap::new();
         self.child_function_jit(&mut variables).codegen_function(
-          ast, body, &def.name, &def.args, &def.signature.args)?;
+          ast, body, &def.name, &def.args, &def.signature.args, false)?;
         return Ok(None);
       }
       Content::StructDefinition(_def) => {
@@ -667,20 +694,25 @@ impl <'l> Jit<'l> {
     Ok(())
   }
 
-  fn codegen_c_prototype(&mut self, def: &FunctionDefinition) -> FunctionValue
+  fn codegen_prototype(
+    &mut self, name : &str,
+    return_type : &Type,
+    args : &[RefStr],
+    arg_types : &[Type])
+      -> FunctionValue
   {
     let arg_types =
-      def.signature.args.iter().map(|t| self.to_basic_type(t).unwrap())
+      arg_types.iter().map(|t| self.to_basic_type(t).unwrap())
       .collect::<Vec<BasicTypeEnum>>();
     let arg_types = arg_types.as_slice();
 
-    let return_type = self.to_basic_type(&def.signature.return_type);
+    let return_type = self.to_basic_type(return_type);
     let fn_type = self.function_type(return_type, arg_types);
-    let function = self.module.add_function(&def.name, fn_type, None);
+    let function = self.module.add_function(name, fn_type, Some(Linkage::External));
 
     // set arguments names
     for (i, arg) in function.get_param_iter().enumerate() {
-      Jit::name_basic_type(&arg, def.args[i].as_ref());
+      Jit::name_basic_type(&arg, args[i].as_ref());
     }
     function
   }
@@ -691,34 +723,21 @@ impl <'l> Jit<'l> {
     body : &AstNode,
     name : &str,
     args : &[RefStr],
-    arg_types : &[Type])
+    arg_types : &[Type],
+    is_top_level : bool)
       -> Result<FunctionValue, Error>
   {
-    /* TODO: is this needed?
-    // check if declaration with this name was already done
-    if module.get_function(name).is_some() {
-      return error(node, format!("function '{}' already defined", name));
-    };
-    */
-    let arg_types =
-      arg_types.iter().map(|t| self.to_basic_type(t).unwrap())
-      .collect::<Vec<BasicTypeEnum>>();
-    let arg_types = arg_types.as_slice();
+    let function = self.codegen_prototype(name, &body.type_tag, args, arg_types);
 
-    let return_type = self.to_basic_type(&body.type_tag);
-    let fn_type = self.function_type(return_type, arg_types);
-    let function = self.module.add_function(name, fn_type, None);
+    if !is_top_level {
+      self.functions.insert(name.into(), function);
+    }
 
     // this function is here because Rust doesn't have a proper try/catch yet
     fn generate(
       function_node : &AstNode, body : &AstNode, function : FunctionValue,
       args : &[RefStr], jit : &mut Jit) -> Result<(), Error>
     {
-      // set arguments names
-      for (i, arg) in function.get_param_iter().enumerate() {
-        Jit::name_basic_type(&arg, args[i].as_ref());
-      }
-
       let entry = jit.context.append_basic_block(&function, "entry");
 
       jit.builder.position_at_end(&entry);
@@ -763,8 +782,9 @@ impl <'l> Jit<'l> {
 pub struct Interpreter {
   sym : SymbolTable,
   context : Context,
-  modules : Vec<Module>,
+  modules : Vec<(Module, ExecutionEngine)>,
   functions : HashMap<RefStr, Rc<FunctionDefinition>>,
+  compiled_functions : HashMap<RefStr, FunctionValue>,
   struct_types : HashMap<RefStr, Rc<StructDefinition>>,
   global_var_types: HashMap<RefStr, Type>,
   global_var_pointers: HashMap<RefStr, PointerValue>,
@@ -775,6 +795,7 @@ impl Interpreter {
     let sym = SymbolTable::new();
     let context = Context::create();
     let functions = HashMap::new();
+    let compiled_functions = HashMap::new();
     let struct_types = HashMap::new();
     let global_var_types = HashMap::new();
     let global_var_pointers = HashMap::new();
@@ -783,8 +804,8 @@ impl Interpreter {
 
     let mut i = 
       Interpreter {
-        sym, context, modules,
-        functions, struct_types,
+        sym, context, modules, functions,
+        compiled_functions, struct_types,
         global_var_types, global_var_pointers };
     
     // load prelude
@@ -810,7 +831,7 @@ impl Interpreter {
   }
 
   fn top_level_jit<'l>(&'l mut self, module : &'l mut Module, pm : &'l mut PassManager) -> Jit<'l> {
-    Jit::new(&mut self.context, module, pm, &mut self.global_var_pointers)
+    Jit::new(&mut self.context, module, &mut self.compiled_functions, &self.functions, &mut self.global_var_pointers, pm)
   }
 
   fn parse_string(&mut self, code : &str) -> Result<Expr, Error> {
@@ -842,14 +863,18 @@ impl Interpreter {
     pm.add_instruction_combining_pass();
     pm.add_reassociate_pass();  
     pm.initialize();
+    /*
+    TODO
+
     for (name, gvp) in self.global_var_pointers.iter() {
       let t = basic_type(gvp.get_type().get_element_type()).unwrap();
       let gv = module.add_global(t, Some(AddressSpace::Global), &name);
       gv.set_constant(false);
     }
+    */
     let f = {
       let jit = self.top_level_jit(&mut module, &mut pm);
-      jit.codegen_function(&ast, &ast, "top_level", &[], &[])?
+      jit.codegen_function(&ast, &ast, "top_level", &[], &[], true)?
     };
     println!("{}", display_expr(expr));
     dump_module(&module);
@@ -879,7 +904,7 @@ impl Interpreter {
     };
     unsafe { f.delete(); }
     // TODO: ee.remove_module(&i.module).unwrap();
-    self.modules.push(module);
+    self.modules.push((module, ee));
     result
   }
 }
