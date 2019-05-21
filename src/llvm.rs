@@ -51,7 +51,10 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 
+use llvm_sys::support::LLVMLoadLibraryPermanently;
+
 use inkwell::AddressSpace;
+use inkwell::support::LLVMString;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::{Context};
@@ -163,8 +166,8 @@ fn basic_type(t : AnyTypeEnum) -> Option<BasicTypeEnum> {
     PointerType(t) => t.as_basic_type_enum(),
     StructType(t) => t.as_basic_type_enum(),
     VectorType(t) => t.as_basic_type_enum(),
-    VoidType(t) => return None,
-    FunctionType(t) => return None,
+    VoidType(_t) => return None,
+    FunctionType(_t) => return None,
   };
   Some(bt)
 }
@@ -782,7 +785,8 @@ impl <'l> Jit<'l> {
 pub struct Interpreter {
   sym : SymbolTable,
   context : Context,
-  modules : Vec<(Module, ExecutionEngine)>,
+  ee : Option<ExecutionEngine>,
+  modules : Vec<Module>,
   functions : HashMap<RefStr, Rc<FunctionDefinition>>,
   compiled_functions : HashMap<RefStr, FunctionValue>,
   struct_types : HashMap<RefStr, Rc<StructDefinition>>,
@@ -804,7 +808,7 @@ impl Interpreter {
 
     let mut i = 
       Interpreter {
-        sym, context, modules, functions,
+        sym, context, ee: None, modules, functions,
         compiled_functions, struct_types,
         global_var_types, global_var_pointers };
     
@@ -846,7 +850,17 @@ impl Interpreter {
     self.run_expression(&expr)
   }
 
-  pub fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
+  fn get_execution_engine_for_module(&mut self, m : &Module) -> Result<ExecutionEngine, String> {
+    if let Some(ee) = &self.ee {
+      ee.add_module(m).map_err(|_| format!("Failed to load module"))?;
+      Ok(ee.clone())
+    }
+    else {
+      m.create_jit_execution_engine(OptimizationLevel::None).map_err(|e| e.to_string())
+    }
+  }
+
+  fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
     let mut type_checker = 
       TypeChecker::new(true, HashMap::new(), &mut self.functions, &mut self.struct_types, &mut self.global_var_types, &mut self.sym);
     let ast = type_checker.to_ast(expr)?;
@@ -890,8 +904,8 @@ impl Interpreter {
       Ok(v)
     }
     let ee =
-      module.create_jit_execution_engine(OptimizationLevel::None)
-      .map_err(|e| error_raw(expr, e.to_string()))?;
+      self.get_execution_engine_for_module(&module)
+      .map_err(|s| error_raw(expr, s))?;
     let result = match ast.type_tag {
       Type::Bool => execute::<bool>(expr, f, &ee).map(Val::Bool),
       Type::Float => execute::<f64>(expr, f, &ee).map(Val::Float),
@@ -904,14 +918,28 @@ impl Interpreter {
     };
     unsafe { f.delete(); }
     // TODO: ee.remove_module(&i.module).unwrap();
-    self.modules.push((module, ee));
+    self.modules.push(module);
     result
   }
 }
 
+#[no_mangle]
+pub extern "C" fn blah(a : i64, b : i64) -> i64 {
+  a + b
+}
+
+// Adding the functions above to a global array,
+// so Rust compiler won't remove them.
+#[used]
+static EXTERNAL_FNS: [extern fn(i64, i64) -> i64; 1] = [blah];
+
 pub fn run_repl() {
   let mut rl = Editor::<()>::new();
   let mut i = Interpreter::new();
+
+  unsafe {
+    LLVMLoadLibraryPermanently(std::ptr::null());
+  }
 
   loop {
     let mut input_line = rl.readline("repl> ").unwrap();

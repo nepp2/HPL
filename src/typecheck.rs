@@ -37,7 +37,7 @@ impl Type {
       "()" => Some(Type::Void),
       other => {
         if other == parser::NO_TYPE {
-          Some(Type::Float)
+          Some(Type::I64)
         }
         else {
           None
