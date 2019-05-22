@@ -785,8 +785,7 @@ impl <'l> Jit<'l> {
 pub struct Interpreter {
   sym : SymbolTable,
   context : Context,
-  ee : Option<ExecutionEngine>,
-  modules : Vec<Module>,
+  modules : Vec<(Module, ExecutionEngine)>,
   functions : HashMap<RefStr, Rc<FunctionDefinition>>,
   compiled_functions : HashMap<RefStr, FunctionValue>,
   struct_types : HashMap<RefStr, Rc<StructDefinition>>,
@@ -808,7 +807,7 @@ impl Interpreter {
 
     let mut i = 
       Interpreter {
-        sym, context, ee: None, modules, functions,
+        sym, context, modules, functions,
         compiled_functions, struct_types,
         global_var_types, global_var_pointers };
     
@@ -850,16 +849,6 @@ impl Interpreter {
     self.run_expression(&expr)
   }
 
-  fn get_execution_engine_for_module(&mut self, m : &Module) -> Result<ExecutionEngine, String> {
-    if let Some(ee) = &self.ee {
-      ee.add_module(m).map_err(|_| format!("Failed to load module"))?;
-      Ok(ee.clone())
-    }
-    else {
-      m.create_jit_execution_engine(OptimizationLevel::None).map_err(|e| e.to_string())
-    }
-  }
-
   fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
     let mut type_checker = 
       TypeChecker::new(true, HashMap::new(), &mut self.functions, &mut self.struct_types, &mut self.global_var_types, &mut self.sym);
@@ -896,6 +885,9 @@ impl Interpreter {
     fn execute<T>(expr : &Expr, f : FunctionValue, ee : &ExecutionEngine) -> Result<T, Error> {
       let function_name = f.get_name().to_str().unwrap();
       let v = unsafe {
+        // ERROR_MAY_BE_HERE; 
+        // TODO: i'm not sure that "get_function" actually calls "FinalizeObject"
+        // see: https://llvm.org/doxygen/ExecutionEngineBindings_8cpp_source.html
         let jit_function =
           ee.get_function::<unsafe extern "C" fn() -> T>(function_name)
           .map_err(|e| error_raw(expr, format!("{:?}", e)))?;
@@ -904,8 +896,9 @@ impl Interpreter {
       Ok(v)
     }
     let ee =
-      self.get_execution_engine_for_module(&module)
-      .map_err(|s| error_raw(expr, s))?;
+      module.create_jit_execution_engine(OptimizationLevel::None)
+      .map_err(|e| error_raw(expr, e.to_string()))?;
+    ee.run_static_constructors(); // TODO: this might not do anything :(
     let result = match ast.type_tag {
       Type::Bool => execute::<bool>(expr, f, &ee).map(Val::Bool),
       Type::Float => execute::<f64>(expr, f, &ee).map(Val::Float),
@@ -916,9 +909,9 @@ impl Interpreter {
       Type::Struct(_) =>
         error(expr, "can't return a struct from a top-level function"),
     };
-    unsafe { f.delete(); }
+    // unsafe { f.delete(); }
     // TODO: ee.remove_module(&i.module).unwrap();
-    self.modules.push(module);
+    self.modules.push((module, ee));
     result
   }
 }
