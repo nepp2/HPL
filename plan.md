@@ -64,3 +64,11 @@ Really I should try to find an example JIT implemented using ORC.
 - Implement arrays
   - stack values?
   - with malloc?
+
+## Other
+
+This blog post by the creator of Nim is interesting:
+
+https://nim-lang.org/araq/destructors.html
+
+It talks about stuff like copying, moving, avoiding pointers, and includes a proposal to copy strings by default(!).
