@@ -1,5 +1,4 @@
 
 /target
-c_bind_test/target
-llvm_test/target
+dlltest/target
 **/*.rs.bk

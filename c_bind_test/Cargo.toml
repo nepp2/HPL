@@ -1,8 +1,0 @@
-[package]
-name = "c_bind_test"
-version = "0.1.0"
-authors = ["Andrew Martin <0andrewmartin0@gmail.com>"]
-edition = "2018"
-
-[dependencies]
-libloading = "0.5"

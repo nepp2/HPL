@@ -1,0 +1,11 @@
+[package]
+name = "dlltest"
+version = "0.1.0"
+authors = ["nepp <0andrewmartin0@gmail.com>"]
+edition = "2018"
+
+[lib]
+name = "dlltest"
+crate-type = ["dylib"] # could be `staticlib` as well
+
+[dependencies]

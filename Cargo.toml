@@ -17,6 +17,7 @@ itertools = "0.7.3"
 maplit = "1.0.1"
 llvm-sys = "70.1.0"
 inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "llvm7-0" }
+dlltest = { path = "dlltest" }
 
 [dependencies.rusttype]
 version = "0.5.2"

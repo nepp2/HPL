@@ -45,6 +45,7 @@ use crate::parser::ReplParseResult::{Complete, Incomplete};
 use crate::typecheck::{
   AstNode, Content, Type, Val, StructDefinition, FunctionDefinition, TypeChecker, VarScope};
 
+use dlltest;
 
 use std::rc::Rc;
 use std::collections::HashMap;
@@ -927,6 +928,8 @@ pub extern "C" fn blah(a : i64, b : i64) -> i64 {
 static EXTERNAL_FNS: [extern fn(i64, i64) -> i64; 1] = [blah];
 
 pub fn run_repl() {
+  dlltest::blahblah(4, 5);
+
   let mut rl = Editor::<()>::new();
   let mut i = Interpreter::new();
 
