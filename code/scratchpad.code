@@ -1,23 +1,19 @@
 
+let a = 300
 
-let code = quote {
-  let a = 300
-
-  fun blah(a, b, c) {
-    let val = a + b
-    if val > c {
-      val
-    }
-    else{
-      c
-    }
+fun blah(a, b, c) {
+  let val = a + b
+  if val > c {
+    val
   }
-
-  blah(30, a, 50)
+  else{
+    c
+  }
 }
 
-print_expr(code)
+cfun blahblah(a : i64, b : i64) : i64
 
-let r = eval(code)
+blah(30, a, 50)
 
-println(r)
+blahblah(2, 4)
+

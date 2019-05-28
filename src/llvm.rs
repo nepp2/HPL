@@ -55,7 +55,6 @@ use std::io::Read;
 use llvm_sys::support::LLVMLoadLibraryPermanently;
 
 use inkwell::AddressSpace;
-use inkwell::support::LLVMString;
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::{Context};
@@ -581,8 +580,9 @@ impl <'l> Jit<'l> {
           return error(ast.loc, format!("unknown variable name '{}'.", name));
         }
       }
-      Content::Deref(n) => {
+      Content::Deref(_n) => {
         /*
+        TODO
         let ptr =
           self.codegen_pointer(n)?
           .ok_or_else(|| error_raw(n.loc, "cannot dereference this construct"))?;
