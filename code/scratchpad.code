@@ -1,4 +1,5 @@
 
+/*
 let a = 300
 
 fun blah(a, b, c) {
@@ -16,4 +17,7 @@ cfun blahblah(a : i64, b : i64) : i64
 blah(30, a, 50)
 
 blahblah(2, 4)
+*/
 
+let a = fatto()
+500

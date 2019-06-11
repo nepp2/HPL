@@ -1,2 +1,8 @@
 
 cfun malloc(bytes : i64) : ptr
+
+let global_val = 5
+
+fun fatto() {
+    5
+}

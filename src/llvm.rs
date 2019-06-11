@@ -181,7 +181,8 @@ pub struct Jit<'l> {
   builder: Builder,
   functions: &'l mut HashMap<RefStr, FunctionValue>,
   function_defs: &'l HashMap<RefStr, Rc<FunctionDefinition>>,
-  variables: &'l mut HashMap<RefStr, PointerValue>,
+  global_var_types: &'l HashMap<RefStr, Type>,
+  variables: HashMap<RefStr, PointerValue>,
   struct_types: HashMap<RefStr, StructType>,
 
   /// A stack of values indicating the entry and exit labels for each loop
@@ -197,25 +198,27 @@ impl <'l> Jit<'l> {
     module : &'l mut Module,
     functions: &'l mut HashMap<RefStr, FunctionValue>,
     function_defs: &'l HashMap<RefStr, Rc<FunctionDefinition>>,
-    variables: &'l mut HashMap<RefStr, PointerValue>,
+    global_var_types: &'l HashMap<RefStr, Type>,
     pm : &'l mut PassManager,
   )
       -> Jit<'l>
   {
     let builder = context.create_builder();
+    let variables = HashMap::new();
     Jit {
       context, module, builder,
-      functions, function_defs, variables,
+      functions, function_defs,
+      global_var_types, variables,
       struct_types: HashMap::new(),
       loop_labels: vec!(),
       pm,
     }
   }
 
-  pub fn child_function_jit<'lc>(&'lc mut self, variables : &'lc mut HashMap<RefStr, PointerValue>)
+  pub fn child_function_jit<'lc>(&'lc mut self, global_var_types: &'lc HashMap<RefStr, Type>)
     -> Jit<'lc>
   {
-    Jit::new(self.context, self.module, self.functions, self.function_defs, variables, self.pm)
+    Jit::new(self.context, self.module, self.functions, self.function_defs, global_var_types, self.pm)
   }
 
   fn create_entry_block_alloca(&self, t : BasicTypeEnum, name : &str) -> PointerValue {
@@ -337,14 +340,17 @@ impl <'l> Jit<'l> {
         return error(ast.loc, "incorrect number of arguments passed");
     }
     // insert a prototype if needed
-    let f =
-      if self.module.get_function(name).is_none() {
-        let def = self.function_defs.get(name).unwrap();
-        self.codegen_prototype(&def.name, &def.signature.return_type, &def.args, &def.signature.args)
+    let f = {
+      if let Some(local_f) = self.module.get_function(name) {
+        local_f
       }
-      else {
+      else{
+        let def = self.function_defs.get(name).unwrap();
+        let f = self.codegen_prototype(&def.name, &def.signature.return_type, &def.args, &def.signature.args);
+        f.set_linkage(Linkage::External);
         f
-      };
+      }
+    };
 
     let mut arg_vals = vec!();
     for a in args.iter() {
@@ -508,8 +514,8 @@ impl <'l> Jit<'l> {
         return Ok(None);
       }
       Content::FunctionDefinition(def, body) => {
-        let mut variables = HashMap::new();
-        self.child_function_jit(&mut variables).codegen_function(
+        let global_var_types = HashMap::new();
+        self.child_function_jit(&global_var_types).codegen_function(
           ast, body, &def.name, &def.args, &def.signature.args, false)?;
         return Ok(None);
       }
@@ -575,6 +581,14 @@ impl <'l> Jit<'l> {
       Content::VariableReference(name) => {
         if let Some(ptr) = self.variables.get(name) {
           stack(*ptr)
+        }
+        else if let Some(type_tag) = self.global_var_types.get(name) {
+          let t = self.to_basic_type(type_tag).unwrap();
+          let gv = self.module.add_global(t, Some(AddressSpace::Global), &name);
+          gv.set_constant(false);
+          let ptr = gv.as_pointer_value();
+          self.variables.insert(name.clone(), ptr);
+          stack(ptr)
         }
         else {
           return error(ast.loc, format!("unknown variable name '{}'.", name));
@@ -780,8 +794,11 @@ impl <'l> Jit<'l> {
       }
     }
   }
-}
 
+  fn codegen_top_level(self, ast : &AstNode) -> Result<FunctionValue, Error> {
+    self.codegen_function(&ast, &ast, "top_level", &[], &[], true)
+  }
+}
 
 pub struct Interpreter {
   sym : SymbolTable,
@@ -791,7 +808,6 @@ pub struct Interpreter {
   compiled_functions : HashMap<RefStr, FunctionValue>,
   struct_types : HashMap<RefStr, Rc<StructDefinition>>,
   global_var_types: HashMap<RefStr, Type>,
-  global_var_pointers: HashMap<RefStr, PointerValue>,
 }
 
 impl Interpreter {
@@ -802,7 +818,6 @@ impl Interpreter {
     let compiled_functions = HashMap::new();
     let struct_types = HashMap::new();
     let global_var_types = HashMap::new();
-    let global_var_pointers = HashMap::new();
 
     let modules = vec!();
 
@@ -810,7 +825,7 @@ impl Interpreter {
       Interpreter {
         sym, context, modules, functions,
         compiled_functions, struct_types,
-        global_var_types, global_var_pointers };
+        global_var_types };
     
     // load prelude
     if let Err(e) = i.load_prelude() {
@@ -835,7 +850,9 @@ impl Interpreter {
   }
 
   fn top_level_jit<'l>(&'l mut self, module : &'l mut Module, pm : &'l mut PassManager) -> Jit<'l> {
-    Jit::new(&mut self.context, module, &mut self.compiled_functions, &self.functions, &mut self.global_var_pointers, pm)
+    Jit::new(
+      &mut self.context, module, &mut self.compiled_functions,
+      &self.functions, &self.global_var_types, pm)
   }
 
   fn parse_string(&mut self, code : &str) -> Result<Expr, Error> {
@@ -851,8 +868,10 @@ impl Interpreter {
   }
 
   fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
-    let mut type_checker = 
-      TypeChecker::new(true, HashMap::new(), &mut self.functions, &mut self.struct_types, &mut self.global_var_types, &mut self.sym);
+    let mut type_checker =
+      TypeChecker::new(
+        true, HashMap::new(), &mut self.functions, &mut self.struct_types,
+        &mut self.global_var_types, &mut self.sym);
     let ast = type_checker.to_ast(expr)?;
     let module_name = format!("module_{}", self.modules.len());
     let mut module = self.context.create_module(&module_name);
@@ -867,18 +886,10 @@ impl Interpreter {
     pm.add_instruction_combining_pass();
     pm.add_reassociate_pass();  
     pm.initialize();
-    /*
-    TODO
 
-    for (name, gvp) in self.global_var_pointers.iter() {
-      let t = basic_type(gvp.get_type().get_element_type()).unwrap();
-      let gv = module.add_global(t, Some(AddressSpace::Global), &name);
-      gv.set_constant(false);
-    }
-    */
     let f = {
       let jit = self.top_level_jit(&mut module, &mut pm);
-      jit.codegen_function(&ast, &ast, "top_level", &[], &[], true)?
+      jit.codegen_top_level(&ast)?
     };
     println!("{}", display_expr(expr));
     dump_module(&module);
