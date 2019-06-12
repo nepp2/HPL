@@ -35,24 +35,13 @@ from Jauhien Piatlicki.]
 
 // TODO: Carlos says I should have more comments than the occasional TODO
 
-use rustyline::Editor;
-
 use crate::error::{Error, error, error_raw, ErrorContent};
-use crate::value::{SymbolTable, display_expr, RefStr, Expr};
-use crate::lexer;
-use crate::parser;
-use crate::parser::ReplParseResult::{Complete, Incomplete};
+use crate::value::RefStr;
 use crate::typecheck::{
-  AstNode, Content, Type, Val, StructDefinition, FunctionDefinition, TypeChecker, VarScope};
-
-use dlltest;
+  AstNode, Content, Type, Val, StructDefinition, FunctionDefinition, VarScope};
 
 use std::rc::Rc;
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::Read;
-
-use llvm_sys::support::LLVMLoadLibraryPermanently;
 
 use inkwell::AddressSpace;
 use inkwell::basic_block::BasicBlock;
@@ -63,45 +52,44 @@ use inkwell::passes::PassManager;
 use inkwell::types::{BasicTypeEnum, BasicType, StructType, PointerType, FunctionType, AnyTypeEnum};
 use inkwell::values::{
   BasicValueEnum, BasicValue, FloatValue, IntValue, FunctionValue, PointerValue };
-use inkwell::{OptimizationLevel, FloatPredicate, IntPredicate};
-use inkwell::execution_engine::ExecutionEngine;
+use inkwell::{FloatPredicate, IntPredicate};
 
-fn dump_module(module : &Module) {
+pub fn dump_module(module : &Module) {
   println!("{}", module.print_to_string().to_string())
 }
 
 macro_rules! codegen_type {
-  (FloatValue, $e:ident, $jit:ident) => { $jit.codegen_float($e) };
-  (IntValue, $e:ident, $jit:ident) => { $jit.codegen_int($e) };
+  (FloatValue, $e:ident, $gen:ident) => { $gen.codegen_float($e) };
+  (IntValue, $e:ident, $gen:ident) => { $gen.codegen_int($e) };
 }
 
 macro_rules! binary_op {
-  ($op_name:ident, $type_name:ident, $a:ident, $b:ident, $jit:ident) => {
+  ($op_name:ident, $type_name:ident, $a:ident, $b:ident, $gen:ident) => {
     {
-      let a = codegen_type!($type_name, $a, $jit)?;
-      let b = codegen_type!($type_name, $b, $jit)?;
-      let fv = ($jit).builder.$op_name(a, b, "op_result");
+      let a = codegen_type!($type_name, $a, $gen)?;
+      let b = codegen_type!($type_name, $b, $gen)?;
+      let fv = ($gen).builder.$op_name(a, b, "op_result");
       reg(fv.into())
     }
   }
 }
 
 macro_rules! unary_op {
-  ($op_name:ident, $type_name:ident, $a:ident, $jit:ident) => {
+  ($op_name:ident, $type_name:ident, $a:ident, $gen:ident) => {
     {
-      let a = codegen_type!($type_name, $a, $jit)?;
-      let fv = ($jit).builder.$op_name(a, "op_result");
+      let a = codegen_type!($type_name, $a, $gen)?;
+      let fv = ($gen).builder.$op_name(a, "op_result");
       reg(fv.into())
     }
   }
 }
 
 macro_rules! compare_op {
-  ($op_name:ident, $pred:expr, $type_name:ident, $a:ident, $b:ident, $jit:ident) => {
+  ($op_name:ident, $pred:expr, $type_name:ident, $a:ident, $b:ident, $gen:ident) => {
     {
-      let a = codegen_type!($type_name, $a, $jit)?;
-      let b = codegen_type!($type_name, $b, $jit)?;
-      let fv = ($jit).builder.$op_name($pred, a, b, "cpm_result");
+      let a = codegen_type!($type_name, $a, $gen)?;
+      let b = codegen_type!($type_name, $b, $gen)?;
+      let fv = ($gen).builder.$op_name($pred, a, b, "cpm_result");
       reg(fv.into())
     }
   }
@@ -112,21 +100,23 @@ macro_rules! compare_op {
 #[derive(PartialEq)]
 enum Storage {
   Register,
-  Stack,
+  Pointer,
 }
 
+/// Represents an SSA value in some LLVM IR. Might be stored directly in an LLVM register,
+/// or might be a pointer to somewhere on the stack/heap.
 #[derive(PartialEq)]
-struct JitVal {
+struct GenVal {
   storage : Storage,
   value : BasicValueEnum,
 }
 
-fn reg(value : BasicValueEnum) -> JitVal {
-  JitVal { storage: Storage::Register, value }
+fn reg(value : BasicValueEnum) -> GenVal {
+  GenVal { storage: Storage::Register, value }
 }
 
-fn stack(ptr : PointerValue) -> JitVal {
-  JitVal { storage: Storage::Stack, value: ptr.as_basic_value_enum() }
+fn pointer(ptr : PointerValue) -> GenVal {
+  GenVal { storage: Storage::Pointer, value: ptr.as_basic_value_enum() }
 }
 
 struct LoopLabels {
@@ -135,11 +125,11 @@ struct LoopLabels {
 }
 
 /*
-impl From<Option<BasicValueEnum>> for JitVal {
-  fn from(v : Option<BasicValueEnum>) -> JitVal {
+impl From<Option<BasicValueEnum>> for GenVal {
+  fn from(v : Option<BasicValueEnum>) -> GenVal {
     match v {
-      Some(v) => JitVal::Register(v),
-      None => JitVal::Void,
+      Some(v) => GenVal::Register(v),
+      None => GenVal::Void,
     }
   }
 }
@@ -175,7 +165,8 @@ fn basic_type(t : AnyTypeEnum) -> Option<BasicTypeEnum> {
 #[derive(Copy, Clone)]
 enum ShortCircuitOp { And, Or }
 
-pub struct Jit<'l> {
+/// Code generates a single function (can spawn children to code-generate internal functions)
+pub struct Gen<'l> {
   context: &'l mut Context,
   module : &'l mut Module,
   builder: Builder,
@@ -191,7 +182,7 @@ pub struct Jit<'l> {
   pm : &'l mut PassManager,
 }
 
-impl <'l> Jit<'l> {
+impl <'l> Gen<'l> {
 
   pub fn new(
     context: &'l mut Context,
@@ -201,11 +192,11 @@ impl <'l> Jit<'l> {
     global_var_types: &'l HashMap<RefStr, Type>,
     pm : &'l mut PassManager,
   )
-      -> Jit<'l>
+      -> Gen<'l>
   {
     let builder = context.create_builder();
     let variables = HashMap::new();
-    Jit {
+    Gen {
       context, module, builder,
       functions, function_defs,
       global_var_types, variables,
@@ -215,10 +206,10 @@ impl <'l> Jit<'l> {
     }
   }
 
-  pub fn child_function_jit<'lc>(&'lc mut self, global_var_types: &'lc HashMap<RefStr, Type>)
-    -> Jit<'lc>
+  pub fn child_function_gen<'lc>(&'lc mut self, global_var_types: &'lc HashMap<RefStr, Type>)
+    -> Gen<'lc>
   {
-    Jit::new(self.context, self.module, self.functions, self.function_defs, global_var_types, self.pm)
+    Gen::new(self.context, self.module, self.functions, self.function_defs, global_var_types, self.pm)
   }
 
   fn create_entry_block_alloca(&self, t : BasicTypeEnum, name : &str) -> PointerValue {
@@ -238,14 +229,17 @@ impl <'l> Jit<'l> {
     -> Result<(), ErrorContent>
   {
     if self.variables.contains_key(&name) {
-      return Err("variable with this name already defined".into());
+      return Err(format!("variable with name '{}' already defined", name).into());
     }
     let pointer = match var_scope {
       VarScope::Global => {
-        let gv = self.module.add_global(value.get_type(), Some(AddressSpace::Global), &name);
+        //TODO let gv = self.module.add_global(value.get_type(), Some(AddressSpace::Global), &name);
+        let gv = self.module.add_global(value.get_type(), None, &name);
         let null = const_null(value.get_type());
         gv.set_initializer(&null);
         gv.set_constant(false);
+        gv.set_linkage(Linkage::Internal);
+        gv.set_alignment(8);
         gv.as_pointer_value()
       }
       VarScope::Local => {
@@ -280,7 +274,7 @@ impl <'l> Jit<'l> {
   fn codegen_expression_to_register(&mut self, ast : &AstNode) -> Result<Option<BasicValueEnum>, Error> {
     if let Some(v) = self.codegen_expression(ast)? {
       let reg_val = match v.storage {
-        Storage::Stack => {
+        Storage::Pointer => {
           let ptr = *v.value.as_pointer_value();
           self.builder.build_load(ptr, "assignment_value")
         }
@@ -296,7 +290,7 @@ impl <'l> Jit<'l> {
   }
 
   fn codegen_short_circuit_op(&mut self, a : &AstNode, b : &AstNode, op : ShortCircuitOp)
-    -> Result<JitVal, Error>
+    -> Result<GenVal, Error>
   {
     use ShortCircuitOp::*;
     let short_circuit_outcome = match op {
@@ -331,7 +325,7 @@ impl <'l> Jit<'l> {
   }
 
   fn codegen_function_call(&mut self, ast : &AstNode, name : &RefStr, args : &[AstNode])
-    -> Result<Option<JitVal>, Error>
+    -> Result<Option<GenVal>, Error>
   {
     let f =
       *self.functions.get(name)
@@ -363,8 +357,8 @@ impl <'l> Jit<'l> {
     return Ok(r.map(reg));
   }
 
-  fn codegen_expression(&mut self, ast : &AstNode) -> Result<Option<JitVal>, Error> {
-    let v : JitVal = match &ast.content {
+  fn codegen_expression(&mut self, ast : &AstNode) -> Result<Option<GenVal>, Error> {
+    let v : GenVal = match &ast.content {
       Content::FunctionCall(name, args) => {
         return self.codegen_function_call(ast, name, args);
       }
@@ -515,7 +509,7 @@ impl <'l> Jit<'l> {
       }
       Content::FunctionDefinition(def, body) => {
         let global_var_types = HashMap::new();
-        self.child_function_jit(&global_var_types).codegen_function(
+        self.child_function_gen(&global_var_types).codegen_function(
           ast, body, &def.name, &def.args, &def.signature.args, false)?;
         return Ok(None);
       }
@@ -533,7 +527,7 @@ impl <'l> Jit<'l> {
           };
           self.builder.build_store(element_ptr, v);
         }
-        stack(ptr)
+        pointer(ptr)
       }
       Content::FieldAccess(x, field_index) => {
         let (struct_val_node, field_name) = (&x.0, &x.1);
@@ -546,13 +540,13 @@ impl <'l> Jit<'l> {
                 *v.value.as_struct_value(), *field_index as u32, field_name).unwrap();
             reg(reg_val)
           }
-          Storage::Stack => {
+          Storage::Pointer => {
             // if this is a pointer to the struct, get a pointer to the field
             let ptr = *v.value.as_pointer_value();
             let field_ptr = unsafe {
               self.builder.build_struct_gep(ptr, *field_index as u32, field_name)
             };
-            stack(field_ptr)
+            pointer(field_ptr)
           }
         }
       }
@@ -560,7 +554,7 @@ impl <'l> Jit<'l> {
         let (assign_node, value_node) = (&ns.0, &ns.1);
         let assign_location = self.codegen_expression(assign_node)?.unwrap();
         let ptr = match assign_location.storage {
-          Storage::Stack => {
+          Storage::Pointer => {
             *assign_location.value.as_pointer_value()
           }
           Storage::Register => {
@@ -580,7 +574,7 @@ impl <'l> Jit<'l> {
       }
       Content::VariableReference(name) => {
         if let Some(ptr) = self.variables.get(name) {
-          stack(*ptr)
+          pointer(*ptr)
         }
         else if let Some(type_tag) = self.global_var_types.get(name) {
           let t = self.to_basic_type(type_tag).unwrap();
@@ -588,7 +582,7 @@ impl <'l> Jit<'l> {
           gv.set_constant(false);
           let ptr = gv.as_pointer_value();
           self.variables.insert(name.clone(), ptr);
-          stack(ptr)
+          pointer(ptr)
         }
         else {
           return error(ast.loc, format!("unknown variable name '{}'.", name));
@@ -730,7 +724,7 @@ impl <'l> Jit<'l> {
 
     // set arguments names
     for (i, arg) in function.get_param_iter().enumerate() {
-      Jit::name_basic_type(&arg, args[i].as_ref());
+      Gen::name_basic_type(&arg, args[i].as_ref());
     }
     function
   }
@@ -754,24 +748,24 @@ impl <'l> Jit<'l> {
     // this function is here because Rust doesn't have a proper try/catch yet
     fn generate(
       function_node : &AstNode, body : &AstNode, function : FunctionValue,
-      args : &[RefStr], jit : &mut Jit) -> Result<(), Error>
+      args : &[RefStr], gen : &mut Gen) -> Result<(), Error>
     {
-      let entry = jit.context.append_basic_block(&function, "entry");
+      let entry = gen.context.append_basic_block(&function, "entry");
 
-      jit.builder.position_at_end(&entry);
+      gen.builder.position_at_end(&entry);
 
       // set function parameters
       for (arg_value, arg_name) in function.get_param_iter().zip(args) {
-        jit.init_variable(arg_name.clone(), VarScope::Local, arg_value)
+        gen.init_variable(arg_name.clone(), VarScope::Local, arg_value)
           .map_err(|c| error_raw(function_node.loc, c))?;
       }
 
       // compile body and emit return
-      jit.codegen_return(Some(body))?;
+      gen.codegen_return(Some(body))?;
 
       // return the whole thing after verification and optimization
       if function.verify(true) {
-        jit.pm.run_on_function(&function);
+        gen.pm.run_on_function(&function);
         Ok(())
       }
       else {
@@ -795,199 +789,8 @@ impl <'l> Jit<'l> {
     }
   }
 
-  fn codegen_top_level(self, ast : &AstNode) -> Result<FunctionValue, Error> {
+  /// Code-generates a module, returning a reference to the top-level function in the module
+  pub fn codegen_module(self, ast : &AstNode) -> Result<FunctionValue, Error> {
     self.codegen_function(&ast, &ast, "top_level", &[], &[], true)
-  }
-}
-
-pub struct Interpreter {
-  sym : SymbolTable,
-  context : Context,
-  modules : Vec<(Module, ExecutionEngine)>,
-  functions : HashMap<RefStr, Rc<FunctionDefinition>>,
-  compiled_functions : HashMap<RefStr, FunctionValue>,
-  struct_types : HashMap<RefStr, Rc<StructDefinition>>,
-  global_var_types: HashMap<RefStr, Type>,
-}
-
-impl Interpreter {
-  pub fn new() -> Interpreter {
-    let sym = SymbolTable::new();
-    let context = Context::create();
-    let functions = HashMap::new();
-    let compiled_functions = HashMap::new();
-    let struct_types = HashMap::new();
-    let global_var_types = HashMap::new();
-
-    let modules = vec!();
-
-    let mut i = 
-      Interpreter {
-        sym, context, modules, functions,
-        compiled_functions, struct_types,
-        global_var_types };
-    
-    // load prelude
-    if let Err(e) = i.load_prelude() {
-      println!("error loading prelude, {}", e);
-    }
-    
-    return i;
-  }
-
-  fn load_module(&mut self, code : &str) -> Result<(), Error> {
-    let expr = self.parse_string(code)?;
-    self.run_expression(&expr)?;
-    Ok(())
-  }
-
-  fn load_prelude(&mut self) -> Result<(), Error> {
-    let mut f = File::open("code/prelude_llvm.code").expect("file not found");
-    let mut code = String::new();
-    f.read_to_string(&mut code).unwrap();
-    self.load_module(&code)?;
-    Ok(())
-  }
-
-  fn top_level_jit<'l>(&'l mut self, module : &'l mut Module, pm : &'l mut PassManager) -> Jit<'l> {
-    Jit::new(
-      &mut self.context, module, &mut self.compiled_functions,
-      &self.functions, &self.global_var_types, pm)
-  }
-
-  fn parse_string(&mut self, code : &str) -> Result<Expr, Error> {
-    let tokens =
-      lexer::lex(code, &mut self.sym)
-      .map_err(|mut es| es.remove(0))?;
-    parser::parse(tokens, &mut self.sym)
-  }
-
-  pub fn run(&mut self, code : &str) -> Result<Val, Error> {;
-    let expr = self.parse_string(code)?;
-    self.run_expression(&expr)
-  }
-
-  fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
-    let mut type_checker =
-      TypeChecker::new(
-        true, HashMap::new(), &mut self.functions, &mut self.struct_types,
-        &mut self.global_var_types, &mut self.sym);
-    let ast = type_checker.to_ast(expr)?;
-    let module_name = format!("module_{}", self.modules.len());
-    let mut module = self.context.create_module(&module_name);
-    let mut pm = PassManager::create_for_function(&module);
-    // TODO: decide what to do about optimisation
-    pm.add_instruction_combining_pass();
-    pm.add_reassociate_pass();
-    pm.add_gvn_pass();
-    pm.add_cfg_simplification_pass();
-    pm.add_basic_alias_analysis_pass();
-    pm.add_promote_memory_to_register_pass();
-    pm.add_instruction_combining_pass();
-    pm.add_reassociate_pass();  
-    pm.initialize();
-
-    let f = {
-      let jit = self.top_level_jit(&mut module, &mut pm);
-      jit.codegen_top_level(&ast)?
-    };
-    println!("{}", display_expr(expr));
-    dump_module(&module);
-
-    fn execute<T>(expr : &Expr, f : FunctionValue, ee : &ExecutionEngine) -> Result<T, Error> {
-      let function_name = f.get_name().to_str().unwrap();
-      let v = unsafe {
-        // ERROR_MAY_BE_HERE; 
-        // TODO: i'm not sure that "get_function" actually calls "FinalizeObject"
-        // see: https://llvm.org/doxygen/ExecutionEngineBindings_8cpp_source.html
-        let jit_function =
-          ee.get_function::<unsafe extern "C" fn() -> T>(function_name)
-          .map_err(|e| error_raw(expr, format!("{:?}", e)))?;
-        jit_function.call()
-      };
-      Ok(v)
-    }
-    let ee =
-      module.create_jit_execution_engine(OptimizationLevel::None)
-      .map_err(|e| error_raw(expr, e.to_string()))?;
-    ee.run_static_constructors(); // TODO: this might not do anything :(
-    let result = match ast.type_tag {
-      Type::Bool => execute::<bool>(expr, f, &ee).map(Val::Bool),
-      Type::Float => execute::<f64>(expr, f, &ee).map(Val::Float),
-      Type::I64 => execute::<i64>(expr, f, &ee).map(Val::I64),
-      Type::Void => execute::<()>(expr, f, &ee).map(|_| Val::Void),
-      Type::Ptr(_) => 
-        error(expr, "can't return a pointer from a top-level function"),
-      Type::Struct(_) =>
-        error(expr, "can't return a struct from a top-level function"),
-    };
-    // unsafe { f.delete(); }
-    // TODO: ee.remove_module(&i.module).unwrap();
-    self.modules.push((module, ee));
-    result
-  }
-}
-
-#[no_mangle]
-pub extern "C" fn blah(a : i64, b : i64) -> i64 {
-  a + b
-}
-
-// Adding the functions above to a global array,
-// so Rust compiler won't remove them.
-#[used]
-static EXTERNAL_FNS: [extern fn(i64, i64) -> i64; 1] = [blah];
-
-pub fn run_repl() {
-  dlltest::blahblah(4, 5);
-
-  let mut rl = Editor::<()>::new();
-  let mut i = Interpreter::new();
-
-  unsafe {
-    LLVMLoadLibraryPermanently(std::ptr::null());
-  }
-
-  loop {
-    let mut input_line = rl.readline("repl> ").unwrap();
-
-    loop {
-      let lex_result =
-        lexer::lex(input_line.as_str(), &mut i.sym)
-        .map_err(|mut es| es.remove(0));
-      let tokens = match lex_result {
-        Ok(tokens) => tokens,
-        Err(e) => {
-          println!("Error occured: {}", e);
-          break;
-        }
-      };
-      let parsing_result = parser::repl_parse(tokens, &mut i.sym);
-      match parsing_result {
-        Ok(Complete(e)) => {
-          // we have parsed a full expression
-          rl.add_history_entry(input_line);
-          match i.run_expression(&e) {
-            Ok(value) => {
-              println!("{:?}", value)
-            }
-            Err(err) => {
-              println!("error: {}", err);
-            }
-          }
-          break;
-        }
-        Ok(Incomplete) => {
-          // get more tokens
-          let next_line = rl.readline(". ").unwrap();
-          input_line.push_str("\n");
-          input_line.push_str(next_line.as_str());
-        }
-        Err(e) => {
-          println!("Error occured: {}", e);
-          break;
-        }
-      }
-    }
   }
 }

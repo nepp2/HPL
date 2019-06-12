@@ -11,14 +11,17 @@ mod parser;
 mod value;
 mod watcher;
 mod typecheck;
-mod llvm;
+//mod memory_manager;
+mod codegen;
+mod jit;
+mod repl;
 mod test;
 
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
 use std::env;
-use crate::llvm::Interpreter;
+use crate::jit::Interpreter;
 use crate::typecheck::Val;
 use crate::error::Error;
 
@@ -46,6 +49,6 @@ fn main(){
     ["watch", f] => watcher::watch(f),
     ["watch"] => watcher::watch("code/scratchpad.code"),
     ["run", f] => load_and_run(f),
-    _ => llvm::run_repl(),
+    _ => repl::run_repl(),
   }
 }

@@ -148,6 +148,7 @@ impl <'l> TypeChecker<'l> {
     sym : &'l mut SymbolTable)
       -> TypeChecker<'l>
   {
+    let global_map = global_variables.keys().map(|n| (n.clone(), n.clone())).collect();
     TypeChecker {
       is_top_level,
       variables,
@@ -155,7 +156,7 @@ impl <'l> TypeChecker<'l> {
       struct_types,
       global_variables,
       sym,
-      scope_map: vec!(HashMap::new())
+      scope_map: vec!(global_map),
     }
   }
 
@@ -171,7 +172,9 @@ impl <'l> TypeChecker<'l> {
   fn create_scoped_variable_name(&mut self, name : RefStr) -> RefStr {
     let mut unique_name = name.to_string();
     let mut i = 0;
-    while self.variables.contains_key(unique_name.as_str()) {
+    while self.global_variables.contains_key(unique_name.as_str()) ||
+      self.variables.contains_key(unique_name.as_str())
+    {
       unique_name.clear();
       i += 1;
       write!(&mut unique_name, "{}#{}", name, i).unwrap();
@@ -365,9 +368,9 @@ impl <'l> TypeChecker<'l> {
               arg_types.push(type_tag);
             }
             let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
-            let mut globals = HashMap::new(); // hide globals from child functions
+            let mut empty_global_map = HashMap::new(); // hide globals from child functions
             let mut type_checker =
-              TypeChecker::new(false, args, self.functions, self.struct_types, &mut globals, self.sym);
+              TypeChecker::new(false, args, self.functions, self.struct_types, &mut empty_global_map, self.sym);
             let body = type_checker.to_ast(function_body)?;
             if self.functions.contains_key(name.as_ref()) {
               return error(expr, "function with that name already defined");
