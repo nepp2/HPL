@@ -127,6 +127,18 @@ impl Interpreter {
     dump_module(&module);
 
     fn execute<T>(expr : &Expr, f : FunctionValue, ee : &ExecutionEngine) -> Result<T, Error> {
+
+      /* TODO: new plan
+
+        The LLVM C api doesn't support a memory manager that can dynamically look up symbols with custom code.
+        Instead I think I can manually load in the symbols that are required via external API calls. This might
+        be faster anyway.
+
+        So basically, I would be manually linking globals and functions in, based on information from the typechecker.
+        This would happen before the execution engine ever runs.
+
+      */
+
       let function_name = f.get_name().to_str().unwrap();
       let v = unsafe {
         // ERROR_MAY_BE_HERE; 
@@ -158,82 +170,4 @@ impl Interpreter {
     self.modules.push((module, ee));
     result
   }
-}
-
-struct ModuleExecutionEngine {
-  ee : LLVMOpaqueExecutionEngine,
-  memory_manager : (),
-  module : LLVMModuleRef,
-}
-
-fn create_execution_engine(module : LLVMModuleRef) -> Result<(), ErrorContent> {
-  let mut ee = unsafe { zeroed() };
-  let mut error = unsafe { zeroed() };
-  let mut options;
-  unsafe {
-      options = std::mem::uninitialized();
-      LLVMInitializeMCJITCompilerOptions(&mut options, std::mem::size_of::<LLVMMCJITCompilerOptions>() as size_t);
-  }
-
-  let result =
-    LLVMCreateMCJITCompilerForModule(
-      &mut ee, module, &mut options,
-      std::mem::size_of::<LLVMMCJITCompilerOptions>() as size_t,
-      &mut error);
-  if result > 0 {
-    let cstr_buf = std::ffi::CStr::from_ptr(error);
-    let error_string = String::from_utf8_lossy(cstr_buf.to_bytes()).into_owned();
-    LLVMDisposeMessage(error);
-    Err(error_string.into())
-  }
-
-    /* TODO: new plan
-
-      The LLVM C api doesn't support a memory manager that can dynamically look up symbols with custom code.
-      Instead I think I can manually load in the symbols that are required via external API calls. This might
-      be faster anyway.
-
-      So basically, I would be manually linking globals and functions in, based on information from the typechecker.
-      This would happen before the execution engine ever runs.
-
-    */
-
-  else {
-    match self.memory_manager {
-      Some(memory_manager) => {
-        Ok((ExecutionEngine {ee:ee, _memory_manager: Some(memory_manager)}, FrozenModule {module:module}))
-      }
-      None => Ok((ExecutionEngine {ee:ee, _memory_manager: None}, FrozenModule {module:module}))
-    }
-  }
-}
-
-pub struct MemoryManagerFunctions<'a, 'b, 'c, 'd, 'e, 'f> {
-  allocate_code_section:
-    Option<Box<FnMut(
-      LLVMMCJITMemoryManagerRef,
-      uintptr_t,
-      u32, u32, &str)
-        -> *mut u8 + 'a>>,
-
-  allocate_data_section:
-    Option<Box<FnMut(
-      LLVMMCJITMemoryManagerRef,
-      uintptr_t,
-      u32, u32,
-      &str, bool)
-        -> *mut u8 + 'b>>,
-
-  finalize_memory: Option<Box<FnMut(LLVMMCJITMemoryManagerRef) -> Result<(), String> + 'c>>,
-
-  invalidate_instruction_cache: Option<Box<FnMut(LLVMMCJITMemoryManagerRef) + 'd>>,
-
-  get_symbol_address: Option<Box<FnMut(LLVMMCJITMemoryManagerRef, &str) -> u64 + 'e>>,
-
-  destroy: Option<Box<FnMut() + 'f>>,
-}
-
-pub struct JitMemoryManager<'a, 'b, 'c, 'd, 'e, 'f> {
-  memory_manager: LLVMMCJITMemoryManagerRef,
-  mm_functions: Box<MemoryManagerFunctions<'a, 'b, 'c, 'd, 'e, 'f>>
 }
