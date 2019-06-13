@@ -51,7 +51,7 @@ use inkwell::module::{Module, Linkage};
 use inkwell::passes::PassManager;
 use inkwell::types::{BasicTypeEnum, BasicType, StructType, PointerType, FunctionType, AnyTypeEnum};
 use inkwell::values::{
-  BasicValueEnum, BasicValue, FloatValue, IntValue, FunctionValue, PointerValue };
+  BasicValueEnum, BasicValue, FloatValue, IntValue, FunctionValue, PointerValue, GlobalValue };
 use inkwell::{FloatPredicate, IntPredicate};
 
 pub fn dump_module(module : &Module) {
@@ -171,6 +171,7 @@ pub struct Gen<'l> {
   module : &'l mut Module,
   builder: Builder,
   functions: &'l mut HashMap<RefStr, FunctionValue>,
+  external_globals: &'l mut HashMap<RefStr, GlobalValue>,
   function_defs: &'l HashMap<RefStr, Rc<FunctionDefinition>>,
   global_var_types: &'l HashMap<RefStr, Type>,
   variables: HashMap<RefStr, PointerValue>,
@@ -179,7 +180,7 @@ pub struct Gen<'l> {
   /// A stack of values indicating the entry and exit labels for each loop
   loop_labels: Vec<LoopLabels>,
 
-  pm : &'l mut PassManager,
+  pm : &'l PassManager<FunctionValue>,
 }
 
 impl <'l> Gen<'l> {
@@ -188,9 +189,10 @@ impl <'l> Gen<'l> {
     context: &'l mut Context,
     module : &'l mut Module,
     functions: &'l mut HashMap<RefStr, FunctionValue>,
+    external_globals: &'l mut HashMap<RefStr, GlobalValue>,
     function_defs: &'l HashMap<RefStr, Rc<FunctionDefinition>>,
     global_var_types: &'l HashMap<RefStr, Type>,
-    pm : &'l mut PassManager,
+    pm : &'l PassManager<FunctionValue>,
   )
       -> Gen<'l>
   {
@@ -198,7 +200,8 @@ impl <'l> Gen<'l> {
     let variables = HashMap::new();
     Gen {
       context, module, builder,
-      functions, function_defs,
+      functions, external_globals,
+      function_defs,
       global_var_types, variables,
       struct_types: HashMap::new(),
       loop_labels: vec!(),
@@ -209,7 +212,7 @@ impl <'l> Gen<'l> {
   pub fn child_function_gen<'lc>(&'lc mut self, global_var_types: &'lc HashMap<RefStr, Type>)
     -> Gen<'lc>
   {
-    Gen::new(self.context, self.module, self.functions, self.function_defs, global_var_types, self.pm)
+    Gen::new(self.context, self.module, self.functions, self.external_globals, self.function_defs, global_var_types, self.pm)
   }
 
   fn create_entry_block_alloca(&self, t : BasicTypeEnum, name : &str) -> PointerValue {
@@ -576,13 +579,16 @@ impl <'l> Gen<'l> {
         if let Some(ptr) = self.variables.get(name) {
           pointer(*ptr)
         }
+        else if let Some(gv) = self.external_globals.get(name) {
+          let ptr = gv.as_pointer_value();
+          pointer(ptr)
+        }
         else if let Some(type_tag) = self.global_var_types.get(name) {
           let t = self.to_basic_type(type_tag).unwrap();
           let gv = self.module.add_global(t, Some(AddressSpace::Global), &name);
           gv.set_constant(false);
-          let ptr = gv.as_pointer_value();
-          self.variables.insert(name.clone(), ptr);
-          pointer(ptr)
+          self.external_globals.insert(name.clone(), gv);
+          pointer(gv.as_pointer_value())
         }
         else {
           return error(ast.loc, format!("unknown variable name '{}'.", name));
@@ -765,7 +771,7 @@ impl <'l> Gen<'l> {
 
       // return the whole thing after verification and optimization
       if function.verify(true) {
-        gen.pm.run_on_function(&function);
+        gen.pm.run_on(&function);
         Ok(())
       }
       else {

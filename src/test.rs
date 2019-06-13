@@ -161,8 +161,6 @@ fn test_while() {
   assert_result(b, Val::I64(13));
 }
 
-/*
-
 #[test]
 fn test_global() {
   let mut i = Interpreter::new();
@@ -171,6 +169,8 @@ fn test_global() {
   assert_result_with_interpreter(&mut i, a, Val::Void);
   assert_result_with_interpreter(&mut i, b, Val::I64(5));
 }
+
+/*
 
 Features to add:
 

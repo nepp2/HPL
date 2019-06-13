@@ -16,7 +16,7 @@ lazy_static = "1.2.0"
 itertools = "0.7.3"
 maplit = "1.0.1"
 llvm-sys = "70.1.0"
-inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "llvm7-0" }
+inkwell = { git = "https://github.com/nepp2/inkwell", branch = "llvm7-0" }
 dlltest = { path = "dlltest" }
 libc = "0.2"
 

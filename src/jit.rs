@@ -1,5 +1,5 @@
 
-use crate::error::{Error, error, error_raw, ErrorContent};
+use crate::error::{Error, error, error_raw};
 use crate::value::{SymbolTable, display_expr, RefStr, Expr};
 use crate::lexer;
 use crate::parser;
@@ -7,28 +7,18 @@ use crate::typecheck::{
   Type, Val, StructDefinition, FunctionDefinition, TypeChecker };
 use crate::codegen::{dump_module, Gen};
 
+use llvm_sys::execution_engine::LLVMGetGlobalValueAddress;
 
 use std::rc::Rc;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
-use std::mem::zeroed;
-
-use libc::{size_t, uintptr_t};
-
-use llvm_sys::execution_engine::{
-  LLVMCreateMCJITCompilerForModule,
-  LLVMInitializeMCJITCompilerOptions,
-  LLVMMCJITCompilerOptions,
-  LLVMOpaqueExecutionEngine,
-  LLVMMCJITMemoryManagerRef};
-use llvm_sys::prelude::LLVMModuleRef;
-use llvm_sys::core::LLVMDisposeMessage;
+use std::ffi::CString;
 
 use inkwell::context::{Context};
-use inkwell::module::Module;
+use inkwell::module::{Module, Linkage};
 use inkwell::passes::PassManager;
-use inkwell::values::FunctionValue;
+use inkwell::values::{FunctionValue, GlobalValue};
 use inkwell::OptimizationLevel;
 use inkwell::execution_engine::ExecutionEngine;
 
@@ -81,12 +71,6 @@ impl Interpreter {
     Ok(())
   }
 
-  fn top_level_jit<'l>(&'l mut self, module : &'l mut Module, pm : &'l mut PassManager) -> Gen<'l> {
-    Gen::new(
-      &mut self.context, module, &mut self.compiled_functions,
-      &self.functions, &self.global_var_types, pm)
-  }
-
   fn parse_string(&mut self, code : &str) -> Result<Expr, Error> {
     let tokens =
       lexer::lex(code, &mut self.sym)
@@ -107,7 +91,8 @@ impl Interpreter {
     let ast = type_checker.to_ast(expr)?;
     let module_name = format!("module_{}", self.modules.len());
     let mut module = self.context.create_module(&module_name);
-    let mut pm = PassManager::create_for_function(&module);
+
+    let mut pm = PassManager::create(&module);
     // TODO: decide what to do about optimisation
     pm.add_instruction_combining_pass();
     pm.add_reassociate_pass();
@@ -119,8 +104,12 @@ impl Interpreter {
     pm.add_reassociate_pass();  
     pm.initialize();
 
+    let mut external_globals : HashMap<RefStr, GlobalValue> = HashMap::new();
+
     let f = {
-      let jit = self.top_level_jit(&mut module, &mut pm);
+      let jit =
+        Gen::new(
+          &mut self.context, &mut module, &mut self.compiled_functions, &mut external_globals, &self.functions, &self.global_var_types, &pm);
       jit.codegen_module(&ast)?
     };
     println!("{}", display_expr(expr));
@@ -154,6 +143,21 @@ impl Interpreter {
     let ee =
       module.create_jit_execution_engine(OptimizationLevel::None)
       .map_err(|e| error_raw(expr, e.to_string()))?;
+
+    for (global_name, global_value) in external_globals.iter() {
+      for (m, eee) in self.modules.iter() {
+        if let Some(g) = m.get_global(global_name) {
+          if g.get_linkage() == Linkage::Internal {
+            unsafe {
+              let address = eee.get_global_address(global_name).unwrap();
+              ee.add_global_mapping(global_value, address as usize);
+              break;
+            }
+          }
+        }
+      }
+    }
+
     ee.run_static_constructors(); // TODO: this might not do anything :(
     let result = match ast.type_tag {
       Type::Bool => execute::<bool>(expr, f, &ee).map(Val::Bool),

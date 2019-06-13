@@ -1,8 +1,8 @@
 
 cfun malloc(bytes : i64) : ptr
 
-let global_val = 5
+let global_var = 8475
 
-fun fatto() {
+fun prelude_function() {
     5
 }
