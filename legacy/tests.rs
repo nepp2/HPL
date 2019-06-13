@@ -1,7 +1,7 @@
 
-use crate::interpreter;
 use crate::interpreter::Interpreter;
 use crate::value::*;
+use crate::error::Error;
 
 #[test]
 fn test_basics() {
@@ -21,11 +21,18 @@ fn test_basics() {
     ("if true { 3 } else { 4 }", Value::from(3.0)),
     ("if false { 3 } else { 4 }", Value::from(4.0)),
     ("let a = 5; a", Value::from(5.0)),
-    (r#""Hello world""#, Value::from("Hello world")),
   ];
   for (code, expected_result) in cases {
     assert_result(code, expected_result);
   }
+}
+
+#[test]
+fn test_string() {
+  let mut i = Interpreter::simple();
+  let code = r#""Hello world""#;
+  let expected = Value::from(i.sym.get("Hello world"));
+  assert_result_with_interpreter(code, expected, &mut i);
 }
 
 #[test]
@@ -47,16 +54,29 @@ fn test_and_or() {
   assert_result(or, Value::from(0.0));
 }
 
-fn assert_result(code : &str, expected_result : Value){
+fn result_string(r : Result<Value, Error>, sym : &mut SymbolTable) -> String {
+  match r {
+    Ok(v) => v.to_string(sym),
+    Err(e) => format!("{}", e),
+  }
+}
+
+fn assert_result_with_interpreter(code : &str, expected_result : Value, i : &mut Interpreter){
   let expected = Ok(expected_result);
-  let result = interpreter::interpret(code);
+  let result = i.interpret(code);
   assert!(
     result == expected,
     "error in code '{}'. Expected result '{:?}'. Actual result was '{:?}'",
-    code, expected, result);
+    code, result_string(expected, &mut i.sym), result_string(result, &mut i.sym));
 }
 
-#[test]
+fn assert_result(code : &str, expected_result : Value){
+  let mut i = Interpreter::simple();
+  assert_result_with_interpreter(code, expected_result, &mut i)
+}
+
+// TODO: multiple dispatch currently not supported
+// #[test]
 fn test_dispatch(){
   let fundef_code = "
     fun add(a : float, b : float) {
@@ -75,13 +95,13 @@ fn test_dispatch(){
   for (code, expected_result) in cases {
     let mut i = Interpreter::simple();
     let def_result = i.interpret(fundef_code);
-    assert!(def_result.is_ok(), "Error: {:?}", def_result);
+    assert!(def_result.is_ok(), "Error: {:?}", result_string(def_result, &mut i.sym));
     let expected = Ok(expected_result);
     let result = i.interpret(code);
     assert!(
       result == expected,
       "error in code '{}'. Expected result '{:?}'. Actual result was '{:?}'",
-      code, expected, result);
+      code, result_string(expected, &mut i.sym), result_string(result, &mut i.sym));
   }
 }
 
@@ -107,12 +127,12 @@ fn test_struct() {
       x : float
       y : float
     }
-    fun add(a : vec2, b : vec2) {
+    fun foo(a, b) {
       vec2(x: a.x + b.x, y: a.y + b.y)
     }
     let a = vec2(x: 10, y: 1)
     let b = vec2(x: 2, y: 20)
-    let c = add(a, b)
+    let c = foo(a, b)
     c.y
   ";
   assert_result(code, Value::from(21.0));
@@ -155,7 +175,7 @@ fn test_while() {
 fn test_first_class_function() {
   let code = "
     let a = [1, 2, 3, 4]
-    fun add(a, b) {
+    fun foo(a, b) {
       a + b
     }
     fun fold(a, v, f) {
@@ -166,20 +186,13 @@ fn test_first_class_function() {
       }
       v
     }
-    fold(a, 0, add)
+    fold(a, 0, foo)
   ";
   assert_result(code, Value::from(10.0));
 }
 
 #[test]
 fn test_for_loop() {
-  let array_code = "
-    let t = 0
-    for v in [1, 2, 3, 4] {
-      t = t + v
-    }
-    t
-  ";
   let range_code = "
     let t = 0
     let r = range(0, 5)
@@ -190,19 +203,7 @@ fn test_for_loop() {
     }
     t
   ";
-  assert_result(array_code, Value::from(10.0));
   assert_result(range_code, Value::from(10.0));
-}
-
-#[test]
-fn test_brace_syntax_quirks(){
-  // This test demonstrates a problem with the struct initialisation syntax
-  let code = "
-    struct a { }
-    let b = a()
-  ";
-  // TODO: fix this problem
-  // assert_result(code, Value::Unit);
 }
 
 #[test]

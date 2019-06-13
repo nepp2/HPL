@@ -1,24 +1,14 @@
 # Programming language research prototype
 
-This is a language for programming games. It is very unfinished.
+Project to create a live programming environment for game development, built on top of a custom programming language and reactive programming model.
 
 ## Goals
-
-### Unify the engine and scripting language
-
-Usually a game engine is written in C++, and the gameplay code will be written in something like C# or Lua. This language aims to be good at both, just as [Julia](https://julialang.org/) does in the scientific computing domain.
-
-### Enable live programming functionality
-
-The initial target is simple live programming functionality in the vein of React/Redux and Elm. That means providing strong, pervasive support for hot-swapping code, and a time-travelling debugger. These features are usually delivered through pervasive immutability. The heavy allocation patterns and pointer indirection this usually involves are not ideal for game engine functionality. This language aims to permit mutability by instead guaranteeing restricted aliasing at key moments.
-
-## Other Requirements
 
 - Simple, high-level language
 - High throughput (good cache behaviour)
 - No unpredictable garbage collection pauses
-- State transitions are local and explicit
-- States can be reliably serialised and recovered
+- Immediate feedback in response to all changes, with live visualisations
+- Extensible editor, supporting asset pipelines and even asset creation
 
 ## Plan
 
@@ -26,14 +16,30 @@ The initial target is simple live programming functionality in the vein of React
 - Restrict aliasing across region boundaries (surviving pointers are unique when the region ends)
 - Cheap memory allocation and zero-latency collection within regions
 - High-level programming constructs available within region without lifetime analysis
-- Restricted aliasing enables easy serialisation for live programming features
 - Regions make state transitions explicit in a high-level way
 
-## Problems
+# Building
 
-The biggest problem is how to manage region boundaries without introducing high language complexity. The proposed solution is to stratify all allocations into two different types. There are ephemeral region allocations, and persistent allocations from a global heap. They have different field assignment semantics; assignment by reference and assignment by value, respectively.
+- Install LLVM 8 on your system (instructions for Windows below)
+- Just run `cargo build`
 
-It's not obvious whether this can be presented in a nice way. To some extent languages like Python and R already do this with their numerical computing libraries, so hopefully it's not as crazy as it sounds.
+## Installing LLVM on Windows
 
-It's also unclear how painful it will be to keep all persistent state in structures which don't permit multi-aliasing or cycles. I will likely permit multi-aliasing for immutable types like strings.
+Based on these instructions: https://llvm.org/docs/GettingStartedVS.html
+
+## Summary
+
+* Download the source code
+* Point CMake GUI at the source
+* Click "config", which should prompt a little window to pop up:
+  * Choose Win64 from the drop-down
+  * Add `host=x64` as an option (the instructions linked say `-Thost=x64`, but actually mean `-T host=x64`, and the `-T` is implicit in this dialog box)
+* Leave the default options, except for:
+  * change the installation directory from "program files" to something with no spaces, or everything will compile but cargo won't be able to build the bindings.
+  * maybe include tools like Clang? (not sure about this)
+* Click "generate". Should spit everything out into a target folder
+* Open LLVM.sln. Check that it says "Win64".
+* Change from "Debug" to "Release"
+* Build the "INSTALL" project. I think this should run with no errors.
+* Add the newly-installed `llvm/bin` folder to the user's `PATH` environment variable
 

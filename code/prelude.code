@@ -1,44 +1,51 @@
 
-struct array_it {
-  a : array,
-  i : float,
-}
-
-fun iterator(a : array) {
-  array_it(a: a, i: 0)
-}
-
-fun next_item(it : array_it) {
-  if it.i < len(it.a) {
-    let i = it.a[it.i]
-    it.i = it.i + 1
-    i
-  }
-  else {
-    ()
-  }
-}
-
-struct range_it {
-  i : float,
+struct range {
+  start : float,
   end : float,
 }
 
 fun range(start, end) {
-  range_it(i: start, end: end)
+  range(start: start, end: end)
 }
 
-fun iterator(r : range_it) {
-  range_it(i: r.i, end: r.end)
+fun println(a) {
+  print(a)
+  print("\n")
 }
 
-fun next_item(it : range_it) {
-  if it.i < it.end {
-    let i = it.i
-    it.i = it.i + 1
-    i
+fun print_expr_inner(e, indent) {
+  if e.tag == "expr" {
+    let separator = " "
+    print("(")
+    if e.value == "block" {
+      indent = indent + 1
+      separator = "\n"
+      for i in range(0, indent) {
+        separator = concat(separator, "   ")
+      }
+    }
+    else {
+      print(e.value)    }
+    print(separator)
+    if e.children == () { return }
+    let n = len(e.children)-1;
+    let i = 0;
+    while true {
+      print_expr_inner(e.children[i], indent)
+      if i >= n {
+        break
+      }
+      print(separator)
+      i = i + 1
+    }
+    print(")")
   }
-  else {
-    ()
+  else{
+    print(e.value)
   }
+}
+
+fun print_expr(e) {
+  print_expr_inner(e, 0)
+  println("")
 }

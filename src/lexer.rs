@@ -1,22 +1,23 @@
 
 use std::collections::HashSet;
-use crate::value::{RefStr, SymbolCache};
+use crate::value::{SymbolTable, RefStr};
 use crate::error::{Error, TextLocation, TextMarker, error_raw};
 
 lazy_static! {
   static ref KEYWORDS : HashSet<&'static str> =
-    vec!["fun", "if", "else", "type", "while", "struct", "for",
-    "break", "return", "let", "true", "false", "region", "import"].into_iter().collect();
+    vec!["fun", "cfun", "if", "else", "type", "while", "struct", "for",
+    "break", "return", "let", "true", "false", "region", "quote",
+    "import", "in"].into_iter().collect();
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum TokenType {
-  Symbol, Syntax, FloatLiteral, Keyword, StringLiteral
+  Symbol, Syntax, FloatLiteral, IntLiteral, Keyword, StringLiteral
 }
 
-#[derive(Debug)]
+#[derive(Clone)]
 pub struct Token {
-  pub string : RefStr,
+  pub symbol : RefStr,
   pub token_type : TokenType,
   pub loc : TextLocation,
 }
@@ -26,7 +27,7 @@ struct CStream<'l> {
   loc : StreamLocation,
   tokens : Vec<Token>,
   errors : Vec<Error>,
-  symbol_cache : &'l mut SymbolCache,
+  symbols : &'l mut SymbolTable,
   current_token : String,
 }
 
@@ -46,13 +47,13 @@ impl From<StreamLocation> for TextMarker {
 
 impl <'l> CStream<'l> {
 
-  fn new(chars : Vec<char>, symbol_cache : &mut SymbolCache) -> CStream {
+  fn new(chars : Vec<char>, symbols : &mut SymbolTable) -> CStream {
     CStream {
       chars,
       loc : StreamLocation { pos: 0, line: 1, line_start: 0 },
       tokens: vec!(),
       errors: vec!(),
-      symbol_cache,
+      symbols,
       current_token: String::new(),
     }
   }
@@ -79,20 +80,20 @@ impl <'l> CStream<'l> {
 
   fn complete_token(&mut self, start_loc : StreamLocation, token_type : TokenType) {
     let loc = self.get_text_location(start_loc);
-    let string = self.symbol_cache.symbol(self.current_token.as_str());
+    let symbol = self.symbols.get(self.current_token.as_ref());
     self.current_token.clear();
     let t = Token {
-      string,
+      symbol,
       token_type: token_type,
       loc : loc,
     };
     self.tokens.push(t);
   }
 
-  fn error(&mut self, start_loc : StreamLocation, message : String) {
+  fn raise_error(&mut self, start_loc : StreamLocation, message : String) -> Error {
     let location = self.get_text_location(start_loc);
     self.current_token.clear();
-    self.errors.push(error_raw(location, message));
+    error_raw(location, message)
   }
 
   fn advance_line(&mut self) {
@@ -143,24 +144,29 @@ impl <'l> CStream<'l> {
     self.iter_char_while(condition, &mut |cs : &mut CStream| { cs.append_char() });
   }
 
-  fn parse_number(&mut self) -> bool {
+  fn parse_number(&mut self) -> Result<bool, Error> {
     if self.is_number() {
       let start_loc = self.loc;
       self.append_char_while(&CStream::is_number);
-      if self.has_chars() && self.peek() == '.' {
-        self.append_char();
-        self.append_char_while(&CStream::is_number);
-      }
+      let literal_type =
+        if self.has_chars() && self.peek() == '.' {
+          self.append_char();
+          self.append_char_while(&CStream::is_number);
+          TokenType::FloatLiteral
+        }
+        else {
+          TokenType::IntLiteral
+        };
       if self.has_chars() && self.is_symbol_start_char() {
         self.append_char_while(&CStream::is_symbol_middle_char);
-        self.error(start_loc, "Malformed floating point literal".to_string());
+        return Err(self.raise_error(start_loc, "Malformed literal".to_string()));
       }
       else{
-        self.complete_token(start_loc, TokenType::FloatLiteral);
+        self.complete_token(start_loc, literal_type);
       }
-      true
+      Ok(true)
     }
-    else { false }
+    else { Ok(false) }
   }
 
   fn is_symbol_start_char(&self) -> bool {
@@ -237,10 +243,10 @@ impl <'l> CStream<'l> {
     return false;
   }
 
-  fn unknown_token(&mut self) {
+  fn unknown_token(&mut self) -> Error {
     let start_loc = self.loc;
     let _ = self.pop(); 
-    self.error(start_loc, "Unknown token".to_string());
+    self.raise_error(start_loc, "Unknown token".to_string())
   }
 
   fn parse_comment(&mut self) -> bool {
@@ -277,40 +283,67 @@ impl <'l> CStream<'l> {
     return false;
   }
 
-  fn parse_string_literal(&mut self) -> bool {
+  fn parse_string_literal(&mut self) -> Result<bool, Error> {
     if self.peek() != '"' {
-      return false;
+      return Ok(false);
     }
     self.skip_char();
     let start_loc = self.loc;
-    self.append_char_while(&|cs : &CStream| {
-      let c = cs.peek();
-      c != '\n' && c != '"'
-    });
-    if self.peek() == '"' {
+    while self.has_chars() {
+      let c = self.peek();
+      if c == '\\' {
+        // slash pattern, e.g. \n for newline
+        self.skip_char();
+        let c = self.peek();
+        match c {
+          '\\' => self.current_token.push('\\'),
+          'n' => self.current_token.push('\n'),
+          't' => self.current_token.push('\t'),
+          '"' => self.current_token.push('"'),
+          _ => return Err(self.raise_error(start_loc, format!("unexpected pattern '\\{}' in string literal", c))),
+        }
+        self.skip_char();
+      }
+      else {
+        if c == '"' { break; }
+        if c == '\n' { self.advance_line() }
+        self.append_char();
+      }
+    }
+    if self.has_chars() {
       self.skip_char();
       self.complete_token(start_loc, TokenType::StringLiteral);
-      return true;
+      return Ok(true);
     }
     else {
-      self.error(start_loc, "malformed string literal".to_string());
-      return false;
+      return Err(self.raise_error(start_loc, "malformed string literal".to_string()));
     }
   }
 }
 
-pub fn lex_with_cache(code : &str, symbol_cache : &mut SymbolCache) -> Result<Vec<Token>, Vec<Error>> {
-  let mut cs = CStream::new(code.chars().collect(), symbol_cache);
+pub fn lex(code : &str, symbols : &mut SymbolTable) -> Result<Vec<Token>, Vec<Error>> {
+
+  fn lex_with_errors(cs : &mut CStream) -> Result<(), Error> {
+    while cs.has_chars() {
+      if cs.handle_newline() {}
+      else if cs.skip_space() {}
+      else if cs.parse_symbol_or_keyword() {}
+      else if cs.parse_string_literal()? {}
+      else if cs.parse_number()? {}
+      else if cs.parse_comment() {}
+      else if cs.parse_syntax() {}
+      else {
+        return Err(cs.unknown_token());
+      }
+    }
+    Ok(())
+  }
+
+  let mut cs = CStream::new(code.chars().collect(), symbols);
   while cs.has_chars() {
-    if cs.handle_newline() {}
-    else if cs.skip_space() {}
-    else if cs.parse_symbol_or_keyword() {}
-    else if cs.parse_string_literal() {}
-    else if cs.parse_number() {}
-    else if cs.parse_comment() {}
-    else if cs.parse_syntax() {}
-    else {
-      cs.unknown_token();
+    match lex_with_errors(&mut cs) {
+      Ok(_) => (),
+      Err(e) => cs.errors.push(e),
     }
   }
   if cs.errors.is_empty() {
@@ -319,18 +352,4 @@ pub fn lex_with_cache(code : &str, symbol_cache : &mut SymbolCache) -> Result<Ve
   else {
     Err(cs.errors)
   }
-}
-
-pub fn lex(code : &str) -> Result<Vec<Token>, Vec<Error>> {
-  lex_with_cache(code, &mut SymbolCache::new())
-}
-
-#[test]
-fn test_lex() {
-  let code = "(3 + 4) * 10";
-  let ts = lex(code).unwrap();
-  for t in ts {
-    println!("{:?}", t.string);
-  }
-  //println!("{:?}", ts);
 }

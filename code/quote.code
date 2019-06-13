@@ -1,0 +1,23 @@
+
+
+let code = quote {
+  let a = 300
+
+  fun blah(a, b, c) {
+    let val = a + b
+    if val > c {
+      val
+    }
+    else{
+      c
+    }
+  }
+
+  blah(30, a, 50)
+}
+
+print_expr(code)
+
+let r = eval(code)
+
+println(r)

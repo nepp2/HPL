@@ -1,55 +1,26 @@
 use notify::{Watcher, RecursiveMode, watcher, DebouncedEvent};
 use std::sync::mpsc::{channel, TryRecvError};
 use std::time::Duration;
-use std::fs::File;
-use std::io::Read;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::thread;
-use std::thread::JoinHandle;
 
-use crate::error::Error;
-use crate::value::Value;
-use crate::interpreter;
+use std::process::{Command, Stdio, Child };
+use std::str;
 
-pub fn print_result(r : Result<Value, Error>) -> String {
-  match r {
-    Ok(v) => format!("{:?}", v),
-    Err(e) => format!( "{}", e),
-  }
-}
-
-pub struct InterpreterTask {
-  interrupt_flag : Arc<AtomicBool>,
-  completion_flag : Arc<AtomicBool>,
-  handle : JoinHandle<String>,
-}
-
-pub fn load_and_run(path : &str) -> InterpreterTask {
-  let path = PathBuf::from(path);
-  let interrupt_flag = Arc::new(AtomicBool::new(false));
-  let completion_flag = Arc::new(AtomicBool::new(false));
-
-  let iflag = interrupt_flag.clone();
-  let cflag = completion_flag.clone();
-
-  let handle = thread::spawn(move || {
-    let mut f = File::open(path).expect("file not found");
-    let mut code = String::new();
-    f.read_to_string(&mut code).unwrap();
-    let result = interpreter::interpret_with_interrupt(&code, iflag);
-    let s = print_result(result);
-    cflag.store(true, Ordering::Relaxed);
-    s
-  });
-
-  InterpreterTask { interrupt_flag, completion_flag, handle }
+pub fn run_process(path : &str) -> Child {
+  let exe = std::env::current_exe().unwrap();
+  let exe = exe.to_str().unwrap();
+  let child = Command::new("cmd")
+      .args(&["/C", exe, "run", path])
+      .stdin(Stdio::piped())
+      .stdout(Stdio::piped())
+      .spawn()
+      .expect("failed to execute child");
+  child
 }
 
 pub fn watch(path : &str) {
 
-  let mut task = Some(load_and_run(path));
+  let mut process = Some(run_process(path));
 
   // Create a channel to receive the events.
   let (tx, rx) = channel();
@@ -65,13 +36,21 @@ pub fn watch(path : &str) {
 
   loop {
 
-    if let Some(t) = task {
-      if t.completion_flag.load(Ordering::Relaxed) {
-        println!("{}", t.handle.join().unwrap());
-        task = None;
+    if let Some(mut p) = process {
+      let exited = p.try_wait().expect("error").is_some();
+      if exited {
+        let output = p.wait_with_output().unwrap();
+        println!("process finished. output:\n{}",
+          str::from_utf8(output.stdout.as_slice()).unwrap());
+        if !output.status.success() {
+          println!("ERROR:\n{}\n{}",
+          output.status,
+          str::from_utf8(output.stderr.as_slice()).unwrap());
+        }
+        process = None;
       }
       else {
-        task = Some(t)
+        process = Some(p);
       }
     }
     loop {
@@ -79,11 +58,11 @@ pub fn watch(path : &str) {
         Ok(event) => {
           match event {
             DebouncedEvent::Write(_) => {
-              if let Some(t) = task {
-                t.interrupt_flag.store(true, Ordering::Relaxed);
-                println!("{}", t.handle.join().unwrap());
+              if let Some(p) = &mut process {
+                p.kill().unwrap();
+                println!("Child process killed");
               }
-              task = Some(load_and_run(path))
+              process = Some(run_process(path));
             }
             _ => {}
           }
@@ -95,6 +74,6 @@ pub fn watch(path : &str) {
         },
       }
     }
-    thread::sleep(Duration::from_millis(100));
+    thread::sleep(Duration::from_millis(10));
   }
 }
