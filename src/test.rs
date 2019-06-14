@@ -28,6 +28,9 @@ fn assert_result(code : &str, expected_result : Val){
 TODO: Fairly sure there's some undefined behaviour in at least one of these tests, causing it to
 crash unpredictably. Haven't found a test that crashes reliably though. Also, I'm not sure the
 crash happens at all without interaction between tests, now that they run in separate processes.
+
+UPDATE: The test failure _may_ could have been caused by Rust running tests in parallel. I'm not
+sure if I'm using LLVM in a way that can be multithreaded.
 */
 
 // Runs the tests in isolated processes, because they do unsafe things and could pollute each other.
