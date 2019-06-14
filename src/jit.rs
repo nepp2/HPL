@@ -7,13 +7,10 @@ use crate::typecheck::{
   Type, Val, StructDefinition, FunctionDefinition, TypeChecker };
 use crate::codegen::{dump_module, Gen};
 
-use llvm_sys::execution_engine::LLVMGetGlobalValueAddress;
-
 use std::rc::Rc;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
-use std::ffi::CString;
 
 use inkwell::context::{Context};
 use inkwell::module::{Module, Linkage};
@@ -118,18 +115,6 @@ impl Interpreter {
     dump_module(&module);
 
     fn execute<T>(expr : &Expr, f : FunctionValue, ee : &ExecutionEngine) -> Result<T, Error> {
-
-      /* TODO: new plan
-
-        The LLVM C api doesn't support a memory manager that can dynamically look up symbols with custom code.
-        Instead I think I can manually load in the symbols that are required via external API calls. This might
-        be faster anyway.
-
-        So basically, I would be manually linking globals and functions in, based on information from the typechecker.
-        This would happen before the execution engine ever runs.
-
-      */
-
       let function_name = f.get_name().to_str().unwrap();
       let v = unsafe {
         // ERROR_MAY_BE_HERE; 

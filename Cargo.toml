@@ -4,6 +4,9 @@ version = "0.1.0"
 authors = ["Andrew R Martin <0andrewmartin0@gmail.com>"]
 edition = "2018"
 
+[dev-dependencies]
+rusty-fork = "0.2.1"
+
 [dependencies]
 byteorder = "1.2.2"
 unicode-normalization = "0.1.5"

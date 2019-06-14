@@ -1,6 +1,9 @@
 
 #![allow(dead_code)]
 
+#[cfg(test)]
+#[macro_use] extern crate rusty_fork;
+
 #[macro_use] extern crate lazy_static;
 // #[macro_use] extern crate maplit;
 
@@ -11,10 +14,11 @@ mod parser;
 mod value;
 mod watcher;
 mod typecheck;
-//mod memory_manager;
 mod codegen;
 mod jit;
 mod repl;
+
+#[cfg(test)]
 mod test;
 
 use std::fs::File;
