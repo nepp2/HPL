@@ -105,11 +105,13 @@ impl Interpreter {
     pm.initialize();
 
     let mut external_globals : HashMap<RefStr, GlobalValue> = HashMap::new();
+    let mut external_functions : HashMap<RefStr, FunctionValue> = HashMap::new();
 
     let f = {
       let jit =
         Gen::new(
-          &mut self.context, &mut module, &mut self.compiled_functions, &mut external_globals, &self.functions, &self.global_var_types, &pm);
+          &mut self.context, &mut module, &mut self.compiled_functions, &self.functions,
+          &mut external_globals, &mut external_functions, &self.global_var_types, &pm);
       jit.codegen_module(&ast)?
     };
     println!("{}", display_expr(expr));
@@ -144,6 +146,7 @@ impl Interpreter {
       module.create_jit_execution_engine(OptimizationLevel::None)
       .map_err(|e| error_raw(expr, e.to_string()))?;
 
+    // Link global variables
     for (global_name, global_value) in external_globals.iter() {
       for (m, eee) in self.modules.iter() {
         if let Some(g) = m.get_global(global_name) {
@@ -151,6 +154,21 @@ impl Interpreter {
             unsafe {
               let address = eee.get_global_address(global_name).unwrap();
               ee.add_global_mapping(global_value, address as usize);
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // Link external functions
+    for (function_name, function_value) in external_functions.iter() {
+      for (m, eee) in self.modules.iter() {
+        if let Some(f) = m.get_function(function_name) {
+          if f.count_basic_blocks() > 0 {
+            unsafe {
+              let address = eee.get_function_address(function_name).unwrap();
+              ee.add_global_mapping(function_value, address as usize);
               break;
             }
           }

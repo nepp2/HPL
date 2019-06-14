@@ -1,38 +1,4 @@
 
-/*
-
-Modified from code released under the license below:
-
-######################################################
-Copyright (c) 2014 Jauhien Piatlicki
-
-Permission is hereby granted, free of charge, to any person obtaining
-a copy of this software and associated documentation files (the
-"Software"), to deal in the Software without restriction, including
-without limitation the rights to use, copy, modify, merge, publish,
-distribute, sublicense, and/or sell copies of the Software, and to
-permit persons to whom the Software is furnished to do so, subject to
-the following conditions:
-
-The above copyright notice and this permission notice shall be
-included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
-TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-[Except as contained in this notice, the name of <copyright holders>
-shall not be used in advertising or otherwise to promote the sale, use
-or other dealings in this Software without prior written authorization
-from Jauhien Piatlicki.]
-######################################################
-
-*/
-
 // TODO: Carlos says I should have more comments than the occasional TODO
 
 use crate::error::{Error, error, error_raw, ErrorContent};
@@ -171,8 +137,9 @@ pub struct Gen<'l> {
   module : &'l mut Module,
   builder: Builder,
   functions: &'l mut HashMap<RefStr, FunctionValue>,
-  external_globals: &'l mut HashMap<RefStr, GlobalValue>,
   function_defs: &'l HashMap<RefStr, Rc<FunctionDefinition>>,
+  external_globals: &'l mut HashMap<RefStr, GlobalValue>,
+  external_functions: &'l mut HashMap<RefStr, FunctionValue>,
   global_var_types: &'l HashMap<RefStr, Type>,
   variables: HashMap<RefStr, PointerValue>,
   struct_types: HashMap<RefStr, StructType>,
@@ -189,8 +156,9 @@ impl <'l> Gen<'l> {
     context: &'l mut Context,
     module : &'l mut Module,
     functions: &'l mut HashMap<RefStr, FunctionValue>,
-    external_globals: &'l mut HashMap<RefStr, GlobalValue>,
     function_defs: &'l HashMap<RefStr, Rc<FunctionDefinition>>,
+    external_globals: &'l mut HashMap<RefStr, GlobalValue>,
+    external_functions: &'l mut HashMap<RefStr, FunctionValue>,
     global_var_types: &'l HashMap<RefStr, Type>,
     pm : &'l PassManager<FunctionValue>,
   )
@@ -200,8 +168,10 @@ impl <'l> Gen<'l> {
     let variables = HashMap::new();
     Gen {
       context, module, builder,
-      functions, external_globals,
+      functions,
       function_defs,
+      external_globals,
+      external_functions,
       global_var_types, variables,
       struct_types: HashMap::new(),
       loop_labels: vec!(),
@@ -212,7 +182,9 @@ impl <'l> Gen<'l> {
   pub fn child_function_gen<'lc>(&'lc mut self, global_var_types: &'lc HashMap<RefStr, Type>)
     -> Gen<'lc>
   {
-    Gen::new(self.context, self.module, self.functions, self.external_globals, self.function_defs, global_var_types, self.pm)
+    Gen::new(
+      self.context, self.module, self.functions, self.function_defs, 
+      self.external_globals, self.external_functions, global_var_types, self.pm)
   }
 
   fn create_entry_block_alloca(&self, t : BasicTypeEnum, name : &str) -> PointerValue {
@@ -345,6 +317,7 @@ impl <'l> Gen<'l> {
         let def = self.function_defs.get(name).unwrap();
         let f = self.codegen_prototype(&def.name, &def.signature.return_type, &def.args, &def.signature.args);
         f.set_linkage(Linkage::External);
+        self.external_functions.insert(name.clone(), f);
         f
       }
     };

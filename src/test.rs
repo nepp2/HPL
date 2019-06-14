@@ -162,12 +162,24 @@ fn test_while() {
 }
 
 #[test]
-fn test_global() {
+fn test_jit_module_variable_linking() {
   let mut i = Interpreter::new();
   let a = "let foo = 5";
   let b = "foo";
   assert_result_with_interpreter(&mut i, a, Val::Void);
   assert_result_with_interpreter(&mut i, b, Val::I64(5));
+}
+
+#[test]
+fn test_jit_module_function_linking() {
+  let mut i = Interpreter::new();
+  let a = "
+    fun foobar() {
+      843
+    }";
+  let b = "foobar()";
+  assert_result_with_interpreter(&mut i, a, Val::Void);
+  assert_result_with_interpreter(&mut i, b, Val::I64(843));
 }
 
 /*
