@@ -89,8 +89,7 @@ impl Interpreter {
     let module_name = format!("module_{}", self.modules.len());
     let mut module = self.context.create_module(&module_name);
 
-    let mut pm = PassManager::create(&module);
-    // TODO: decide what to do about optimisation
+    let pm = PassManager::create(&module);
     pm.add_instruction_combining_pass();
     pm.add_reassociate_pass();
     pm.add_gvn_pass();
@@ -103,7 +102,6 @@ impl Interpreter {
 
     let mut external_globals : HashMap<RefStr, GlobalValue> = HashMap::new();
     let mut external_functions : HashMap<RefStr, FunctionValue> = HashMap::new();
-
     let f = {
       let jit =
         Gen::new(
@@ -167,6 +165,8 @@ impl Interpreter {
       Type::Float => execute::<f64>(expr, f, &ee).map(Val::Float),
       Type::I64 => execute::<i64>(expr, f, &ee).map(Val::I64),
       Type::Void => execute::<()>(expr, f, &ee).map(|_| Val::Void),
+      Type::Array(_, _) => 
+        error(expr, "can't return an array from a top-level function"),
       Type::Ptr(_) => 
         error(expr, "can't return a pointer from a top-level function"),
       Type::Struct(_) =>

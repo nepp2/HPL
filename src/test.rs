@@ -193,6 +193,28 @@ rusty_fork_test! {
     assert_result_with_interpreter(&mut i, b, Val::I64(843));
   }
 
+  #[test]
+  fn test_arrays() {
+    let code = "
+      let a = [0, 1, 2, 3, 6]
+      a[1] = 50
+      a[1] + a[4]
+    ";
+    assert_result(code, Val::I64(7));
+  }
+
+  /*
+  #[test]
+  fn test_arrays() {
+    let code = "
+      let a = [0, [1, 2, 3], 6]
+      a[1][1] = 50
+      a[1][1] + a[2]
+    ";
+    assert_result(code, Val::I64(56));
+  }
+  */
+
 }
 
 /*
@@ -201,16 +223,6 @@ Features to add:
 
   * non-native types (can fold strings and arrays into this?)
   * consider making new-lines significant in some cases (relating to semi-colons)
-
-#[test]
-fn test_arrays() {
-  let code = "
-    let a = [0, [1, 2, 3], 6]
-    a[1][1] = 50
-    a[1][1] + a[2]
-  ";
-  assert_result(code, Val::I64(56));
-}
 
 #[test]
 fn test_string() {

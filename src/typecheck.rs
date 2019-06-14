@@ -15,6 +15,7 @@ pub enum Type {
   Float,
   I64,
   Bool,
+  Array(Box<Type>, u32),
   Struct(Rc<StructDefinition>),
   Ptr(Box<Type>),
 }
@@ -89,6 +90,8 @@ pub enum Content {
   StructDefinition(Rc<StructDefinition>),
   StructInstantiate(Rc<StructDefinition>, Vec<AstNode>),
   FieldAccess(Box<(AstNode, RefStr)>, usize),
+  Index(Box<(AstNode, AstNode)>),
+  ArrayLiteral(Vec<AstNode>),
   FunctionCall(RefStr, Vec<AstNode>),
   IntrinsicCall(RefStr, Vec<AstNode>),
   While(Box<(AstNode, AstNode)>),
@@ -455,6 +458,37 @@ impl <'l> TypeChecker<'l> {
             let field_type = field_type.clone();
             let c = Content::FieldAccess(Box::new((struct_val, field_name.clone())), field_index);
             Ok(ast(expr, field_type, c))
+          }
+          ("literal_array", exprs) => {
+            let mut elements = vec!();
+            for e in exprs {
+              elements.push(self.to_ast(e)?);
+            }
+            let t =
+              if let Some(a) = elements.first() {
+                for b in &elements[1..] {
+                  if a.type_tag != b.type_tag {
+                    return error(expr, format!("array initialiser contains more than one type."));
+                  }
+                }
+                a.type_tag.clone()
+              }
+              else {
+                Type::Void
+              };
+            Ok(ast(expr, Type::Array(Box::new(t), elements.len() as u32), Content::ArrayLiteral(elements)))
+          }
+          ("index", [array_expr, index_expr]) => {
+            let array = self.to_ast(array_expr)?;
+            let inner_type = match &array.type_tag {
+              Type::Array(t, _) => *(t).clone(),
+              _ => return error(array_expr, "expected array"),
+            };
+            let index = self.to_ast(index_expr)?;
+            if index.type_tag != Type::I64 {
+              return error(array_expr, "expected integer");
+            }
+            Ok(ast(expr, inner_type, Content::Index(Box::new((array, index)))))
           }
           _ => return error(expr, "unsupported expression"),
         }

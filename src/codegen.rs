@@ -15,7 +15,7 @@ use inkwell::builder::Builder;
 use inkwell::context::{Context};
 use inkwell::module::{Module, Linkage};
 use inkwell::passes::PassManager;
-use inkwell::types::{BasicTypeEnum, BasicType, StructType, PointerType, FunctionType, AnyTypeEnum};
+use inkwell::types::{BasicTypeEnum, BasicType, StructType, PointerType, FunctionType, AnyTypeEnum, ArrayType};
 use inkwell::values::{
   BasicValueEnum, BasicValue, FloatValue, IntValue, FunctionValue, PointerValue, GlobalValue };
 use inkwell::{FloatPredicate, IntPredicate};
@@ -526,6 +526,33 @@ impl <'l> Gen<'l> {
           }
         }
       }
+      Content::ArrayLiteral(elements) => {
+        if let Type::Array(inner_type, length) = &ast.type_tag {
+          let element_type = self.to_basic_type(inner_type).unwrap();
+          let length = self.context.i32_type().const_int(*length as u64, false).into();
+          let array_ptr = self.builder.build_array_alloca(element_type, length, "array_alloca");
+          let zero = self.context.i32_type().const_int(0, false).into();
+          println!("PREJIT MESSAGE");
+          for (i, e) in elements.iter().enumerate() {
+            let v = self.codegen_value(e)?;
+            println!("VALUE");
+            //let index = self.context.i32_type().const_int(i as u64, false).into();
+            println!("INDEX");
+            let element_ptr = unsafe { self.builder.build_in_bounds_gep(array_ptr, &[zero], "element_ptr") };
+            println!("ELEMENT_PTR");
+            //self.builder.build_store(element_ptr, v);
+            println!("ELEMENT_STORE");
+          }
+          println!("POSTJIT MESSAGE");
+          pointer(array_ptr)
+        }
+        else{
+          panic!();
+        }
+      }
+      Content::Index(ns) => {
+        panic!();
+      }
       Content::Assignment(ns) => {
         let (assign_node, value_node) = (&ns.0, &ns.1);
         let assign_location = self.codegen_expression(assign_node)?.unwrap();
@@ -616,11 +643,27 @@ impl <'l> Gen<'l> {
       Type::Float => Some(self.context.f64_type().into()),
       Type::I64 => Some(self.context.i64_type().into()),
       Type::Bool => Some(self.context.bool_type().into()),
+      Type::Array(t, _length) => {
+        let bt = self.to_basic_type(t);
+        Some(self.pointer_to_type(bt).into())
+      }
       Type::Struct(def) => Some(self.struct_type(def).as_basic_type_enum()),
       Type::Ptr(t) => {
         let bt = self.to_basic_type(t);
         Some(self.pointer_to_type(bt).into())
       }
+    }
+  }
+
+  fn array_of_type(&self, t : BasicTypeEnum, length : u32) -> ArrayType {
+    use BasicTypeEnum::*;
+    match t {
+      ArrayType(t) => t.array_type(length),
+      IntType(t) => t.array_type(length),
+      FloatType(t) => t.array_type(length),
+      PointerType(t) => t.array_type(length),
+      StructType(t) => t.array_type(length),
+      VectorType(t) => t.array_type(length),
     }
   }
 
