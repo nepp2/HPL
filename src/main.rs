@@ -16,6 +16,7 @@ mod typecheck;
 mod codegen;
 mod jit;
 mod repl;
+mod c_interface;
 
 #[cfg(test)]
 mod test;

@@ -1,8 +1,9 @@
 
-cfun malloc(bytes : i64) : ptr
+struct range {
+  start : i64,
+  end : i64,
+}
 
-let global_var = 8475
-
-fun prelude_function() {
-    5
+fun range(start : i64, end : i64) {
+  range(start: start, end: end)
 }

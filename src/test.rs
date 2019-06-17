@@ -203,18 +203,6 @@ rusty_fork_test! {
     assert_result(code, Val::I64(56));
   }
 
-  /*
-  #[test]
-  fn test_arrays() {
-    let code = "
-      let a = [0, [1, 2, 3], 6]
-      a[1][1] = 50
-      a[1][1] + a[2]
-    ";
-    assert_result(code, Val::I64(56));
-  }
-  */
-
 }
 
 /*
