@@ -246,6 +246,14 @@ impl <'l> Gen<'l> {
     }
   }
 
+  fn codegen_pointer(&mut self, n : &AstNode) -> Result<PointerValue, Error> {
+    let v = self.codegen_value(n)?;
+    match v {
+      BasicValueEnum::PointerValue(p) => Ok(p),
+      t => error(n.loc, format!("Expected pointer, found {:?}", t)),
+    }
+  }
+
   fn codegen_expression_to_register(&mut self, ast : &AstNode) -> Result<Option<BasicValueEnum>, Error> {
     if let Some(v) = self.codegen_expression(ast)? {
       let reg_val = match v.storage {
@@ -530,28 +538,25 @@ impl <'l> Gen<'l> {
         if let Type::Array(inner_type, length) = &ast.type_tag {
           let element_type = self.to_basic_type(inner_type).unwrap();
           let length = self.context.i32_type().const_int(*length as u64, false).into();
-          let array_ptr = self.builder.build_array_alloca(element_type, length, "array_alloca");
-          let zero = self.context.i32_type().const_int(0, false).into();
-          println!("PREJIT MESSAGE");
+          let array_ptr = self.builder.build_array_malloc(element_type, length, "array_malloc");
           for (i, e) in elements.iter().enumerate() {
             let v = self.codegen_value(e)?;
-            println!("VALUE");
-            //let index = self.context.i32_type().const_int(i as u64, false).into();
-            println!("INDEX");
-            let element_ptr = unsafe { self.builder.build_in_bounds_gep(array_ptr, &[zero], "element_ptr") };
-            println!("ELEMENT_PTR");
-            //self.builder.build_store(element_ptr, v);
-            println!("ELEMENT_STORE");
+            let index = self.context.i32_type().const_int(i as u64, false).into();
+            let element_ptr = unsafe { self.builder.build_in_bounds_gep(array_ptr, &[index], "element_ptr") };
+            self.builder.build_store(element_ptr, v);
           }
-          println!("POSTJIT MESSAGE");
-          pointer(array_ptr)
+          reg(array_ptr.into())
         }
         else{
           panic!();
         }
       }
       Content::Index(ns) => {
-        panic!();
+        let (array_node, index_node) = (&ns.0, &ns.1);
+        let array = self.codegen_pointer(array_node)?;
+        let index = self.codegen_int(index_node)?;
+        let element_ptr = unsafe { self.builder.build_in_bounds_gep(array, &[index], "element_ptr") };
+        pointer(element_ptr)
       }
       Content::Assignment(ns) => {
         let (assign_node, value_node) = (&ns.0, &ns.1);
@@ -671,12 +676,12 @@ impl <'l> Gen<'l> {
     if let Some(t) = t {
     use BasicTypeEnum::*;
       match t {
-        ArrayType(t) => t.ptr_type(AddressSpace::Local),
-        IntType(t) => t.ptr_type(AddressSpace::Local),
-        FloatType(t) => t.ptr_type(AddressSpace::Local),
-        PointerType(t) => t.ptr_type(AddressSpace::Local),
-        StructType(t) => t.ptr_type(AddressSpace::Local),
-        VectorType(t) => t.ptr_type(AddressSpace::Local),
+        ArrayType(t) => t.ptr_type(AddressSpace::Generic),
+        IntType(t) => t.ptr_type(AddressSpace::Generic),
+        FloatType(t) => t.ptr_type(AddressSpace::Generic),
+        PointerType(t) => t.ptr_type(AddressSpace::Generic),
+        StructType(t) => t.ptr_type(AddressSpace::Generic),
+        VectorType(t) => t.ptr_type(AddressSpace::Generic),
       }
     }
     else {

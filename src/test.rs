@@ -200,7 +200,7 @@ rusty_fork_test! {
       a[1] = 50
       a[1] + a[4]
     ";
-    assert_result(code, Val::I64(7));
+    assert_result(code, Val::I64(56));
   }
 
   /*
