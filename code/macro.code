@@ -1,0 +1,11 @@
+macro for(var, range) {
+  quote {
+    {
+      let $var = $range.start;
+      while $var < $range.end {
+        $body
+        $var = $var + 1
+      }
+    }
+  }
+}
