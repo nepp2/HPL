@@ -12,7 +12,7 @@ lazy_static! {
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum TokenType {
-  Symbol, Syntax, FloatLiteral, IntLiteral, Keyword, StringLiteral
+  Symbol, Syntax, FloatLiteral, IntLiteral, StringLiteral
 }
 
 #[derive(Clone)]
@@ -187,7 +187,7 @@ impl <'l> CStream<'l> {
       self.append_char();
       self.append_char_while (&CStream::is_symbol_middle_char);
       if KEYWORDS.contains(self.current_token.as_str()) {
-        self.complete_token(start_loc, TokenType::Keyword);
+        self.complete_token(start_loc, TokenType::Syntax);
       }
       else {
         self.complete_token(start_loc, TokenType::Symbol);

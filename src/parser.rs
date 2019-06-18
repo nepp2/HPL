@@ -290,50 +290,6 @@ fn parse_literal<T : FromStr>(ps : &mut ParseState) -> Result<T, Error> {
   }
 }
 
-fn parse_syntax(ps : &mut ParseState) -> Result<Expr, Error> {
-  let start = ps.peek_marker();
-  match ps.peek()?.symbol.as_ref() {
-    "[" => {
-      ps.expect(Syntax, "[")?;
-      let mut exprs = vec!();
-      loop {
-        if ps.peek()?.symbol.as_ref() == "]" {
-          break;
-        }
-        exprs.push(parse_expression(ps)?);
-        if ps.peek()?.symbol.as_ref() == "," {
-          ps.skip()
-        }
-        else {
-          break;
-        }
-      }
-      ps.expect(Syntax, "]")?;
-      Ok(ps.add_tree("literal_array", exprs, start))
-    }
-    "(" => {
-      ps.expect(Syntax, "(")?;
-      if ps.accept(Syntax, ")") {
-        // "()" denotes the unit value
-        let u = ExprTag::LiteralUnit;
-        Ok(ps.add_leaf(u, start))
-      }
-      else {
-        let a = parse_expression(ps)?;
-        ps.expect(Syntax, ")")?;
-        Ok(a)
-      }
-    }
-    "{" => {
-      ps.expect(Syntax, "{")?;
-      let block = parse_block(ps)?;
-      ps.expect(Syntax, "}")?;
-      Ok(block)
-    }
-    _ => error(ps.peek()?.loc, format!("Unexpected syntax '{}'", ps.peek()?.symbol)),
-  }
-}
-
 fn parse_simple_string(ps : &mut ParseState, t : TokenType) -> Result<Expr, Error> {
   let start = ps.peek_marker();
   let s = ps.pop_type(t)?.symbol.clone();
@@ -341,7 +297,7 @@ fn parse_simple_string(ps : &mut ParseState, t : TokenType) -> Result<Expr, Erro
 }
 
 fn parse_simple_symbol(ps : &mut ParseState) -> Result<Expr, Error> {
-  parse_simple_string(ps, TokenType::Symbol)
+  parse_simple_string(ps, Symbol)
 }
 
 fn parse_type(ps : &mut ParseState) -> Result<Expr, Error> {
@@ -350,7 +306,7 @@ fn parse_type(ps : &mut ParseState) -> Result<Expr, Error> {
 
 fn parse_fun(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
-  ps.expect(Keyword, "fun")?;
+  ps.expect(Syntax, "fun")?;
   let fun_name = parse_simple_symbol(ps)?;
   let mut arguments = vec!();
   let args_start = ps.peek_marker();
@@ -382,7 +338,7 @@ fn parse_fun(ps : &mut ParseState) -> Result<Expr, Error> {
 
 fn parse_cfun(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
-  ps.expect(Keyword, "cfun")?;
+  ps.expect(Syntax, "cfun")?;
   let fun_name = parse_simple_symbol(ps)?;
   let mut arguments = vec!();
   let args_start = ps.peek_marker();
@@ -412,7 +368,7 @@ fn parse_cfun(ps : &mut ParseState) -> Result<Expr, Error> {
 
 fn parse_let(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
-  ps.expect(Keyword, "let")?;
+  ps.expect(Syntax, "let")?;
   let var_name = parse_simple_symbol(ps)?;
   ps.expect(Syntax, "=")?;
   let initialiser = parse_expression(ps)?;
@@ -421,13 +377,13 @@ fn parse_let(ps : &mut ParseState) -> Result<Expr, Error> {
 
 fn parse_if(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
-  ps.expect(Keyword, "if")?;
+  ps.expect(Syntax, "if")?;
   let conditional = parse_expression(ps)?;
   ps.expect(Syntax, "{")?;
   let then_block = parse_block(ps)?;
   ps.expect(Syntax, "}")?;
   let mut args = vec!(conditional, then_block);
-  if ps.accept(Keyword, "else") {
+  if ps.accept(Syntax, "else") {
     if ps.peek()?.symbol.as_ref() == "if" {
       let else_if = parse_if(ps)?;
       args.push(else_if);
@@ -444,7 +400,7 @@ fn parse_if(ps : &mut ParseState) -> Result<Expr, Error> {
 
 fn parse_while(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
-  ps.expect(Keyword, "while")?;
+  ps.expect(Syntax, "while")?;
   let conditional = parse_expression(ps)?;
   ps.expect(Syntax, "{")?;
   let loop_block = parse_block(ps)?;
@@ -455,9 +411,9 @@ fn parse_while(ps : &mut ParseState) -> Result<Expr, Error> {
 
 fn parse_for(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
-  ps.expect(Keyword, "for")?;
+  ps.expect(Syntax, "for")?;
   let loop_var = parse_simple_symbol(ps)?;
-  ps.expect(Keyword, "in")?;
+  ps.expect(Syntax, "in")?;
   let iterator = parse_expression(ps)?;
   ps.expect(Syntax, "{")?;
   let loop_block = parse_block(ps)?;
@@ -468,7 +424,7 @@ fn parse_for(ps : &mut ParseState) -> Result<Expr, Error> {
 
 fn parse_struct_definition(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
-  ps.expect(Keyword, "struct")?;
+  ps.expect(Syntax, "struct")?;
   let struct_name = parse_simple_symbol(ps)?;
   ps.expect(Syntax, "{")?;
   let mut args = vec!(struct_name);
@@ -524,7 +480,7 @@ fn parse_struct_instantiate(ps : &mut ParseState) -> Result<Expr, Error> {
 
 fn parse_region(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
-  ps.expect(Keyword, "region")?;
+  ps.expect(Syntax, "region")?;
   ps.expect(Syntax, "{")?;
   let exprs = parse_block_exprs(ps)?;
   ps.expect(Syntax, "}")?;
@@ -533,14 +489,14 @@ fn parse_region(ps : &mut ParseState) -> Result<Expr, Error> {
 
 fn parse_quote(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
-  ps.expect(Keyword, "quote")?;
+  ps.expect(Syntax, "quote")?;
   let e = parse_expression(ps)?;
   Ok(ps.add_tree("quote", vec![e], start))
 }
 
 fn parse_return(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
-  ps.expect(Keyword, "return")?;
+  ps.expect(Syntax, "return")?;
   if ps.has_tokens() {
     let t = ps.peek()?;
     if !TERMINATING_SYNTAX.contains(t.symbol.as_ref()) {
@@ -551,7 +507,8 @@ fn parse_return(ps : &mut ParseState) -> Result<Expr, Error> {
   Ok(ps.add_tree("return", vec![], start))
 }
 
-fn parse_keyword_term(ps : &mut ParseState) -> Result<Expr, Error> {
+fn parse_syntax(ps : &mut ParseState) -> Result<Expr, Error> {
+  let start = ps.peek_marker();
   match ps.peek()?.symbol.as_ref() {
     "region" => parse_region(ps),
     "quote" => parse_quote(ps),
@@ -561,25 +518,59 @@ fn parse_keyword_term(ps : &mut ParseState) -> Result<Expr, Error> {
     "if" => parse_if(ps),
     "for" => parse_for(ps),
     "break" => {
-      Ok(parse_simple_string(ps, TokenType::Keyword)?)
+      Ok(parse_simple_string(ps, Syntax)?)
     }
     "return" => parse_return(ps),
     "while" => parse_while(ps),
     "struct" => parse_struct_definition(ps),
     "true" => {
       let start = ps.peek_marker();
-      ps.expect(Keyword, "true")?;
+      ps.expect(Syntax, "true")?;
       Ok(ps.add_leaf(ExprTag::LiteralBool(true), start))
     }
     "false" => {
       let start = ps.peek_marker();
-      ps.expect(Keyword, "false")?;
+      ps.expect(Syntax, "false")?;
       Ok(ps.add_leaf(ExprTag::LiteralBool(false), start))
     }
-    _ => {
-      let t = ps.peek()?;
-      error(t.loc, format!("Encountered unexpected keyword '{}'. This keyword is not supported here.", t.symbol))
+    "[" => {
+      ps.expect(Syntax, "[")?;
+      let mut exprs = vec!();
+      loop {
+        if ps.peek()?.symbol.as_ref() == "]" {
+          break;
+        }
+        exprs.push(parse_expression(ps)?);
+        if ps.peek()?.symbol.as_ref() == "," {
+          ps.skip()
+        }
+        else {
+          break;
+        }
+      }
+      ps.expect(Syntax, "]")?;
+      Ok(ps.add_tree("literal_array", exprs, start))
     }
+    "(" => {
+      ps.expect(Syntax, "(")?;
+      if ps.accept(Syntax, ")") {
+        // "()" denotes the unit value
+        let u = ExprTag::LiteralUnit;
+        Ok(ps.add_leaf(u, start))
+      }
+      else {
+        let a = parse_expression(ps)?;
+        ps.expect(Syntax, ")")?;
+        Ok(a)
+      }
+    }
+    "{" => {
+      ps.expect(Syntax, "{")?;
+      let block = parse_block(ps)?;
+      ps.expect(Syntax, "}")?;
+      Ok(block)
+    }
+    _ => error(ps.peek()?.loc, format!("Unexpected syntax '{}'", ps.peek()?.symbol)),
   }
 }
 
@@ -600,7 +591,6 @@ fn parse_symbol_term(ps : &mut ParseState) -> Result<Expr, Error> {
 fn parse_expression_term(ps : &mut ParseState) -> Result<Expr, Error> {
   match ps.peek()?.token_type {
     TokenType::Symbol => parse_symbol_term(ps),
-    TokenType::Keyword => parse_keyword_term(ps),
     TokenType::Syntax => parse_syntax(ps),
     TokenType::StringLiteral => {
       let start = ps.peek_marker();
