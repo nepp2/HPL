@@ -4,7 +4,6 @@ use std::fmt::Write;
 
 use crate::error::{Error, error, error_raw, TextLocation};
 use crate::value::{SymbolTable, RefStr, Expr, ExprTag};
-use crate::parser;
 
 use std::collections::HashMap;
 use itertools::Itertools;
@@ -36,14 +35,8 @@ impl Type {
       "ptr" => Some(Type::Ptr(Box::new(Type::Void))),
       "i64" => Some(Type::I64),
       "()" => Some(Type::Void),
-      other => {
-        if other == parser::NO_TYPE {
-          Some(Type::I64)
-        }
-        else {
-          None
-        }
-      }
+      "" => Some(Type::I64),
+      _ => None,
     }
   }
 }
