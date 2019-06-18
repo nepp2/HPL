@@ -51,9 +51,9 @@ rusty_fork_test! {
       ("5 >= 5", Val::Bool(true)),
       ("5 == 5", Val::Bool(true)),
       ("-(4 - 5)", Val::I64(1)),
-      ("4 + {let a = 5; let b = 4; a}", Val::I64(9)),
-      ("if true { 3 } else { 4 }", Val::I64(3)),
-      ("if false { 3 } else { 4 }", Val::I64(4)),
+      ("4 + (let a = 5; let b = 4; a)", Val::I64(9)),
+      ("if true then 3 else 4 end", Val::I64(3)),
+      ("if false then 3 else 4 end", Val::I64(4)),
       ("let a = 5; a", Val::I64(5)),
     ];
     for (code, expected_result) in cases {
@@ -68,12 +68,12 @@ rusty_fork_test! {
     // Make sure they terminate early
     let and = "
       let a = 0
-      false && {a = 1; true}
+      false && (a = 1; true)
       a
     ";
     let or = "
       let a = 0
-      true || {a = 1; true}
+      true || (a = 1; true)
       a
     ";
     assert_result(and, Val::I64(0));
@@ -84,13 +84,12 @@ rusty_fork_test! {
   fn test_scope(){
     let code = "
       let a = 4
-      let b = if true {
+      let b = if true
         let a = 5
         a
-      }
-      else {
+      else
         10
-      }
+      end
       a + b
     ";
     assert_result(code, Val::I64(9));
@@ -104,11 +103,11 @@ rusty_fork_test! {
       a
     ";
     let b = "
-      struct point {
+      struct point
         x : i64
         y : i64
-      }
-      let a = point(x: 5, y: 50)
+      end
+      let a = point{x: 5, y: 50}
       a.x = a.x + 10
       a.y = 500
       a.x + a.y
@@ -120,15 +119,15 @@ rusty_fork_test! {
   #[test]
   fn test_struct() {
     let code = "
-      struct point {
+      struct point
         x : i64
         y : i64
-      }
-      fun foo(a : point, b : point) {
-        point(x: a.x + b.x, y: a.y + b.y)
-      }
-      let a = point(x: 10, y: 1)
-      let b = point(x: 2, y: 20)
+      end
+      fun foo(a : point, b : point)
+        point{x: a.x + b.x, y: a.y + b.y}
+      end
+      let a = point{x: 10, y: 1}
+      let b = point{2, 20}
       let c = foo(a, b)
       c.y
     ";
@@ -138,12 +137,12 @@ rusty_fork_test! {
   #[test]
   fn test_return(){
     let code = "
-      fun foo(v : bool) {
-        if v {
+      fun foo(v : bool)
+        if v
           return 10
-        }
+        end
         20
-      }
+      end
       foo(true) + foo(false)
     ";
     assert_result(code, Val::I64(30));
@@ -153,20 +152,20 @@ rusty_fork_test! {
   fn test_while() {
     let a = "
       let x = 10
-      while true {
-        x = x - 1;
-        if x <= 5 {
-          break;
-        }
-      }
+      while true
+        x = x - 1
+        if x <= 5
+          break
+        end
+      end
       x
     ";
     assert_result(a, Val::I64(5));
     let b = "
       let x = 1
-      while x < 10 {
-        x = x + 6;
-      }
+      while x < 10
+        x = x + 6
+      end
       x
     ";
     assert_result(b, Val::I64(13));
@@ -185,9 +184,9 @@ rusty_fork_test! {
   fn test_jit_module_function_linking() {
     let mut i = Interpreter::new();
     let a = "
-      fun foobar() {
+      fun foobar()
         843
-      }";
+      end";
     let b = "foobar()";
     assert_result_with_interpreter(&mut i, a, Val::Void);
     assert_result_with_interpreter(&mut i, b, Val::I64(843));

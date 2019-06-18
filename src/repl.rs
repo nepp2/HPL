@@ -66,6 +66,7 @@ pub fn run_repl() {
           input_line.push_str(next_line.as_str());
         }
         Err(e) => {
+          rl.add_history_entry(input_line);
           println!("Error occured: {}", e);
           break;
         }

@@ -6,9 +6,14 @@ use crate::error::{Error, TextLocation, TextMarker, error_raw};
 lazy_static! {
   static ref KEYWORDS : HashSet<&'static str> =
     vec!["fun", "cfun", "if", "else", "type", "while", "struct", "for",
-    "break", "return", "let", "true", "false", "region", "quote",
-    "import", "in", "end", "do"].into_iter().collect();
+    "break", "return", "let", "true", "false", "quote",
+    "import", "in", "end", "do", "macro"].into_iter().collect();
 }
+
+const SYNTAX : &'static [&'static str] =
+  &["==", "!=", "<=", ">=", "=>", "+=", "-=", "*=", "/=", "||",
+    "&&", "{", "}", "(", ")", "[", "]", "<", ">", ";", ":", ",",
+    ".", "=", "+", "-", "*", "/", "%", "?", "|", "&", "^", "!", "$"];
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum TokenType {
@@ -269,13 +274,8 @@ impl <'l> CStream<'l> {
     return false;
   }
 
-  const SYNTAX : &'static [&'static str] =
-    &["==", "!=", "<=", ">=", "=>", "+=", "-=", "*=", "/=", "||",
-      "&&", "{", "}", "(", ")", "[", "]", "<", ">", ";", ":", ",",
-      ".", "=", "+", "-", "*", "/", "%", "?", "|", "&", "^", "!"];
-
   fn parse_syntax(&mut self) -> bool {
-    for s in CStream::SYNTAX {
+    for s in SYNTAX {
       if self.parse_string(s, TokenType::Syntax) {
         return true;
       }

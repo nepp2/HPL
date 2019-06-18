@@ -1,8 +1,11 @@
 
-fun blah(y) {
-    let x = [1 + y, y]
-    x
-}
-
-
-blah(3)[0]
+macro forloop(i : Symbol, range : Expr)
+  quote
+    let r = $range
+    let $i = r.start;
+    while $i < r.limit
+      $body
+      $i = $i + 1
+    end
+  end
+end  

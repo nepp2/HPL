@@ -1,11 +1,11 @@
-macro for(var, range) {
-  quote {
-    {
-      let $var = $range.start;
-      while $var < $range.end {
-        $body
-        $var = $var + 1
-      }
-    }
-  }
-}
+
+macro for(i : Symbol, range : Expr)
+  quote
+    let r = $range
+    let $i = r.start;
+    while $i < r.end
+      $body
+      $i = $i + 1
+    end
+  end
+end

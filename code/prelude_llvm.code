@@ -1,9 +1,5 @@
 
-struct range {
+struct range
   start : i64,
-  end : i64,
-}
-
-fun range(start : i64, end : i64) {
-  range(start: start, end: end)
-}
+  limit : i64,
+end

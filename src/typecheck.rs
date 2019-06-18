@@ -422,18 +422,17 @@ impl <'l> TypeChecker<'l> {
               self.struct_types.get(name)
               .ok_or_else(|| error_raw(name_expr, "no struct with this name exists"))?;
             let field_iter = fields.iter().zip(def.fields.iter());
+            if fields.len() != def.fields.len() {
+              return error(expr, "wrong number of fields");
+            }
             for ((field, value), (expected_name, expected_type)) in field_iter {
               let name = field.symbol_unwrap()?;
-              if name != expected_name {
+              if name.as_ref() != "" && name != expected_name {
                 return error(*field, "incorrect field name");
               }
               if &value.type_tag != expected_type {
                 return error(value.loc, "type mismatch");
               }
-            }
-            if fields.len() > def.fields.len() {
-              let extra_field = fields[def.fields.len()].0;
-              return error(extra_field, "too many fields");
             }
             let c = Content::StructInstantiate(def.clone(), fields.into_iter().map(|v| v.1).collect());
             Ok(ast(expr, Type::Struct(def.clone()), c))
