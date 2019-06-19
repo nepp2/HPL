@@ -4,6 +4,7 @@ let height = 600
 
 cfun SDL_Init(flags : u32) : i32
 
+SDL_Init(0 as u32)
 
 #=
 
