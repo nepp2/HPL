@@ -15,7 +15,9 @@ use inkwell::builder::Builder;
 use inkwell::context::{Context};
 use inkwell::module::{Module, Linkage};
 use inkwell::passes::PassManager;
-use inkwell::types::{BasicTypeEnum, BasicType, StructType, PointerType, FunctionType, AnyTypeEnum, ArrayType};
+use inkwell::types::{
+  BasicTypeEnum, BasicType, StructType, PointerType, FunctionType, AnyTypeEnum, ArrayType,
+  IntType, FloatType };
 use inkwell::values::{
   BasicValueEnum, BasicValue, FloatValue, IntValue, FunctionValue, PointerValue, GlobalValue };
 use inkwell::{FloatPredicate, IntPredicate};
@@ -44,8 +46,19 @@ macro_rules! unary_op {
   ($op_name:ident, $type_name:ident, $a:ident, $gen:ident) => {
     {
       let a = codegen_type!($type_name, $a, $gen)?;
-      let fv = ($gen).builder.$op_name(a, "op_result");
-      reg(fv.into())
+      let v = ($gen).builder.$op_name(a, "op_result");
+      reg(v.into())
+    }
+  }
+}
+
+macro_rules! convert_op {
+  ($op_name:ident, $type_name:ident, $type_width:expr, $a:ident, $gen:ident) => {
+    {
+      let a = codegen_type!($type_name, $a, $gen)?;
+      let t = $type_width;
+      let v = ($gen).builder.$op_name(a, t, "conversion_result");
+      reg(v.into())
     }
   }
 }
@@ -272,6 +285,95 @@ impl <'l> Gen<'l> {
     }
   }
 
+  fn codegen_convert(&mut self, convert_node : &AstNode, value_to_convert : &AstNode) -> Result<GenVal, Error> {
+    fn int_type(gen : &Gen, width : u64) -> IntType {
+      match width {
+        1 => gen.context.bool_type(),
+        8 => gen.context.i8_type(),
+        16 => gen.context.i16_type(),
+        32 => gen.context.i32_type(),
+        64 => gen.context.i64_type(),
+        128 => gen.context.i128_type(),
+        _ => panic!(),
+      }
+    }
+    fn float_type(gen : &Gen, width : u64) -> FloatType {
+      match width {
+        16 => gen.context.f16_type(),
+        32 => gen.context.f32_type(),
+        64 => gen.context.f64_type(),
+        128 => gen.context.f128_type(),
+        _ => panic!(),
+      }
+    }
+
+    let from_type = &value_to_convert.type_tag;
+    let to_type = &convert_node.type_tag;
+    let n = value_to_convert;
+    
+    let from_float = from_type.float();
+    let from_signed = from_type.signed_int();
+    let from_unsigned = from_type.unsigned_int();
+    let from_int = from_signed || from_unsigned;
+    let from_width = from_type.width();
+
+    let to_float = to_type.float();
+    let to_signed = to_type.signed_int();
+    let to_unsigned = to_type.unsigned_int();
+    let to_int = to_signed || to_unsigned;
+    let to_width = to_type.width();
+
+    // truncate
+    if to_width < from_width {
+      if from_int && to_int {
+        let t = int_type(self, to_width);
+        return Ok(convert_op!(build_int_truncate, IntValue, t, n, self));
+      }
+      if from_float && to_float {
+        let t = float_type(self, to_width);
+        return Ok(convert_op!(build_float_trunc, FloatValue, t, n, self));
+      }
+    }
+    // extend
+    if to_width > from_width {
+      if from_signed && to_int {
+        let t = int_type(self, to_width);
+        return Ok(convert_op!(build_int_s_extend, IntValue, t, n, self));
+      }
+      if from_unsigned && to_int {
+        let t = int_type(self, to_width);
+        return Ok(convert_op!(build_int_z_extend, IntValue, t, n, self));
+      }
+      if from_float && to_float {
+        let t = float_type(self, to_width);
+        return Ok(convert_op!(build_float_ext, FloatValue, t, n, self));
+      }
+    }
+    // same-width int casts
+    if to_width == from_width && from_int && to_int {
+      let v = self.codegen_value(n)?;
+      return Ok(reg(v));
+    }
+    // float/int conversions
+    if from_signed && to_float {
+      let t = float_type(self, to_width);
+      return Ok(convert_op!(build_signed_int_to_float, IntValue, t, n, self));
+    }
+    if from_unsigned && to_float {
+      let t = float_type(self, to_width);
+      return Ok(convert_op!(build_unsigned_int_to_float, IntValue, t, n, self));
+    }
+    if from_float && to_signed {
+      let t = int_type(self, to_width);
+      return Ok(convert_op!(build_float_to_signed_int, FloatValue, t, n, self));
+    }
+    if from_float && to_unsigned {
+      let t = int_type(self, to_width);
+      return Ok(convert_op!(build_float_to_unsigned_int, FloatValue, t, n, self));
+    }
+    return error(convert_node.loc, "type cast not supported");
+  }
+
   fn codegen_short_circuit_op(&mut self, a : &AstNode, b : &AstNode, op : ShortCircuitOp)
     -> Result<GenVal, Error>
   {
@@ -349,19 +451,20 @@ impl <'l> Gen<'l> {
       Content::IntrinsicCall(name, args) => {
         if let [a, b] = args.as_slice() {
           match (&a.type_tag, name.as_ref()) {
-          (Type::Float, "+") => binary_op!(build_float_add, FloatValue, a, b, self),
-            (Type::Float, "-") => binary_op!(build_float_sub, FloatValue, a, b, self),
-            (Type::Float, "*") => binary_op!(build_float_mul, FloatValue, a, b, self),
-            (Type::Float, "/") => binary_op!(build_float_div, FloatValue, a, b, self),
-            (Type::Float, ">") => compare_op!(build_float_compare, FloatPredicate::OGT, FloatValue, a, b, self),
-            (Type::Float, ">=") => compare_op!(build_float_compare, FloatPredicate::OGE, FloatValue, a, b, self),
-            (Type::Float, "<") => compare_op!(build_float_compare, FloatPredicate::OLT, FloatValue, a, b, self),
-            (Type::Float, "<=") => compare_op!(build_float_compare, FloatPredicate::OLE, FloatValue, a, b, self),
-            (Type::Float, "==") => compare_op!(build_float_compare, FloatPredicate::OEQ, FloatValue, a, b, self),
+          (Type::F64, "+") => binary_op!(build_float_add, FloatValue, a, b, self),
+            (Type::F64, "-") => binary_op!(build_float_sub, FloatValue, a, b, self),
+            (Type::F64, "*") => binary_op!(build_float_mul, FloatValue, a, b, self),
+            (Type::F64, "/") => binary_op!(build_float_div, FloatValue, a, b, self),
+            (Type::F64, ">") => compare_op!(build_float_compare, FloatPredicate::OGT, FloatValue, a, b, self),
+            (Type::F64, ">=") => compare_op!(build_float_compare, FloatPredicate::OGE, FloatValue, a, b, self),
+            (Type::F64, "<") => compare_op!(build_float_compare, FloatPredicate::OLT, FloatValue, a, b, self),
+            (Type::F64, "<=") => compare_op!(build_float_compare, FloatPredicate::OLE, FloatValue, a, b, self),
+            (Type::F64, "==") => compare_op!(build_float_compare, FloatPredicate::OEQ, FloatValue, a, b, self),
             (Type::I64, "+") => binary_op!(build_int_add, IntValue, a, b, self),
             (Type::I64, "-") => binary_op!(build_int_sub, IntValue, a, b, self),
             (Type::I64, "*") => binary_op!(build_int_mul, IntValue, a, b, self),
-            //(Type::I64, "/") => binary_op!(build_int_div, IntValue, a, b, self),
+            // TODO: why is this commented out?
+            // (Type::I64, "/") => binary_op!(build_int_div, IntValue, a, b, self),
             (Type::I64, ">") => compare_op!(build_int_compare, IntPredicate::SGT, IntValue, a, b, self),
             (Type::I64, ">=") => compare_op!(build_int_compare, IntPredicate::SGE, IntValue, a, b, self),
             (Type::I64, "<") => compare_op!(build_int_compare, IntPredicate::SLT, IntValue, a, b, self),
@@ -374,7 +477,7 @@ impl <'l> Gen<'l> {
         }
         else if let [a] = args.as_slice() {
           match (&a.type_tag, name.as_ref()) {
-            (Type::Float, "unary_-") => unary_op!(build_float_neg, FloatValue, a, self),
+            (Type::F64, "unary_-") => unary_op!(build_float_neg, FloatValue, a, self),
             (Type::I64, "unary_-") => unary_op!(build_int_neg, IntValue, a, self),
             (Type::Bool, "unary_!") => unary_op!(build_not, IntValue, a, self),
             _ => return error(ast.loc, "encountered unrecognised intrinsic"),
@@ -383,6 +486,9 @@ impl <'l> Gen<'l> {
         else {
           return error(ast.loc, "encountered unrecognised intrinsic");
         }
+      }
+      Content::Convert(n) => {
+        self.codegen_convert(ast, n)?
       }
       Content::While(ns) => {
         let (cond_node, body_node) = (&ns.0, &ns.1);
@@ -619,8 +725,12 @@ impl <'l> Gen<'l> {
       }
       Content::Literal(v) => {
         match v {
-          Val::Float(f) => reg(self.context.f64_type().const_float(*f).into()),
-          Val::I64(i) => reg(self.context.i64_type().const_int(*i as u64, false).into()),
+          Val::F64(f) => reg(self.context.f64_type().const_float(*f).into()),
+          Val::F32(f) => reg(self.context.f32_type().const_float(*f as f64).into()),
+          Val::I64(i) => reg(self.context.i64_type().const_int(*i as u64, false).into()), // TODO the signed values should maybe pass "true" here?
+          Val::I32(i) => reg(self.context.i32_type().const_int(*i as u64, false).into()),
+          Val::U64(i) => reg(self.context.i64_type().const_int(*i as u64, false).into()),
+          Val::U32(i) => reg(self.context.i32_type().const_int(*i as u64, false).into()),
           Val::Bool(b) =>
             reg(self.context.bool_type().const_int(if *b { 1 } else { 0 }, false).into()),
           Val::Void => return Ok(None),
@@ -645,8 +755,12 @@ impl <'l> Gen<'l> {
   fn to_basic_type(&mut self, t : &Type) -> Option<BasicTypeEnum> {
     match t {
       Type::Void => None,
-      Type::Float => Some(self.context.f64_type().into()),
+      Type::F64 => Some(self.context.f64_type().into()),
+      Type::F32 => Some(self.context.f32_type().into()),
       Type::I64 => Some(self.context.i64_type().into()),
+      Type::I32 => Some(self.context.i32_type().into()),
+      Type::U64 => Some(self.context.i64_type().into()),
+      Type::U32 => Some(self.context.i32_type().into()),
       Type::Bool => Some(self.context.bool_type().into()),
       Type::Array(t, _length) => {
         let bt = self.to_basic_type(t);

@@ -162,8 +162,12 @@ impl Interpreter {
     ee.run_static_constructors(); // TODO: this might not do anything :(
     let result = match ast.type_tag {
       Type::Bool => execute::<bool>(expr, f, &ee).map(Val::Bool),
-      Type::Float => execute::<f64>(expr, f, &ee).map(Val::Float),
+      Type::F64 => execute::<f64>(expr, f, &ee).map(Val::F64),
+      Type::F32 => execute::<f32>(expr, f, &ee).map(Val::F32),
       Type::I64 => execute::<i64>(expr, f, &ee).map(Val::I64),
+      Type::I32 => execute::<i32>(expr, f, &ee).map(Val::I32),
+      Type::U64 => execute::<u64>(expr, f, &ee).map(Val::U64),
+      Type::U32 => execute::<u32>(expr, f, &ee).map(Val::U32),
       Type::Void => execute::<()>(expr, f, &ee).map(|_| Val::Void),
       Type::Array(_, _) => 
         error(expr, "can't return an array from a top-level function"),

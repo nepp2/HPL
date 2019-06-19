@@ -142,7 +142,7 @@ lazy_static! {
     vec!["-", "!", "$"].into_iter().collect();
   static ref INFIX_OPERATORS : HashSet<&'static str> =
     vec!["=", ".", "==", "!=", "<=", ">=", "=>", "+=", "-=", "*=", "/=", "||", "&&",
-      "<", ">", "+", "-", "*", "/", "%", "|", "&", "^"].into_iter().collect();
+      "<", ">", "+", "-", "*", "/", "%", "|", "&", "^", "as"].into_iter().collect();
   static ref SPECIAL_OPERATORS : HashSet<&'static str> =
     vec!["=", ".", "+=", "&&", "||", "$"].into_iter().collect();
 }
@@ -150,6 +150,8 @@ lazy_static! {
 fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
   
   fn operator_precedence(t : &Token) -> Result<i32, Error> {
+    // TODO: can't distinguish precedence of unary operator from binary operator.
+    // This matters for the '-' operator, for example.
     let p =
       match t.symbol.as_ref() {
         "=" => 1,
@@ -167,11 +169,12 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
         "*" => 5,
         "/" => 5,
         "%" => 5,
-        "!" => 6,
-        "(" => 7,
-        "[" => 7,
-        "." => 8,
-        "$" => 9,
+        "as" => 6,
+        "!" => 7,
+        "(" => 8,
+        "[" => 8,
+        "." => 9,
+        "$" => 10,
         _ => return error(t.loc, format!("Unexpected operator '{}'", t.symbol)),
       };
     Ok(p)
@@ -266,7 +269,12 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
     let infix_start = left_expr.loc.start;
     let operator_start = ps.peek_marker();
     let operator_str = ps.pop_type(Syntax)?.symbol.clone();
-    if SPECIAL_OPERATORS.contains(operator_str.as_ref()) {
+    if operator_str.as_ref() == "as" {
+      let right_expr = parse_type(ps)?;
+      let args = vec!(left_expr, right_expr);
+      Ok(ps.add_tree("as", args, infix_start))
+    }
+    else if SPECIAL_OPERATORS.contains(operator_str.as_ref()) {
       let right_expr = pratt_parse(ps, precedence)?;
       let args = vec!(left_expr, right_expr);
       Ok(ps.add_tree(operator_str, args, infix_start))

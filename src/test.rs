@@ -42,7 +42,7 @@ rusty_fork_test! {
       ("", Val::Void),
       ("()", Val::Void),
       ("4 + 5", Val::I64(9)),
-      ("4. + 5.5", Val::Float(9.5)),
+      ("4. + 5.5", Val::F64(9.5)),
       ("4 - 5", Val::I64(-1)),
       ("4 * 5", Val::I64(20)),
       ("20 > 5", Val::Bool(true)),
@@ -55,6 +55,23 @@ rusty_fork_test! {
       ("if true then 3 else 4 end", Val::I64(3)),
       ("if false then 3 else 4 end", Val::I64(4)),
       ("let a = 5; a", Val::I64(5)),
+    ];
+    for (code, expected_result) in cases {
+      assert_result(code, expected_result);
+    }
+  }
+
+  #[test]
+  fn test_conversions() {
+    let cases = vec![
+      ("4.5 as i32", Val::I32(4)),
+      ("4 as u32", Val::U32(4)),
+      ("4 as f64", Val::F64(4.0)),
+      ("4 as f32", Val::F32(4.0)),
+      ("(4 as u32) as i64", Val::I64(4)),
+      ("(4 as u32) as u64", Val::U64(4)),
+      ("(-4 as i32) as u64", Val::U64((-4 as i32) as u64)),
+      ("-4 as u32", Val::U32((-4 as i32) as u32)),
     ];
     for (code, expected_result) in cases {
       assert_result(code, expected_result);

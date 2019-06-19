@@ -6,7 +6,7 @@ use crate::error::{Error, TextLocation, TextMarker, error_raw};
 lazy_static! {
   static ref KEYWORDS : HashSet<&'static str> =
     vec!["fun", "cfun", "if", "else", "type", "while", "struct", "for",
-    "break", "return", "let", "true", "false", "quote",
+    "break", "return", "let", "true", "false", "quote", "then", "as",
     "import", "in", "end", "do", "macro"].into_iter().collect();
 }
 
@@ -256,19 +256,19 @@ impl <'l> CStream<'l> {
 
   fn parse_comment(&mut self) -> bool {
     // TODO: this doesn't handle newlines properly, so the error locations will be wrong
-    if self.peek_string("//") {
+    if self.peek_string("#=") {
+      self.skip_char();
+      self.skip_char();
+      self.skip_char_while(&|cs : &CStream| { !cs.peek_string("=#") });
+      self.skip_char();
+      self.skip_char();
+      return true;
+    }
+    else if self.peek() == '#' {
       self.skip_char_while(&|cs : &CStream| {
         let c = cs.peek();
         c != '\n'
       });
-      return true;
-    }
-    else if self.peek_string("/*") {
-      self.skip_char();
-      self.skip_char();
-      self.skip_char_while(&|cs : &CStream| { !cs.peek_string("*/") });
-      self.skip_char();
-      self.skip_char();
       return true;
     }
     return false;

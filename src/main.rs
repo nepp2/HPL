@@ -50,7 +50,10 @@ fn main(){
   let args: Vec<String> = env::args().collect();
   let args: Vec<&str> = args.iter().map(|s| s.as_ref()).collect();
   match args[1..] {
-    ["watch", f] => watcher::watch(f),
+    ["watch", f] => {
+      let path = format!("code/{}.code", f);
+      watcher::watch(path.as_ref())
+    }
     ["watch"] => watcher::watch("code/scratchpad.code"),
     ["run", f] => load_and_run(f),
     _ => repl::run_repl(),

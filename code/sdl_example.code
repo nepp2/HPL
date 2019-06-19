@@ -2,37 +2,43 @@
 let width = 800
 let height = 600
 
+cfun SDL_Init(flags : u32) : i32
+
+
+#=
+
 let view = create_sdl_view(width, height)
 
-while true {
+while true
   let e = poll_event(view)
-  if e != () {
+  if e != ()
     let t = type_name(e)
-    if t == "sdl_event_quit" {
+    if t == "sdl_event_quit"
       break
-    }
-    if t == "sdl_event_keydown" {
-      if e.key == "Escape" {
+    end
+    if t == "sdl_event_keydown"
+      if e.key == "Escape"
         break
-      }
+      end
       print(e)
-    }
-  }
-  else {
+    end
+  else
     set_draw_color(view, 40, 40, 40, 255)
     clear(view)
 
     set_draw_color(view, 0, 0, 0, 255)
     let gap = 50
-    for x in range(0, width/gap) {
+    for x in range(0, width/gap)
       draw_line(view, x * gap, 0, x * gap, height)
-    }
-    for y in range(0, height/gap) {
+    end
+    for y in range(0, height/gap)
       draw_line(view, 0, y * gap, width, y * gap)
-    }
+    end
 
     present(view)
-  }
+  end
 
   sleep(1000/60)
-}
+end
+
+=#

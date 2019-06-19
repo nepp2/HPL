@@ -11,8 +11,12 @@ use itertools::Itertools;
 #[derive(Clone, PartialEq, Debug)]
 pub enum Type {
   Void,
-  Float,
+  F64,
+  F32,
   I64,
+  U64,
+  I32,
+  U32,
   Bool,
   Array(Box<Type>, u32),
   Struct(Rc<StructDefinition>),
@@ -22,21 +26,58 @@ pub enum Type {
 #[derive(Clone, PartialEq, Debug)]
 pub enum Val {
   Void,
-  Float(f64),
+  F64(f64),
+  F32(f32),
   I64(i64),
+  U64(u64),
+  I32(i32),
+  U32(u32),
   Bool(bool),
 }
 
 impl Type {
-  fn from_string(s : &str) -> Option<Type> {
+  pub fn from_string(s : &str) -> Option<Type> {
     match s {
-      "float" => Some(Type::Float),
+      "f64" => Some(Type::F64),
+      "f32" => Some(Type::F32),
       "bool" => Some(Type::Bool),
       "ptr" => Some(Type::Ptr(Box::new(Type::Void))),
       "i64" => Some(Type::I64),
+      "u64" => Some(Type::U64),
+      "i32" => Some(Type::I32),
+      "u32" => Some(Type::U32),
       "()" => Some(Type::Void),
       "" => Some(Type::I64),
       _ => None,
+    }
+  }
+
+  pub fn float(&self) -> bool {
+    match self { Type::F32 | Type::F64 => true, _ => false }
+  }
+
+  pub fn unsigned_int(&self) -> bool {
+    match self { Type::U64 | Type::U32 => true, _ => false }
+  }
+
+  pub fn signed_int(&self) -> bool {
+    match self { Type::I64 | Type::I32 => true, _ => false }
+  }
+
+  pub fn int(&self) -> bool {
+    self.signed_int() || self.unsigned_int()
+  }
+
+  /// returns the minimum number of bits required to store the type inline
+  pub fn width(&self) -> u64 {
+    match self {
+      Type::F32 | Type::U32 | Type::I32 => 32,
+      Type::F64 | Type::U64 | Type::I64 => 64,
+      Type::Bool => 1,
+      Type::Void => 0,
+      Type::Array(_, _) => 0, // TODO: this is wrong
+      Type::Struct(_) => 0, // TODO: this is wrong
+      Type::Ptr(_) => 64, // TODO: could be wrong
     }
   }
 }
@@ -89,6 +130,7 @@ pub enum Content {
   IntrinsicCall(RefStr, Vec<AstNode>),
   While(Box<(AstNode, AstNode)>),
   ExplicitReturn(Option<Box<AstNode>>),
+  Convert(Box<AstNode>),
   Deref(Box<AstNode>),
   Break,
 }
@@ -194,8 +236,8 @@ impl <'l> TypeChecker<'l> {
   fn match_intrinsic(name : &str, args : &[AstNode]) -> Option<Type> {
     match args {
       [a, b] => match (&a.type_tag, &b.type_tag) {
-        (Type::Float, Type::Float) => match name {
-          "+" | "-" | "*" | "/" => Some(Type::Float),
+        (Type::F64, Type::F64) => match name {
+          "+" | "-" | "*" | "/" => Some(Type::F64),
           ">" | ">="| "<" | "<=" | "==" => Some(Type::Bool),
           _ => None,
         }
@@ -207,7 +249,7 @@ impl <'l> TypeChecker<'l> {
         _ => None
       }
       [a] => match (&a.type_tag, name) {
-        (Type::Float, "unary_-") => Some(Type::Float),
+        (Type::F64, "unary_-") => Some(Type::F64),
         (Type::I64, "unary_-") => Some(Type::I64),
         (Type::Bool, "unary_!") => Some(Type::Bool),
         _ => None,
@@ -236,6 +278,11 @@ impl <'l> TypeChecker<'l> {
               return Ok(ast(expr, return_type, Content::FunctionCall(function_name.clone(), args)));
             }
             error(expr, "unknown function")
+          }
+          ("as", [a, b]) => {
+            let a = self.to_ast(a)?;
+            let t = self.to_type(b)?;
+            Ok(ast(expr, t, Content::Convert(Box::new(a))))
           }
           ("&&", [a, b]) => {
             let a = self.to_ast(a)?;
@@ -501,8 +548,8 @@ impl <'l> TypeChecker<'l> {
         }
       }
       ExprTag::LiteralFloat(f) => {
-        let v = Val::Float(*f as f64);
-        Ok(ast(expr, Type::Float, Content::Literal(v)))
+        let v = Val::F64(*f as f64);
+        Ok(ast(expr, Type::F64, Content::Literal(v)))
       }
       ExprTag::LiteralInt(v) => {
         let v = Val::I64(*v as i64);
