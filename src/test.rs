@@ -219,6 +219,24 @@ rusty_fork_test! {
     assert_result(code, Val::I64(56));
   }
 
+  #[test]
+  fn test_dll_function_linking() {
+    let code = "
+      cfun function_from_dll(a : i64, b : i64) : i64
+      function_from_dll(17, 7)
+    ";
+    assert_result(code, Val::I64(10));
+  }
+
+  #[test]
+  fn test_executable_function_linking() {
+    let code = "
+      cfun function_from_executable(a : i64, b : i64) : i64
+      function_from_executable(17, 7)
+    ";
+    assert_result(code, Val::I64(24));
+  }
+
 }
 
 /*

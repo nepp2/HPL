@@ -6,29 +6,9 @@ use crate::jit::Interpreter;
 
 use rustyline::Editor;
 
-use dlltest;
-
-use llvm_sys::support::LLVMLoadLibraryPermanently;
-
-#[no_mangle]
-pub extern "C" fn blah(a : i64, b : i64) -> i64 {
-  a + b
-}
-
-// Adding the functions above to a global array,
-// so Rust compiler won't remove them.
-#[used]
-static EXTERNAL_FNS: [extern fn(i64, i64) -> i64; 1] = [blah];
-
 pub fn run_repl() {
-  dlltest::blahblah(4, 5);
-
   let mut rl = Editor::<()>::new();
   let mut i = Interpreter::new();
-
-  unsafe {
-    LLVMLoadLibraryPermanently(std::ptr::null());
-  }
 
   loop {
     let mut input_line = rl.readline("repl> ").unwrap();

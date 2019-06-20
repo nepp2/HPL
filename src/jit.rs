@@ -19,6 +19,23 @@ use inkwell::values::{FunctionValue, GlobalValue};
 use inkwell::OptimizationLevel;
 use inkwell::execution_engine::ExecutionEngine;
 
+use llvm_sys::support::LLVMLoadLibraryPermanently;
+use dlltest;
+
+static mut loaded_symbols : bool = false;
+
+#[no_mangle]
+pub extern "C" fn function_from_executable(a : i64, b : i64) -> i64 {
+  a + b
+}
+
+/*
+// Adding the functions above to a global array,
+// so Rust compiler won't remove them.
+#[used]
+static EXTERNAL_FNS: [extern fn(i64, i64) -> i64; 1] = [blah];
+*/
+
 pub struct Interpreter {
   pub sym : SymbolTable,
   pub context : Context,
@@ -31,6 +48,19 @@ pub struct Interpreter {
 
 impl Interpreter {
   pub fn new() -> Interpreter {
+
+    unsafe {
+      if !loaded_symbols {
+        dlltest::function_from_dll(4, 5);
+        function_from_executable(4, 5);
+        // This makes sure that any symbols in the main executable can be
+        // linked to the code we generate with the JIT. This includes any
+        // DLLs used by the main exe.
+        LLVMLoadLibraryPermanently(std::ptr::null());
+        loaded_symbols = true;
+      }
+    }
+
     let sym = SymbolTable::new();
     let context = Context::create();
     let functions = HashMap::new();
