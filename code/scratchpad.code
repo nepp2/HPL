@@ -1,11 +1,17 @@
 
-macro forloop(i : Symbol, range : Expr)
-  quote
-    let r = $range
-    let $i = r.start;
-    while $i < r.limit
-      $body
-      $i = $i + 1
-    end
-  end
-end  
+
+struct string
+  data : ptr(u8)
+  length : u64
+end
+
+# macro forloop(i : Symbol, range : Expr)
+#   quote
+#     let r = $range
+#     let $i = r.start;
+#     while $i < r.limit
+#       $body
+#       $i = $i + 1
+#     end
+#   end
+# end  

@@ -641,9 +641,9 @@ impl <'l> Gen<'l> {
         }
       }
       Content::ArrayLiteral(elements) => {
-        if let Type::Array(inner_type, length) = &ast.type_tag {
+        if let Type::Ptr(inner_type) = &ast.type_tag {
           let element_type = self.to_basic_type(inner_type).unwrap();
-          let length = self.context.i32_type().const_int(*length as u64, false).into();
+          let length = self.context.i32_type().const_int(elements.len() as u64, false).into();
           let array_ptr = self.builder.build_array_malloc(element_type, length, "array_malloc");
           for (i, e) in elements.iter().enumerate() {
             let v = self.codegen_value(e)?;
@@ -731,6 +731,8 @@ impl <'l> Gen<'l> {
           Val::I32(i) => reg(self.context.i32_type().const_int(*i as u64, false).into()),
           Val::U64(i) => reg(self.context.i64_type().const_int(*i as u64, false).into()),
           Val::U32(i) => reg(self.context.i32_type().const_int(*i as u64, false).into()),
+          Val::U16(i) => reg(self.context.i16_type().const_int(*i as u64, false).into()),
+          Val::U8(i) => reg(self.context.i8_type().const_int(*i as u64, false).into()),
           Val::Bool(b) =>
             reg(self.context.bool_type().const_int(if *b { 1 } else { 0 }, false).into()),
           Val::Void => return Ok(None),
@@ -761,11 +763,9 @@ impl <'l> Gen<'l> {
       Type::I32 => Some(self.context.i32_type().into()),
       Type::U64 => Some(self.context.i64_type().into()),
       Type::U32 => Some(self.context.i32_type().into()),
+      Type::U16 => Some(self.context.i16_type().into()),
+      Type::U8 => Some(self.context.i8_type().into()),
       Type::Bool => Some(self.context.bool_type().into()),
-      Type::Array(t, _length) => {
-        let bt = self.to_basic_type(t);
-        Some(self.pointer_to_type(bt).into())
-      }
       Type::Struct(def) => Some(self.struct_type(def).as_basic_type_enum()),
       Type::Ptr(t) => {
         let bt = self.to_basic_type(t);

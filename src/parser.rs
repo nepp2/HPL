@@ -313,7 +313,23 @@ fn parse_simple_symbol(ps : &mut ParseState) -> Result<Expr, Error> {
 }
 
 fn parse_type(ps : &mut ParseState) -> Result<Expr, Error> {
-  parse_simple_symbol(ps)
+  let start = ps.peek_marker();
+  let type_name = ps.pop_type(Symbol)?.symbol.clone();
+  let mut params = vec!();
+  if ps.accept(Syntax, "(") {
+    loop {
+      if ps.peek()?.token_type != Symbol {
+        break;
+      }
+      params.push(parse_type(ps)?);
+      if !ps.accept(Syntax, ",") {
+        break;
+      }
+    }
+    ps.expect(Syntax, ")")?;
+  }
+  let type_expr = ps.add_tree(type_name, params, start);
+  Ok(type_expr)
 }
 
 fn parse_function(ps : &mut ParseState, keyword : &str) -> Result<Expr, Error> {
@@ -457,8 +473,8 @@ fn parse_struct_definition(ps : &mut ParseState) -> Result<Expr, Error> {
     let arg_name = parse_simple_symbol(ps)?;
     args.push(arg_name);
     if ps.accept(Syntax, ":") {
-      let type_name = parse_simple_symbol(ps)?;
-      args.push(type_name);
+      let type_expr = parse_type(ps)?;
+      args.push(type_expr);
     }
     else {
       let start = ps.peek_marker();

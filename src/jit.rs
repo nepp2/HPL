@@ -198,9 +198,9 @@ impl Interpreter {
       Type::I32 => execute::<i32>(expr, f, &ee).map(Val::I32),
       Type::U64 => execute::<u64>(expr, f, &ee).map(Val::U64),
       Type::U32 => execute::<u32>(expr, f, &ee).map(Val::U32),
+      Type::U16 => execute::<u16>(expr, f, &ee).map(Val::U16),
+      Type::U8 => execute::<u8>(expr, f, &ee).map(Val::U8),
       Type::Void => execute::<()>(expr, f, &ee).map(|_| Val::Void),
-      Type::Array(_, _) => 
-        error(expr, "can't return an array from a top-level function"),
       Type::Ptr(_) => 
         error(expr, "can't return a pointer from a top-level function"),
       Type::Struct(_) =>

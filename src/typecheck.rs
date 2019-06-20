@@ -17,8 +17,9 @@ pub enum Type {
   U64,
   I32,
   U32,
+  U16,
+  U8,
   Bool,
-  Array(Box<Type>, u32),
   Struct(Rc<StructDefinition>),
   Ptr(Box<Type>),
 }
@@ -32,6 +33,8 @@ pub enum Val {
   U64(u64),
   I32(i32),
   U32(u32),
+  U16(u16),
+  U8(u8),
   Bool(bool),
 }
 
@@ -41,11 +44,12 @@ impl Type {
       "f64" => Some(Type::F64),
       "f32" => Some(Type::F32),
       "bool" => Some(Type::Bool),
-      "ptr" => Some(Type::Ptr(Box::new(Type::Void))),
       "i64" => Some(Type::I64),
       "u64" => Some(Type::U64),
       "i32" => Some(Type::I32),
       "u32" => Some(Type::U32),
+      "u16" => Some(Type::U16),
+      "u8" => Some(Type::U8),
       "()" => Some(Type::Void),
       "" => Some(Type::I64),
       _ => None,
@@ -57,7 +61,7 @@ impl Type {
   }
 
   pub fn unsigned_int(&self) -> bool {
-    match self { Type::U64 | Type::U32 => true, _ => false }
+    match self { Type::U64 | Type::U32 | Type::U16 | Type::U8 => true, _ => false }
   }
 
   pub fn signed_int(&self) -> bool {
@@ -71,12 +75,14 @@ impl Type {
   /// returns the minimum number of bits required to store the type inline
   pub fn width(&self) -> u64 {
     match self {
-      Type::F32 | Type::U32 | Type::I32 => 32,
       Type::F64 | Type::U64 | Type::I64 => 64,
+      Type::F32 | Type::U32 | Type::I32 => 32,
+      Type::U16 => 16,
+      Type::U8 => 8,
       Type::Bool => 1,
       Type::Void => 0,
-      Type::Array(_, _) => 0, // TODO: this is wrong
-      Type::Struct(_) => 0, // TODO: this is wrong
+      Type::Struct(def) =>
+        def.fields.iter().map(|(_, t)| t.width()).sum(),
       Type::Ptr(_) => 64, // TODO: could be wrong
     }
   }
@@ -223,14 +229,29 @@ impl <'l> TypeChecker<'l> {
   }
 
   fn to_type(&mut self, expr : &Expr) -> Result<Type, Error> {
-    let s = expr.symbol_unwrap()?;
-    if let Some(t) = Type::from_string(s) {
+    let name = expr.tree_symbol_unwrap()?.as_ref();
+    let params = expr.children.as_slice();
+    if let Some(t) = Type::from_string(name) {
+      if params.len() > 0 {
+        return error(expr, "unexpected type parameters");
+      }
       return Ok(t);
     }
-    if let Some(t) = self.struct_types.get(s) {
-      return Ok(Type::Struct(t.clone()));
+    match (name, params) {
+      ("ptr", [t]) => {
+        let t = self.to_type(t)?;
+        Ok(Type::Ptr(Box::new(t)))
+      }
+      (name, params) => {
+        if let Some(t) = self.struct_types.get(name) {
+          if params.len() > 0 {
+            return error(expr, "unexpected struct type parameters");
+          }
+          return Ok(Type::Struct(t.clone()))
+        }
+        return error(expr, "type does not exist");
+      }
     }
-    error(expr, "no type with this name exists")
   }
 
   fn match_intrinsic(name : &str, args : &[AstNode]) -> Option<Type> {
@@ -515,13 +536,13 @@ impl <'l> TypeChecker<'l> {
               else {
                 Type::Void
               };
-            Ok(ast(expr, Type::Array(Box::new(t), elements.len() as u32), Content::ArrayLiteral(elements)))
+            Ok(ast(expr, Type::Ptr(Box::new(t)), Content::ArrayLiteral(elements)))
           }
           ("index", [array_expr, index_expr]) => {
             let array = self.to_ast(array_expr)?;
             let inner_type = match &array.type_tag {
-              Type::Array(t, _) => *(t).clone(),
-              _ => return error(array_expr, "expected array"),
+              Type::Ptr(t) => *(t).clone(),
+              _ => return error(array_expr, "expected ptr"),
             };
             let index = self.to_ast(index_expr)?;
             if index.type_tag != Type::I64 {
