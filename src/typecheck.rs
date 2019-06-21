@@ -8,6 +8,36 @@ use crate::value::{SymbolTable, RefStr, Expr, ExprTag};
 use std::collections::HashMap;
 use itertools::Itertools;
 
+#[no_mangle]
+#[derive(PartialEq, Debug)]
+pub struct ScriptString {
+  ptr : *mut u8,
+  length : u64,
+}
+
+impl ScriptString {
+  pub fn new(mut s : String) -> ScriptString {
+    let v = unsafe { s.as_mut_vec() };
+    v.shrink_to_fit();
+    let ss = ScriptString { ptr: v.as_mut_ptr(), length: v.capacity() as u64 };
+    std::mem::forget(s);
+    ss
+  }
+
+  pub fn to_string(&self) -> String {
+    let slice = unsafe { std::slice::from_raw_parts(self.ptr, self.length as usize) };
+    std::str::from_utf8(slice).expect("wasn't a valid utf8 string!").into()
+  }
+}
+
+impl Drop for ScriptString {
+  fn drop(&mut self) {
+    unsafe {
+      Vec::from_raw_parts(self.ptr, self.length as usize, self.length as usize);
+    }
+  }
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub enum Type {
   Void,
@@ -35,6 +65,7 @@ pub enum Val {
   U32(u32),
   U16(u16),
   U8(u8),
+  String(String),
   Bool(bool),
 }
 
@@ -567,6 +598,10 @@ impl <'l> TypeChecker<'l> {
         else {
           error(expr, "unknown variable name")
         }
+      }
+      ExprTag::LiteralString(s) => {
+        let v = Val::String(s.to_string());
+        Ok(ast(expr, Type::Ptr(Box::new(Type::U8)), Content::Literal(v)))
       }
       ExprTag::LiteralFloat(f) => {
         let v = Val::F64(*f as f64);

@@ -1,10 +1,4 @@
 
-
-struct string
-  data : ptr(u8)
-  length : u64
-end
-
 # macro forloop(i : Symbol, range : Expr)
 #   quote
 #     let r = $range

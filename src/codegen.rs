@@ -736,6 +736,13 @@ impl <'l> Gen<'l> {
           Val::Bool(b) =>
             reg(self.context.bool_type().const_int(if *b { 1 } else { 0 }, false).into()),
           Val::Void => return Ok(None),
+          Val::String(s) => {
+            let vs : &[u8] = s.as_ref();
+            let vs : Vec<IntValue> =
+              vs.iter().map(|v|
+                self.context.i8_type().const_int(*v as u64, false).into()).collect();
+            reg(self.context.i8_type().const_array(vs.as_slice()).into())
+          }
         }
       }
     };

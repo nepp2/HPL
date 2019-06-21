@@ -4,7 +4,7 @@ use crate::value::{SymbolTable, display_expr, RefStr, Expr};
 use crate::lexer;
 use crate::parser;
 use crate::typecheck::{
-  Type, Val, StructDefinition, FunctionDefinition, TypeChecker };
+  Type, Val, StructDefinition, FunctionDefinition, TypeChecker, ScriptString };
 use crate::codegen::{dump_module, Gen};
 
 use std::rc::Rc;
@@ -22,7 +22,7 @@ use inkwell::execution_engine::ExecutionEngine;
 use llvm_sys::support::LLVMLoadLibraryPermanently;
 use dlltest;
 
-static mut loaded_symbols : bool = false;
+static mut LOADED_SYMBOLS : bool = false;
 
 #[no_mangle]
 pub extern "C" fn function_from_executable(a : i64, b : i64) -> i64 {
@@ -50,14 +50,14 @@ impl Interpreter {
   pub fn new() -> Interpreter {
 
     unsafe {
-      if !loaded_symbols {
+      if !LOADED_SYMBOLS {
         dlltest::function_from_dll(4, 5);
         function_from_executable(4, 5);
         // This makes sure that any symbols in the main executable can be
         // linked to the code we generate with the JIT. This includes any
         // DLLs used by the main exe.
         LLVMLoadLibraryPermanently(std::ptr::null());
-        loaded_symbols = true;
+        LOADED_SYMBOLS = true;
       }
     }
 
@@ -203,8 +203,15 @@ impl Interpreter {
       Type::Void => execute::<()>(expr, f, &ee).map(|_| Val::Void),
       Type::Ptr(_) => 
         error(expr, "can't return a pointer from a top-level function"),
-      Type::Struct(_) =>
-        error(expr, "can't return a struct from a top-level function"),
+      Type::Struct(def) => {
+        if def.name.as_ref() == "string" {
+          let ss = execute::<ScriptString>(expr, f, &ee)?;
+          Ok(Val::String(ss.to_string()))
+        }
+        else {
+          error(expr, "can't return a struct from a top-level function")
+        }
+      }
     };
     // unsafe { f.delete(); }
     // TODO: ee.remove_module(&i.module).unwrap();

@@ -1,7 +1,7 @@
 
 use crate::error::Error;
 use crate::jit::Interpreter;
-use crate::typecheck::Val;
+use crate::typecheck::{Val, ScriptString};
 
 fn result_string(r : Result<Val, Error>) -> String {
   match r {
@@ -220,6 +220,24 @@ rusty_fork_test! {
   }
 
   #[test]
+  fn test_string() {
+    let mut i = Interpreter::new();
+    let code = r#""Hello world""#;
+    let result = i.run(code);
+    let expected = "Hello world";
+    match &result {
+      Ok(Val::String(s)) => {
+        if s.as_str() == expected {
+          return;
+        }
+      }
+      _ => (),
+    }
+    panic!("error in code '{}'. Expected result '{:?}'. Actual result was '{:?}'",
+          code, expected, result_string(result));
+  }
+
+  #[test]
   fn test_dll_function_linking() {
     let code = "
       cfun function_from_dll(a : i64, b : i64) : i64
@@ -247,15 +265,6 @@ Features to add:
 
   * non-native types (can fold strings and arrays into this?)
   * consider making new-lines significant in some cases (relating to semi-colons)
-
-#[test]
-fn test_string() {
-  let mut i = Interpreter::new();
-  let code = r#""Hello world""#;
-  // TODO let expected = Val::from(i.sym.get("Hello world"));
-  let expected = Val::Void;
-  assert_result_with_interpreter(code, expected, &mut i);
-}
 
 #[test]
 fn test_first_class_function() {
