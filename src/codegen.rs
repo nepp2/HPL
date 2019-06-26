@@ -213,6 +213,15 @@ impl <'l> Gen<'l> {
     pointer
   }
 
+  fn add_global(&mut self, initial_value : BasicValueEnum, is_constant : bool, name : &str) -> PointerValue {
+    let gv = self.module.add_global(initial_value.get_type(), None, name);
+    gv.set_initializer(&initial_value);
+    gv.set_constant(is_constant);
+    gv.set_linkage(Linkage::Internal);
+    gv.set_alignment(8); // TODO: is this needed?
+    gv.as_pointer_value()
+  }
+
   fn init_variable(&mut self, name : RefStr, var_scope : VarScope, value : BasicValueEnum)
     -> Result<(), ErrorContent>
   {
@@ -221,14 +230,7 @@ impl <'l> Gen<'l> {
     }
     let pointer = match var_scope {
       VarScope::Global => {
-        //TODO let gv = self.module.add_global(value.get_type(), Some(AddressSpace::Global), &name);
-        let gv = self.module.add_global(value.get_type(), None, &name);
-        let null = const_null(value.get_type());
-        gv.set_initializer(&null);
-        gv.set_constant(false);
-        gv.set_linkage(Linkage::Internal);
-        gv.set_alignment(8);
-        gv.as_pointer_value()
+        self.add_global(value, false, &name)
       }
       VarScope::Local => {
         self.create_entry_block_alloca(value.get_type(), &name)
@@ -741,7 +743,10 @@ impl <'l> Gen<'l> {
             let vs : Vec<IntValue> =
               vs.iter().map(|v|
                 self.context.i8_type().const_int(*v as u64, false).into()).collect();
-            reg(self.context.i8_type().const_array(vs.as_slice()).into())
+            let v : BasicValueEnum = self.context.i8_type().const_array(vs.as_slice()).into();
+            let name = &s.as_ref()[0..std::cmp::min(s.len(), 10)];
+            self.add_global(v, true, name)
+            //reg()
           }
         }
       }
@@ -762,6 +767,7 @@ impl <'l> Gen<'l> {
   }
 
   fn to_basic_type(&mut self, t : &Type) -> Option<BasicTypeEnum> {
+    println!("hello world");
     match t {
       Type::Void => None,
       Type::F64 => Some(self.context.f64_type().into()),
