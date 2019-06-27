@@ -743,10 +743,12 @@ impl <'l> Gen<'l> {
             let vs : Vec<IntValue> =
               vs.iter().map(|v|
                 self.context.i8_type().const_int(*v as u64, false).into()).collect();
-            let v : BasicValueEnum = self.context.i8_type().const_array(vs.as_slice()).into();
-            let name = &s.as_ref()[0..std::cmp::min(s.len(), 10)];
-            self.add_global(v, true, name)
-            //reg()
+            let vs : BasicValueEnum = self.context.i8_type().const_array(vs.as_slice()).into();
+            let name = &s.as_str()[0..std::cmp::min(s.len(), 10)];
+            let ptr = self.add_global(vs, true, name);
+            let cast_to = self.context.i8_type().ptr_type(AddressSpace::Generic);
+            let v = self.builder.build_pointer_cast(ptr, cast_to, "string_pointer");
+            reg(v.into())
           }
         }
       }
@@ -767,7 +769,6 @@ impl <'l> Gen<'l> {
   }
 
   fn to_basic_type(&mut self, t : &Type) -> Option<BasicTypeEnum> {
-    println!("hello world");
     match t {
       Type::Void => None,
       Type::F64 => Some(self.context.f64_type().into()),

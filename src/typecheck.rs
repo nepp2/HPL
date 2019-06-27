@@ -16,6 +16,7 @@ pub struct ScriptString {
 }
 
 impl ScriptString {
+  /*
   pub fn new(mut s : String) -> ScriptString {
     let v = unsafe { s.as_mut_vec() };
     v.shrink_to_fit();
@@ -23,13 +24,14 @@ impl ScriptString {
     std::mem::forget(s);
     ss
   }
+  */
 
   pub fn to_string(&self) -> String {
     let slice = unsafe { std::slice::from_raw_parts(self.ptr, self.length as usize) };
     std::str::from_utf8(slice).expect("wasn't a valid utf8 string!").into()
   }
 }
-
+/*
 impl Drop for ScriptString {
   fn drop(&mut self) {
     unsafe {
@@ -37,6 +39,7 @@ impl Drop for ScriptString {
     }
   }
 }
+*/
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Type {

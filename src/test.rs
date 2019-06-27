@@ -222,7 +222,10 @@ rusty_fork_test! {
   #[test]
   fn test_string() {
     let mut i = Interpreter::new();
-    let code = r#""Hello world""#;
+    let code = r#"
+      let s = "Hello world"
+      string { data: s, length: 11 as u64 }
+    "#;
     let result = i.run(code);
     let expected = "Hello world";
     match &result {
