@@ -9,10 +9,11 @@ use std::collections::HashMap;
 use itertools::Itertools;
 
 #[no_mangle]
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Copy, Clone)]
+#[repr(C)]
 pub struct ScriptString {
-  ptr : *mut u8,
-  length : u64,
+  pub ptr : *mut u8,
+  pub length : u64,
 }
 
 impl ScriptString {
@@ -26,9 +27,9 @@ impl ScriptString {
   }
   */
 
-  pub fn to_string(&self) -> String {
+  pub fn to_str(&self) -> &str {
     let slice = unsafe { std::slice::from_raw_parts(self.ptr, self.length as usize) };
-    std::str::from_utf8(slice).expect("wasn't a valid utf8 string!").into()
+    std::str::from_utf8(slice).expect("wasn't a valid utf8 string!")
   }
 }
 /*
@@ -172,6 +173,7 @@ pub enum Content {
   ExplicitReturn(Option<Box<AstNode>>),
   Convert(Box<AstNode>),
   Deref(Box<AstNode>),
+  SizeOf(Box<Type>),
   Break,
 }
 
@@ -333,6 +335,10 @@ impl <'l> TypeChecker<'l> {
               return Ok(ast(expr, return_type, Content::FunctionCall(function_name.clone(), args)));
             }
             error(expr, "unknown function")
+          }
+          ("sizeof", [t]) => {
+            let type_tag = self.to_type(t)?;
+            return Ok(ast(expr, Type::U64, Content::SizeOf(Box::new(type_tag))));
           }
           ("as", [a, b]) => {
             let a = self.to_ast(a)?;

@@ -1,11 +1,8 @@
 
-# macro forloop(i : Symbol, range : Expr)
-#   quote
-#     let r = $range
-#     let $i = r.start;
-#     while $i < r.limit
-#       $body
-#       $i = $i + 1
-#     end
-#   end
-# end  
+let s = "hello beaver booper"
+
+let ss = string { data: s, length: 4 as u64 }
+
+let b = [ss]
+
+s

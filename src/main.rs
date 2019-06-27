@@ -49,6 +49,7 @@ fn load_and_run(path : &str) {
 fn main(){
   let args: Vec<String> = env::args().collect();
   let args: Vec<&str> = args.iter().map(|s| s.as_ref()).collect();
+  println!("ScriptString size: {}", std::mem::size_of::<typecheck::ScriptString>());
   match args[1..] {
     ["watch", f] => {
       let path = format!("code/{}.code", f);

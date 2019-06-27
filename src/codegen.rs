@@ -27,6 +27,7 @@ pub fn dump_module(module : &Module) {
 }
 
 macro_rules! codegen_type {
+  (PointerValue, $e:ident, $gen:ident) => { $gen.codegen_pointer($e) };
   (FloatValue, $e:ident, $gen:ident) => { $gen.codegen_float($e) };
   (IntValue, $e:ident, $gen:ident) => { $gen.codegen_int($e) };
 }
@@ -214,7 +215,7 @@ impl <'l> Gen<'l> {
   }
 
   fn add_global(&mut self, initial_value : BasicValueEnum, is_constant : bool, name : &str) -> PointerValue {
-    let gv = self.module.add_global(initial_value.get_type(), None, name);
+    let gv = self.module.add_global(initial_value.get_type(), Some(AddressSpace::Global), name);
     gv.set_initializer(&initial_value);
     gv.set_constant(is_constant);
     gv.set_linkage(Linkage::Internal);
@@ -230,7 +231,7 @@ impl <'l> Gen<'l> {
     }
     let pointer = match var_scope {
       VarScope::Global => {
-        self.add_global(value, false, &name)
+        self.add_global(const_null(value.get_type()), false, &name)
       }
       VarScope::Local => {
         self.create_entry_block_alloca(value.get_type(), &name)
@@ -318,12 +319,18 @@ impl <'l> Gen<'l> {
     let from_unsigned = from_type.unsigned_int();
     let from_int = from_signed || from_unsigned;
     let from_width = from_type.width();
+    let from_pointer = if let Type::Ptr(_) = from_type { true } else { false };
 
     let to_float = to_type.float();
     let to_signed = to_type.signed_int();
     let to_unsigned = to_type.unsigned_int();
     let to_int = to_signed || to_unsigned;
     let to_width = to_type.width();
+
+    if from_pointer && to_unsigned {
+      let t = int_type(self, to_width);
+      return Ok(convert_op!(build_ptr_to_int, PointerValue, t, n, self));
+    }
 
     // truncate
     if to_width < from_width {
@@ -489,6 +496,10 @@ impl <'l> Gen<'l> {
           return error(ast.loc, "encountered unrecognised intrinsic");
         }
       }
+      Content::SizeOf(t) => {
+        let t = self.to_basic_type(&t);
+        reg(self.size_of_type(t).into())
+      }
       Content::Convert(n) => {
         self.codegen_convert(ast, n)?
       }
@@ -650,7 +661,7 @@ impl <'l> Gen<'l> {
           for (i, e) in elements.iter().enumerate() {
             let v = self.codegen_value(e)?;
             let index = self.context.i32_type().const_int(i as u64, false).into();
-            let element_ptr = unsafe { self.builder.build_in_bounds_gep(array_ptr, &[index], "element_ptr") };
+            let element_ptr = unsafe { self.builder.build_gep(array_ptr, &[index], "element_ptr") };
             self.builder.build_store(element_ptr, v);
           }
           reg(array_ptr.into())
@@ -663,7 +674,7 @@ impl <'l> Gen<'l> {
         let (array_node, index_node) = (&ns.0, &ns.1);
         let array = self.codegen_pointer(array_node)?;
         let index = self.codegen_int(index_node)?;
-        let element_ptr = unsafe { self.builder.build_in_bounds_gep(array, &[index], "element_ptr") };
+        let element_ptr = unsafe { self.builder.build_gep(array, &[index], "element_ptr") };
         pointer(element_ptr)
       }
       Content::Assignment(ns) => {
@@ -800,6 +811,23 @@ impl <'l> Gen<'l> {
     }
   }
 
+  fn size_of_type(&self, t : Option<BasicTypeEnum>) -> IntValue {
+    if let Some(t) = t {
+    use BasicTypeEnum::*;
+      match t {
+        ArrayType(t) => t.size_of().unwrap(),
+        IntType(t) => t.size_of(),
+        FloatType(t) => t.size_of(),
+        PointerType(t) => t.size_of(),
+        StructType(t) => t.size_of().unwrap(),
+        VectorType(t) => t.size_of().unwrap(),
+      }
+    }
+    else {
+      self.context.i64_type().const_zero()
+    }
+  }
+
   fn pointer_to_type(&self, t : Option<BasicTypeEnum>) -> PointerType {
     if let Some(t) = t {
     use BasicTypeEnum::*;
@@ -875,7 +903,8 @@ impl <'l> Gen<'l> {
 
     let return_type = self.to_basic_type(return_type);
     let fn_type = self.function_type(return_type, arg_types);
-    let function = self.module.add_function(name, fn_type, Some(Linkage::External));
+    let function = self.module.add_function(name, fn_type, None);
+    //let function = self.module.add_function(name, fn_type, Some(Linkage::External));
 
     // set arguments names
     for (i, arg) in function.get_param_iter().enumerate() {

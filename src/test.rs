@@ -220,11 +220,34 @@ rusty_fork_test! {
   }
 
   #[test]
+  fn test_native_type_return() {
+    #[repr(C)]
+    #[derive(Debug)]
+    struct Blah {
+      x : i64,
+      y : i32,
+    }
+    let mut i = Interpreter::new();
+    let code = r#"
+      struct blah
+        x : i32
+        y : i32
+      end
+      blah { x: 50 as i32, y: 5390 as i32 }
+    "#;
+    //let v = i.run_unwrapped::<[i32 ; 6]>(code).unwrap();
+    let v = i.run_unwrapped::<Blah>(code).unwrap();
+    //let expected = "Hello world";
+    //assert_eq!(v.z, 50);
+    panic!(format!("{:?}", v));
+  }
+
+  #[test]
   fn test_string() {
     let mut i = Interpreter::new();
     let code = r#"
       let s = "Hello world"
-      string { data: s, length: 11 as u64 }
+      string { data: s, length: 923742 as u64 }
     "#;
     let result = i.run(code);
     let expected = "Hello world";
@@ -237,7 +260,7 @@ rusty_fork_test! {
       _ => (),
     }
     panic!("error in code '{}'. Expected result '{:?}'. Actual result was '{:?}'",
-          code, expected, result_string(result));
+      code, expected, result_string(result));
   }
 
   #[test]

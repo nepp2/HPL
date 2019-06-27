@@ -520,6 +520,15 @@ fn parse_struct_instantiate(ps : &mut ParseState) -> Result<Expr, Error> {
   Ok(ps.add_tree("struct_instantiate", args, start))
 }
 
+fn parse_sizeof(ps : &mut ParseState) -> Result<Expr, Error> {
+  let start = ps.peek_marker();
+  ps.expect(Syntax, "sizeof")?;
+  ps.expect(Syntax, "(")?;
+  let e = parse_type(ps)?;
+  ps.expect(Syntax, ")")?;
+  Ok(ps.add_tree("sizeof", vec![e], start))
+}
+
 fn parse_quote(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
   ps.expect(Syntax, "quote")?;
@@ -543,6 +552,7 @@ fn parse_return(ps : &mut ParseState) -> Result<Expr, Error> {
 fn parse_syntax(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
   match ps.peek()?.symbol.as_ref() {
+    "sizeof" => parse_sizeof(ps),
     "quote" => parse_quote(ps),
     "let" => parse_let(ps),
     "fun" => parse_fun(ps),

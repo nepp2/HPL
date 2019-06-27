@@ -4,7 +4,8 @@ use crate::value::{SymbolTable, display_expr, RefStr, Expr};
 use crate::lexer;
 use crate::parser;
 use crate::typecheck::{
-  Type, Val, StructDefinition, FunctionDefinition, TypeChecker, ScriptString };
+  Type, Val, StructDefinition, FunctionDefinition,
+  TypeChecker, ScriptString, AstNode };
 use crate::codegen::{dump_module, Gen};
 
 use std::rc::Rc;
@@ -36,10 +37,26 @@ pub extern "C" fn function_from_executable(a : i64, b : i64) -> i64 {
 static EXTERNAL_FNS: [extern fn(i64, i64) -> i64; 1] = [blah];
 */
 
+fn execute<T>(function_name : &str, ee : &ExecutionEngine) -> T {
+  unsafe {
+    let jit_function =
+      ee.get_function::<unsafe extern "C" fn() -> T>(function_name)
+      .expect("could not find function in JIT-compiled module");
+    jit_function.call()
+  }
+}
+
+pub struct CompiledExpression {
+  pub f : FunctionValue,
+  pub ee : ExecutionEngine,
+  pub m : Module,
+  pub ast : AstNode,
+}
+
 pub struct Interpreter {
   pub sym : SymbolTable,
   pub context : Context,
-  pub modules : Vec<(Module, ExecutionEngine)>,
+  pub modules : Vec<CompiledExpression>,
   pub functions : HashMap<RefStr, Rc<FunctionDefinition>>,
   pub compiled_functions : HashMap<RefStr, FunctionValue>,
   pub struct_types : HashMap<RefStr, Rc<StructDefinition>>,
@@ -110,7 +127,7 @@ impl Interpreter {
     self.run_expression(&expr)
   }
 
-  pub fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
+  pub fn compile_expression(&mut self, expr : &Expr) -> Result<&CompiledExpression, Error> {
     let mut type_checker =
       TypeChecker::new(
         true, HashMap::new(), &mut self.functions, &mut self.struct_types,
@@ -142,30 +159,17 @@ impl Interpreter {
     println!("{}", display_expr(expr));
     dump_module(&module);
 
-    fn execute<T>(expr : &Expr, f : FunctionValue, ee : &ExecutionEngine) -> Result<T, Error> {
-      let function_name = f.get_name().to_str().unwrap();
-      let v = unsafe {
-        // ERROR_MAY_BE_HERE; 
-        // TODO: i'm not sure that "get_function" actually calls "FinalizeObject"
-        // see: https://llvm.org/doxygen/ExecutionEngineBindings_8cpp_source.html
-        let jit_function =
-          ee.get_function::<unsafe extern "C" fn() -> T>(function_name)
-          .map_err(|e| error_raw(expr, format!("{:?}", e)))?;
-        jit_function.call()
-      };
-      Ok(v)
-    }
     let ee =
       module.create_jit_execution_engine(OptimizationLevel::None)
       .map_err(|e| error_raw(expr, e.to_string()))?;
 
     // Link global variables
     for (global_name, global_value) in external_globals.iter() {
-      for (m, eee) in self.modules.iter() {
-        if let Some(g) = m.get_global(global_name) {
+      for c in self.modules.iter() {
+        if let Some(g) = c.m.get_global(global_name) {
           if g.get_linkage() == Linkage::Internal {
             unsafe {
-              let address = eee.get_global_address(global_name).unwrap();
+              let address = c.ee.get_global_address(global_name).unwrap();
               ee.add_global_mapping(global_value, address as usize);
               break;
             }
@@ -176,11 +180,11 @@ impl Interpreter {
 
     // Link external functions
     for (function_name, function_value) in external_functions.iter() {
-      for (m, eee) in self.modules.iter() {
-        if let Some(f) = m.get_function(function_name) {
+      for c in self.modules.iter() {
+        if let Some(f) = c.m.get_function(function_name) {
           if f.count_basic_blocks() > 0 {
             unsafe {
-              let address = eee.get_function_address(function_name).unwrap();
+              let address = c.ee.get_function_address(function_name).unwrap();
               ee.add_global_mapping(function_value, address as usize);
               break;
             }
@@ -188,34 +192,75 @@ impl Interpreter {
         }
       }
     }
+    // TODO: is this needed?
+    ee.run_static_constructors();
 
-    ee.run_static_constructors(); // TODO: this might not do anything :(
-    let result = match ast.type_tag {
-      Type::Bool => execute::<bool>(expr, f, &ee).map(Val::Bool),
-      Type::F64 => execute::<f64>(expr, f, &ee).map(Val::F64),
-      Type::F32 => execute::<f32>(expr, f, &ee).map(Val::F32),
-      Type::I64 => execute::<i64>(expr, f, &ee).map(Val::I64),
-      Type::I32 => execute::<i32>(expr, f, &ee).map(Val::I32),
-      Type::U64 => execute::<u64>(expr, f, &ee).map(Val::U64),
-      Type::U32 => execute::<u32>(expr, f, &ee).map(Val::U32),
-      Type::U16 => execute::<u16>(expr, f, &ee).map(Val::U16),
-      Type::U8 => execute::<u8>(expr, f, &ee).map(Val::U8),
-      Type::Void => execute::<()>(expr, f, &ee).map(|_| Val::Void),
-      Type::Ptr(_) => 
-        error(expr, "can't return a pointer from a top-level function"),
+    self.modules.push(CompiledExpression { f, ee, m: module, ast });
+    Ok(self.modules.last().unwrap())
+  }
+
+  pub fn run_unwrapped<T>(&mut self, code : &str) -> Result<T, Error> {
+    let expr = self.parse_string(code)?;
+    let c = self.compile_expression(&expr)?;
+    let f = c.f.get_name().to_str().unwrap();
+    let v : T = execute(f, &c.ee);
+    Ok(v)
+  }
+
+  pub fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
+    let c = self.compile_expression(expr)?;
+    let f = c.f.get_name().to_str().unwrap();
+    let result = match &c.ast.type_tag {
+      Type::Bool => Val::Bool(execute::<bool>(f, &c.ee)),
+      Type::F64 => Val::F64(execute::<f64>(f, &c.ee)),
+      Type::F32 => Val::F32(execute::<f32>(f, &c.ee)),
+      Type::I64 => Val::I64(execute::<i64>(f, &c.ee)),
+      Type::I32 => Val::I32(execute::<i32>(f, &c.ee)),
+      Type::U64 => Val::U64(execute::<u64>(f, &c.ee)),
+      Type::U32 => Val::U32(execute::<u32>(f, &c.ee)),
+      Type::U16 => Val::U16(execute::<u16>(f, &c.ee)),
+      Type::U8 => Val::U8(execute::<u8>(f, &c.ee)),
+      Type::Void => {
+        execute::<()>(f, &c.ee);
+        Val::Void
+      }
+      Type::Ptr(t) => {
+        if let Type::U8 = t.as_ref() {
+          unsafe{
+            let ptr = execute::<*mut u8>(f, &c.ee);
+            let slice = std::slice::from_raw_parts(ptr, 10);
+            let s = std::str::from_utf8(slice).expect("wasn't a valid utf8 string!");
+            println!("transmuted string: {}", s);
+          }          
+        }
+        else if let Type::Struct(def) = t.as_ref() {
+          if def.name.as_ref() == "string" {
+            unsafe{
+              let ptr = execute::<*mut ScriptString>(f, &c.ee);
+              let ss = &*ptr;
+              let temp : [ u64 ; 2 ] = std::mem::transmute_copy(&ss);
+              println!("transmuted string: [{}, {}]", temp[0], temp[1]);
+            }
+          }
+        }
+        return error(expr, "can't return a pointer from a top-level function");
+      }
       Type::Struct(def) => {
         if def.name.as_ref() == "string" {
-          let ss = execute::<ScriptString>(expr, f, &ee)?;
-          Ok(Val::String(ss.to_string()))
+          let ss = execute::<ScriptString>(f, &c.ee);
+          //Ok(Val::String(ss.to_string()))
+          let temp : [ u64 ; 2 ] = unsafe { std::mem::transmute_copy(&ss) };
+          println!("transmuted string: [{:#b}, {:#b}]", temp[0], temp[1]);
+          Val::U64(ss.length)
         }
         else {
-          error(expr, "can't return a struct from a top-level function")
+          return error(expr, "can't return a struct from a top-level function");
         }
       }
     };
     // unsafe { f.delete(); }
     // TODO: ee.remove_module(&i.module).unwrap();
-    self.modules.push((module, ee));
-    result
+    //self.modules.push((module, ee));
+    Ok(result)
   }
 }
