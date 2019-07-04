@@ -906,6 +906,13 @@ impl <'l> Gen<'l> {
     let function = self.module.add_function(name, fn_type, None);
     //let function = self.module.add_function(name, fn_type, Some(Linkage::External));
 
+    // TODO: function.set_call_conventions(8);
+    function.add_attribute(0, self.context.create_string_attribute("nounwind", ""));
+    function.add_attribute(0, self.context.create_string_attribute("nonlazybind", ""));
+    function.add_attribute(0, self.context.create_string_attribute("uwtable", ""));
+    function.add_attribute(0, self.context.create_string_attribute("probe-stack", "__rust_probestack"));
+    function.add_attribute(0, self.context.create_string_attribute("target-cpu", "x86-64"));
+
     // set arguments names
     for (i, arg) in function.get_param_iter().enumerate() {
       Gen::name_basic_type(&arg, args[i].as_ref());

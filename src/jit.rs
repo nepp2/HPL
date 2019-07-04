@@ -207,6 +207,21 @@ impl Interpreter {
     Ok(v)
   }
 
+  pub fn run_named_function_with_arg<T, A>(
+    &mut self, code : &str, function_name: &str, arg: A)
+      -> Result<T, Error>
+  {
+    let expr = self.parse_string(code)?;
+    let c = self.compile_expression(&expr)?;
+    let v = unsafe {
+      let jit_function =
+        c.ee.get_function::<unsafe extern "C" fn(A) -> T>(function_name)
+        .expect("could not find function in JIT-compiled module");
+      jit_function.call(arg)
+    };
+    Ok(v)
+  }
+
   pub fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
     let c = self.compile_expression(expr)?;
     let f = c.f.get_name().to_str().unwrap();

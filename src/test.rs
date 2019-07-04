@@ -220,25 +220,49 @@ rusty_fork_test! {
   }
 
   #[test]
+  fn test_struct_format() {
+    let mut i = Interpreter::new();
+    let code = r#"
+      struct blah
+        x : i32
+        p : ptr(i64)
+        y : i64
+        z : f32
+      end
+      fun main(a : ptr(blah))
+        a[0] = blah { 50 as i32, [40, 50, 60], 5390, 45640.5 as f32 }
+      end
+    "#;
+    let mut mem : Vec<u32> = vec!(0 ; 30);
+    let p = mem.as_mut_ptr();
+    let _ : () = i.run_named_function_with_arg(code, "main", p).unwrap();
+    panic!(format!("{:?}", mem));
+  }
+
+  #[test]
   fn test_native_type_return() {
     #[repr(C)]
     #[derive(Debug)]
     struct Blah {
       x : i64,
-      y : i32,
+      y : i64,
     }
     let mut i = Interpreter::new();
     let code = r#"
       struct blah
-        x : i32
-        y : i32
+        x : i64
+        y : i64
       end
-      blah { x: 50 as i32, y: 5390 as i32 }
+      blah { x: 50 as i64, y: 53 as i64 }
     "#;
     //let v = i.run_unwrapped::<[i32 ; 6]>(code).unwrap();
     let v = i.run_unwrapped::<Blah>(code).unwrap();
+    let v : i128 = unsafe { std::mem::transmute_copy(&v) };
     //let expected = "Hello world";
     //assert_eq!(v.z, 50);
+    println!("{:#X} - 50", 50);
+    println!("{:#X} - 53", 53);
+    println!("{:#X}", v);
     panic!(format!("{:?}", v));
   }
 
