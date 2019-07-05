@@ -253,11 +253,14 @@ rusty_fork_test! {
         x : i64
         y : i64
       end
-      blah { x: 50 as i64, y: 53 as i64 }
+      fun blah_fun()
+        blah { x: 50 as i64, y: 53 as i64 }
+      end
+      blah_fun()
     "#;
     let v = i.run_unwrapped::<Blah>(code).unwrap();
-    //let v : [i64 ; 10] = unsafe { std::mem::transmute_copy(&v) };
-    //let expected = "Hello world";
+    //let mem : [i64 ; 10] = unsafe { std::mem::transmute_copy(&v) };
+    //panic!(format!("{:?}", mem));
     assert_eq!(v.x, 50);
     assert_eq!(v.y, 53);
   }

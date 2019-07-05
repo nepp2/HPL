@@ -1,0 +1,11 @@
+; ModuleID = 'module_1'
+source_filename = "module_1"
+target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
+
+; Function Attrs: norecurse nounwind nonlazybind readnone uwtable
+define { i64, i64 } @top_level() #0 {
+entry:
+  ret { i64, i64 } { i64 50, i64 53 }
+}
+
+attributes #0 = { norecurse nounwind nonlazybind readnone uwtable "probe-stack"="__rust_probestack" "target-cpu"="x86-64" }

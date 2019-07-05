@@ -911,8 +911,10 @@ impl <'l> Gen<'l> {
 
     // TODO: function.set_call_conventions(8);
     let i : u32 = !0; //LLVMAttributeFunctionIndex;
+    function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("norecurse"), 0));
     function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("nounwind"), 0));
     function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("nonlazybind"), 0));
+    function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("readnone"), 0));
     function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("uwtable"), 0));
     function.add_attribute(i, self.context.create_string_attribute("probe-stack", "__rust_probestack"));
     function.add_attribute(i, self.context.create_string_attribute("target-cpu", "x86-64"));

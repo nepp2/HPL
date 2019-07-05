@@ -1,0 +1,31 @@
+; ModuleID = 'playground.e2r85j00-cgu.0'
+source_filename = "playground.e2r85j00-cgu.0"
+target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
+target triple = "x86_64-unknown-linux-gnu"
+
+; playground::blah
+; Function Attrs: norecurse nounwind nonlazybind readnone uwtable
+define { i64, i64 } @_ZN10playground4blah17hcf328a0bab964a12E() unnamed_addr #0 {
+start:
+  ret { i64, i64 } { i64 50, i64 75 }
+}
+
+; playground::blah2
+; Function Attrs: nounwind nonlazybind uwtable
+define i64 @_ZN10playground5blah217hcfa468985c8317c9E({ i64, i64 } ()* nocapture nonnull %f) unnamed_addr #1 {
+start:
+  %0 = tail call { i64, i64 } %f() #2
+  %.fca.0.extract = extractvalue { i64, i64 } %0, 0
+  %.fca.1.extract = extractvalue { i64, i64 } %0, 1
+  %1 = mul i64 %.fca.0.extract, 53
+  %2 = add i64 %1, %.fca.1.extract
+  ret i64 %2
+}
+
+attributes #0 = { norecurse nounwind nonlazybind readnone uwtable "probe-stack"="__rust_probestack" "target-cpu"="x86-64" }
+attributes #1 = { nounwind nonlazybind uwtable "probe-stack"="__rust_probestack" "target-cpu"="x86-64" }
+attributes #2 = { nounwind }
+
+!llvm.module.flags = !{!0}
+
+!0 = !{i32 2, !"RtLibUseGOT", i32 1}
