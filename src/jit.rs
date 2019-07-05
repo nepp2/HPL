@@ -19,6 +19,8 @@ use inkwell::passes::PassManager;
 use inkwell::values::{FunctionValue, GlobalValue};
 use inkwell::OptimizationLevel;
 use inkwell::execution_engine::ExecutionEngine;
+use inkwell::data_layout::DataLayout;
+use inkwell::targets::{InitializationConfig, Target, TargetData}; // TODO: DELETE?
 
 use llvm_sys::support::LLVMLoadLibraryPermanently;
 use dlltest;
@@ -68,8 +70,11 @@ impl Interpreter {
 
     unsafe {
       if !LOADED_SYMBOLS {
-        dlltest::function_from_dll(4, 5);
-        function_from_executable(4, 5);
+        // TODO: DELETE?
+        Target::initialize_native(&InitializationConfig::default()).expect("Failed to initialize native target");
+
+        dlltest::function_from_dll(4, 5); // DELETE?
+        function_from_executable(4, 5); // DELETE?
         // This makes sure that any symbols in the main executable can be
         // linked to the code we generate with the JIT. This includes any
         // DLLs used by the main exe.
@@ -135,6 +140,10 @@ impl Interpreter {
     let ast = type_checker.to_ast(expr)?;
     let module_name = format!("module_{}", self.modules.len());
     let mut module = self.context.create_module(&module_name);
+
+    // TODO: remove?
+    let target = TargetData::create("e-m:e-i64:64-f80:128-n8:16:32:64-S128");
+    module.set_data_layout(&target.get_data_layout());
 
     let pm = PassManager::create(&module);
     pm.add_instruction_combining_pass();

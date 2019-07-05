@@ -255,15 +255,11 @@ rusty_fork_test! {
       end
       blah { x: 50 as i64, y: 53 as i64 }
     "#;
-    //let v = i.run_unwrapped::<[i32 ; 6]>(code).unwrap();
     let v = i.run_unwrapped::<Blah>(code).unwrap();
-    let v : i128 = unsafe { std::mem::transmute_copy(&v) };
+    //let v : [i64 ; 10] = unsafe { std::mem::transmute_copy(&v) };
     //let expected = "Hello world";
-    //assert_eq!(v.z, 50);
-    println!("{:#X} - 50", 50);
-    println!("{:#X} - 53", 53);
-    println!("{:#X}", v);
-    panic!(format!("{:?}", v));
+    assert_eq!(v.x, 50);
+    assert_eq!(v.y, 53);
   }
 
   #[test]

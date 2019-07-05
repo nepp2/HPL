@@ -14,6 +14,7 @@ use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::{Context};
 use inkwell::module::{Module, Linkage};
+use inkwell::attributes::Attribute;
 use inkwell::passes::PassManager;
 use inkwell::types::{
   BasicTypeEnum, BasicType, StructType, PointerType, FunctionType, AnyTypeEnum, ArrayType,
@@ -21,6 +22,8 @@ use inkwell::types::{
 use inkwell::values::{
   BasicValueEnum, BasicValue, FloatValue, IntValue, FunctionValue, PointerValue, GlobalValue };
 use inkwell::{FloatPredicate, IntPredicate};
+
+use llvm_sys::LLVMAttributeFunctionIndex;
 
 pub fn dump_module(module : &Module) {
   println!("{}", module.print_to_string().to_string())
@@ -907,11 +910,12 @@ impl <'l> Gen<'l> {
     //let function = self.module.add_function(name, fn_type, Some(Linkage::External));
 
     // TODO: function.set_call_conventions(8);
-    function.add_attribute(0, self.context.create_string_attribute("nounwind", ""));
-    function.add_attribute(0, self.context.create_string_attribute("nonlazybind", ""));
-    function.add_attribute(0, self.context.create_string_attribute("uwtable", ""));
-    function.add_attribute(0, self.context.create_string_attribute("probe-stack", "__rust_probestack"));
-    function.add_attribute(0, self.context.create_string_attribute("target-cpu", "x86-64"));
+    let i : u32 = !0; //LLVMAttributeFunctionIndex;
+    function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("nounwind"), 0));
+    function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("nonlazybind"), 0));
+    function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("uwtable"), 0));
+    function.add_attribute(i, self.context.create_string_attribute("probe-stack", "__rust_probestack"));
+    function.add_attribute(i, self.context.create_string_attribute("target-cpu", "x86-64"));
 
     // set arguments names
     for (i, arg) in function.get_param_iter().enumerate() {
