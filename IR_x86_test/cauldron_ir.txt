@@ -3,7 +3,15 @@ source_filename = "module_1"
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
 
 ; Function Attrs: norecurse nounwind nonlazybind readnone uwtable
-define { i64, i64 } @top_level() #0 {
+define i64 @top_level() #0 {
+entry:
+  %tmp = call { i64, i64 } @blah_fun()
+  %y = extractvalue { i64, i64 } %tmp, 1
+  ret i64 %y
+}
+
+; Function Attrs: norecurse nounwind nonlazybind readnone uwtable
+define { i64, i64 } @blah_fun() #0 {
 entry:
   ret { i64, i64 } { i64 50, i64 53 }
 }

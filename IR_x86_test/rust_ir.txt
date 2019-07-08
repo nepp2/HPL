@@ -1,0 +1,19 @@
+@_ZN7example4BLOO17h346e6b828cbb67b6E = local_unnamed_addr global <{ [8 x i8] }> <{ [8 x i8] c"5\00\00\00\00\00\00\00" }>, align 8
+
+define { i64, i64 } @_ZN7example5blah117h85b611fdff56a62bE() unnamed_addr #0 {
+start:
+  %0 = load i64, i64* bitcast (<{ [8 x i8] }>* @_ZN7example4BLOO17h346e6b828cbb67b6E to i64*), align 8
+  %.fca.1.insert = insertvalue { i64, i64 } { i64 50, i64 undef }, i64 %0, 1
+  ret { i64, i64 } %.fca.1.insert
+}
+
+define i64 @_ZN7example5blah217he1db0f05635a6e36E({ i64, i64 } ()* nocapture nonnull %f) unnamed_addr #1 {
+start:
+  %0 = tail call { i64, i64 } %f() #2
+  %.fca.1.extract = extractvalue { i64, i64 } %0, 1
+  ret i64 %.fca.1.extract
+}
+
+attributes #0 = { noinline norecurse nounwind nonlazybind readonly uwtable "probe-stack"="__rust_probestack" "target-cpu"="x86-64" }
+attributes #1 = { nounwind nonlazybind uwtable "probe-stack"="__rust_probestack" "target-cpu"="x86-64" }
+attributes #2 = { nounwind }

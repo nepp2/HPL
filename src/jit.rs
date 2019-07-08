@@ -216,6 +216,16 @@ impl Interpreter {
     Ok(v)
   }
 
+  // Calls a function that accepts an OUT pointer as an argument, in C style.
+  pub fn run_with_pointer_return<A>(
+    &mut self, code : &str, function_name: &str)
+      -> Result<A, Error>
+  {
+    let mut arg : A = unsafe { std::mem::zeroed() };
+    self.run_named_function_with_arg(code, function_name, &mut arg)?;
+    Ok(arg)
+  }
+
   pub fn run_named_function_with_arg<T, A>(
     &mut self, code : &str, function_name: &str, arg: A)
       -> Result<T, Error>
@@ -257,29 +267,10 @@ impl Interpreter {
             println!("transmuted string: {}", s);
           }          
         }
-        else if let Type::Struct(def) = t.as_ref() {
-          if def.name.as_ref() == "string" {
-            unsafe{
-              let ptr = execute::<*mut ScriptString>(f, &c.ee);
-              let ss = &*ptr;
-              let temp : [ u64 ; 2 ] = std::mem::transmute_copy(&ss);
-              println!("transmuted string: [{}, {}]", temp[0], temp[1]);
-            }
-          }
-        }
         return error(expr, "can't return a pointer from a top-level function");
       }
       Type::Struct(def) => {
-        if def.name.as_ref() == "string" {
-          let ss = execute::<ScriptString>(f, &c.ee);
-          //Ok(Val::String(ss.to_string()))
-          let temp : [ u64 ; 2 ] = unsafe { std::mem::transmute_copy(&ss) };
-          println!("transmuted string: [{:#b}, {:#b}]", temp[0], temp[1]);
-          Val::U64(ss.length)
-        }
-        else {
-          return error(expr, "can't return a struct from a top-level function");
-        }
+        return error(expr, "can't return a struct from a top-level function");
       }
     };
     // unsafe { f.delete(); }
