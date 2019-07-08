@@ -162,7 +162,8 @@ impl Interpreter {
       let jit =
         Gen::new(
           &mut self.context, &mut module, &mut self.compiled_functions, &self.functions,
-          &mut external_globals, &mut external_functions, &self.global_var_types, &pm);
+          &mut external_globals, &mut external_functions, &self.global_var_types,
+          &self.struct_types, &pm);
       jit.codegen_module(&ast)?
     };
     println!("{}", display_expr(expr));

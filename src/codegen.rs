@@ -160,6 +160,7 @@ pub struct Gen<'l> {
   global_var_types: &'l HashMap<RefStr, Type>,
   variables: HashMap<RefStr, PointerValue>,
   struct_types: HashMap<RefStr, StructType>,
+  struct_definitions: &'l HashMap<RefStr, Rc<StructDefinition>>,
 
   /// A stack of values indicating the entry and exit labels for each loop
   loop_labels: Vec<LoopLabels>,
@@ -177,6 +178,7 @@ impl <'l> Gen<'l> {
     external_globals: &'l mut HashMap<RefStr, GlobalValue>,
     external_functions: &'l mut HashMap<RefStr, FunctionValue>,
     global_var_types: &'l HashMap<RefStr, Type>,
+    struct_definitions: &'l HashMap<RefStr, Rc<StructDefinition>>,
     pm : &'l PassManager<FunctionValue>,
   )
       -> Gen<'l>
@@ -191,6 +193,7 @@ impl <'l> Gen<'l> {
       external_functions,
       global_var_types, variables,
       struct_types: HashMap::new(),
+      struct_definitions,
       loop_labels: vec!(),
       pm,
     }
@@ -200,8 +203,8 @@ impl <'l> Gen<'l> {
     -> Gen<'lc>
   {
     Gen::new(
-      self.context, self.module, self.functions, self.function_defs, 
-      self.external_globals, self.external_functions, global_var_types, self.pm)
+      self.context, self.module, self.functions, self.function_defs,  self.external_globals,
+      self.external_functions, global_var_types, self.struct_definitions, self.pm)
   }
 
   fn create_entry_block_alloca(&self, t : BasicTypeEnum, name : &str) -> PointerValue {
@@ -421,6 +424,18 @@ impl <'l> Gen<'l> {
     return Ok(reg(phi.as_basic_value()));
   }
 
+  fn codegen_struct_initialise(&mut self, def : &StructDefinition, args : &[BasicValueEnum]) -> GenVal {
+    let t = self.struct_type(def).as_basic_type_enum();
+    let ptr = self.create_entry_block_alloca(t, &def.name);
+    for (i, v) in args.iter().enumerate() {
+      let element_ptr = unsafe {
+        self.builder.build_struct_gep(ptr, i as u32, &def.fields[i].0)
+      };
+      self.builder.build_store(element_ptr, *v);
+    }
+    pointer(ptr)
+  }
+
   fn codegen_function_call(&mut self, ast : &AstNode, name : &RefStr, args : &[AstNode])
     -> Result<Option<GenVal>, Error>
   {
@@ -624,16 +639,9 @@ impl <'l> Gen<'l> {
         return Ok(None);
       }
       Content::StructInstantiate(def, args) => {
-        let t = self.struct_type(def).as_basic_type_enum();
-        let ptr = self.create_entry_block_alloca(t, &def.name);
-        for (i, a) in args.iter().enumerate() {
-          let v = self.codegen_value(a)?;
-          let element_ptr = unsafe {
-            self.builder.build_struct_gep(ptr, i as u32, &def.fields[i].0)
-          };
-          self.builder.build_store(element_ptr, v);
-        }
-        pointer(ptr)
+        let a : Result<Vec<BasicValueEnum>, Error> =
+          args.iter().map(|a| self.codegen_value(a)).collect();
+        self.codegen_struct_initialise(def, a?.as_slice())
       }
       Content::FieldAccess(x, field_index) => {
         let (struct_val_node, field_name) = (&x.0, &x.1);
@@ -754,15 +762,18 @@ impl <'l> Gen<'l> {
           Val::Void => return Ok(None),
           Val::String(s) => {
             let vs : &[u8] = s.as_ref();
+            let byte = self.context.i8_type();
             let vs : Vec<IntValue> =
               vs.iter().map(|v|
-                self.context.i8_type().const_int(*v as u64, false).into()).collect();
-            let vs : BasicValueEnum = self.context.i8_type().const_array(vs.as_slice()).into();
+                byte.const_int(*v as u64, false).into()).collect();
+            let const_array : BasicValueEnum = self.context.i8_type().const_array(vs.as_slice()).into();
             let name = &s.as_str()[0..std::cmp::min(s.len(), 10)];
-            let ptr = self.add_global(vs, true, name);
+            let ptr = self.add_global(const_array, true, name);
             let cast_to = self.context.i8_type().ptr_type(AddressSpace::Generic);
-            let v = self.builder.build_pointer_cast(ptr, cast_to, "string_pointer");
-            reg(v.into())
+            let string_pointer = self.builder.build_pointer_cast(ptr, cast_to, "string_pointer");
+            let string_length = self.context.i64_type().const_int(vs.len() as u64, false);
+            let def = self.struct_definitions.get("string").unwrap();
+            self.codegen_struct_initialise(def, &[string_pointer.into(), string_length.into()])
           }
         }
       }

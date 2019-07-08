@@ -280,8 +280,7 @@ rusty_fork_test! {
     let mut i = Interpreter::new();
     let code = r#"
       fun main(a : ptr(string))
-        let s = "Hello world"
-        a[0] = string { data: s, length: 11 as u64 }
+        a[0] = "Hello world"
       end
     "#;
     let s : ScriptString = i.run_with_pointer_return(code, "main").unwrap();
