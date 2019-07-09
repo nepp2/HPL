@@ -1,0 +1,16 @@
+[package]
+name = "runtime"
+version = "0.1.0"
+authors = ["nepp <0andrewmartin0@gmail.com>"]
+edition = "2018"
+
+[lib]
+name = "runtime"
+crate-type = ["dylib"] # could be `staticlib` as well
+
+[dependencies]
+
+[dependencies.clang]
+version = "0.22.0"
+default-features = false
+features = ["clang_8_0"]

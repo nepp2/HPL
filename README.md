@@ -27,7 +27,7 @@ Project to create a live programming environment for game development, built on 
 
 Based on these instructions: https://llvm.org/docs/GettingStartedVS.html
 
-## Summary
+### Summary
 
 * Download the source code
 * Install CMake and python 3.x
@@ -44,3 +44,10 @@ Based on these instructions: https://llvm.org/docs/GettingStartedVS.html
 * Build the "INSTALL" project. I think this should run with no errors.
 * Add the newly-installed `llvm/bin` folder to the user's `PATH` environment variable
 
+### Why do you have to build LLVM from source?
+
+From the llvm-sys documentation:
+
+> You must use a version of Rust that uses the same compiler as you build LLVM with, either MSVC or MinGW. Fortunately, a mismatch like this will cause errors at compile-time when llvm-config provides options which are supported by only one of them, so if you're using the other it will cause the build to fail.
+
+The prebuilt windows binaries on the LLVM website do not work, so I presume they are not built with the visual studio compiler (MSVC). I could use the MinGW Rust, but that's just a whole other hassle. It seems less well supported.
