@@ -1,0 +1,35 @@
+[package]
+name = "cauldron"
+version = "0.1.0"
+authors = ["Andrew R Martin <0andrewmartin0@gmail.com>"]
+edition = "2018"
+
+[dev-dependencies]
+rusty-fork = "0.2.1"
+
+[dependencies]
+compiler = { path = "../compiler" }
+maplit = "1.0.1"
+dlltest = { path = "../dlltest" }
+llvm-sys = "70.1.0"
+# byteorder = "1.2.2"
+# unicode-normalization = "0.1.5"
+# ropey = "0.6.3"
+# clipboard = "0.4.6"
+# rand = "0.6.4"
+# rustyline = "4.0.0"
+# notify = "4.0.10"
+# lazy_static = "1.2.0"
+# itertools = "0.7.3"
+#libc = "0.2"
+# inkwell = { git = "https://github.com/nepp2/inkwell", branch = "llvm7-0" }
+
+# [dependencies.rusttype]
+# version = "0.5.2"
+# default-features = false
+# features = ["gpu_cache"]
+
+# [dependencies.sdl2]
+# version = "0.31"
+# default-features = false
+# features = ["bundled"]

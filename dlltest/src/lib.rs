@@ -1,7 +1,7 @@
 
 #[no_mangle]
 pub extern "C" fn function_from_dll(a : i64, b : i64) -> i64 {
-  a - b
+  a + b
 }
 
 #[cfg(test)]

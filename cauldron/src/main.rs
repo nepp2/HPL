@@ -4,7 +4,7 @@
 #[cfg(test)]
 #[macro_use] extern crate rusty_fork;
 
-#[macro_use] extern crate lazy_static;
+// #[macro_use] extern crate lazy_static;
 // #[macro_use] extern crate maplit;
 
 /*
@@ -28,7 +28,7 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::env;
 
-use cauldron_compiler as cc;
+use compiler as cc;
 
 use cc::jit::Interpreter;
 use cc::typecheck::Val;

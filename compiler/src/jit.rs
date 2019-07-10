@@ -103,7 +103,7 @@ impl Interpreter {
   }
 
   fn load_prelude(&mut self) -> Result<(), Error> {
-    let mut f = File::open("code/prelude_llvm.code").expect("file not found");
+    let mut f = File::open("../code/prelude_llvm.code").expect("file not found");
     let mut code = String::new();
     f.read_to_string(&mut code).unwrap();
     self.load_module(&code)?;

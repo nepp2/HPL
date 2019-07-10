@@ -18,10 +18,8 @@ pub mod jit;
 pub mod repl;
 pub mod c_interface;
 
-/*
 #[cfg(test)]
 mod test;
-*/
 
 use std::fs::File;
 use std::io::Read;
