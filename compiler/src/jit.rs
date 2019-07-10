@@ -12,6 +12,7 @@ use std::rc::Rc;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
+use std::ffi::CString;
 
 use inkwell::context::{Context};
 use inkwell::module::{Module, Linkage};
@@ -19,17 +20,12 @@ use inkwell::passes::PassManager;
 use inkwell::values::{FunctionValue, GlobalValue};
 use inkwell::OptimizationLevel;
 use inkwell::execution_engine::ExecutionEngine;
-use inkwell::data_layout::DataLayout;
 use inkwell::targets::{InitializationConfig, Target, TargetData}; // TODO: DELETE?
 
 use llvm_sys::support::LLVMLoadLibraryPermanently;
+use llvm_sys::prelude::LLVMBool;
 
 static mut LOADED_SYMBOLS : bool = false;
-
-#[no_mangle]
-pub extern "C" fn function_from_executable(a : i64, b : i64) -> i64 {
-  a + b
-}
 
 fn execute<T>(function_name : &str, ee : &ExecutionEngine) -> T {
   unsafe {
@@ -57,6 +53,18 @@ pub struct Interpreter {
   pub global_var_types: HashMap<RefStr, Type>,
 }
 
+// TODO: delete this?
+unsafe fn load_dll(path : &str) {
+  #[cfg(not(debug_assertions))]
+  let s = "release";
+  #[cfg(debug_assertions)]
+  let s = "debug";
+  let path = format!("target/{}/deps/{}", s, path);
+  let dll_name = CString::new(path.as_str()).expect("Conversion to CString failed unexpectedly");
+  let b : LLVMBool = LLVMLoadLibraryPermanently(dll_name.as_ptr());
+  println!("Loaded '{}'? - {}", path, b != 0);
+}
+
 impl Interpreter {
   pub fn new() -> Interpreter {
 
@@ -69,6 +77,8 @@ impl Interpreter {
         // linked to the code we generate with the JIT. This includes any
         // DLLs used by the main exe.
         LLVMLoadLibraryPermanently(std::ptr::null());
+
+        //load_thing("C:/Users/andrew/workspace/cauldron/target/debug/deps/dlltest.dll");
         LOADED_SYMBOLS = true;
       }
     }

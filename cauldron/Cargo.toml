@@ -10,7 +10,6 @@ rusty-fork = "0.2.1"
 [dependencies]
 compiler = { path = "../compiler" }
 maplit = "1.0.1"
-dlltest = { path = "../dlltest" }
 llvm-sys = "70.1.0"
 # byteorder = "1.2.2"
 # unicode-normalization = "0.1.5"

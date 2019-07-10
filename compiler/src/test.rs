@@ -288,16 +288,22 @@ rusty_fork_test! {
     assert_eq!(s.as_str(), expected);
   }
 
-  /* TODO: DECIDE WHAT TO DO WITH THIS
   #[test]
   fn test_dll_function_linking() {
-    let code = "
+    // Seems to cause the symbols to be linked
+    use dlltest::*;
+    
+    let a = "
       cfun function_from_dll(a : i64, b : i64) : i64
       function_from_dll(17, 7)
     ";
-    assert_result(code, Val::I64(10));
+    let b = "
+      cfun another_function_from_dll(a : i64, b : i64) : i64
+      another_function_from_dll(17, 7)
+    ";
+    assert_result(a, Val::I64(24));
+    assert_result(b, Val::I64(24));
   }
-  */
 
   /* TODO: FIX THIS
   #[test]

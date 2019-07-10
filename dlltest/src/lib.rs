@@ -4,6 +4,11 @@ pub extern "C" fn function_from_dll(a : i64, b : i64) -> i64 {
   a + b
 }
 
+#[no_mangle]
+pub extern "C" fn another_function_from_dll(a : i64, b : i64) -> i64 {
+  a + b
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

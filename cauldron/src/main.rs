@@ -18,10 +18,10 @@ mod codegen;
 mod jit;
 mod repl;
 mod c_interface;
-*/
 
 #[cfg(test)]
 mod test;
+*/
 
 use std::fs::File;
 use std::io::Read;
