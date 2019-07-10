@@ -7,19 +7,21 @@
 #[macro_use] extern crate lazy_static;
 // #[macro_use] extern crate maplit;
 
-mod error;
-mod lexer;
-mod parser;
-mod value;
-mod watcher;
-mod typecheck;
-mod codegen;
-mod jit;
-mod repl;
-mod c_interface;
+pub mod error;
+pub mod lexer;
+pub mod parser;
+pub mod value;
+pub mod watcher;
+pub mod typecheck;
+pub mod codegen;
+pub mod jit;
+pub mod repl;
+pub mod c_interface;
 
+/*
 #[cfg(test)]
 mod test;
+*/
 
 use std::fs::File;
 use std::io::Read;

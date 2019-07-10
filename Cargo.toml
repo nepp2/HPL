@@ -19,9 +19,10 @@ lazy_static = "1.2.0"
 itertools = "0.7.3"
 maplit = "1.0.1"
 llvm-sys = "70.1.0"
-inkwell = { git = "https://github.com/nepp2/inkwell", branch = "llvm7-0" }
 dlltest = { path = "dlltest" }
+cauldron_compiler = { path = "compiler" }
 libc = "0.2"
+# inkwell = { git = "https://github.com/nepp2/inkwell", branch = "llvm7-0" }
 
 [dependencies.rusttype]
 version = "0.5.2"

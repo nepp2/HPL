@@ -1,7 +1,8 @@
 
-use crate::error::Error;
-use crate::jit::Interpreter;
-use crate::typecheck::{Val, ScriptString};
+use cauldron_compiler as cc;
+use cc::error::Error;
+use cc::jit::Interpreter;
+use cc::typecheck::{Val, ScriptString};
 
 fn result_string(r : Result<Val, Error>) -> String {
   match r {

@@ -7,6 +7,7 @@
 #[macro_use] extern crate lazy_static;
 // #[macro_use] extern crate maplit;
 
+/*
 mod error;
 mod lexer;
 mod parser;
@@ -17,6 +18,7 @@ mod codegen;
 mod jit;
 mod repl;
 mod c_interface;
+*/
 
 #[cfg(test)]
 mod test;
@@ -25,9 +27,15 @@ use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
 use std::env;
-use crate::jit::Interpreter;
-use crate::typecheck::Val;
-use crate::error::Error;
+
+use cauldron_compiler as cc;
+
+use cc::jit::Interpreter;
+use cc::typecheck::Val;
+use cc::error::Error;
+use cc::typecheck;
+use cc::watcher;
+use cc::repl;
 
 pub fn print_result(r : Result<Val, Error>) -> String {
   match r {
