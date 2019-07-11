@@ -1,12 +1,8 @@
 [package]
-name = "compiler"
+name = "cauldron"
 version = "0.1.0"
 authors = ["Andrew R Martin <0andrewmartin0@gmail.com>"]
 edition = "2018"
-
-[lib]
-name = "compiler"
-#crate-type = ["dylib"] # could be `staticlib` as well
 
 [dev-dependencies]
 rusty-fork = "0.2.1"
@@ -22,10 +18,11 @@ notify = "4.0.10"
 lazy_static = "1.2.0"
 itertools = "0.7.3"
 maplit = "1.0.1"
-llvm-sys = "70.1.0"
+llvm-sys = "70.0"
 inkwell = { git = "https://github.com/nepp2/inkwell", branch = "llvm7-0" }
 libc = "0.2"
 dlltest = { path = "../dlltest" }
+libloading = "0.5"
 
 [dependencies.rusttype]
 version = "0.5.2"

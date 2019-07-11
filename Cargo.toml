@@ -1,8 +1,7 @@
 [workspace]
 
 members = [
-    "cauldron",
-    "compiler",
-    "dlltest",
-    "runtime",
+  "compiler",
+  "dlltest",
+  "runtime",
 ]

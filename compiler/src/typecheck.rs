@@ -627,7 +627,7 @@ impl <'l> TypeChecker<'l> {
       ExprTag::LiteralUnit => {
         Ok(ast(expr, Type::Void, Content::Literal(Val::Void)))
       },
-      _ => error(expr, "unsupported expression"),
+      // _ => error(expr, "unsupported expression"),
     }
   }
 }

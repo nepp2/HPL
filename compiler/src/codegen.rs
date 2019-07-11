@@ -23,8 +23,6 @@ use inkwell::values::{
   BasicValueEnum, BasicValue, FloatValue, IntValue, FunctionValue, PointerValue, GlobalValue };
 use inkwell::{FloatPredicate, IntPredicate};
 
-use llvm_sys::LLVMAttributeFunctionIndex;
-
 pub fn dump_module(module : &Module) {
   println!("{}", module.print_to_string().to_string())
 }

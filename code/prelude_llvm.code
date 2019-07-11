@@ -8,3 +8,5 @@ struct string
   data : ptr(u8)
   length : u64
 end
+
+cfun malloc(size: u64) : ptr(u8)

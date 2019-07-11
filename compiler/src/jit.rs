@@ -5,7 +5,7 @@ use crate::lexer;
 use crate::parser;
 use crate::typecheck::{
   Type, Val, StructDefinition, FunctionDefinition,
-  TypeChecker, ScriptString, AstNode };
+  TypeChecker, AstNode };
 use crate::codegen::{dump_module, Gen};
 
 use std::rc::Rc;
@@ -26,6 +26,12 @@ use llvm_sys::support::LLVMLoadLibraryPermanently;
 use llvm_sys::prelude::LLVMBool;
 
 static mut LOADED_SYMBOLS : bool = false;
+
+// TODO: fix this gross hack
+#[cfg(not(test))]
+static PRELUDE_PATH : &'static str = "code/prelude_llvm.code";
+#[cfg(test)]
+static PRELUDE_PATH : &'static str = "../code/prelude_llvm.code";
 
 fn execute<T>(function_name : &str, ee : &ExecutionEngine) -> T {
   unsafe {
@@ -113,7 +119,7 @@ impl Interpreter {
   }
 
   fn load_prelude(&mut self) -> Result<(), Error> {
-    let mut f = File::open("../code/prelude_llvm.code").expect("file not found");
+    let mut f = File::open(PRELUDE_PATH).expect("failed to load prelude");
     let mut code = String::new();
     f.read_to_string(&mut code).unwrap();
     self.load_module(&code)?;
@@ -259,18 +265,10 @@ impl Interpreter {
         execute::<()>(f, &c.ee);
         Val::Void
       }
-      Type::Ptr(t) => {
-        if let Type::U8 = t.as_ref() {
-          unsafe{
-            let ptr = execute::<*mut u8>(f, &c.ee);
-            let slice = std::slice::from_raw_parts(ptr, 10);
-            let s = std::str::from_utf8(slice).expect("wasn't a valid utf8 string!");
-            println!("transmuted string: {}", s);
-          }          
-        }
+      Type::Ptr(_) => {
         return error(expr, "can't return a pointer from a top-level function");
       }
-      Type::Struct(def) => {
+      Type::Struct(_def) => {
         return error(expr, "can't return a struct from a top-level function");
       }
     };

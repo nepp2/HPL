@@ -4,38 +4,31 @@
 #[cfg(test)]
 #[macro_use] extern crate rusty_fork;
 
-// #[macro_use] extern crate lazy_static;
+#[macro_use] extern crate lazy_static;
 // #[macro_use] extern crate maplit;
 
-/*
-mod error;
-mod lexer;
-mod parser;
-mod value;
-mod watcher;
-mod typecheck;
-mod codegen;
-mod jit;
-mod repl;
-mod c_interface;
+pub mod error;
+pub mod lexer;
+pub mod parser;
+pub mod value;
+pub mod watcher;
+pub mod typecheck;
+pub mod codegen;
+pub mod jit;
+pub mod repl;
+pub mod c_interface;
 
 #[cfg(test)]
 mod test;
-*/
 
 use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
 use std::env;
 
-use compiler as cc;
-
-use cc::jit::Interpreter;
-use cc::typecheck::Val;
-use cc::error::Error;
-use cc::typecheck;
-use cc::watcher;
-use cc::repl;
+use crate::jit::Interpreter;
+use crate::typecheck::Val;
+use crate::error::Error;
 
 pub fn print_result(r : Result<Val, Error>) -> String {
   match r {
@@ -54,10 +47,25 @@ fn load_and_run(path : &str) {
   println!("{}", print_result(result));
 }
 
+use libloading as lib;
+use llvm_sys::execution_engine::LLVMExecutionEngineRef;
+use libc::c_char;
+
+type Sig = unsafe extern fn(LLVMExecutionEngineRef, *const c_char) -> u64;
+
+fn call_dynamic() {
+  let lib = lib::Library::new("target/debug/deps/compiler.dll").unwrap();
+  unsafe {
+    let f = lib.get::<Sig>(b"LLVMGetFunctionAddress");
+    println!("Loaded: {:?}", f);
+    //Ok(func())
+  }
+}
+
 fn main(){
+  // call_dynamic();
   let args: Vec<String> = env::args().collect();
   let args: Vec<&str> = args.iter().map(|s| s.as_ref()).collect();
-  println!("ScriptString size: {}", std::mem::size_of::<typecheck::ScriptString>());
   match args[1..] {
     ["watch", f] => {
       let path = format!("code/{}.code", f);

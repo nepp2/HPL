@@ -20,7 +20,7 @@ pub extern fn drop_interpreter(i : *mut Interpreter) {
 pub extern fn lex_string(i : *mut Interpreter, code : *mut c_char) {
   let i = unsafe { &mut *i };
   let code = unsafe { CStr::from_ptr(code) };
-  let tokens =
+  let _tokens =
     lexer::lex(code.to_str().unwrap(), &mut i.sym)
     .map_err(|mut es| es.remove(0)).unwrap();
   

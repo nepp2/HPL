@@ -291,6 +291,7 @@ rusty_fork_test! {
   #[test]
   fn test_dll_function_linking() {
     // Seems to cause the symbols to be linked
+    #[allow(unused_imports)]
     use dlltest::*;
     
     let a = "
