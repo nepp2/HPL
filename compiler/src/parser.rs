@@ -1,5 +1,5 @@
 use crate::lexer::{Token, TokenType};
-use crate::value::{RefStr, SymbolTable, Expr, ExprTag};
+use crate::value::{RefStr, StringCache, Expr, ExprTag};
 use crate::error::{Error, ErrorContent, TextLocation, TextMarker, error};
 use std::collections::HashSet;
 use std::str::FromStr;
@@ -10,15 +10,15 @@ static EXPECTED_TOKEN_ERROR : &str = "Expected token. Found nothing.";
 struct ParseState<'l> {
   tokens : Vec<Token>,
   pos : usize,
-  sym : &'l mut SymbolTable,
+  cache : &'l mut StringCache,
 }
 
 use TokenType::*;
 
 impl <'l> ParseState<'l> {
 
-  fn new(tokens : Vec<Token>, sym : &mut SymbolTable,) -> ParseState {
-    ParseState { tokens, pos: 0, sym }
+  fn new(tokens : Vec<Token>, cache : &mut StringCache,) -> ParseState {
+    ParseState { tokens, pos: 0, cache }
   }
 
   fn has_tokens(&self) -> bool {
@@ -119,7 +119,7 @@ impl <'l> ParseState<'l> {
     (&mut self, s : T, children : Vec<Expr>, start : TextMarker) -> Expr
   {
     let loc = self.loc(start);
-    let tag = ExprTag::Tree(self.sym.get(s));
+    let tag = ExprTag::Tree(self.cache.get(s));
     self.add_expr(tag, children, loc)
   }
 
@@ -127,7 +127,7 @@ impl <'l> ParseState<'l> {
     (&mut self, s : T, start : TextMarker) -> Expr
   {
     let loc = self.loc(start);
-    let tag = ExprTag::Symbol(self.sym.get(s));
+    let tag = ExprTag::Symbol(self.cache.get(s));
     self.add_expr(tag, vec!(), loc)
   }
 }
@@ -391,7 +391,7 @@ fn parse_cfun(ps : &mut ParseState) -> Result<Expr, Error> {
     parse_type(ps)?
   }
   else {
-    ps.add_symbol("", start)
+    ps.add_tree("()", vec!(), start)
   };
   let cfun_expr = ps.add_tree("cfun", vec![fun_name, args_expr, return_type], start);
   Ok(cfun_expr)
@@ -684,7 +684,7 @@ fn parse_block(ps : &mut ParseState) -> Result<Expr, Error> {
   Ok(ps.add_tree("block", exprs, start))
 }
 
-pub fn parse(tokens : Vec<Token>, symbols : &mut SymbolTable) -> Result<Expr, Error> {
+pub fn parse(tokens : Vec<Token>, symbols : &mut StringCache) -> Result<Expr, Error> {
   let mut ps = ParseState::new(tokens, symbols);
   let e = parse_block(&mut ps)?;
   if ps.has_tokens() {
@@ -699,7 +699,7 @@ pub enum ReplParseResult {
   Incomplete,
 }
 
-pub fn repl_parse(tokens : Vec<Token>, symbols : &mut SymbolTable) -> Result<ReplParseResult, Error> {
+pub fn repl_parse(tokens : Vec<Token>, symbols : &mut StringCache) -> Result<ReplParseResult, Error> {
   use ReplParseResult::*;
   let mut ps = ParseState::new(tokens, symbols);
   match parse_block(&mut ps) {

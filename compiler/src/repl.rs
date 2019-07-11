@@ -15,7 +15,7 @@ pub fn run_repl() {
 
     loop {
       let lex_result =
-        lexer::lex(input_line.as_str(), &mut i.sym)
+        lexer::lex(input_line.as_str(), &mut i.cache)
         .map_err(|mut es| es.remove(0));
       let tokens = match lex_result {
         Ok(tokens) => tokens,
@@ -24,7 +24,7 @@ pub fn run_repl() {
           break;
         }
       };
-      let parsing_result = parser::repl_parse(tokens, &mut i.sym);
+      let parsing_result = parser::repl_parse(tokens, &mut i.cache);
       match parsing_result {
         Ok(Complete(e)) => {
           // we have parsed a full expression

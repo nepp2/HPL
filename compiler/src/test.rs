@@ -1,7 +1,8 @@
 
 use crate::error::Error;
 use crate::jit::Interpreter;
-use crate::typecheck::{Val, ScriptString};
+use crate::typecheck::Val;
+use crate::c_interface::ScriptString;
 
 fn result_string(r : Result<Val, Error>) -> String {
   match r {

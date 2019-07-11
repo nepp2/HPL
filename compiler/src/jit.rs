@@ -1,18 +1,18 @@
 
 use crate::error::{Error, error, error_raw};
-use crate::value::{SymbolTable, display_expr, RefStr, Expr};
+use crate::value::{StringCache, display_expr, RefStr, Expr};
 use crate::lexer;
 use crate::parser;
 use crate::typecheck::{
   Type, Val, StructDefinition, FunctionDefinition,
   TypeChecker, AstNode };
 use crate::codegen::{dump_module, Gen};
+use crate::c_interface::CLibraries;
 
 use std::rc::Rc;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
-use std::ffi::CString;
 
 use inkwell::context::{Context};
 use inkwell::module::{Module, Linkage};
@@ -23,15 +23,14 @@ use inkwell::execution_engine::ExecutionEngine;
 use inkwell::targets::{InitializationConfig, Target, TargetData}; // TODO: DELETE?
 
 use llvm_sys::support::LLVMLoadLibraryPermanently;
-use llvm_sys::prelude::LLVMBool;
 
 static mut LOADED_SYMBOLS : bool = false;
 
 // TODO: fix this gross hack
 #[cfg(not(test))]
-static PRELUDE_PATH : &'static str = "code/prelude_llvm.code";
+static PRELUDE_PATH : &'static str = "code/prelude.code";
 #[cfg(test)]
-static PRELUDE_PATH : &'static str = "../code/prelude_llvm.code";
+static PRELUDE_PATH : &'static str = "../code/prelude.code";
 
 fn execute<T>(function_name : &str, ee : &ExecutionEngine) -> T {
   unsafe {
@@ -50,25 +49,14 @@ pub struct CompiledExpression {
 }
 
 pub struct Interpreter {
-  pub sym : SymbolTable,
+  pub cache : StringCache,
   pub context : Context,
   pub modules : Vec<CompiledExpression>,
+  pub c_libs : CLibraries,
   pub functions : HashMap<RefStr, Rc<FunctionDefinition>>,
   pub compiled_functions : HashMap<RefStr, FunctionValue>,
   pub struct_types : HashMap<RefStr, Rc<StructDefinition>>,
   pub global_var_types: HashMap<RefStr, Type>,
-}
-
-// TODO: delete this?
-unsafe fn load_dll(path : &str) {
-  #[cfg(not(debug_assertions))]
-  let s = "release";
-  #[cfg(debug_assertions)]
-  let s = "debug";
-  let path = format!("target/{}/deps/{}", s, path);
-  let dll_name = CString::new(path.as_str()).expect("Conversion to CString failed unexpectedly");
-  let b : LLVMBool = LLVMLoadLibraryPermanently(dll_name.as_ptr());
-  println!("Loaded '{}'? - {}", path, b != 0);
 }
 
 impl Interpreter {
@@ -84,25 +72,24 @@ impl Interpreter {
         // DLLs used by the main exe.
         LLVMLoadLibraryPermanently(std::ptr::null());
 
-        //load_thing("C:/Users/andrew/workspace/cauldron/target/debug/deps/dlltest.dll");
         LOADED_SYMBOLS = true;
       }
     }
 
-    let sym = SymbolTable::new();
+    let cache = StringCache::new();
     let context = Context::create();
+    let modules = vec!();
+    let c_libs = CLibraries::new();
     let functions = HashMap::new();
     let compiled_functions = HashMap::new();
     let struct_types = HashMap::new();
     let global_var_types = HashMap::new();
 
-    let modules = vec!();
-
     let mut i = 
       Interpreter {
-        sym, context, modules, functions,
-        compiled_functions, struct_types,
-        global_var_types };
+        cache, context, modules, c_libs,
+        functions, compiled_functions,
+        struct_types, global_var_types };
     
     // load prelude
     if let Err(e) = i.load_prelude() {
@@ -128,9 +115,9 @@ impl Interpreter {
 
   fn parse_string(&mut self, code : &str) -> Result<Expr, Error> {
     let tokens =
-      lexer::lex(code, &mut self.sym)
+      lexer::lex(code, &mut self.cache)
       .map_err(|mut es| es.remove(0))?;
-    parser::parse(tokens, &mut self.sym)
+    parser::parse(tokens, &mut self.cache)
   }
 
   pub fn run(&mut self, code : &str) -> Result<Val, Error> {;
@@ -142,7 +129,7 @@ impl Interpreter {
     let mut type_checker =
       TypeChecker::new(
         true, HashMap::new(), &mut self.functions, &mut self.struct_types,
-        &mut self.global_var_types, &mut self.sym);
+        &mut self.global_var_types, &self.c_libs.local_symbol_table, &mut self.cache);
     let ast = type_checker.to_ast(expr)?;
     let module_name = format!("module_{}", self.modules.len());
     let mut module = self.context.create_module(&module_name);
@@ -164,20 +151,34 @@ impl Interpreter {
 
     let mut external_globals : HashMap<RefStr, GlobalValue> = HashMap::new();
     let mut external_functions : HashMap<RefStr, FunctionValue> = HashMap::new();
+    let mut c_functions : HashMap<RefStr, FunctionValue> = HashMap::new();
     let f = {
       let jit =
         Gen::new(
           &mut self.context, &mut module, &mut self.compiled_functions, &self.functions,
-          &mut external_globals, &mut external_functions, &self.global_var_types,
+          &mut external_globals, &mut external_functions, &mut c_functions, &self.global_var_types,
           &self.struct_types, &pm);
       jit.codegen_module(&ast)?
     };
+
+    // TODO: provide an option for this?
     println!("{}", display_expr(expr));
     dump_module(&module);
 
     let ee =
       module.create_jit_execution_engine(OptimizationLevel::None)
       .map_err(|e| error_raw(expr, e.to_string()))?;
+
+    // Link c functions
+    for (function_name, function_value) in c_functions.iter() {
+      let address = *self.c_libs.local_symbol_table.get(function_name).unwrap();
+      unsafe {
+        let p = address as *mut ();
+        let p : extern "C" fn() = std::mem::transmute(p);
+        p();
+      }
+      ee.add_global_mapping(function_value, address);
+    }
 
     // Link global variables
     for (global_name, global_value) in external_globals.iter() {
@@ -208,6 +209,7 @@ impl Interpreter {
         }
       }
     }
+
     // TODO: is this needed?
     ee.run_static_constructors();
 

@@ -155,6 +155,7 @@ pub struct Gen<'l> {
   function_defs: &'l HashMap<RefStr, Rc<FunctionDefinition>>,
   external_globals: &'l mut HashMap<RefStr, GlobalValue>,
   external_functions: &'l mut HashMap<RefStr, FunctionValue>,
+  c_functions: &'l mut HashMap<RefStr, FunctionValue>,
   global_var_types: &'l HashMap<RefStr, Type>,
   variables: HashMap<RefStr, PointerValue>,
   struct_types: HashMap<RefStr, StructType>,
@@ -175,6 +176,7 @@ impl <'l> Gen<'l> {
     function_defs: &'l HashMap<RefStr, Rc<FunctionDefinition>>,
     external_globals: &'l mut HashMap<RefStr, GlobalValue>,
     external_functions: &'l mut HashMap<RefStr, FunctionValue>,
+    c_functions: &'l mut HashMap<RefStr, FunctionValue>,
     global_var_types: &'l HashMap<RefStr, Type>,
     struct_definitions: &'l HashMap<RefStr, Rc<StructDefinition>>,
     pm : &'l PassManager<FunctionValue>,
@@ -189,6 +191,7 @@ impl <'l> Gen<'l> {
       function_defs,
       external_globals,
       external_functions,
+      c_functions,
       global_var_types, variables,
       struct_types: HashMap::new(),
       struct_definitions,
@@ -202,7 +205,7 @@ impl <'l> Gen<'l> {
   {
     Gen::new(
       self.context, self.module, self.functions, self.function_defs,  self.external_globals,
-      self.external_functions, global_var_types, self.struct_definitions, self.pm)
+      self.external_functions, self.c_functions, global_var_types, self.struct_definitions, self.pm)
   }
 
   fn create_entry_block_alloca(&self, t : BasicTypeEnum, name : &str) -> PointerValue {
@@ -463,7 +466,6 @@ impl <'l> Gen<'l> {
       arg_vals.push(v);
     }
     let call = self.builder.build_call(f, arg_vals.as_slice(), "tmp");
-    println!("{:?}", call);
     let r = call.try_as_basic_value().left();
     return Ok(r.map(reg));
   }
@@ -624,6 +626,7 @@ impl <'l> Gen<'l> {
       Content::CFunctionPrototype(def) => {
         let f = self.codegen_prototype(&def.name, &def.signature.return_type, &def.args, &def.signature.args);
         self.functions.insert(def.name.clone(), f);
+        self.c_functions.insert(def.name.clone(), f);
         return Ok(None);
       }
       Content::FunctionDefinition(def, body) => {
@@ -920,10 +923,10 @@ impl <'l> Gen<'l> {
 
     // TODO: function.set_call_conventions(8);
     let i : u32 = !0; //LLVMAttributeFunctionIndex;
-    function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("norecurse"), 0));
+    //function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("norecurse"), 0));
     function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("nounwind"), 0));
     function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("nonlazybind"), 0));
-    function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("readnone"), 0));
+    //function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("readnone"), 0));
     function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("uwtable"), 0));
     function.add_attribute(i, self.context.create_string_attribute("probe-stack", "__rust_probestack"));
     function.add_attribute(i, self.context.create_string_attribute("target-cpu", "x86-64"));

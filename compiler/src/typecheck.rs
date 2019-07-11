@@ -3,44 +3,10 @@ use std::rc::Rc;
 use std::fmt::Write;
 
 use crate::error::{Error, error, error_raw, TextLocation};
-use crate::value::{SymbolTable, RefStr, Expr, ExprTag};
+use crate::value::{StringCache, RefStr, Expr, ExprTag};
 
 use std::collections::HashMap;
 use itertools::Itertools;
-
-#[no_mangle]
-#[derive(PartialEq, Debug, Copy, Clone)]
-#[repr(C)]
-pub struct ScriptString {
-  pub ptr : *mut u8,
-  pub length : u64,
-}
-
-impl ScriptString {
-  /*
-  pub fn new(mut s : String) -> ScriptString {
-    let v = unsafe { s.as_mut_vec() };
-    v.shrink_to_fit();
-    let ss = ScriptString { ptr: v.as_mut_ptr(), length: v.capacity() as u64 };
-    std::mem::forget(s);
-    ss
-  }
-  */
-
-  pub fn as_str(&self) -> &str {
-    let slice = unsafe { std::slice::from_raw_parts(self.ptr, self.length as usize) };
-    std::str::from_utf8(slice).expect("wasn't a valid utf8 string!")
-  }
-}
-/*
-impl Drop for ScriptString {
-  fn drop(&mut self) {
-    unsafe {
-      Vec::from_raw_parts(self.ptr, self.length as usize, self.length as usize);
-    }
-  }
-}
-*/
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Type {
@@ -209,12 +175,13 @@ pub struct TypeChecker<'l> {
   functions: &'l mut HashMap<RefStr, Rc<FunctionDefinition>>,
   struct_types : &'l mut HashMap<RefStr, Rc<StructDefinition>>,
   global_variables : &'l mut HashMap<RefStr, Type>,
+  local_symbol_table : &'l HashMap<RefStr, usize>,
 
   /// Tracks which variables are available, when.
   /// Used to rename variables with clashing names.
   scope_map: Vec<HashMap<RefStr, RefStr>>,
 
-  sym: &'l mut SymbolTable,
+  cache: &'l mut StringCache,
 }
 
 impl <'l> TypeChecker<'l> {
@@ -225,7 +192,8 @@ impl <'l> TypeChecker<'l> {
     functions : &'l mut HashMap<RefStr, Rc<FunctionDefinition>>,
     struct_types : &'l mut HashMap<RefStr, Rc<StructDefinition>>,
     global_variables : &'l mut HashMap<RefStr, Type>,
-    sym : &'l mut SymbolTable)
+    local_symbol_table : &'l HashMap<RefStr, usize>,
+    cache : &'l mut StringCache)
       -> TypeChecker<'l>
   {
     let global_map = global_variables.keys().map(|n| (n.clone(), n.clone())).collect();
@@ -235,7 +203,8 @@ impl <'l> TypeChecker<'l> {
       functions,
       struct_types,
       global_variables,
-      sym,
+      local_symbol_table,
+      cache,
       scope_map: vec!(global_map),
     }
   }
@@ -453,7 +422,12 @@ impl <'l> TypeChecker<'l> {
               args: arg_names,
               signature,
             });
+            if !self.local_symbol_table.contains_key(name) {
+              // TODO: check the signature of the function too
+              return error(expr, "tried to bind non-existing C function")
+            }
             self.functions.insert(name.clone(), def.clone());
+            
             Ok(ast(expr, Type::Void, Content::CFunctionPrototype(def)))
           }
           ("fun", exprs) => {
@@ -474,7 +448,7 @@ impl <'l> TypeChecker<'l> {
             let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
             let mut empty_global_map = HashMap::new(); // hide globals from child functions
             let mut type_checker =
-              TypeChecker::new(false, args, self.functions, self.struct_types, &mut empty_global_map, self.sym);
+              TypeChecker::new(false, args, self.functions, self.struct_types, &mut empty_global_map, self.local_symbol_table, self.cache);
             let body = type_checker.to_ast(function_body)?;
             if self.functions.contains_key(name.as_ref()) {
               return error(expr, "function with that name already defined");

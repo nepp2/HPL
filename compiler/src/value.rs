@@ -88,12 +88,12 @@ impl <'l> Into<TextLocation> for &'l Expr {
 }
 
 #[derive(Default)]
-pub struct SymbolTable {
+pub struct StringCache {
   symbols : HashSet<RefStr>,
 }
 
-impl SymbolTable {
-  pub fn new() -> SymbolTable {
+impl StringCache {
+  pub fn new() -> StringCache {
     Default::default()
   }
 
