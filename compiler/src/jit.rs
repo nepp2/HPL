@@ -135,8 +135,10 @@ impl Interpreter {
     let mut module = self.context.create_module(&module_name);
 
     // TODO: remove?
-    let target = TargetData::create("e-m:e-i64:64-f80:128-n8:16:32:64-S128");
+    let target = TargetData::create("e-m:w-i64:64-f80:128-n8:16:32:64-S128");
     module.set_data_layout(&target.get_data_layout());
+    let target = Target::from_name("x86-64").unwrap();  // "x86_64-pc-windows-msvc"
+    //module.set_target(&target);
 
     let pm = PassManager::create(&module);
     pm.add_instruction_combining_pass();
