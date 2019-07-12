@@ -20,7 +20,7 @@ use inkwell::passes::PassManager;
 use inkwell::values::{FunctionValue, GlobalValue};
 use inkwell::OptimizationLevel;
 use inkwell::execution_engine::ExecutionEngine;
-use inkwell::targets::{InitializationConfig, Target, TargetData}; // TODO: DELETE?
+use inkwell::targets::{InitializationConfig, Target, TargetData, TargetMachine};
 
 use llvm_sys::support::LLVMLoadLibraryPermanently;
 
@@ -64,7 +64,7 @@ impl Interpreter {
 
     unsafe {
       if !LOADED_SYMBOLS {
-        // TODO: DELETE?
+        // TODO: delete?
         Target::initialize_native(&InitializationConfig::default()).expect("Failed to initialize native target");
 
         // This makes sure that any symbols in the main executable can be
@@ -135,10 +135,17 @@ impl Interpreter {
     let mut module = self.context.create_module(&module_name);
 
     // TODO: remove?
-    let target = TargetData::create("e-m:w-i64:64-f80:128-n8:16:32:64-S128");
-    module.set_data_layout(&target.get_data_layout());
-    let target = Target::from_name("x86-64").unwrap();  // "x86_64-pc-windows-msvc"
-    //module.set_target(&target);
+    // let target = TargetData::create("e-m:w-i64:64-f80:128-n8:16:32:64-S128");
+    // module.set_data_layout(&target.get_data_layout());
+
+    // let target = Target::from_triple("x86_64-pc-windows-msvc").unwrap();
+    // module.set_target(&target);
+
+    // let mut next = Target::get_first();
+    // while let Some(t) = next {
+    //   println!("TARGET: {:?}", t.get_description());
+    //   next = t.get_next();
+    // }
 
     let pm = PassManager::create(&module);
     pm.add_instruction_combining_pass();
@@ -173,13 +180,27 @@ impl Interpreter {
 
     // Link c functions
     for (function_name, function_value) in c_functions.iter() {
-      let address = *self.c_libs.local_symbol_table.get(function_name).unwrap();
-      unsafe {
-        let p = address as *mut ();
-        let p : extern "C" fn() = std::mem::transmute(p);
-        p();
+      /*
+        What's happening is that I am trying to load a pointer
+        into a prototype in one module. Then I try to call the
+        function in another module, which means the external
+        function must be populated using the prototype, which
+        doesn't work.
+      */
+      if let Some(address) = self.c_libs.local_symbol_table.get(function_name) {
+        println!("Storing address '{}' for function '{}'", *address, function_name);
+        ee.add_global_mapping(function_value, *address as usize);
+        unsafe {
+          //println!("{:?}", ee.get_global_address(function_name));
+          // println!("Calling function '{}' at address '{:?}'", function_name, address);
+          // let p = address as *mut ();
+          // let p : extern "C" fn() = std::mem::transmute(p);
+          // p();
+        }
       }
-      ee.add_global_mapping(function_value, address);
+      else {
+        println!("Warning: unlinked symbol '{}'. May be handled by system linker.", function_name);
+      }
     }
 
     // Link global variables

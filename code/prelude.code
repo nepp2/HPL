@@ -17,4 +17,9 @@ end
 
 cfun load_library(name : string) : lib_handle
 
-cfun hello()
+fun max(a : i64, b : i64)
+  if a > b then a else b end
+end
+
+fun id()
+end

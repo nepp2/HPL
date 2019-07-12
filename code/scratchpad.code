@@ -1,8 +1,14 @@
 
-let s = "hello beaver booper"
+cfun function_from_dll(a : i64, b : i64) : i64
+function_from_dll(17, 7)
 
-let ss = string { data: s, length: 4 as u64 }
+cfun print(data : ptr(u8), length : u64)
 
-let b = [ss]
+# let s = "fuck you"
 
-s
+# print(s.data, s.length)
+
+cfun hello()
+
+hello()
+max(12, 7)

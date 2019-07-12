@@ -175,7 +175,7 @@ pub struct TypeChecker<'l> {
   functions: &'l mut HashMap<RefStr, Rc<FunctionDefinition>>,
   struct_types : &'l mut HashMap<RefStr, Rc<StructDefinition>>,
   global_variables : &'l mut HashMap<RefStr, Type>,
-  local_symbol_table : &'l HashMap<RefStr, usize>,
+  local_symbol_table : &'l HashMap<RefStr, u64>,
 
   /// Tracks which variables are available, when.
   /// Used to rename variables with clashing names.
@@ -192,7 +192,7 @@ impl <'l> TypeChecker<'l> {
     functions : &'l mut HashMap<RefStr, Rc<FunctionDefinition>>,
     struct_types : &'l mut HashMap<RefStr, Rc<StructDefinition>>,
     global_variables : &'l mut HashMap<RefStr, Type>,
-    local_symbol_table : &'l HashMap<RefStr, usize>,
+    local_symbol_table : &'l HashMap<RefStr, u64>,
     cache : &'l mut StringCache)
       -> TypeChecker<'l>
   {
@@ -424,7 +424,7 @@ impl <'l> TypeChecker<'l> {
             });
             if !self.local_symbol_table.contains_key(name) {
               // TODO: check the signature of the function too
-              return error(expr, "tried to bind non-existing C function")
+              // return error(expr, "tried to bind non-existing C function")
             }
             self.functions.insert(name.clone(), def.clone());
             
@@ -584,7 +584,8 @@ impl <'l> TypeChecker<'l> {
       }
       ExprTag::LiteralString(s) => {
         let v = Val::String(s.to_string());
-        Ok(ast(expr, Type::Ptr(Box::new(Type::U8)), Content::Literal(v)))
+        let s = self.struct_types.get("string").unwrap();
+        Ok(ast(expr, Type::Struct(s.clone()), Content::Literal(v)))
       }
       ExprTag::LiteralFloat(f) => {
         let v = Val::F64(*f as f64);

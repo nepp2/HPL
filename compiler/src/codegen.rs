@@ -222,7 +222,7 @@ impl <'l> Gen<'l> {
   }
 
   fn add_global(&mut self, initial_value : BasicValueEnum, is_constant : bool, name : &str) -> PointerValue {
-    let gv = self.module.add_global(initial_value.get_type(), Some(AddressSpace::Global), name);
+    let gv = self.module.add_global(initial_value.get_type(), Some(AddressSpace::Generic), name);
     gv.set_initializer(&initial_value);
     gv.set_constant(is_constant);
     gv.set_linkage(Linkage::Internal);
@@ -625,6 +625,7 @@ impl <'l> Gen<'l> {
       }
       Content::CFunctionPrototype(def) => {
         let f = self.codegen_prototype(&def.name, &def.signature.return_type, &def.args, &def.signature.args);
+        f.set_linkage(Linkage::External);
         self.functions.insert(def.name.clone(), f);
         self.c_functions.insert(def.name.clone(), f);
         return Ok(None);
@@ -721,7 +722,7 @@ impl <'l> Gen<'l> {
         }
         else if let Some(type_tag) = self.global_var_types.get(name) {
           let t = self.to_basic_type(type_tag).unwrap();
-          let gv = self.module.add_global(t, Some(AddressSpace::Global), &name);
+          let gv = self.module.add_global(t, Some(AddressSpace::Generic), &name);
           gv.set_constant(false);
           self.external_globals.insert(name.clone(), gv);
           pointer(gv.as_pointer_value())
@@ -856,7 +857,7 @@ impl <'l> Gen<'l> {
       }
     }
     else {
-      self.context.void_type().ptr_type(AddressSpace::Local)
+      self.context.void_type().ptr_type(AddressSpace::Generic)
     }
   }
 
