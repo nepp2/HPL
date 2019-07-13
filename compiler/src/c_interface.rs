@@ -31,7 +31,7 @@ pub extern fn lex_string(i : *mut Interpreter, code : *mut c_char) {
 }
 
 #[no_mangle]
-#[derive(PartialEq, Debug, Copy, Clone)]
+#[derive(Copy, Clone)]
 #[repr(C)]
 pub struct ScriptString {
   pub ptr : *mut u8,
@@ -66,16 +66,27 @@ pub extern "C" fn hello_world() {
   println!("Hello world");
 }
 
+/*
+  Doesn't work because windows does this:
+
+      define void @print({ i8*, i64 }* noalias nocapture dereferenceable(16) %s) unnamed_addr #3
+
+  To trust Godbolt, I have to pass an argument to rustc to stop it from assuming linux:
+
+      --target x86_64-pc-windows-msvc
+
+*/
+#[no_mangle]
+pub extern "C" fn print(s : ScriptString) {
+  println!("{}", s.as_str());
+}
+
 #[no_mangle]
 pub extern "C" fn load_library_c(file_name : ScriptString) -> usize {
-  println!("calling the load library function");
-  500
-  /*
   match load_library(file_name.as_str()) {
     Some(v) => v,
     None => 0,
   }
-  */
 }
 
 static mut SHARED_LIBRARIES : Option<HashMap<usize, (RefStr, Library)>> = None;
@@ -112,6 +123,7 @@ impl CLibraries {
     cache.insert("load_library".into(), (load_library_c as *const()) as usize);
     cache.insert("malloc".into(), (malloc as *const()) as usize);
     cache.insert("hello".into(), (hello_world as *const()) as usize);
+    cache.insert("print".into(), (print as *const()) as usize);
 
     CLibraries {
       local_symbol_table: cache,

@@ -1,12 +1,13 @@
 
-cfun function_from_dll(a : i64, b : i64) : i64
-#function_from_dll(17, 7)
-
-cfun print(data : ptr(u8), length : u64)
-
 # let s = "fuck you"
 
 # print(s.data, s.length)
 
 hello()
 max(12, 7)
+
+let s = ["printing probably doesn't work"]
+
+cfun print(s : ptr(string))
+
+print(s)
