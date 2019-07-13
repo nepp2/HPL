@@ -151,11 +151,17 @@ pub struct Gen<'l> {
   context: &'l mut Context,
   module : &'l mut Module,
   builder: Builder,
-  functions: &'l mut HashMap<RefStr, FunctionValue>,
   function_defs: &'l HashMap<RefStr, Rc<FunctionDefinition>>,
+
+  /// Used by the JIT to link globals between modules
   external_globals: &'l mut HashMap<RefStr, GlobalValue>,
+
+  /// Used by the JIT to link functions between modules
   external_functions: &'l mut HashMap<RefStr, FunctionValue>,
-  c_functions: &'l mut HashMap<RefStr, FunctionValue>,
+
+  /// Used by the JIT to link c functions
+  c_functions: &'l mut HashMap<RefStr, (FunctionValue, usize)>,
+
   global_var_types: &'l HashMap<RefStr, Type>,
   variables: HashMap<RefStr, PointerValue>,
   struct_types: HashMap<RefStr, StructType>,
@@ -172,11 +178,10 @@ impl <'l> Gen<'l> {
   pub fn new(
     context: &'l mut Context,
     module : &'l mut Module,
-    functions: &'l mut HashMap<RefStr, FunctionValue>,
     function_defs: &'l HashMap<RefStr, Rc<FunctionDefinition>>,
     external_globals: &'l mut HashMap<RefStr, GlobalValue>,
     external_functions: &'l mut HashMap<RefStr, FunctionValue>,
-    c_functions: &'l mut HashMap<RefStr, FunctionValue>,
+    c_functions: &'l mut HashMap<RefStr, (FunctionValue, usize)>,
     global_var_types: &'l HashMap<RefStr, Type>,
     struct_definitions: &'l HashMap<RefStr, Rc<StructDefinition>>,
     pm : &'l PassManager<FunctionValue>,
@@ -187,7 +192,6 @@ impl <'l> Gen<'l> {
     let variables = HashMap::new();
     Gen {
       context, module, builder,
-      functions,
       function_defs,
       external_globals,
       external_functions,
@@ -204,7 +208,7 @@ impl <'l> Gen<'l> {
     -> Gen<'lc>
   {
     Gen::new(
-      self.context, self.module, self.functions, self.function_defs,  self.external_globals,
+      self.context, self.module, self.function_defs,  self.external_globals,
       self.external_functions, self.c_functions, global_var_types, self.struct_definitions, self.pm)
   }
 
@@ -440,10 +444,10 @@ impl <'l> Gen<'l> {
   fn codegen_function_call(&mut self, ast : &AstNode, name : &RefStr, args : &[AstNode])
     -> Result<Option<GenVal>, Error>
   {
-    let f =
-      *self.functions.get(name)
+    let def =
+      self.function_defs.get(name)
       .ok_or_else(|| error_raw(ast.loc, format!("could not find function with name '{}'", name)))?;
-    if f.count_params() as usize != args.len() {
+    if def.args.len() != args.len() {
         return error(ast.loc, "incorrect number of arguments passed");
     }
     // insert a prototype if needed
@@ -452,10 +456,15 @@ impl <'l> Gen<'l> {
         local_f
       }
       else{
-        let def = self.function_defs.get(name).unwrap();
         let f = self.codegen_prototype(&def.name, &def.signature.return_type, &def.args, &def.signature.args);
-        f.set_linkage(Linkage::External);
-        self.external_functions.insert(name.clone(), f);
+        // TODO is this needed?
+        // f.set_linkage(Linkage::External);
+        if let Some(address) = def.c_function_address {
+          self.c_functions.insert(name.clone(), (f, address));
+        }
+        else {
+          self.external_functions.insert(name.clone(), f);
+        }
         f
       }
     };
@@ -624,10 +633,6 @@ impl <'l> Gen<'l> {
         return Ok(None);
       }
       Content::CFunctionPrototype(def) => {
-        let f = self.codegen_prototype(&def.name, &def.signature.return_type, &def.args, &def.signature.args);
-        f.set_linkage(Linkage::External);
-        self.functions.insert(def.name.clone(), f);
-        self.c_functions.insert(def.name.clone(), f);
         return Ok(None);
       }
       Content::FunctionDefinition(def, body) => {
@@ -950,10 +955,6 @@ impl <'l> Gen<'l> {
       -> Result<FunctionValue, Error>
   {
     let function = self.codegen_prototype(name, &body.type_tag, args, arg_types);
-
-    if !is_top_level {
-      self.functions.insert(name.into(), function);
-    }
 
     // this function is here because Rust doesn't have a proper try/catch yet
     fn generate(

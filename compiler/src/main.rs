@@ -63,8 +63,8 @@ fn call_dynamic() {
 }
 
 // TODO: IF THIS IS HERE, THE TESTS BREAK FOR SOME FUCKING REASON
-#[allow(unused_imports)]
-use dlltest::*;
+// #[allow(unused_imports)]
+// use dlltest::*;
 
 fn main(){
   // call_dynamic();

@@ -54,7 +54,6 @@ pub struct Interpreter {
   pub modules : Vec<CompiledExpression>,
   pub c_libs : CLibraries,
   pub functions : HashMap<RefStr, Rc<FunctionDefinition>>,
-  pub compiled_functions : HashMap<RefStr, FunctionValue>,
   pub struct_types : HashMap<RefStr, Rc<StructDefinition>>,
   pub global_var_types: HashMap<RefStr, Type>,
 }
@@ -81,15 +80,14 @@ impl Interpreter {
     let modules = vec!();
     let c_libs = CLibraries::new();
     let functions = HashMap::new();
-    let compiled_functions = HashMap::new();
     let struct_types = HashMap::new();
     let global_var_types = HashMap::new();
 
     let mut i = 
       Interpreter {
         cache, context, modules, c_libs,
-        functions, compiled_functions,
-        struct_types, global_var_types };
+        functions, struct_types,
+        global_var_types };
     
     // load prelude
     if let Err(e) = i.load_prelude() {
@@ -160,12 +158,12 @@ impl Interpreter {
 
     let mut external_globals : HashMap<RefStr, GlobalValue> = HashMap::new();
     let mut external_functions : HashMap<RefStr, FunctionValue> = HashMap::new();
-    let mut c_functions : HashMap<RefStr, FunctionValue> = HashMap::new();
+    let mut c_functions : HashMap<RefStr, (FunctionValue, usize)> = HashMap::new();
     let f = {
       let jit =
         Gen::new(
-          &mut self.context, &mut module, &mut self.compiled_functions, &self.functions,
-          &mut external_globals, &mut external_functions, &mut c_functions, &self.global_var_types,
+          &mut self.context, &mut module, &self.functions, &mut external_globals,
+          &mut external_functions, &mut c_functions, &self.global_var_types,
           &self.struct_types, &pm);
       jit.codegen_module(&ast)?
     };
@@ -179,28 +177,8 @@ impl Interpreter {
       .map_err(|e| error_raw(expr, e.to_string()))?;
 
     // Link c functions
-    for (function_name, function_value) in c_functions.iter() {
-      /*
-        What's happening is that I am trying to load a pointer
-        into a prototype in one module. Then I try to call the
-        function in another module, which means the external
-        function must be populated using the prototype, which
-        doesn't work.
-      */
-      if let Some(address) = self.c_libs.local_symbol_table.get(function_name) {
-        println!("Storing address '{}' for function '{}'", *address, function_name);
-        ee.add_global_mapping(function_value, *address as usize);
-        unsafe {
-          //println!("{:?}", ee.get_global_address(function_name));
-          // println!("Calling function '{}' at address '{:?}'", function_name, address);
-          // let p = address as *mut ();
-          // let p : extern "C" fn() = std::mem::transmute(p);
-          // p();
-        }
-      }
-      else {
-        println!("Warning: unlinked symbol '{}'. May be handled by system linker.", function_name);
-      }
+    for (function_value, address) in c_functions.values() {
+      ee.add_global_mapping(function_value, *address);
     }
 
     // Link global variables

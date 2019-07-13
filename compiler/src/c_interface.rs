@@ -101,7 +101,7 @@ pub fn load_library(file_name : &str) -> Option<usize> {
 }
 
 pub struct CLibraries {
-  pub local_symbol_table : HashMap<RefStr, u64>,
+  pub local_symbol_table : HashMap<RefStr, usize>,
   pub shared_libraries : HashMap<usize, (RefStr, Library)>,
   pub lib_handle_counter : usize,
 }
@@ -109,9 +109,9 @@ pub struct CLibraries {
 impl CLibraries {
   pub fn new() -> CLibraries {
     let mut cache = HashMap::new();
-    cache.insert("load_library".into(), (load_library_c as *const()) as u64);
-    cache.insert("malloc".into(), (malloc as *const()) as u64);
-    cache.insert("hello".into(), (hello_world as *const()) as u64);
+    cache.insert("load_library".into(), (load_library_c as *const()) as usize);
+    cache.insert("malloc".into(), (malloc as *const()) as usize);
+    cache.insert("hello".into(), (hello_world as *const()) as usize);
 
     CLibraries {
       local_symbol_table: cache,

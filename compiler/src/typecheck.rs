@@ -99,7 +99,8 @@ pub struct StructDefinition {
 pub struct FunctionDefinition {
   pub name : RefStr,
   pub args : Vec<RefStr>,
-  pub signature : Rc<FunctionSignature>
+  pub signature : Rc<FunctionSignature>,
+  pub c_function_address : Option<usize>,
 }
 
 #[derive(Debug)]
@@ -175,7 +176,7 @@ pub struct TypeChecker<'l> {
   functions: &'l mut HashMap<RefStr, Rc<FunctionDefinition>>,
   struct_types : &'l mut HashMap<RefStr, Rc<StructDefinition>>,
   global_variables : &'l mut HashMap<RefStr, Type>,
-  local_symbol_table : &'l HashMap<RefStr, u64>,
+  local_symbol_table : &'l HashMap<RefStr, usize>,
 
   /// Tracks which variables are available, when.
   /// Used to rename variables with clashing names.
@@ -192,7 +193,7 @@ impl <'l> TypeChecker<'l> {
     functions : &'l mut HashMap<RefStr, Rc<FunctionDefinition>>,
     struct_types : &'l mut HashMap<RefStr, Rc<StructDefinition>>,
     global_variables : &'l mut HashMap<RefStr, Type>,
-    local_symbol_table : &'l HashMap<RefStr, u64>,
+    local_symbol_table : &'l HashMap<RefStr, usize>,
     cache : &'l mut StringCache)
       -> TypeChecker<'l>
   {
@@ -417,15 +418,18 @@ impl <'l> TypeChecker<'l> {
               return_type,
               args: arg_types,
             });
+            let address = self.local_symbol_table.get(name).map(|v| *v);
+            if address.is_none() {
+              // TODO: check the signature of the function too
+              println!("Warning: C function '{}' not linked. LLVM linker may link it instead.", name);
+              // return error(expr, "tried to bind non-existing C function")
+            }
             let def = Rc::new(FunctionDefinition {
               name: name.clone(),
               args: arg_names,
               signature,
+              c_function_address: address,
             });
-            if !self.local_symbol_table.contains_key(name) {
-              // TODO: check the signature of the function too
-              // return error(expr, "tried to bind non-existing C function")
-            }
             self.functions.insert(name.clone(), def.clone());
             
             Ok(ast(expr, Type::Void, Content::CFunctionPrototype(def)))
@@ -461,6 +465,7 @@ impl <'l> TypeChecker<'l> {
               name: name.clone(),
               args: arg_names,
               signature,
+              c_function_address: None,
             });
             self.functions.insert(name.clone(), def.clone());
             Ok(ast(expr, Type::Void, Content::FunctionDefinition(def, Box::new(body))))

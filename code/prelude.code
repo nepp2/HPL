@@ -23,3 +23,5 @@ end
 
 fun id()
 end
+
+cfun hello()
