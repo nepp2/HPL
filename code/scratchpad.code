@@ -3,11 +3,19 @@
 
 # print(s.data, s.length)
 
-hello()
-max(12, 7)
+# hello()
+# max(12, 7)
 
-let s = ["printing probably doesn't work"]
+# let s = ["printing probably doesn't work"]
 
-cfun print(s : ptr(string))
+# cfun print(s : ptr(string))
 
-print(s)
+# print(s)
+let s = ["SDL2"]
+let sdl2 = load_library(s)
+
+# int SDL_Init(Uint32 flags)
+
+let SDL_Init = load_symbol(sdl2, ["SDL_Init"])
+
+SDL_Init as u64

@@ -15,7 +15,9 @@ struct lib_handle
   handle : u64
 end
 
-cfun load_library(name : string) : lib_handle
+cfun load_library(name : ptr(string)) : lib_handle
+
+cfun load_symbol(handle : lib_handle, name : ptr(string)) : ptr(u8)
 
 fun max(a : i64, b : i64)
   if a > b then a else b end

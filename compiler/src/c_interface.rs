@@ -4,11 +4,12 @@ use crate::jit::Interpreter;
 use crate::lexer;
 use crate::value::RefStr;
 
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::collections::HashMap;
+use std::path::Path;
 
-use libloading::Library;
+use libloading::{Library, Symbol};
 
 #[no_mangle]
 pub extern fn create_interpreter() -> *mut Interpreter {
@@ -61,11 +62,6 @@ extern {
   pub fn malloc(size: usize) -> *mut u8;
 }
 
-#[no_mangle]
-pub extern "C" fn hello_world() {
-  println!("Hello world");
-}
-
 /*
   Doesn't work because windows does this:
 
@@ -82,19 +78,21 @@ pub extern "C" fn print(s : ScriptString) {
 }
 
 #[no_mangle]
-pub extern "C" fn load_library_c(file_name : ScriptString) -> usize {
-  match load_library(file_name.as_str()) {
-    Some(v) => v,
-    None => 0,
-  }
+pub extern "C" fn load_library_c(lib_name : ScriptString) -> usize {
+  let lib = lib_name.as_str();
+  let deps_path = format!("{}target/{}/deps/{}.dll", ROOT, MODE, lib);
+  let local_path = format!("{}.dll", lib);
+  let paths = [deps_path.as_str(), local_path.as_str()];
+  paths.iter().cloned().flat_map(load_library).nth(0).unwrap_or(0)
 }
 
 static mut SHARED_LIBRARIES : Option<HashMap<usize, (RefStr, Library)>> = None;
 static mut SHARED_LIB_HANDLE_COUNTER : usize = 0;
 
 /// TODO: This is not thread-safe!
-pub fn load_library(file_name : &str) -> Option<usize> {
-  let path = format!("{}target/{}/deps/{}", ROOT, MODE, file_name);
+pub fn load_library(path : &str) -> Option<usize> {
+  let path = Path::new(path);
+  let file_name = path.file_name().unwrap().to_str().unwrap();
   let r = Library::new(path);
   if r.is_err() {
     return None;
@@ -111,6 +109,21 @@ pub fn load_library(file_name : &str) -> Option<usize> {
   }
 }
 
+/// TODO: This is not thread-safe!
+#[no_mangle]
+pub extern "C" fn load_symbol(lib_handle : usize, symbol_name : ScriptString) -> usize {
+  let s = CString::new(symbol_name.as_str()).unwrap();
+  unsafe {
+    if SHARED_LIBRARIES.is_none() {
+      panic!();
+    }
+    let (_, lib) = SHARED_LIBRARIES.as_ref().unwrap().get(&lib_handle).unwrap();
+    let symbol: Option<Symbol<*const ()>> =
+      lib.get(s.as_bytes_with_nul()).ok();
+    symbol.map(|sym| sym.into_raw().into_raw() as usize).unwrap_or(0)
+  }
+}
+
 pub struct CLibraries {
   pub local_symbol_table : HashMap<RefStr, usize>,
   pub shared_libraries : HashMap<usize, (RefStr, Library)>,
@@ -121,8 +134,8 @@ impl CLibraries {
   pub fn new() -> CLibraries {
     let mut cache = HashMap::new();
     cache.insert("load_library".into(), (load_library_c as *const()) as usize);
+    cache.insert("load_symbol".into(), (load_symbol as *const()) as usize);
     cache.insert("malloc".into(), (malloc as *const()) as usize);
-    cache.insert("hello".into(), (hello_world as *const()) as usize);
     cache.insert("print".into(), (print as *const()) as usize);
 
     CLibraries {
