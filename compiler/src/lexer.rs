@@ -149,7 +149,7 @@ impl <'l> CStream<'l> {
     self.iter_char_while(condition, &mut |cs : &mut CStream| { cs.append_char() });
   }
 
-  fn parse_number(&mut self) -> Result<bool, Error> {
+  fn lex_number(&mut self) -> Result<bool, Error> {
     if self.is_number() {
       let start_loc = self.loc;
       self.append_char_while(&CStream::is_number);
@@ -186,7 +186,7 @@ impl <'l> CStream<'l> {
     }
   }
 
-  fn parse_symbol_or_keyword(&mut self) -> bool {
+  fn lex_symbol_or_keyword(&mut self) -> bool {
     if self.is_symbol_start_char() {
       let start_loc = self.loc;
       self.append_char();
@@ -238,7 +238,7 @@ impl <'l> CStream<'l> {
     return false;
   }
 
-  fn parse_string(&mut self, s : &str, token_type : TokenType) -> bool {
+  fn lex_string(&mut self, s : &str, token_type : TokenType) -> bool {
     let start_loc = self.loc;
     if self.skip_string(s) {
       self.current_token.push_str(s);
@@ -254,7 +254,7 @@ impl <'l> CStream<'l> {
     self.raise_error(start_loc, "Unknown token".to_string())
   }
 
-  fn parse_comment(&mut self) -> bool {
+  fn lex_comment(&mut self) -> bool {
     // TODO: this doesn't handle newlines properly, so the error locations will be wrong
     if self.peek_string("#=") {
       self.skip_char();
@@ -274,16 +274,16 @@ impl <'l> CStream<'l> {
     return false;
   }
 
-  fn parse_syntax(&mut self) -> bool {
+  fn lex_syntax(&mut self) -> bool {
     for s in SYNTAX {
-      if self.parse_string(s, TokenType::Syntax) {
+      if self.lex_string(s, TokenType::Syntax) {
         return true;
       }
     }
     return false;
   }
 
-  fn parse_string_literal(&mut self) -> Result<bool, Error> {
+  fn lex_string_literal(&mut self) -> Result<bool, Error> {
     if self.peek() != '"' {
       return Ok(false);
     }
@@ -327,11 +327,11 @@ pub fn lex(code : &str, symbols : &mut StringCache) -> Result<Vec<Token>, Vec<Er
     while cs.has_chars() {
       if cs.handle_newline() {}
       else if cs.skip_space() {}
-      else if cs.parse_symbol_or_keyword() {}
-      else if cs.parse_string_literal()? {}
-      else if cs.parse_number()? {}
-      else if cs.parse_comment() {}
-      else if cs.parse_syntax() {}
+      else if cs.lex_symbol_or_keyword() {}
+      else if cs.lex_string_literal()? {}
+      else if cs.lex_number()? {}
+      else if cs.lex_comment() {}
+      else if cs.lex_syntax() {}
       else {
         return Err(cs.unknown_token());
       }

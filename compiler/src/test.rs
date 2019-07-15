@@ -247,35 +247,13 @@ rusty_fork_test! {
     assert_eq!(b.z, 45640.5);
   }
 
-  /* TODO: Broken
-    Couldn't figure out why. I compared the generated x86 of the caller and callee in both Rust
-    and Cauldron and they were identical. No clue.
-
   #[test]
-  fn test_native_type_return() {
-    #[repr(C)]
-    #[derive(Debug)]
-    struct Blah {
-      x : i64,
-      y : i64,
-    }
-    let mut i = Interpreter::new();
-    let code = r#"
-      struct blah
-        x : i64
-        y : i64
-      end
-      fun blah_fun()
-        blah { x: 50 as i64, y: 53 as i64 }
-      end
-      blah_fun()
-    "#;
-    let v = i.run_unwrapped::<Blah>(code).unwrap();
-    assert_eq!(v.x, 50);
-    assert_eq!(v.y, 53);
+  fn test_struct_abi() {
+    // TODO test that structs are passed into C functions corrected
+    panic!("test not implemented");
   }
-  */
 
+  // TODO: this test isn't very good
   #[test]
   fn test_string() {
     let mut i = Interpreter::new();
@@ -306,17 +284,6 @@ rusty_fork_test! {
     assert_result(a, Val::I64(24));
     assert_result(b, Val::I64(24));
   }
-
-  /* TODO: FIX THIS
-  #[test]
-  fn test_executable_function_linking() {
-    let code = "
-      cfun function_from_executable(a : i64, b : i64) : i64
-      function_from_executable(17, 7)
-    ";
-    assert_result(code, Val::I64(24));
-  }
-  */
 
 }
 

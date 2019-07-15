@@ -632,13 +632,13 @@ impl <'l> Gen<'l> {
         }
         return Ok(None);
       }
-      Content::CFunctionPrototype(def) => {
+      Content::CFunctionPrototype(_def) => {
         return Ok(None);
       }
       Content::FunctionDefinition(def, body) => {
         let global_var_types = HashMap::new();
         self.child_function_gen(&global_var_types).codegen_function(
-          ast, body, &def.name, &def.args, &def.signature.args, false)?;
+          ast, body, &def.name, &def.args, &def.signature.args)?;
         return Ok(None);
       }
       Content::StructDefinition(_def) => {
@@ -950,8 +950,7 @@ impl <'l> Gen<'l> {
     body : &AstNode,
     name : &str,
     args : &[RefStr],
-    arg_types : &[Type],
-    is_top_level : bool)
+    arg_types : &[Type])
       -> Result<FunctionValue, Error>
   {
     let function = self.codegen_prototype(name, &body.type_tag, args, arg_types);
@@ -1002,6 +1001,6 @@ impl <'l> Gen<'l> {
 
   /// Code-generates a module, returning a reference to the top-level function in the module
   pub fn codegen_module(self, ast : &AstNode) -> Result<FunctionValue, Error> {
-    self.codegen_function(&ast, &ast, "top_level", &[], &[], true)
+    self.codegen_function(&ast, &ast, "top_level", &[], &[])
   }
 }

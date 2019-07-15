@@ -20,7 +20,7 @@ use inkwell::passes::PassManager;
 use inkwell::values::{FunctionValue, GlobalValue};
 use inkwell::OptimizationLevel;
 use inkwell::execution_engine::ExecutionEngine;
-use inkwell::targets::{InitializationConfig, Target, TargetData, TargetMachine};
+use inkwell::targets::{InitializationConfig, Target};
 
 use llvm_sys::support::LLVMLoadLibraryPermanently;
 
@@ -131,19 +131,6 @@ impl Interpreter {
     let ast = type_checker.to_ast(expr)?;
     let module_name = format!("module_{}", self.modules.len());
     let mut module = self.context.create_module(&module_name);
-
-    // TODO: remove?
-    // let target = TargetData::create("e-m:w-i64:64-f80:128-n8:16:32:64-S128");
-    // module.set_data_layout(&target.get_data_layout());
-
-    // let target = Target::from_triple("x86_64-pc-windows-msvc").unwrap();
-    // module.set_target(&target);
-
-    // let mut next = Target::get_first();
-    // while let Some(t) = next {
-    //   println!("TARGET: {:?}", t.get_description());
-    //   next = t.get_next();
-    // }
 
     let pm = PassManager::create(&module);
     pm.add_instruction_combining_pass();
