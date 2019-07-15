@@ -8,7 +8,7 @@
 
 # let s = ["printing probably doesn't work"]
 
-# cfun print(s : ptr(string))
+cfun print(s : ptr(string))
 
 # print(s)
 let s = ["SDL2"]
@@ -16,6 +16,10 @@ let sdl2 = load_library(s)
 
 # int SDL_Init(Uint32 flags)
 
-let SDL_Init = load_symbol(sdl2, ["SDL_Init"])
+fun blah(s : string)
+  print([s])
+end
 
-SDL_Init as u64
+# This causes some "pipe shut down" error?
+# let SDL_Init = load_symbol(sdl2, ["SDL_Init"]) as fun()
+

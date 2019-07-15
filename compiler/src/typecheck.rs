@@ -20,6 +20,7 @@ pub enum Type {
   U16,
   U8,
   Bool,
+  Fun(Rc<FunctionSignature>),
   Struct(Rc<StructDefinition>),
   Ptr(Box<Type>),
 }
@@ -73,6 +74,10 @@ impl Type {
     self.signed_int() || self.unsigned_int()
   }
 
+  pub fn pointer(&self) -> bool {
+    match self { Type::Ptr(_) | Type::Fun(_) => true, _ => false }
+  }
+
   /// returns the minimum number of bits required to store the type inline
   pub fn width(&self) -> u64 {
     match self {
@@ -82,6 +87,7 @@ impl Type {
       Type::U8 => 8,
       Type::Bool => 1,
       Type::Void => 0,
+      Type::Fun(_) => 64, // this assumes functions are always passed as pointers
       Type::Struct(def) =>
         def.fields.iter().map(|(_, t)| t.width()).sum(),
       Type::Ptr(_) => 64, // TODO: could be wrong
@@ -103,7 +109,7 @@ pub struct FunctionDefinition {
   pub c_function_address : Option<usize>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct FunctionSignature {
   pub return_type : Type,
   pub args : Vec<Type>,
@@ -127,6 +133,7 @@ pub enum Content {
   IfThen(Box<(AstNode, AstNode)>),
   IfThenElse(Box<(AstNode, AstNode, AstNode)>),
   Block(Vec<AstNode>),
+  FunctionReference(RefStr),
   FunctionDefinition(Rc<FunctionDefinition>, Box<AstNode>),
   CFunctionPrototype(Rc<FunctionDefinition>),
   StructDefinition(Rc<StructDefinition>),
@@ -242,6 +249,14 @@ impl <'l> TypeChecker<'l> {
         return error(expr, "unexpected type parameters");
       }
       return Ok(t);
+    }
+    if name == "fun" {
+      let args =
+        params[0].children.iter().map(|e| self.to_type(e))
+        .collect::<Result<Vec<Type>, Error>>()?;
+      let return_type = self.to_type(&params[1])?;
+      return Ok(Type::Fun(Rc::new(FunctionSignature{ args, return_type})));
+      //params[0]
     }
     match (name, params) {
       ("ptr", [t]) => {
@@ -581,11 +596,12 @@ impl <'l> TypeChecker<'l> {
           self.variables.get(name.as_ref())
           .or_else(|| self.global_variables.get(name.as_ref()));
         if let Some(t) = var_type {
-          Ok(ast(expr, t.clone(), Content::VariableReference(name)))
+          return Ok(ast(expr, t.clone(), Content::VariableReference(name)));
         }
-        else {
-          error(expr, "unknown variable name")
+        if let Some(def) = self.functions.get(s.as_ref()) {
+          return Ok(ast(expr, Type::Fun(def.signature.clone()), Content::FunctionReference(s.clone())))
         }
+        error(expr, "unknown variable name")
       }
       ExprTag::LiteralString(s) => {
         let v = Val::String(s.to_string());

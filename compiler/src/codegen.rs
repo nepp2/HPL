@@ -330,17 +330,27 @@ impl <'l> Gen<'l> {
     let from_unsigned = from_type.unsigned_int();
     let from_int = from_signed || from_unsigned;
     let from_width = from_type.width();
-    let from_pointer = if let Type::Ptr(_) = from_type { true } else { false };
+    let from_pointer = from_type.pointer();
 
     let to_float = to_type.float();
     let to_signed = to_type.signed_int();
     let to_unsigned = to_type.unsigned_int();
     let to_int = to_signed || to_unsigned;
     let to_width = to_type.width();
+    let to_pointer = to_type.pointer();
 
+    // Pointer casts
     if from_pointer && to_unsigned {
       let t = int_type(self, to_width);
       return Ok(convert_op!(build_ptr_to_int, PointerValue, t, n, self));
+    }
+    if from_unsigned && to_pointer {
+      let t = *self.to_basic_type(to_type).unwrap().as_pointer_type();
+      return Ok(convert_op!(build_int_to_ptr, IntValue, t, n, self));
+    }
+    if from_pointer && to_pointer {
+      let t = *self.to_basic_type(to_type).unwrap().as_pointer_type();
+      return Ok(convert_op!(build_pointer_cast, PointerValue, t, n, self));
     }
 
     // truncate
@@ -441,6 +451,23 @@ impl <'l> Gen<'l> {
     pointer(ptr)
   }
 
+  /// ensure necessary definitions are inserted and linking operations performed when a function is referenced
+  fn get_linked_function_reference(&mut self, def : &FunctionDefinition) -> FunctionValue {
+    if let Some(local_f) = self.module.get_function(&def.name) {
+      local_f
+    }
+    else{
+      let f = self.codegen_prototype(&def.name, &def.signature.return_type, &def.args, &def.signature.args);
+      if let Some(address) = def.c_function_address {
+        self.c_functions.insert(def.name.clone(), (f, address));
+      }
+      else {
+        self.external_functions.insert(def.name.clone(), f);
+      }
+      f
+    }
+  }
+
   fn codegen_function_call(&mut self, ast : &AstNode, name : &RefStr, args : &[AstNode])
     -> Result<Option<GenVal>, Error>
   {
@@ -450,25 +477,7 @@ impl <'l> Gen<'l> {
     if def.args.len() != args.len() {
         return error(ast.loc, "incorrect number of arguments passed");
     }
-    // insert a prototype if needed
-    let f = {
-      if let Some(local_f) = self.module.get_function(name) {
-        local_f
-      }
-      else{
-        let f = self.codegen_prototype(&def.name, &def.signature.return_type, &def.args, &def.signature.args);
-        // TODO is this needed?
-        // f.set_linkage(Linkage::External);
-        if let Some(address) = def.c_function_address {
-          self.c_functions.insert(name.clone(), (f, address));
-        }
-        else {
-          self.external_functions.insert(name.clone(), f);
-        }
-        f
-      }
-    };
-
+    let f = self.get_linked_function_reference(def);
     let mut arg_vals = vec!();
     for a in args.iter() {
       let v = self.codegen_value(a)?;
@@ -736,6 +745,13 @@ impl <'l> Gen<'l> {
           return error(ast.loc, format!("unknown variable name '{}'.", name));
         }
       }
+      Content::FunctionReference(name) => {
+        let def =
+          self.function_defs.get(name)
+          .ok_or_else(|| error_raw(ast.loc, format!("could not find function with name '{}'", name)))?;
+        let f = self.get_linked_function_reference(def);
+        reg(f.as_global_value().as_pointer_value().into())
+      }
       Content::Deref(_n) => {
         /*
         TODO
@@ -812,6 +828,10 @@ impl <'l> Gen<'l> {
       Type::U16 => Some(self.context.i16_type().into()),
       Type::U8 => Some(self.context.i8_type().into()),
       Type::Bool => Some(self.context.bool_type().into()),
+      Type::Fun(sig) => {
+        let t = self.to_function_type(sig.args.as_slice(), &sig.return_type);
+        Some(t.ptr_type(AddressSpace::Generic).into())
+      }
       Type::Struct(def) => Some(self.struct_type(def).as_basic_type_enum()),
       Type::Ptr(t) => {
         let bt = self.to_basic_type(t);
@@ -866,6 +886,16 @@ impl <'l> Gen<'l> {
     }
   }
 
+  fn to_function_type(&mut self, arg_types : &[Type], return_type : &Type) -> FunctionType {
+    let arg_types =
+      arg_types.iter().map(|t| self.to_basic_type(t).unwrap())
+      .collect::<Vec<BasicTypeEnum>>();
+    let arg_types = arg_types.as_slice();
+
+    let return_type = self.to_basic_type(return_type);
+    self.function_type(return_type, arg_types)
+  }
+
   fn function_type(&self, return_type : Option<BasicTypeEnum>, arg_types : &[BasicTypeEnum])
     -> FunctionType
   {
@@ -917,17 +947,9 @@ impl <'l> Gen<'l> {
     arg_types : &[Type])
       -> FunctionValue
   {
-    let arg_types =
-      arg_types.iter().map(|t| self.to_basic_type(t).unwrap())
-      .collect::<Vec<BasicTypeEnum>>();
-    let arg_types = arg_types.as_slice();
-
-    let return_type = self.to_basic_type(return_type);
-    let fn_type = self.function_type(return_type, arg_types);
+    let fn_type = self.to_function_type(arg_types, return_type);
     let function = self.module.add_function(name, fn_type, None);
-    //let function = self.module.add_function(name, fn_type, Some(Linkage::External));
 
-    // TODO: function.set_call_conventions(8);
     let i : u32 = !0; //LLVMAttributeFunctionIndex;
     //function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("norecurse"), 0));
     function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("nounwind"), 0));

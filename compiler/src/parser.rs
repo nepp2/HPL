@@ -314,22 +314,48 @@ fn parse_simple_symbol(ps : &mut ParseState) -> Result<Expr, Error> {
 
 fn parse_type(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
-  let type_name = ps.pop_type(Symbol)?.symbol.clone();
-  let mut params = vec!();
-  if ps.accept(Syntax, "(") {
+  if ps.accept(TokenType::Syntax, "fun") {
+    let mut arguments = vec!();
+    let args_start = ps.peek_marker();
+    ps.expect(Syntax, "(")?;
     loop {
       if ps.peek()?.token_type != Symbol {
         break;
       }
-      params.push(parse_type(ps)?);
+      arguments.push(parse_type(ps)?);
       if !ps.accept(Syntax, ",") {
         break;
       }
     }
     ps.expect(Syntax, ")")?;
+    let args_expr = ps.add_tree("args", arguments, args_start);
+    let return_type = if ps.accept(Syntax, ":") {
+      parse_type(ps)?
+    }
+    else {
+      ps.add_tree("()", vec!(), start)
+    };
+    let fun_type_expr = ps.add_tree("fun", vec![args_expr, return_type], start);
+    Ok(fun_type_expr)
   }
-  let type_expr = ps.add_tree(type_name, params, start);
-  Ok(type_expr)
+  else {
+    let type_name = ps.pop_type(Symbol)?.symbol.clone();
+    let mut params = vec!();
+    if ps.accept(Syntax, "(") {
+      loop {
+        if ps.peek()?.token_type != Symbol {
+          break;
+        }
+        params.push(parse_type(ps)?);
+        if !ps.accept(Syntax, ",") {
+          break;
+        }
+      }
+      ps.expect(Syntax, ")")?;
+    }
+    let type_expr = ps.add_tree(type_name, params, start);
+    Ok(type_expr)
+  }
 }
 
 fn parse_function(ps : &mut ParseState, keyword : &str) -> Result<Expr, Error> {

@@ -255,6 +255,9 @@ impl Interpreter {
         execute::<()>(f, &c.ee);
         Val::Void
       }
+      Type::Fun(_) => {
+        return error(expr, "can't return a function from a top-level function");
+      }
       Type::Ptr(_) => {
         return error(expr, "can't return a pointer from a top-level function");
       }
