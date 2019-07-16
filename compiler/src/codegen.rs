@@ -468,30 +468,25 @@ impl <'l> Gen<'l> {
     }
   }
 
-  fn codegen_function_call(&mut self, ast : &AstNode, name : &RefStr, args : &[AstNode])
+  fn codegen_function_call(&mut self, ast : &AstNode, function_value : &AstNode, args : &[AstNode])
     -> Result<Option<GenVal>, Error>
   {
-    let def =
-      self.function_defs.get(name)
-      .ok_or_else(|| error_raw(ast.loc, format!("could not find function with name '{}'", name)))?;
-    if def.args.len() != args.len() {
-        return error(ast.loc, "incorrect number of arguments passed");
-    }
-    let f = self.get_linked_function_reference(def);
+    //let f = self.get_linked_function_reference(def);
     let mut arg_vals = vec!();
+    let function_pointer = self.codegen_pointer(function_value)?;
     for a in args.iter() {
       let v = self.codegen_value(a)?;
       arg_vals.push(v);
     }
-    let call = self.builder.build_call(f, arg_vals.as_slice(), "tmp");
+    let call = self.builder.build_call(function_pointer, arg_vals.as_slice(), "tmp");
     let r = call.try_as_basic_value().left();
     return Ok(r.map(reg));
   }
 
   fn codegen_expression(&mut self, ast : &AstNode) -> Result<Option<GenVal>, Error> {
     let v : GenVal = match &ast.content {
-      Content::FunctionCall(name, args) => {
-        return self.codegen_function_call(ast, name, args);
+      Content::FunctionCall(function_value, args) => {
+        return self.codegen_function_call(ast, function_value, args);
       }
       Content::IntrinsicCall(name, args) => {
         if let [a, b] = args.as_slice() {

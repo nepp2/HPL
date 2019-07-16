@@ -141,7 +141,7 @@ pub enum Content {
   FieldAccess(Box<(AstNode, RefStr)>, usize),
   Index(Box<(AstNode, AstNode)>),
   ArrayLiteral(Vec<AstNode>),
-  FunctionCall(RefStr, Vec<AstNode>),
+  FunctionCall(Box<AstNode>, Vec<AstNode>),
   IntrinsicCall(RefStr, Vec<AstNode>),
   While(Box<(AstNode, AstNode)>),
   ExplicitReturn(Option<Box<AstNode>>),
@@ -307,19 +307,26 @@ impl <'l> TypeChecker<'l> {
         let children = expr.children.as_slice();
         match (instr.as_ref(), children) {
           ("call", exprs) => {
-            let function_name = exprs[0].symbol_unwrap()?;
             let args =
                   exprs[1..].iter().map(|e| self.to_ast(e))
                   .collect::<Result<Vec<AstNode>, Error>>()?;
-            let op_tag = TypeChecker::match_intrinsic(function_name.as_ref(), args.as_slice());
-            if let Some(op_tag) = op_tag {
-              return Ok(ast(expr, op_tag, Content::IntrinsicCall(function_name.clone(), args)))
+            if let Some(function_name) = exprs[0].symbol_unwrap().ok() {
+              let op_tag = TypeChecker::match_intrinsic(
+                function_name.as_ref(), args.as_slice());
+              if let Some(op_tag) = op_tag {
+                return Ok(ast(expr, op_tag, Content::IntrinsicCall(function_name.clone(), args)))
+              }
             }
-            if let Some(def) = self.functions.get(function_name.as_ref()) {
-              let return_type = def.signature.return_type.clone();
-              return Ok(ast(expr, return_type, Content::FunctionCall(function_name.clone(), args)));
+            let function_value = self.to_ast(&exprs[0])?;
+            if let Type::Fun(sig) = &function_value.type_tag {
+              if sig.args.len() != args.len() {
+                return error(expr, "incorrect number of arguments passed");
+              }
+              let return_type = sig.return_type.clone();
+              let content = Content::FunctionCall(Box::new(function_value), args);
+              return Ok(ast(expr, return_type, content));
             }
-            error(expr, "unknown function")
+            error(&exprs[0], "value is not a function")
           }
           ("sizeof", [t]) => {
             let type_tag = self.to_type(t)?;

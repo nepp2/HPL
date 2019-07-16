@@ -20,6 +20,15 @@ fun blah(s : string)
   print([s])
 end
 
+struct f
+  a : fun(string)
+end
+
+let b = f{blah}
+
+b.a("blah blah blah")
+
 # This causes some "pipe shut down" error?
-# let SDL_Init = load_symbol(sdl2, ["SDL_Init"]) as fun()
+let SDL_Init = load_symbol(sdl2, ["SDL_Init"]) # as fun()
+
 
