@@ -40,6 +40,11 @@ pub struct ScriptString {
 }
 
 impl ScriptString {
+  pub fn from_str(s : &str) -> Self {
+    let ptr = (s as *const str) as *mut u8;
+    ScriptString { ptr, length: s.len() as u64 }
+  }
+
   pub fn as_str(&self) -> &str {
     let slice = unsafe { std::slice::from_raw_parts(self.ptr, self.length as usize) };
     std::str::from_utf8(slice).expect("wasn't a valid utf8 string!")
@@ -112,6 +117,8 @@ pub fn load_library(path : &str) -> Option<usize> {
 /// TODO: This is not thread-safe!
 #[no_mangle]
 pub extern "C" fn load_symbol(lib_handle : usize, symbol_name : ScriptString) -> usize {
+  0
+  /*
   let s = CString::new(symbol_name.as_str()).unwrap();
   unsafe {
     if SHARED_LIBRARIES.is_none() {
@@ -122,6 +129,7 @@ pub extern "C" fn load_symbol(lib_handle : usize, symbol_name : ScriptString) ->
       lib.get(s.as_bytes_with_nul()).ok();
     symbol.map(|sym| sym.into_raw().into_raw() as usize).unwrap_or(0)
   }
+  */
 }
 
 pub struct CLibraries {

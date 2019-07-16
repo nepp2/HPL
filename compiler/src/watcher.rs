@@ -4,6 +4,7 @@ use std::time::Duration;
 use std::thread;
 
 use std::process::{Command, Stdio, Child };
+use std::io::Read;
 use std::str;
 
 pub fn run_process(path : &str) -> Child {
@@ -20,7 +21,15 @@ pub fn run_process(path : &str) -> Child {
 
 pub fn watch(path : &str) {
 
+  fn read_to_string<R : Read>(stream : &mut Option<R>, s : &mut String) {
+    if let Some(stream) = stream.as_mut() {
+      stream.read_to_string(s).unwrap();
+    }
+  }
+
   let mut process = Some(run_process(path));
+  let mut output = String::new();
+  let mut error = String::new();
 
   // Create a channel to receive the events.
   let (tx, rx) = channel();
@@ -37,15 +46,17 @@ pub fn watch(path : &str) {
   loop {
 
     if let Some(mut p) = process {
-      let exited = p.try_wait().expect("error").is_some();
-      if exited {
-        let output = p.wait_with_output().unwrap();
-        println!("process finished. output:\n{}",
-          str::from_utf8(output.stdout.as_slice()).unwrap());
-        if !output.status.success() {
-          println!("ERROR:\n{}\n{}",
-          output.status,
-          str::from_utf8(output.stderr.as_slice()).unwrap());
+      // TODO: try_wait is buggy on windows, and never returns if too much data has been
+      // written to stdout or stderr. That's why I read from them proactively.
+      let exit_status = p.try_wait().expect("error");
+      read_to_string(&mut p.stdout, &mut output);
+      read_to_string(&mut p.stderr, &mut error);
+      if let Some(exit_status) = exit_status {
+        println!("process finished. output:\n{}", output);
+        output.clear();
+        if !exit_status.success() || error.len() > 0 {
+          println!("ERROR:\n{}\n{}", exit_status, error);
+          error.clear();
         }
         process = None;
       }

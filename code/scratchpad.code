@@ -11,8 +11,6 @@
 cfun print(s : ptr(string))
 
 # print(s)
-let s = ["SDL2"]
-let sdl2 = load_library(s)
 
 # int SDL_Init(Uint32 flags)
 
@@ -28,7 +26,8 @@ let b = f{blah}
 
 b.a("blah blah blah")
 
-# This causes some "pipe shut down" error?
-let SDL_Init = load_symbol(sdl2, ["SDL_Init"]) # as fun()
+let s = ["SDL2"]
+let sdl2 = load_library(s)
+let SDL_Init = load_symbol(sdl2, ["SDL_Init"]) as fun()
 
-
+# SDL_Init()

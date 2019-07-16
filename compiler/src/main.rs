@@ -62,10 +62,6 @@ fn call_dynamic() {
   }
 }
 
-// TODO: IF THIS IS HERE, THE TESTS BREAK FOR SOME FUCKING REASON
-// #[allow(unused_imports)]
-// use dlltest::*;
-
 fn main(){
   // call_dynamic();
   let args: Vec<String> = env::args().collect();
@@ -76,7 +72,8 @@ fn main(){
       watcher::watch(path.as_ref())
     }
     ["watch"] => watcher::watch("code/scratchpad.code"),
+    ["repl"] => repl::run_repl(),
     ["run", f] => load_and_run(f),
-    _ => repl::run_repl(),
+    _ => watcher::watch("code/scratchpad.code"),
   }
 }
