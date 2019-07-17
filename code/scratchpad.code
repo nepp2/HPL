@@ -28,6 +28,30 @@ b.a("blah blah blah")
 
 let s = ["SDL2"]
 let sdl2 = load_library(s)
-let SDL_Init = load_symbol(sdl2, ["SDL_Init"]) as fun()
+let sdl_init = load_symbol(sdl2, ["SDL_Init"]) as fun(u32) : i32
 
-#SDL_Init()
+let sdl_create_window =
+  load_symbol(sdl2, ["SDL_CreateWindow"])
+    as fun(ptr(u8), i32, i32, i32, i32, u32) : ptr(u8)
+
+let SDL_INIT_VIDEO = 32 as u32
+let SDL_WINDOWPOS_UNDEFINED = 536805376 as i32
+let SDL_WINDOW_OPENGL = 2 as u32
+let SDL_WINDOW_SHOWN = 4 as u32
+
+sdl_init(SDL_INIT_VIDEO);
+
+let c = malloc(4 as u32)
+c[0] = 65 as u8
+c[1] = 65 as u8
+c[2] = 65 as u8
+c[3] = 0 as u8
+
+let win =
+  sdl_create_window(
+    c,
+    SDL_WINDOWPOS_UNDEFINED,
+    SDL_WINDOWPOS_UNDEFINED,
+    500 as i32,
+    400 as i32,
+    SDL_WINDOW_SHOWN);
