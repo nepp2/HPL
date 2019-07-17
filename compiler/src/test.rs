@@ -25,15 +25,6 @@ fn assert_result(code : &str, expected_result : Val){
   assert_result_with_interpreter(&mut i, code, expected_result)
 }
 
-/*
-TODO: Fairly sure there's some undefined behaviour in at least one of these tests, causing it to
-crash unpredictably. Haven't found a test that crashes reliably though. Also, I'm not sure the
-crash happens at all without interaction between tests, now that they run in separate processes.
-
-UPDATE: The test failure _may_ could have been caused by Rust running tests in parallel. I'm not
-sure if I'm using LLVM in a way that can be multithreaded.
-*/
-
 // Runs the tests in isolated processes, because they do unsafe things and could pollute each other.
 rusty_fork_test! {
 
@@ -285,34 +276,33 @@ rusty_fork_test! {
     assert_result(b, Val::I64(24));
   }
 
+  #[test]
+  fn test_first_class_function() {
+    let code = "
+      fun foo(a : i64, b : i64)
+        a + b
+      end
+      fun fold(a : ptr(i64), len : i64, v : i64, f : fun(i64, i64) : i64)
+        let i = 0
+        while i < len
+          v = f(v, a[i])
+          i = i + 1
+        end
+        v
+      end
+      let a = [1, 2, 3, 4]
+      fold(a, 4, 0, foo)
+    ";
+    assert_result(code, Val::I64(10));
+  }
+
 }
 
 /*
 
 Features to add:
 
-  * non-native types (can fold strings and arrays into this?)
   * consider making new-lines significant in some cases (relating to semi-colons)
-
-#[test]
-fn test_first_class_function() {
-  let code = "
-    let a = [1, 2, 3, 4]
-    fun foo(a, b) {
-      a + b
-    }
-    fun fold(a, v, f) {
-      let i = 0
-      while i < len(a) {
-        v = f(v, a[i])
-        i = i + 1
-      }
-      v
-    }
-    fold(a, 0, foo)
-  ";
-  assert_result(code, Val::I64(10));
-}
 
 #[test]
 fn test_for_loop() {

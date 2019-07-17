@@ -117,8 +117,6 @@ pub fn load_library(path : &str) -> Option<usize> {
 /// TODO: This is not thread-safe!
 #[no_mangle]
 pub extern "C" fn load_symbol(lib_handle : usize, symbol_name : ScriptString) -> usize {
-  0
-  /*
   let s = CString::new(symbol_name.as_str()).unwrap();
   unsafe {
     if SHARED_LIBRARIES.is_none() {
@@ -129,7 +127,6 @@ pub extern "C" fn load_symbol(lib_handle : usize, symbol_name : ScriptString) ->
       lib.get(s.as_bytes_with_nul()).ok();
     symbol.map(|sym| sym.into_raw().into_raw() as usize).unwrap_or(0)
   }
-  */
 }
 
 pub struct CLibraries {

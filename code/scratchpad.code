@@ -30,4 +30,4 @@ let s = ["SDL2"]
 let sdl2 = load_library(s)
 let SDL_Init = load_symbol(sdl2, ["SDL_Init"]) as fun()
 
-# SDL_Init()
+#SDL_Init()
