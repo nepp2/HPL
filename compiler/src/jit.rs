@@ -4,7 +4,7 @@ use crate::value::{StringCache, display_expr, RefStr, Expr};
 use crate::lexer;
 use crate::parser;
 use crate::typecheck::{
-  Type, Val, StructDefinition, FunctionDefinition,
+  Type, Val, TypeDefinition, FunctionDefinition,
   TypeChecker, AstNode };
 use crate::codegen::{dump_module, Gen};
 use crate::c_interface::CLibraries;
@@ -20,7 +20,7 @@ use inkwell::passes::PassManager;
 use inkwell::values::{FunctionValue, GlobalValue};
 use inkwell::OptimizationLevel;
 use inkwell::execution_engine::ExecutionEngine;
-use inkwell::targets::{InitializationConfig, Target};
+use inkwell::targets::{InitializationConfig, Target };
 
 use llvm_sys::support::LLVMLoadLibraryPermanently;
 
@@ -54,7 +54,7 @@ pub struct Interpreter {
   pub modules : Vec<CompiledExpression>,
   pub c_libs : CLibraries,
   pub functions : HashMap<RefStr, Rc<FunctionDefinition>>,
-  pub struct_types : HashMap<RefStr, Rc<StructDefinition>>,
+  pub types : HashMap<RefStr, Rc<TypeDefinition>>,
   pub global_var_types: HashMap<RefStr, Type>,
 }
 
@@ -80,14 +80,13 @@ impl Interpreter {
     let modules = vec!();
     let c_libs = CLibraries::new();
     let functions = HashMap::new();
-    let struct_types = HashMap::new();
+    let types = HashMap::new();
     let global_var_types = HashMap::new();
 
     let mut i = 
       Interpreter {
         cache, context, modules, c_libs,
-        functions, struct_types,
-        global_var_types };
+        functions, types, global_var_types };
     
     // load prelude
     if let Err(e) = i.load_prelude() {
@@ -124,13 +123,22 @@ impl Interpreter {
   }
 
   pub fn compile_expression(&mut self, expr : &Expr) -> Result<&CompiledExpression, Error> {
+    // TODO: provide an option for this?
+    println!("{}", display_expr(expr));
+
     let mut type_checker =
       TypeChecker::new(
-        true, HashMap::new(), &mut self.functions, &mut self.struct_types,
+        true, HashMap::new(), &mut self.functions, &mut self.types,
         &mut self.global_var_types, &self.c_libs.local_symbol_table, &mut self.cache);
     let ast = type_checker.to_ast(expr)?;
     let module_name = format!("module_{}", self.modules.len());
     let mut module = self.context.create_module(&module_name);
+
+    let ee =
+      module.create_jit_execution_engine(OptimizationLevel::None)
+      .map_err(|e| error_raw(expr, e.to_string()))?;
+
+    // TODO module.set_target(target: &Target);
 
     let pm = PassManager::create(&module);
     pm.add_instruction_combining_pass();
@@ -149,19 +157,14 @@ impl Interpreter {
     let f = {
       let jit =
         Gen::new(
-          &mut self.context, &mut module, &self.functions, &mut external_globals,
+          &mut self.context, &mut module, &mut ee.get_target_data(), &self.functions, &mut external_globals,
           &mut external_functions, &mut c_functions, &self.global_var_types,
-          &self.struct_types, &pm);
+          &self.types, &pm);
       jit.codegen_module(&ast)?
     };
-
+    
     // TODO: provide an option for this?
-    println!("{}", display_expr(expr));
     dump_module(&module);
-
-    let ee =
-      module.create_jit_execution_engine(OptimizationLevel::None)
-      .map_err(|e| error_raw(expr, e.to_string()))?;
 
     // Link c functions
     for (function_value, address) in c_functions.values() {
@@ -262,6 +265,9 @@ impl Interpreter {
         return error(expr, "can't return a pointer from a top-level function");
       }
       Type::Struct(_def) => {
+        return error(expr, "can't return a struct from a top-level function");
+      }
+      Type::Union(_def) => {
         return error(expr, "can't return a struct from a top-level function");
       }
     };

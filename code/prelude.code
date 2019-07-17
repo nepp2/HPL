@@ -19,6 +19,8 @@ cfun load_library(name : ptr(string)) : lib_handle
 
 cfun load_symbol(handle : lib_handle, name : ptr(string)) : ptr(u8)
 
+cfun print(s : ptr(string))
+
 fun max(a : i64, b : i64)
   if a > b then a else b end
 end

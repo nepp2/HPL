@@ -21,7 +21,8 @@ pub enum Type {
   U8,
   Bool,
   Fun(Rc<FunctionSignature>),
-  Struct(Rc<StructDefinition>),
+  Struct(Rc<TypeDefinition>),
+  Union(Rc<TypeDefinition>),
   Ptr(Box<Type>),
 }
 
@@ -77,28 +78,18 @@ impl Type {
   pub fn pointer(&self) -> bool {
     match self { Type::Ptr(_) | Type::Fun(_) => true, _ => false }
   }
+}
 
-  /// returns the minimum number of bits required to store the type inline
-  pub fn width(&self) -> u64 {
-    match self {
-      Type::F64 | Type::U64 | Type::I64 => 64,
-      Type::F32 | Type::U32 | Type::I32 => 32,
-      Type::U16 => 16,
-      Type::U8 => 8,
-      Type::Bool => 1,
-      Type::Void => 0,
-      Type::Fun(_) => 64, // this assumes functions are always passed as pointers
-      Type::Struct(def) =>
-        def.fields.iter().map(|(_, t)| t.width()).sum(),
-      Type::Ptr(_) => 64, // TODO: could be wrong
-    }
-  }
+#[derive(Clone, Debug, PartialEq)]
+pub enum TypeKind {
+  Struct, Union
 }
 
 #[derive(Clone, Debug)]
-pub struct StructDefinition {
+pub struct TypeDefinition {
   pub name : RefStr,
   pub fields : Vec<(RefStr, Type)>,
+  pub kind : TypeKind,
 }
 
 #[derive(Debug)]
@@ -115,7 +106,7 @@ pub struct FunctionSignature {
   pub args : Vec<Type>,
 }
 
-impl PartialEq for StructDefinition {
+impl PartialEq for TypeDefinition {
   fn eq(&self, rhs : &Self) -> bool {
     self.name == rhs.name
   }
@@ -136,8 +127,9 @@ pub enum Content {
   FunctionReference(RefStr),
   FunctionDefinition(Rc<FunctionDefinition>, Box<AstNode>),
   CFunctionPrototype(Rc<FunctionDefinition>),
-  StructDefinition(Rc<StructDefinition>),
-  StructInstantiate(Rc<StructDefinition>, Vec<AstNode>),
+  TypeDefinition(Rc<TypeDefinition>),
+  StructInstantiate(Rc<TypeDefinition>, Vec<AstNode>),
+  UnionInstantiate(Rc<TypeDefinition>, Box<(RefStr, AstNode)>),
   FieldAccess(Box<(AstNode, RefStr)>, usize),
   Index(Box<(AstNode, AstNode)>),
   ArrayLiteral(Vec<AstNode>),
@@ -181,7 +173,7 @@ pub struct TypeChecker<'l> {
   is_top_level : bool,
   variables: HashMap<RefStr, Type>,
   functions: &'l mut HashMap<RefStr, Rc<FunctionDefinition>>,
-  struct_types : &'l mut HashMap<RefStr, Rc<StructDefinition>>,
+  types : &'l mut HashMap<RefStr, Rc<TypeDefinition>>,
   global_variables : &'l mut HashMap<RefStr, Type>,
   local_symbol_table : &'l HashMap<RefStr, usize>,
 
@@ -198,7 +190,7 @@ impl <'l> TypeChecker<'l> {
     is_top_level : bool,
     variables : HashMap<RefStr, Type>,
     functions : &'l mut HashMap<RefStr, Rc<FunctionDefinition>>,
-    struct_types : &'l mut HashMap<RefStr, Rc<StructDefinition>>,
+    types : &'l mut HashMap<RefStr, Rc<TypeDefinition>>,
     global_variables : &'l mut HashMap<RefStr, Type>,
     local_symbol_table : &'l HashMap<RefStr, usize>,
     cache : &'l mut StringCache)
@@ -209,7 +201,7 @@ impl <'l> TypeChecker<'l> {
       is_top_level,
       variables,
       functions,
-      struct_types,
+      types,
       global_variables,
       local_symbol_table,
       cache,
@@ -256,7 +248,6 @@ impl <'l> TypeChecker<'l> {
         .collect::<Result<Vec<Type>, Error>>()?;
       let return_type = self.to_type(&params[1])?;
       return Ok(Type::Fun(Rc::new(FunctionSignature{ args, return_type})));
-      //params[0]
     }
     match (name, params) {
       ("ptr", [t]) => {
@@ -264,13 +255,13 @@ impl <'l> TypeChecker<'l> {
         Ok(Type::Ptr(Box::new(t)))
       }
       (name, params) => {
-        if let Some(t) = self.struct_types.get(name) {
+        if let Some(t) = self.types.get(name) {
           if params.len() > 0 {
             return error(expr, "unexpected struct type parameters");
           }
           return Ok(Type::Struct(t.clone()))
         }
-        return error(expr, "type does not exist");
+        return error(expr, format!("type '{}' does not exist", name));
       }
     }
   }
@@ -298,6 +289,29 @@ impl <'l> TypeChecker<'l> {
       }
       _ => None,
     }
+  }
+
+  fn to_type_definition(&mut self, expr : &Expr, exprs : &[Expr], kind : TypeKind) -> Result<AstNode, Error> {
+    if exprs.len() < 1 {
+      return error(expr, "malformed struct definition");
+    }
+    let name_expr = &exprs[0];
+    let name = name_expr.symbol_unwrap()?;
+    if self.types.contains_key(name) {
+      return error(expr, "struct with this name already defined");
+    }
+    // TODO: check for duplicates?
+    let field_exprs = &exprs[1..];
+    let mut fields = vec![];
+    // TODO: record the field types, and check them!
+    for (field_name_expr, type_expr) in field_exprs.iter().tuples() {
+      let field_name = field_name_expr.symbol_unwrap()?.clone();
+      let type_tag = self.to_type(type_expr)?;
+      fields.push((field_name, type_tag));
+    }
+    let def = Rc::new(TypeDefinition { name: name.clone(), fields, kind });
+    self.types.insert(name.clone(), def.clone());
+    Ok(ast(expr, Type::Void, Content::TypeDefinition(def)))
   }
 
   pub fn to_ast(&mut self, expr : &Expr) -> Result<AstNode, Error> {
@@ -474,7 +488,7 @@ impl <'l> TypeChecker<'l> {
             let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
             let mut empty_global_map = HashMap::new(); // hide globals from child functions
             let mut type_checker =
-              TypeChecker::new(false, args, self.functions, self.struct_types, &mut empty_global_map, self.local_symbol_table, self.cache);
+              TypeChecker::new(false, args, self.functions, self.types, &mut empty_global_map, self.local_symbol_table, self.cache);
             let body = type_checker.to_ast(function_body)?;
             if self.functions.contains_key(name.as_ref()) {
               return error(expr, "function with that name already defined");
@@ -492,31 +506,15 @@ impl <'l> TypeChecker<'l> {
             self.functions.insert(name.clone(), def.clone());
             Ok(ast(expr, Type::Void, Content::FunctionDefinition(def, Box::new(body))))
           }
-          ("struct_define", exprs) => {
-            if exprs.len() < 1 {
-              return error(expr, "malformed struct definition");
-            }
-            let name_expr = &exprs[0];
-            let name = name_expr.symbol_unwrap()?;
-            if self.struct_types.contains_key(name) {
-              return error(expr, "struct with this name already defined");
-            }
-            // TODO: check for duplicates?
-            let field_exprs = &exprs[1..];
-            let mut fields = vec![];
-            // TODO: record the field types, and check them!
-            for (field_name_expr, type_expr) in field_exprs.iter().tuples() {
-              let field_name = field_name_expr.symbol_unwrap()?.clone();
-              let type_tag = self.to_type(type_expr)?;
-              fields.push((field_name, type_tag));
-            }
-            let def = Rc::new(StructDefinition { name: name.clone(), fields });
-            self.struct_types.insert(name.clone(), def.clone());
-            Ok(ast(expr, Type::Void, Content::StructDefinition(def)))
+          ("union", exprs) => {
+            self.to_type_definition(expr, exprs, TypeKind::Union)
           }
-          ("struct_instantiate", exprs) => {
+          ("struct", exprs) => {
+            self.to_type_definition(expr, exprs, TypeKind::Struct)
+          }
+          ("type_instantiate", exprs) => {
             if exprs.len() < 1 || exprs.len() % 2 == 0 {
-              return error(expr, format!("malformed struct instantiation {:?}", expr));
+              return error(expr, format!("malformed type instantiation {:?}", expr));
             }
             let name_expr = &exprs[0];
             let field_exprs = &exprs[1..];
@@ -528,36 +526,53 @@ impl <'l> TypeChecker<'l> {
               })
               .collect::<Result<Vec<(&Expr, AstNode)>, Error>>()?;
             let def =
-              self.struct_types.get(name)
-              .ok_or_else(|| error_raw(name_expr, "no struct with this name exists"))?;
-            let field_iter = fields.iter().zip(def.fields.iter());
-            if fields.len() != def.fields.len() {
-              return error(expr, "wrong number of fields");
-            }
-            for ((field, value), (expected_name, expected_type)) in field_iter {
-              let name = field.symbol_unwrap()?;
-              if name.as_ref() != "" && name != expected_name {
-                return error(*field, "incorrect field name");
+              self.types.get(name)
+              .ok_or_else(|| error_raw(name_expr, "no type with this name exists"))?;
+            match &def.kind {
+              TypeKind::Struct => {
+                if fields.len() != def.fields.len() {
+                  return error(expr, "wrong number of fields");
+                }
+                let field_iter = fields.iter().zip(def.fields.iter());
+                for ((field, value), (expected_name, expected_type)) in field_iter {
+                  let name = field.symbol_unwrap()?;
+                  if name.as_ref() != "" && name != expected_name {
+                    return error(*field, "incorrect field name");
+                  }
+                  if &value.type_tag != expected_type {
+                    return error(value.loc, "type mismatch");
+                  }
+                }
+                let c = Content::StructInstantiate(def.clone(), fields.into_iter().map(|v| v.1).collect());
+                Ok(ast(expr, Type::Struct(def.clone()), c))
               }
-              if &value.type_tag != expected_type {
-                return error(value.loc, "type mismatch");
+              TypeKind::Union => {
+                if fields.len() != 1 {
+                  return error(expr, "must instantiate exactly one field");
+                }
+                let (field, value) = fields.into_iter().nth(0).unwrap();
+                let name = field.symbol_unwrap()?;
+                if def.fields.iter().find(|(n, _)| n == name).is_none() {
+                  return error(field, "field does not exist in this union");
+                }
+                let c = Content::UnionInstantiate(def.clone(), Box::new((name.clone(), value)));
+                Ok(ast(expr, Type::Union(def.clone()), c))
               }
             }
-            let c = Content::StructInstantiate(def.clone(), fields.into_iter().map(|v| v.1).collect());
-            Ok(ast(expr, Type::Struct(def.clone()), c))
           }
-          (".", [struct_expr, field_expr]) => {
-            let struct_val = self.to_ast(struct_expr)?;
+          (".", [container_expr, field_expr]) => {
+            let container_val = self.to_ast(container_expr)?;
             let field_name = field_expr.symbol_unwrap()?;
-            let def = match &struct_val.type_tag {
+            let def = match &container_val.type_tag {
               Type::Struct(def) => def,
-              _ => return error(struct_expr, format!("expected struct, found {:?}", struct_val.type_tag)),
+              Type::Union(def) => def,
+              _ => return error(container_expr, format!("expected struct or union, found {:?}", container_val.type_tag)),
             };
             let (field_index, (_, field_type)) =
               def.fields.iter().enumerate().find(|(_, (n, _))| n==field_name)
-              .ok_or_else(|| error_raw(field_expr, "struct does not have field with this name"))?;
+              .ok_or_else(|| error_raw(field_expr, "type does not have field with this name"))?;
             let field_type = field_type.clone();
-            let c = Content::FieldAccess(Box::new((struct_val, field_name.clone())), field_index);
+            let c = Content::FieldAccess(Box::new((container_val, field_name.clone())), field_index);
             Ok(ast(expr, field_type, c))
           }
           ("literal_array", exprs) => {
@@ -612,7 +627,7 @@ impl <'l> TypeChecker<'l> {
       }
       ExprTag::LiteralString(s) => {
         let v = Val::String(s.to_string());
-        let s = self.struct_types.get("string").unwrap();
+        let s = self.types.get("string").unwrap();
         Ok(ast(expr, Type::Struct(s.clone()), Content::Literal(v)))
       }
       ExprTag::LiteralFloat(f) => {

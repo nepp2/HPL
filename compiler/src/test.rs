@@ -144,6 +144,20 @@ rusty_fork_test! {
   }
 
   #[test]
+  fn test_union() {
+    let code = "
+      union foo
+        u : u64
+        i : i64
+      end
+      let v = foo{i : 16}
+      v.i = (v.u as i64) + 16
+      v.u
+    ";
+    assert_result(code, Val::U64(32));
+  }
+
+  #[test]
   fn test_return(){
     let code = "
       fun foo(v : bool)
@@ -240,7 +254,7 @@ rusty_fork_test! {
 
   #[test]
   fn test_struct_abi() {
-    // TODO test that structs are passed into C functions corrected
+    // TODO test that structs are passed into C functions correctly
     panic!("test not implemented");
   }
 

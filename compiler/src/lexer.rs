@@ -7,7 +7,7 @@ lazy_static! {
   static ref KEYWORDS : HashSet<&'static str> =
     vec!["fun", "cfun", "if", "else", "type", "while", "struct", "for",
     "break", "return", "let", "true", "false", "quote", "then", "as",
-    "import", "in", "end", "do", "macro", "sizeof"].into_iter().collect();
+    "import", "in", "end", "do", "macro", "sizeof", "union"].into_iter().collect();
 }
 
 const SYNTAX : &'static [&'static str] =

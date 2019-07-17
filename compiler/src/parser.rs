@@ -482,11 +482,11 @@ fn parse_for(ps : &mut ParseState) -> Result<Expr, Error> {
   Ok(ps.add_tree("for", args, start))
 }
 
-fn parse_struct_definition(ps : &mut ParseState) -> Result<Expr, Error> {
+fn parse_type_definition(ps : &mut ParseState, kind : &str) -> Result<Expr, Error> {
   let start = ps.peek_marker();
-  ps.expect(Syntax, "struct")?;
-  let struct_name = parse_simple_symbol(ps)?;
-  let mut args = vec!(struct_name);
+  ps.expect(Syntax, kind)?;
+  let type_name = parse_simple_symbol(ps)?;
+  let mut args = vec!(type_name);
   'outer: loop {
     'inner: loop {
       if !ps.has_tokens() || ps.peek()?.symbol.as_ref() == "end" {
@@ -508,14 +508,14 @@ fn parse_struct_definition(ps : &mut ParseState) -> Result<Expr, Error> {
     }
   }
   ps.expect(Syntax, "end")?;
-  Ok(ps.add_tree("struct_define", args, start))
+  Ok(ps.add_tree(kind, args, start))
 }
 
-fn parse_struct_instantiate(ps : &mut ParseState) -> Result<Expr, Error> {
+fn parse_type_instantiate(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
-  let struct_name = parse_simple_symbol(ps)?;
+  let type_name = parse_simple_symbol(ps)?;
   ps.expect(Syntax, "{")?;
-  let mut args = vec!(struct_name);
+  let mut args = vec!(type_name);
   'outer: loop {
     'inner: loop {
       if !ps.has_tokens() || ps.peek()?.symbol.as_ref() == "}" {
@@ -543,7 +543,7 @@ fn parse_struct_instantiate(ps : &mut ParseState) -> Result<Expr, Error> {
     }
   }
   ps.expect(Syntax, "}")?;
-  Ok(ps.add_tree("struct_instantiate", args, start))
+  Ok(ps.add_tree("type_instantiate", args, start))
 }
 
 fn parse_sizeof(ps : &mut ParseState) -> Result<Expr, Error> {
@@ -591,7 +591,8 @@ fn parse_syntax(ps : &mut ParseState) -> Result<Expr, Error> {
     }
     "return" => parse_return(ps),
     "while" => parse_while(ps),
-    "struct" => parse_struct_definition(ps),
+    "struct" => parse_type_definition(ps, "struct"),
+    "union" => parse_type_definition(ps, "union"),
     "true" => {
       let start = ps.peek_marker();
       ps.expect(Syntax, "true")?;
@@ -652,7 +653,7 @@ fn parse_symbol_term(ps : &mut ParseState) -> Result<Expr, Error> {
   let is_struct =
     ps.peek_ahead(1).map_or(false, |t| t.symbol.as_ref() == "{");
   if is_struct {
-    parse_struct_instantiate(ps)
+    parse_type_instantiate(ps)
   }
   else{
     // else assume it's just a symbol reference

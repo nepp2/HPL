@@ -4,7 +4,7 @@
 use crate::error::{Error, error, error_raw, ErrorContent};
 use crate::value::RefStr;
 use crate::typecheck::{
-  AstNode, Content, Type, Val, StructDefinition, FunctionDefinition, VarScope};
+  AstNode, Content, Type, Val, TypeDefinition, TypeKind, FunctionDefinition, VarScope};
 
 use std::rc::Rc;
 use std::collections::HashMap;
@@ -22,6 +22,7 @@ use inkwell::types::{
 use inkwell::values::{
   BasicValueEnum, BasicValue, FloatValue, IntValue, FunctionValue, PointerValue, GlobalValue };
 use inkwell::{FloatPredicate, IntPredicate};
+use inkwell::targets::TargetData;
 
 pub fn dump_module(module : &Module) {
   println!("{}", module.print_to_string().to_string())
@@ -150,6 +151,7 @@ enum ShortCircuitOp { And, Or }
 pub struct Gen<'l> {
   context: &'l mut Context,
   module : &'l mut Module,
+  target_data : &'l TargetData,
   builder: Builder,
   function_defs: &'l HashMap<RefStr, Rc<FunctionDefinition>>,
 
@@ -165,7 +167,7 @@ pub struct Gen<'l> {
   global_var_types: &'l HashMap<RefStr, Type>,
   variables: HashMap<RefStr, PointerValue>,
   struct_types: HashMap<RefStr, StructType>,
-  struct_definitions: &'l HashMap<RefStr, Rc<StructDefinition>>,
+  type_definitions: &'l HashMap<RefStr, Rc<TypeDefinition>>,
 
   /// A stack of values indicating the entry and exit labels for each loop
   loop_labels: Vec<LoopLabels>,
@@ -178,12 +180,13 @@ impl <'l> Gen<'l> {
   pub fn new(
     context: &'l mut Context,
     module : &'l mut Module,
+    target_data : &'l TargetData,
     function_defs: &'l HashMap<RefStr, Rc<FunctionDefinition>>,
     external_globals: &'l mut HashMap<RefStr, GlobalValue>,
     external_functions: &'l mut HashMap<RefStr, FunctionValue>,
     c_functions: &'l mut HashMap<RefStr, (FunctionValue, usize)>,
     global_var_types: &'l HashMap<RefStr, Type>,
-    struct_definitions: &'l HashMap<RefStr, Rc<StructDefinition>>,
+    type_definitions: &'l HashMap<RefStr, Rc<TypeDefinition>>,
     pm : &'l PassManager<FunctionValue>,
   )
       -> Gen<'l>
@@ -191,14 +194,15 @@ impl <'l> Gen<'l> {
     let builder = context.create_builder();
     let variables = HashMap::new();
     Gen {
-      context, module, builder,
+      context, module,
+      target_data, builder,
       function_defs,
       external_globals,
       external_functions,
       c_functions,
       global_var_types, variables,
       struct_types: HashMap::new(),
-      struct_definitions,
+      type_definitions,
       loop_labels: vec!(),
       pm,
     }
@@ -208,8 +212,8 @@ impl <'l> Gen<'l> {
     -> Gen<'lc>
   {
     Gen::new(
-      self.context, self.module, self.function_defs,  self.external_globals,
-      self.external_functions, self.c_functions, global_var_types, self.struct_definitions, self.pm)
+      self.context, self.module, self.target_data, self.function_defs,  self.external_globals,
+      self.external_functions, self.c_functions, global_var_types, self.type_definitions, self.pm)
   }
 
   fn create_entry_block_alloca(&self, t : BasicTypeEnum, name : &str) -> PointerValue {
@@ -230,7 +234,7 @@ impl <'l> Gen<'l> {
     gv.set_initializer(&initial_value);
     gv.set_constant(is_constant);
     gv.set_linkage(Linkage::Internal);
-    gv.set_alignment(8); // TODO: is this needed?
+    //gv.set_alignment(8); // TODO: is this needed?
     gv.as_pointer_value()
   }
 
@@ -323,20 +327,22 @@ impl <'l> Gen<'l> {
 
     let from_type = &value_to_convert.type_tag;
     let to_type = &convert_node.type_tag;
+    let from_llvm_type = self.to_basic_type(from_type).ok_or_else(|| error_raw(value_to_convert.loc, "can't cast from void"))?;
+    let to_llvm_type = self.to_basic_type(to_type).ok_or_else(|| error_raw(convert_node.loc, "can't cast to void"))?;
     let n = value_to_convert;
     
     let from_float = from_type.float();
     let from_signed = from_type.signed_int();
     let from_unsigned = from_type.unsigned_int();
     let from_int = from_signed || from_unsigned;
-    let from_width = from_type.width();
+    let from_width = self.target_data.get_bit_size(&from_llvm_type);
     let from_pointer = from_type.pointer();
 
     let to_float = to_type.float();
     let to_signed = to_type.signed_int();
     let to_unsigned = to_type.unsigned_int();
     let to_int = to_signed || to_unsigned;
-    let to_width = to_type.width();
+    let to_width = self.target_data.get_bit_size(&to_llvm_type);
     let to_pointer = to_type.pointer();
 
     // Pointer casts
@@ -439,7 +445,7 @@ impl <'l> Gen<'l> {
     return Ok(reg(phi.as_basic_value()));
   }
 
-  fn codegen_struct_initialise(&mut self, def : &StructDefinition, args : &[BasicValueEnum]) -> GenVal {
+  fn codegen_struct_initialise(&mut self, def : &TypeDefinition, args : &[BasicValueEnum]) -> GenVal {
     let t = self.struct_type(def).as_basic_type_enum();
     let ptr = self.create_entry_block_alloca(t, &def.name);
     for (i, v) in args.iter().enumerate() {
@@ -448,6 +454,15 @@ impl <'l> Gen<'l> {
       };
       self.builder.build_store(element_ptr, *v);
     }
+    pointer(ptr)
+  }
+
+  fn codegen_union_initialise(&mut self, def : &TypeDefinition, val : BasicValueEnum) -> GenVal {
+    let union_type = self.struct_type(def).as_basic_type_enum();
+    let ptr = self.create_entry_block_alloca(union_type, &def.name);
+    let variant_type = self.pointer_to_type(Some(val.get_type()));
+    let variant_ptr = self.builder.build_pointer_cast(ptr, variant_type, "union_cast");
+    self.builder.build_store(variant_ptr, val);
     pointer(ptr)
   }
 
@@ -468,7 +483,7 @@ impl <'l> Gen<'l> {
     }
   }
 
-  fn codegen_function_call(&mut self, ast : &AstNode, function_value : &AstNode, args : &[AstNode])
+  fn codegen_function_call(&mut self, function_value : &AstNode, args : &[AstNode])
     -> Result<Option<GenVal>, Error>
   {
     //let f = self.get_linked_function_reference(def);
@@ -486,7 +501,7 @@ impl <'l> Gen<'l> {
   fn codegen_expression(&mut self, ast : &AstNode) -> Result<Option<GenVal>, Error> {
     let v : GenVal = match &ast.content {
       Content::FunctionCall(function_value, args) => {
-        return self.codegen_function_call(ast, function_value, args);
+        return self.codegen_function_call(function_value, args);
       }
       Content::IntrinsicCall(name, args) => {
         if let [a, b] = args.as_slice() {
@@ -645,7 +660,7 @@ impl <'l> Gen<'l> {
           ast, body, &def.name, &def.args, &def.signature.args)?;
         return Ok(None);
       }
-      Content::StructDefinition(_def) => {
+      Content::TypeDefinition(_def) => {
         // TODO: is nothing required here?
         return Ok(None);
       }
@@ -654,9 +669,17 @@ impl <'l> Gen<'l> {
           args.iter().map(|a| self.codegen_value(a)).collect();
         self.codegen_struct_initialise(def, a?.as_slice())
       }
+      Content::UnionInstantiate(def, arg) => {
+        let val = self.codegen_value(&arg.1)?;
+        self.codegen_union_initialise(def, val)
+      }
       Content::FieldAccess(x, field_index) => {
-        let (struct_val_node, field_name) = (&x.0, &x.1);
-        let v = self.codegen_expression(struct_val_node)?.unwrap();
+        blah blah blah THIS IS BROKEN
+        // DOESN'T HANDLE UNIONS AT ALL
+        
+        let (type_val_node, field_name) = (&x.0, &x.1);
+        let v = self.codegen_expression(type_val_node)?.unwrap();
+        // TODO: should the struct just be shunted into an alloca, always?
         match v.storage {
           Storage::Register => {
             // if the struct is in a register, dereference the field into a register
@@ -790,7 +813,7 @@ impl <'l> Gen<'l> {
             let cast_to = self.context.i8_type().ptr_type(AddressSpace::Generic);
             let string_pointer = self.builder.build_pointer_cast(ptr, cast_to, "string_pointer");
             let string_length = self.context.i64_type().const_int(vs.len() as u64, false);
-            let def = self.struct_definitions.get("string").unwrap();
+            let def = self.type_definitions.get("string").unwrap();
             self.codegen_struct_initialise(def, &[string_pointer.into(), string_length.into()])
           }
         }
@@ -828,6 +851,7 @@ impl <'l> Gen<'l> {
         Some(t.ptr_type(AddressSpace::Generic).into())
       }
       Type::Struct(def) => Some(self.struct_type(def).as_basic_type_enum()),
+      Type::Union(def) => Some(self.struct_type(def).as_basic_type_enum()),
       Type::Ptr(t) => {
         let bt = self.to_basic_type(t);
         Some(self.pointer_to_type(bt).into())
@@ -910,16 +934,50 @@ impl <'l> Gen<'l> {
     }
   }
 
-  fn struct_type(&mut self, def : &StructDefinition) -> StructType {
+  fn struct_type(&mut self, def : &TypeDefinition) -> StructType {
     if let Some(t) = self.struct_types.get(&def.name) {
       return *t;
     }
-    let types =
-      def.fields.iter().map(|(_, t)| {
-        self.to_basic_type(t).unwrap()
-      })
-      .collect::<Vec<BasicTypeEnum>>();
-    let t = self.context.struct_type(&types, false);
+    let t = match def.kind {
+      TypeKind::Struct => {
+        let types =
+          def.fields.iter().map(|(_, t)| {
+            self.to_basic_type(t).unwrap()
+          })
+          .collect::<Vec<BasicTypeEnum>>();
+        self.context.struct_type(&types, false)
+      }
+      TypeKind::Union => {
+        let mut union_bitwidth = 0;
+        let mut bt : Option<BasicTypeEnum> = None;
+        let mut widest_alignment = 0;
+        for (_, t) in def.fields.iter() {
+          if let Some(t) = self.to_basic_type(t) {
+            let alignment = self.target_data.get_preferred_alignment(&t);
+            if alignment > widest_alignment {
+              widest_alignment = alignment;
+              bt = Some(t)
+            }
+            let width = self.target_data.get_bit_size(&t);
+            if width > union_bitwidth {
+              union_bitwidth = width;
+            }
+          }
+        }
+        if let Some(t) = bt {
+          let val_bitwidth = self.target_data.get_bit_size(&t);
+          assert!(union_bitwidth >= val_bitwidth);
+          let difference = union_bitwidth - val_bitwidth;
+          assert!(difference % 8 == 0);
+          let padding = self.context.i8_type().array_type(difference as u32 / 8);
+          self.context.struct_type(&[t, padding.into()], true)
+        }
+        else {
+          let padding = self.context.i8_type().array_type(union_bitwidth as u32 / 8);
+          self.context.struct_type(&[padding.into()], true)
+        }
+      }
+    };
     self.struct_types.insert(def.name.clone(), t);
     return t;
   }

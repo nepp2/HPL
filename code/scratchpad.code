@@ -1,43 +1,21 @@
 
-# let s = "fuck you"
-
-# print(s.data, s.length)
-
-# hello()
-# max(12, 7)
-
-# let s = ["printing probably doesn't work"]
-
-cfun print(s : ptr(string))
-
-# print(s)
-
-# int SDL_Init(Uint32 flags)
-
-fun blah(s : string)
-  print([s])
-end
-
-struct f
-  a : fun(string)
-end
-
-let b = f{blah}
-
-b.a("blah blah blah")
-
-let s = ["SDL2"]
-let sdl2 = load_library(s)
+let sdl2 = load_library(["SDL2"])
 let sdl_init = load_symbol(sdl2, ["SDL_Init"]) as fun(u32) : i32
 
 let sdl_create_window =
   load_symbol(sdl2, ["SDL_CreateWindow"])
     as fun(ptr(u8), i32, i32, i32, i32, u32) : ptr(u8)
 
+let sdl_poll_event =
+  load_symbol(sdl2, ["SDL_PollEvent"])
+    as fun(ptr(u8)) : i32
+
 let SDL_INIT_VIDEO = 32 as u32
 let SDL_WINDOWPOS_UNDEFINED = 536805376 as i32
 let SDL_WINDOW_OPENGL = 2 as u32
 let SDL_WINDOW_SHOWN = 4 as u32
+
+############################
 
 sdl_init(SDL_INIT_VIDEO);
 
@@ -55,3 +33,5 @@ let win =
     500 as i32,
     400 as i32,
     SDL_WINDOW_SHOWN);
+
+
