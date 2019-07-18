@@ -144,14 +144,35 @@ rusty_fork_test! {
   }
 
   #[test]
+  fn test_struct_in_register() {
+    let code = "
+      struct point
+        x : i64
+        y : i64
+      end
+      fun foo(a : point, b : point)
+        point{x: a.x + b.x, y: a.y + b.y}
+      end
+      let a = point{x: 10, y: 1}
+      let b = point{2, 20}
+      foo(a, b).y
+    ";
+    assert_result(code, Val::I64(21));
+  }
+
+  #[test]
   fn test_union() {
     let code = "
+      struct bar
+        a : i32
+        b : i32
+      end
       union foo
         u : u64
-        i : i64
+        i : bar
       end
-      let v = foo{i : 16}
-      v.i = (v.u as i64) + 16
+      let v = foo{u : 16 as u64}
+      v.i = bar{ ((v.u as i64) + 16) as i32, 0 as i32 }
       v.u
     ";
     assert_result(code, Val::U64(32));

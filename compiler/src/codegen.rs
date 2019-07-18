@@ -446,15 +446,12 @@ impl <'l> Gen<'l> {
   }
 
   fn codegen_struct_initialise(&mut self, def : &TypeDefinition, args : &[BasicValueEnum]) -> GenVal {
-    let t = self.struct_type(def).as_basic_type_enum();
-    let ptr = self.create_entry_block_alloca(t, &def.name);
+    let t = self.struct_type(def);
+    let mut sv = t.get_undef();
     for (i, v) in args.iter().enumerate() {
-      let element_ptr = unsafe {
-        self.builder.build_struct_gep(ptr, i as u32, &def.fields[i].0)
-      };
-      self.builder.build_store(element_ptr, *v);
+      sv = self.builder.build_insert_value(sv, *v, i as u32, "insert_field").unwrap().into_struct_value();
     }
-    pointer(ptr)
+    reg(sv.into())
   }
 
   fn codegen_union_initialise(&mut self, def : &TypeDefinition, val : BasicValueEnum) -> GenVal {
@@ -674,28 +671,46 @@ impl <'l> Gen<'l> {
         self.codegen_union_initialise(def, val)
       }
       Content::FieldAccess(x, field_index) => {
-        blah blah blah THIS IS BROKEN
-        // DOESN'T HANDLE UNIONS AT ALL
-        
         let (type_val_node, field_name) = (&x.0, &x.1);
         let v = self.codegen_expression(type_val_node)?.unwrap();
-        // TODO: should the struct just be shunted into an alloca, always?
-        match v.storage {
-          Storage::Register => {
-            // if the struct is in a register, dereference the field into a register
-            let reg_val =
-              self.builder.build_extract_value(
-                *v.value.as_struct_value(), *field_index as u32, field_name).unwrap();
-            reg(reg_val)
+        match &type_val_node.type_tag {
+          Type::Struct(_) => {
+            match v.storage {
+              Storage::Register => {
+                // if the struct is in a register, dereference the field into a register
+                let reg_val =
+                  self.builder.build_extract_value(
+                    *v.value.as_struct_value(), *field_index as u32, field_name).unwrap();
+                reg(reg_val)
+              }
+              Storage::Pointer => {
+                // if this is a pointer to the struct, get a pointer to the field
+                let ptr = *v.value.as_pointer_value();
+                let field_ptr = unsafe {
+                  self.builder.build_struct_gep(ptr, *field_index as u32, field_name)
+                };
+                pointer(field_ptr)
+              }
+            }
           }
-          Storage::Pointer => {
-            // if this is a pointer to the struct, get a pointer to the field
-            let ptr = *v.value.as_pointer_value();
-            let field_ptr = unsafe {
-              self.builder.build_struct_gep(ptr, *field_index as u32, field_name)
-            };
-            pointer(field_ptr)
+          Type::Union(def) => {
+            let t = self.to_basic_type(&def.fields[*field_index].1);
+            match v.storage {
+              Storage::Register => {
+                // if the struct is in a register, dereference the field into a register
+                let reg_val =
+                  self.builder.build_bitcast(v.value, t.unwrap(), "union_cast");
+                reg(reg_val)
+              }
+              Storage::Pointer => {
+                // if this is a pointer to the struct, get a pointer to the field
+                let ptr = *v.value.as_pointer_value();
+                let field_ptr = self.builder.build_pointer_cast(ptr, self.pointer_to_type(t), "union_cast");
+                pointer(field_ptr)
+              }
+            }
           }
+          _ => panic!(),
         }
       }
       Content::ArrayLiteral(elements) => {
