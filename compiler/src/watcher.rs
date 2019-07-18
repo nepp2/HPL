@@ -10,8 +10,10 @@ use std::str;
 pub fn run_process(path : &str) -> Child {
   let exe = std::env::current_exe().unwrap();
   let exe = exe.to_str().unwrap();
-  let child = Command::new("cmd")
-      .args(&["/C", exe, "run", path])
+  // let child = Command::new("cmd")
+  //     .args(&["/C", exe, "run", path])
+  let child = Command::new(exe)
+      .args(&["run", path])
       .stdin(Stdio::piped())
       .stdout(Stdio::piped())
       .spawn()
@@ -44,15 +46,14 @@ pub fn watch(path : &str) {
   watcher.watch("code/prelude.code", RecursiveMode::Recursive).unwrap();
 
   loop {
-
+    //println!("loop");
     if let Some(mut p) = process {
-      // TODO: try_wait is buggy on windows, and never returns if too much data has been
-      // written to stdout or stderr. That's why I read from them proactively.
       let exit_status = p.try_wait().expect("error");
+      // TODO: ERROR - THIS CALL BLOCKS
       read_to_string(&mut p.stdout, &mut output);
       read_to_string(&mut p.stderr, &mut error);
       if let Some(exit_status) = exit_status {
-        println!("process finished. output:\n{}", output);
+        println!("{}", output);
         output.clear();
         if !exit_status.success() || error.len() > 0 {
           println!("ERROR:\n{}\n{}", exit_status, error);
@@ -62,28 +63,29 @@ pub fn watch(path : &str) {
       }
       else {
         process = Some(p);
+        print!("{}", output);
+        output.clear();
       }
     }
-    loop {
-      match rx.try_recv() {
-        Ok(event) => {
-          match event {
-            DebouncedEvent::Write(_) => {
-              if let Some(p) = &mut process {
-                p.kill().unwrap();
-                println!("Child process killed");
-              }
-              process = Some(run_process(path));
+    //println!("loop2");
+    match rx.try_recv() {
+      Ok(event) => {
+        match event {
+          DebouncedEvent::Write(_) => {
+            if let Some(p) = &mut process {
+              p.kill().unwrap();
+              println!("Child process killed");
             }
-            _ => {}
+            process = Some(run_process(path));
           }
-        },
-        Err(e) => match e {
-          TryRecvError::Disconnected =>
-            println!("watch error: {:?}", e),
-          TryRecvError::Empty => break,
-        },
-      }
+          _ => {}
+        }
+      },
+      Err(e) => match e {
+        TryRecvError::Disconnected =>
+          println!("watch error: {:?}", e),
+        TryRecvError::Empty => break,
+      },
     }
     thread::sleep(Duration::from_millis(10));
   }

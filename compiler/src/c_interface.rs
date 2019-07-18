@@ -11,6 +11,8 @@ use std::path::Path;
 
 use libloading::{Library, Symbol};
 
+use std::{thread, time};
+
 #[no_mangle]
 pub extern fn create_interpreter() -> *mut Interpreter {
   Box::into_raw(Box::new(Interpreter::new()))
@@ -83,6 +85,12 @@ pub extern "C" fn print(s : ScriptString) {
 }
 
 #[no_mangle]
+pub extern "C" fn thread_sleep(millis : u64) {
+  let t = time::Duration::from_millis(millis);
+  thread::sleep(t);
+}
+
+#[no_mangle]
 pub extern "C" fn load_library_c(lib_name : ScriptString) -> usize {
   let lib = lib_name.as_str();
   let deps_path = format!("{}target/{}/deps/{}.dll", ROOT, MODE, lib);
@@ -142,6 +150,7 @@ impl CLibraries {
     cache.insert("load_symbol".into(), (load_symbol as *const()) as usize);
     cache.insert("malloc".into(), (malloc as *const()) as usize);
     cache.insert("print".into(), (print as *const()) as usize);
+    cache.insert("thread_sleep".into(), (thread_sleep as *const()) as usize);
 
     CLibraries {
       local_symbol_table: cache,

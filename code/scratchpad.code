@@ -1,4 +1,70 @@
 
+struct sdl_keysym
+  scancode : u32
+  sym : u32
+  mod : u16
+  unused : u32
+end
+
+struct sdl_window_event
+  window_id : u32
+  event : u8
+  data1 : i32
+  data2 : i32
+end
+
+struct sdl_keyboard_event
+  window_id : u32
+  state : u8
+  repeat : u8
+  keysym : sdl_keysym
+end
+
+struct sdl_padding
+  a0 : i64
+  a1 : i64
+  a2 : i64
+  a3 : i64
+  a4 : i64
+  a5 : i64
+  a6 : i64
+  a7 : i64
+  a8 : i64
+  a9 : i64
+  a10 : i64
+  a11 : i64
+  a12 : i64
+  a13 : i64
+  a14 : i64
+  a15 : i64
+  a16 : i64
+  a17 : i64
+  a18 : i64
+  a19 : i64
+end
+
+union sdl_event_content
+  none : i64
+  window : sdl_window_event
+  keyboard : sdl_keyboard_event
+  padding : sdl_padding
+end
+
+struct sdl_event
+  event_type : u32
+  timestamp : u32
+  content : sdl_event_content
+end
+
+let SDL_QUIT = 256
+
+let SDL_WINDOWEVENT = 512
+
+let SDL_KEYDOWN = 768
+let SDL_KEYUP = 769
+let SDL_TEXTEDITING =  770
+let SDL_TEXTINPUT = 771
+
 let sdl2 = load_library(["SDL2"])
 let sdl_init = load_symbol(sdl2, ["SDL_Init"]) as fun(u32) : i32
 
@@ -8,7 +74,7 @@ let sdl_create_window =
 
 let sdl_poll_event =
   load_symbol(sdl2, ["SDL_PollEvent"])
-    as fun(ptr(u8)) : i32
+    as fun(ptr(sdl_event)) : i32
 
 let SDL_INIT_VIDEO = 32 as u32
 let SDL_WINDOWPOS_UNDEFINED = 536805376 as i32
@@ -34,4 +100,18 @@ let win =
     400 as i32,
     SDL_WINDOW_SHOWN);
 
+let event = [sdl_event{event_type: 0 as u32, timestamp: 0 as u32, content: sdl_event_content{ none: 0 }}]
+let s = [string {[0 as u8], 1 as u64}]
 
+while true
+  sdl_poll_event(event)
+  let t = event[0].event_type as i64
+  if t == SDL_QUIT
+    break
+  else if t == SDL_KEYDOWN
+    let c = event[0].content.keyboard.keysym.sym as u8
+    s[0].data[0] = c
+    print(s)
+  end
+  thread_sleep(10 as u64)
+end

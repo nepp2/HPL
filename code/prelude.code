@@ -21,6 +21,8 @@ cfun load_symbol(handle : lib_handle, name : ptr(string)) : ptr(u8)
 
 cfun print(s : ptr(string))
 
+cfun thread_sleep(millis : u64)
+
 fun max(a : i64, b : i64)
   if a > b then a else b end
 end

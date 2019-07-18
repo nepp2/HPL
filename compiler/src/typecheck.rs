@@ -257,9 +257,12 @@ impl <'l> TypeChecker<'l> {
       (name, params) => {
         if let Some(t) = self.types.get(name) {
           if params.len() > 0 {
-            return error(expr, "unexpected struct type parameters");
+            return error(expr, "unexpected type parameters");
           }
-          return Ok(Type::Struct(t.clone()))
+          match t.kind {
+            TypeKind::Struct => return Ok(Type::Struct(t.clone())),
+            TypeKind::Union => return Ok(Type::Union(t.clone())),
+          }
         }
         return error(expr, format!("type '{}' does not exist", name));
       }
@@ -293,7 +296,7 @@ impl <'l> TypeChecker<'l> {
 
   fn to_type_definition(&mut self, expr : &Expr, exprs : &[Expr], kind : TypeKind) -> Result<AstNode, Error> {
     if exprs.len() < 1 {
-      return error(expr, "malformed struct definition");
+      return error(expr, "malformed type definition");
     }
     let name_expr = &exprs[0];
     let name = name_expr.symbol_unwrap()?;
@@ -540,7 +543,7 @@ impl <'l> TypeChecker<'l> {
                     return error(*field, "incorrect field name");
                   }
                   if &value.type_tag != expected_type {
-                    return error(value.loc, "type mismatch");
+                    return error(value.loc, format!("type mismatch. expected {:?}, found {:?}", expected_type, value.type_tag));
                   }
                 }
                 let c = Content::StructInstantiate(def.clone(), fields.into_iter().map(|v| v.1).collect());

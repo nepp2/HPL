@@ -141,14 +141,14 @@ impl Interpreter {
     // TODO module.set_target(target: &Target);
 
     let pm = PassManager::create(&module);
-    pm.add_instruction_combining_pass();
-    pm.add_reassociate_pass();
-    pm.add_gvn_pass();
-    pm.add_cfg_simplification_pass();
-    pm.add_basic_alias_analysis_pass();
-    pm.add_promote_memory_to_register_pass();
-    pm.add_instruction_combining_pass();
-    pm.add_reassociate_pass();  
+    // pm.add_instruction_combining_pass();
+    // pm.add_reassociate_pass();
+    // pm.add_gvn_pass();
+    // pm.add_cfg_simplification_pass();
+    // pm.add_basic_alias_analysis_pass();
+    // pm.add_promote_memory_to_register_pass();
+    // pm.add_instruction_combining_pass();
+    // pm.add_reassociate_pass();  
     pm.initialize();
 
     let mut external_globals : HashMap<RefStr, GlobalValue> = HashMap::new();

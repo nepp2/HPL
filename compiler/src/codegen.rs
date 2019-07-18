@@ -748,6 +748,8 @@ impl <'l> Gen<'l> {
             return error(assign_node.loc, "cannot assign to this construct");
           }
         };
+        // TODO: this is very inefficient when assigning large structs. Can optimise
+        // by detecting pointers and using the memcopy intrinsic
         let reg_val = self.codegen_expression_to_register(value_node)?.unwrap();
         self.builder.build_store(ptr, reg_val);
         return Ok(None);
