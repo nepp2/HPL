@@ -2,36 +2,34 @@ use notify::{Watcher, RecursiveMode, watcher, DebouncedEvent};
 use std::sync::mpsc::{channel, TryRecvError};
 use std::time::Duration;
 use std::thread;
+use std::default::Default;
 
 use std::process::{Command, Stdio, Child };
-use std::io::Read;
+use std::io::{Read, BufReader, BufRead};
 use std::str;
 
-pub fn run_process(path : &str) -> Child {
+use subprocess::{Popen, PopenConfig, Redirection};
+
+pub fn run_process(path : &str) -> Popen {
   let exe = std::env::current_exe().unwrap();
   let exe = exe.to_str().unwrap();
-  // let child = Command::new("cmd")
-  //     .args(&["/C", exe, "run", path])
-  let child = Command::new(exe)
-      .args(&["run", path])
-      .stdin(Stdio::piped())
-      .stdout(Stdio::piped())
-      .spawn()
-      .expect("failed to execute child");
-  child
+  Popen::create(&[exe, "run", path], PopenConfig {
+      stdout: Redirection::Pipe, ..Default::default()
+  }).unwrap()
+  // let exe = std::env::current_exe().unwrap();
+  // let exe = exe.to_str().unwrap();
+  // let mut child =
+  //   Command::new(exe)
+  //     .args(&["run", path])
+  //     .stdin(Stdio::piped())
+  //     .stdout(Stdio::piped());
+  //     .spawn().expect("failed to execute child");
+  // child
 }
 
 pub fn watch(path : &str) {
 
-  fn read_to_string<R : Read>(stream : &mut Option<R>, s : &mut String) {
-    if let Some(stream) = stream.as_mut() {
-      stream.read_to_string(s).unwrap();
-    }
-  }
-
   let mut process = Some(run_process(path));
-  let mut output = String::new();
-  let mut error = String::new();
 
   // Create a channel to receive the events.
   let (tx, rx) = channel();
@@ -48,23 +46,21 @@ pub fn watch(path : &str) {
   loop {
     //println!("loop");
     if let Some(mut p) = process {
-      let exit_status = p.try_wait().expect("error");
-      // TODO: ERROR - THIS CALL BLOCKS
-      read_to_string(&mut p.stdout, &mut output);
-      read_to_string(&mut p.stderr, &mut error);
+      // check if the process is still alive
+      let exit_status = p.poll();
+
+      let (out, err) = p.communicate(None).unwrap();
+      if let Some(out) = out { println!("{}", out); }
+      if let Some(err) = err { println!("{}", err); }
+
       if let Some(exit_status) = exit_status {
-        println!("{}", output);
-        output.clear();
-        if !exit_status.success() || error.len() > 0 {
-          println!("ERROR:\n{}\n{}", exit_status, error);
-          error.clear();
+        if !exit_status.success() {
+          println!("ERROR:\n{:?}", exit_status);
         }
         process = None;
       }
       else {
         process = Some(p);
-        print!("{}", output);
-        output.clear();
       }
     }
     //println!("loop2");

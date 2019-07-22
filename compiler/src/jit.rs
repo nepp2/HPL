@@ -124,7 +124,7 @@ impl Interpreter {
 
   pub fn compile_expression(&mut self, expr : &Expr) -> Result<&CompiledExpression, Error> {
     // TODO: provide an option for this?
-    println!("{}", display_expr(expr));
+    // println!("{}", display_expr(expr));
 
     let mut type_checker =
       TypeChecker::new(
@@ -164,7 +164,7 @@ impl Interpreter {
     };
     
     // TODO: provide an option for this?
-    dump_module(&module);
+    // dump_module(&module);
 
     // Link c functions
     for (function_value, address) in c_functions.values() {
