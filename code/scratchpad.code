@@ -112,6 +112,7 @@ while true
     let c = event[0].content.keyboard.keysym.sym as u8
     s[0].data[0] = c
     print(s)
+    #print(s)
   end
   thread_sleep(10 as u64)
 end

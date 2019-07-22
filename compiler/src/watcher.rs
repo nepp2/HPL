@@ -13,9 +13,24 @@ use subprocess::{Popen, PopenConfig, Redirection};
 pub fn run_process(path : &str) -> Popen {
   let exe = std::env::current_exe().unwrap();
   let exe = exe.to_str().unwrap();
-  Popen::create(&[exe, "run", path], PopenConfig {
+  let mut p = Popen::create(&[exe, "run", path], PopenConfig {
       stdout: Redirection::Pipe, ..Default::default()
-  }).unwrap()
+  }).unwrap();
+  let stdout = p.stdout.take().unwrap();
+  thread::spawn(|| {
+    let mut s = String::new();
+    let mut buf = BufReader::new(stdout);
+    loop {
+      let i = buf.read_line(&mut s).unwrap();
+      print!("{}", s);
+      s.clear();
+      if i == 0 {
+        break;
+      }
+    }
+    println!("Watcher stdout thread terminating");
+  });
+  p
   // let exe = std::env::current_exe().unwrap();
   // let exe = exe.to_str().unwrap();
   // let mut child =
@@ -49,13 +64,13 @@ pub fn watch(path : &str) {
       // check if the process is still alive
       let exit_status = p.poll();
 
-      let (out, err) = p.communicate(None).unwrap();
-      if let Some(out) = out { println!("{}", out); }
-      if let Some(err) = err { println!("{}", err); }
-
       if let Some(exit_status) = exit_status {
+        let (_, err) = p.communicate(None).unwrap();
         if !exit_status.success() {
           println!("ERROR:\n{:?}", exit_status);
+        }
+        if let Some(err) = err {
+          println!("{}", err);
         }
         process = None;
       }
@@ -80,7 +95,7 @@ pub fn watch(path : &str) {
       Err(e) => match e {
         TryRecvError::Disconnected =>
           println!("watch error: {:?}", e),
-        TryRecvError::Empty => break,
+        TryRecvError::Empty => (),
       },
     }
     thread::sleep(Duration::from_millis(10));
