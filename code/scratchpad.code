@@ -56,6 +56,10 @@ struct sdl_event
   content : sdl_event_content
 end
 
+struct sdl_rect
+  x : i32, y : i32, w : i32, h : i32
+end
+
 let SDL_QUIT = 256
 
 let SDL_WINDOWEVENT = 512
@@ -65,13 +69,45 @@ let SDL_KEYUP = 769
 let SDL_TEXTEDITING =  770
 let SDL_TEXTINPUT = 771
 
+let SDL_RENDERER_SOFTWARE = 1
+let SDL_RENDERER_ACCELERATED = 2
+let SDL_RENDERER_PRESENTVSYNC = 4
+let SDL_RENDERER_TARGETTEXTURE = 8
+
 let sdl2 = load_library(["SDL2"])
 let sdl_init = load_symbol(sdl2, ["SDL_Init"]) as fun(u32) : i32
 
+# title, x, y, w, h, flags
 let sdl_create_window =
   load_symbol(sdl2, ["SDL_CreateWindow"])
     as fun(ptr(u8), i32, i32, i32, i32, u32) : ptr(u8)
 
+# window, index, flags
+let sdl_create_renderer =
+  load_symbol(sdl2, ["SDL_CreateRenderer"])
+    as fun(ptr(u8), i32, u32) : ptr(u8)
+
+# renderer
+let sdl_clear =
+  load_symbol(sdl2, ["SDL_RenderClear"])
+    as fun(ptr(u8)) : i32
+
+# renderer, r, g, b, a
+let sdl_set_draw_color =
+  load_symbol(sdl2, ["SDL_SetRenderDrawColor"])
+    as fun(ptr(u8), u8, u8, u8, u8) : i32
+
+# renderer
+let sdl_present =
+  load_symbol(sdl2, ["SDL_RenderPresent"])
+    as fun(ptr(u8))
+
+# renderer, rect
+let sdl_fill_rect =
+  load_symbol(sdl2, ["SDL_RenderFillRect"])
+    as fun(ptr(u8), ptr(sdl_rect))
+
+# event
 let sdl_poll_event =
   load_symbol(sdl2, ["SDL_PollEvent"])
     as fun(ptr(sdl_event)) : i32
@@ -100,7 +136,14 @@ let win =
     400 as i32,
     SDL_WINDOW_SHOWN);
 
-let event = [sdl_event{event_type: 0 as u32, timestamp: 0 as u32, content: sdl_event_content{ none: 0 }}]
+let renderer = sdl_create_renderer(win, -1 as i32, SDL_RENDERER_ACCELERATED as u32)
+
+let event =
+  [sdl_event{
+    event_type: 0 as u32,
+    timestamp: 0 as u32,
+    content: sdl_event_content{ none: 0 }
+  }]
 let s = [string {[0 as u8], 1 as u64}]
 
 while true
@@ -112,7 +155,11 @@ while true
     let c = event[0].content.keyboard.keysym.sym as u8
     s[0].data[0] = c
     print(s)
-    #print(s)
   end
-  thread_sleep(10 as u64)
+
+  sdl_set_draw_color(renderer, 255 as u8, 0 as u8, 0 as u8, 255 as u8)
+  sdl_clear(renderer)
+  sdl_present(renderer)
+
+  thread_sleep(16 as u64)
 end

@@ -139,7 +139,7 @@ lazy_static! {
   static ref EXPRESSION_TERMINATORS : HashSet<&'static str> =
     vec!["end", "}", ")", "]", "else", ",", ";"].into_iter().collect();
   static ref PREFIX_OPERATORS : HashSet<&'static str> =
-    vec!["-", "!", "$"].into_iter().collect();
+    vec!["-", "!", "$", "ref"].into_iter().collect();
   static ref INFIX_OPERATORS : HashSet<&'static str> =
     vec!["=", ".", "==", "!=", "<=", ">=", "=>", "+=", "-=", "*=", "/=", "||", "&&",
       "<", ">", "+", "-", "*", "/", "%", "|", "&", "^", "as"].into_iter().collect();
@@ -171,6 +171,7 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
         "%" => 5,
         "as" => 6,
         "!" => 7,
+        "ref" => 7,
         "(" => 8,
         "[" => 8,
         "." => 9,
@@ -250,9 +251,7 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
     let t = ps.peek()?;
     // if the next token is a prefix operator
     if t.token_type == Syntax && PREFIX_OPERATORS.contains(t.symbol.as_ref()) {
-      let mut op_string = String::new();
-      op_string.push_str("unary_");
-      op_string.push_str(t.symbol.as_ref());
+      let op_string = format!("unary_{}", t.symbol.as_ref());
       ps.expect_type(Syntax)?;
       let operator = ps.add_symbol(op_string, start);
       let expr = parse_expression_term(ps)?;

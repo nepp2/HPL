@@ -288,6 +288,7 @@ impl <'l> TypeChecker<'l> {
         (Type::F64, "unary_-") => Some(Type::F64),
         (Type::I64, "unary_-") => Some(Type::I64),
         (Type::Bool, "unary_!") => Some(Type::Bool),
+        (t, "unary_ref") => Some(Type::Ptr(Box::new(t.clone()))),
         _ => None,
       }
       _ => None,
