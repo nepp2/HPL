@@ -10,7 +10,7 @@
 pub mod error;
 pub mod lexer;
 pub mod parser;
-pub mod value;
+pub mod expr;
 pub mod watcher;
 pub mod typecheck;
 pub mod codegen;

@@ -2,7 +2,7 @@
 // TODO: Carlos says I should have more comments than the occasional TODO
 
 use crate::error::{Error, error, error_raw, ErrorContent};
-use crate::value::RefStr;
+use crate::expr::RefStr;
 use crate::typecheck::{
   AstNode, Content, Type, Val, TypeDefinition, TypeKind, FunctionDefinition, VarScope};
 

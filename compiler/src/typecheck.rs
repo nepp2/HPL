@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::fmt::Write;
 
 use crate::error::{Error, error, error_raw, TextLocation};
-use crate::value::{StringCache, RefStr, Expr, ExprTag};
+use crate::expr::{StringCache, RefStr, Expr, ExprTag};
 
 use std::collections::HashMap;
 use itertools::Itertools;
@@ -518,7 +518,7 @@ impl <'l> TypeChecker<'l> {
           }
           ("type_instantiate", exprs) => {
             if exprs.len() < 1 || exprs.len() % 2 == 0 {
-              return error(expr, format!("malformed type instantiation {:?}", expr));
+              return error(expr, format!("malformed type instantiation"));
             }
             let name_expr = &exprs[0];
             let field_exprs = &exprs[1..];

@@ -16,6 +16,7 @@ pub fn error_content<S : Into<ErrorContent>>(message : S) -> ErrorContent {
   message.into()
 }
 
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TextMarker {
   pub line : usize,
@@ -34,6 +35,7 @@ impl <'l> Into<TextLocation> for &'l TextLocation {
   }
 }
 
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TextLocation {
   pub start : TextMarker,

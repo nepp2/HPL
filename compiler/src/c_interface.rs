@@ -2,12 +2,13 @@
 
 use crate::jit::Interpreter;
 use crate::lexer;
-use crate::value::RefStr;
+use crate::expr::RefStr;
 
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::collections::HashMap;
 use std::path::Path;
+use std::fmt;
 
 use libloading::{Library, Symbol};
 
@@ -33,23 +34,32 @@ pub extern fn lex_string(i : *mut Interpreter, code : *mut c_char) {
   
 }
 
+/// A sized string that is compatible with the Cauldron's string representation
 #[no_mangle]
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct ScriptString {
+pub struct SStr {
   pub ptr : *mut u8,
   pub length : u64,
 }
 
-impl ScriptString {
+impl SStr {
   pub fn from_str(s : &str) -> Self {
     let ptr = (s as *const str) as *mut u8;
-    ScriptString { ptr, length: s.len() as u64 }
+    SStr { ptr, length: s.len() as u64 }
   }
 
   pub fn as_str(&self) -> &str {
-    let slice = unsafe { std::slice::from_raw_parts(self.ptr, self.length as usize) };
-    std::str::from_utf8(slice).expect("wasn't a valid utf8 string!")
+    unsafe {
+      let slice = std::slice::from_raw_parts(self.ptr, self.length as usize);
+      std::str::from_utf8_unchecked(slice)
+    }
+  }
+}
+
+impl fmt::Debug for SStr {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "{}", self.as_str())
   }
 }
 
@@ -70,7 +80,7 @@ extern {
 }
 
 #[no_mangle]
-pub extern "C" fn print(s : ScriptString) {
+pub extern "C" fn print(s : SStr) {
   println!("{}", s.as_str());
 }
 
@@ -87,7 +97,7 @@ pub extern "C" fn thread_sleep(millis : u64) {
 }
 
 #[no_mangle]
-pub extern "C" fn load_library_c(lib_name : ScriptString) -> usize {
+pub extern "C" fn load_library_c(lib_name : SStr) -> usize {
   let lib = lib_name.as_str();
   let deps_path = format!("{}target/{}/deps/{}.dll", ROOT, MODE, lib);
   let local_path = format!("{}.dll", lib);
@@ -120,7 +130,7 @@ pub fn load_library(path : &str) -> Option<usize> {
 
 /// TODO: This is not thread-safe!
 #[no_mangle]
-pub extern "C" fn load_symbol(lib_handle : usize, symbol_name : ScriptString) -> usize {
+pub extern "C" fn load_symbol(lib_handle : usize, symbol_name : SStr) -> usize {
   let s = CString::new(symbol_name.as_str()).unwrap();
   unsafe {
     if SHARED_LIBRARIES.is_none() {

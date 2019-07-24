@@ -2,7 +2,7 @@
 use crate::error::Error;
 use crate::jit::Interpreter;
 use crate::typecheck::Val;
-use crate::c_interface::ScriptString;
+use crate::c_interface::SStr;
 
 fn result_string(r : Result<Val, Error>) -> String {
   match r {
@@ -297,7 +297,7 @@ rusty_fork_test! {
         a[0] = "Hello world"
       end
     "#;
-    let s : ScriptString = i.run_with_pointer_return(code, "main").unwrap();
+    let s : SStr = i.run_with_pointer_return(code, "main").unwrap();
     let expected = "Hello world";
     assert_eq!(s.as_str(), expected);
   }

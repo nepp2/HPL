@@ -1,6 +1,6 @@
 
 use crate::error::{Error, error, error_raw};
-use crate::value::{StringCache, display_expr, RefStr, Expr};
+use crate::expr::{StringCache, RefStr, Expr};
 use crate::lexer;
 use crate::parser;
 use crate::typecheck::{
