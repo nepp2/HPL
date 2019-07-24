@@ -1,6 +1,7 @@
 
 use std::rc::Rc;
 use std::fmt::Write;
+use std::any::Any;
 
 use crate::error::{Error, error, error_raw, TextLocation};
 use crate::expr::{StringCache, RefStr, Expr, ExprTag};
@@ -24,6 +25,7 @@ pub enum Type {
   Struct(Rc<TypeDefinition>),
   Union(Rc<TypeDefinition>),
   Ptr(Box<Type>),
+  Unresolved()
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -124,6 +126,7 @@ pub enum Content {
   IfThen(Box<(AstNode, AstNode)>),
   IfThenElse(Box<(AstNode, AstNode, AstNode)>),
   Block(Vec<AstNode>),
+  Quote(Box<Expr>),
   FunctionReference(RefStr),
   FunctionDefinition(Rc<FunctionDefinition>, Box<AstNode>),
   CFunctionPrototype(Rc<FunctionDefinition>),
@@ -380,6 +383,10 @@ impl <'l> TypeChecker<'l> {
           Content::VariableInitialise(scoped_name, v, VarScope::Local)
         };
         Ok(ast(expr, Type::Void, c))
+      }
+      // TODO this is a very stupid approach
+      ("quote", [e]) => {
+        Ok(ast(expr, Type::Ptr(Box::new(Type::U8)), Content::Quote(Box::new(e.clone()))))
       }
       ("=", [assign_expr, value_expr]) => {
         let a = self.to_ast(assign_expr)?;

@@ -20,6 +20,26 @@ pub enum ExprTag {
   LiteralUnit,
 }
 
+impl  Clone for ExprTag {
+  fn clone(&self) -> Self {
+    fn clone(s : SStr) -> SStr {
+      let v : String = s.as_str().into();
+      let s = SStr::from_str(s.as_str());
+      std::mem::forget(v);
+      s
+    }
+    use self::ExprTag::*;
+    match self {
+      Symbol(s) => Symbol(clone(*s)),
+      LiteralString(s) => LiteralString(clone(*s)),
+      LiteralFloat(f) => LiteralFloat(*f),
+      LiteralInt(i) => LiteralInt(*i),
+      LiteralBool(b) => LiteralBool(*b),
+      LiteralUnit => LiteralUnit,
+    }
+  }
+}
+
 impl ExprTag {
   pub fn literal_string(s : String) -> ExprTag {
     let tag = ExprTag::LiteralString(SStr::from_str(s.as_str()));
@@ -35,8 +55,8 @@ impl ExprTag {
 
 #[repr(C)]
 pub struct SArray<T> {
-  pub len : u64,
   pub data : *mut T,
+  pub len : u64,
 }
 
 impl <T> SArray<T> {
@@ -59,7 +79,19 @@ impl <T> Drop for SArray<T> {
   }
 }
 
+impl <T : Clone> Clone for SArray<T> {
+  fn clone(&self) -> Self {
+    let v = unsafe {
+      Vec::from_raw_parts(self.data, self.len as usize, self.len as usize)
+    };
+    let a = SArray::new(v.clone());
+    std::mem::forget(v);
+    a
+  }
+}
+
 #[repr(C)]
+#[derive(Clone)]
 pub struct Expr {
   pub children : SArray<Expr>,
   pub loc : TextLocation,
@@ -67,38 +99,20 @@ pub struct Expr {
 }
 
 impl Expr {
-
   pub fn new(tag : ExprTag, children : Vec<Expr>, loc : TextLocation) -> Expr {
     Expr { children: SArray::new(children), loc, tag }
   }
-  
-  // TODO: are these needed?
-  // pub fn get_symbol(&self) -> SStr {
-  //   if self.tag == ExprTag::Symbol { unsafe { self.data.s } } else { panic!() }
-  // }
-  // pub fn get_string(&self) -> SStr {
-  //   if self.tag == ExprTag::LiteralString { unsafe { self.data.s } } else { panic!() }
-  // }
-  // pub fn get_float(&self) -> f64 {
-  //   if self.tag == ExprTag::LiteralFloat { unsafe { self.data.f } } else { panic!() }
-  // }
-  // pub fn get_int(&self) -> i64 {
-  //   if self.tag == ExprTag::LiteralInt { unsafe { self.data.i } } else { panic!() }
-  // }
-  // pub fn get_bool(&self) -> bool {
-  //   if self.tag == ExprTag::LiteralBool { unsafe { self.data.b } } else { panic!() }
-  // }
 }
 
 impl Drop for Expr {
   fn drop(&mut self) {
-    match self.tag {
-      ExprTag::Symbol(s) => {
-        unsafe {
-          String::from_raw_parts(s.ptr, s.length as usize, s.length as usize);
-        }
-      }
-      _ => ()
+    let s = match self.tag {
+      ExprTag::Symbol(s) => s,
+      ExprTag::LiteralString(s) => s,
+      _ => return,
+    };
+    unsafe {
+      String::from_raw_parts(s.ptr, s.length as usize, s.length as usize);
     }
   }
 }
@@ -120,6 +134,11 @@ impl Expr {
   }
 }
 
+impl fmt::Debug for Expr {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "{}", self)
+  }
+}
 
 impl fmt::Display for Expr {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

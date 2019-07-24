@@ -26,3 +26,28 @@ cfun thread_sleep(millis : u64)
 fun max(a : i64, b : i64)
   if a > b then a else b end
 end
+
+union expr_data
+  s : string
+  f : f64
+  i : i64
+  b : bool
+end
+
+struct expr_tag
+  tag : u8
+  data : expr_data
+end
+
+struct expr_array
+  data : ptr(expr)
+  length : u64
+end
+
+struct expr
+  children : expr_array
+  loc : text_location
+  tag : expr_tag
+end
+
+cfun print_expr(e : ptr(u8))

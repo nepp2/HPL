@@ -119,6 +119,16 @@ let SDL_WINDOW_SHOWN = 4 as u32
 
 ############################
 
+let e = quote
+  let c = malloc(4 as u32)
+  c[0] = 65 as u8
+  c[1] = 65 as u8
+  c[2] = 65 as u8
+  c[3] = 0 as u8
+end
+
+print_expr(e)
+
 sdl_init(SDL_INIT_VIDEO);
 
 let c = malloc(4 as u32)

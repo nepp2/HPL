@@ -663,6 +663,12 @@ impl <'l> Gen<'l> {
         }
         return Ok(None);
       }
+      Content::Quote(e) => {
+        let v = Box::into_raw(e.clone()) as u64;
+        let v = self.context.i64_type().const_int(v, false);
+        let t = self.context.i8_type().ptr_type(AddressSpace::Generic);
+        reg(self.builder.build_int_to_ptr(v, t, "quote_expr").into())
+      }
       Content::CFunctionPrototype(_def) => {
         return Ok(None);
       }

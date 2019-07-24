@@ -2,7 +2,7 @@
 
 use crate::jit::Interpreter;
 use crate::lexer;
-use crate::expr::RefStr;
+use crate::expr::{RefStr, Expr};
 
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -143,6 +143,12 @@ pub extern "C" fn load_symbol(lib_handle : usize, symbol_name : SStr) -> usize {
   }
 }
 
+/// TODO: This is not thread-safe!
+#[no_mangle]
+pub extern "C" fn print_expr(e : &Expr) {
+  println!("{}", e);
+}
+
 pub struct CLibraries {
   pub local_symbol_table : HashMap<RefStr, usize>,
   pub shared_libraries : HashMap<usize, (RefStr, Library)>,
@@ -156,6 +162,7 @@ impl CLibraries {
     sym.insert("load_symbol".into(), (load_symbol as *const()) as usize);
     sym.insert("malloc".into(), (malloc as *const()) as usize);
     sym.insert("print".into(), (print as *const()) as usize);
+    sym.insert("print_expr".into(), (print_expr as *const()) as usize);
     sym.insert("test_add".into(), (test_add as *const()) as usize);
     sym.insert("thread_sleep".into(), (thread_sleep as *const()) as usize);
 

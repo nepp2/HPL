@@ -555,7 +555,8 @@ fn parse_sizeof(ps : &mut ParseState) -> Result<Expr, Error> {
 fn parse_quote(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
   ps.expect(Syntax, "quote")?;
-  let e = parse_expression(ps)?;
+  let e = parse_block(ps)?;
+  ps.expect(Syntax, "end")?;
   Ok(ps.add_tree("quote", vec![e], start))
 }
 
