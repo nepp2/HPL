@@ -1,5 +1,5 @@
 use crate::lexer::{Token, TokenType};
-use crate::expr::{RefStr, StringCache, Expr, ExprTag};
+use crate::expr::{StringCache, Expr, ExprTag};
 use crate::error::{Error, ErrorContent, TextLocation, TextMarker, error};
 use std::collections::HashSet;
 use std::str::FromStr;
@@ -107,7 +107,7 @@ impl <'l> ParseState<'l> {
   }
 
   fn add_expr(&mut self, tag : ExprTag, children : Vec<Expr>, loc : TextLocation) -> Expr {
-    Expr { tag, children, loc }
+    Expr::new(tag, children, loc)
   }
 
   fn add_leaf(&mut self, tag : ExprTag, start : TextMarker) -> Expr {
@@ -115,19 +115,17 @@ impl <'l> ParseState<'l> {
     self.add_expr(tag, vec!(), loc)
   }
 
-  fn add_tree<T : AsRef<str> + Into<RefStr>>
+  fn add_tree<T : Into<String>>
     (&mut self, s : T, children : Vec<Expr>, start : TextMarker) -> Expr
   {
     let loc = self.loc(start);
-    let tag = ExprTag::Tree(self.cache.get(s));
+    let tag = ExprTag::symbol(s.into());
     self.add_expr(tag, children, loc)
   }
 
-  fn add_symbol<T : AsRef<str> + Into<RefStr>>
-    (&mut self, s : T, start : TextMarker) -> Expr
-  {
+  fn add_symbol(&mut self, s : String, start : TextMarker) -> Expr {
     let loc = self.loc(start);
-    let tag = ExprTag::Symbol(self.cache.get(s));
+    let tag = ExprTag::symbol(s);
     self.add_expr(tag, vec!(), loc)
   }
 }
@@ -267,13 +265,13 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
   fn parse_infix(ps : &mut ParseState, left_expr : Expr, precedence : i32) -> Result<Expr, Error> {
     let infix_start = left_expr.loc.start;
     let operator_start = ps.peek_marker();
-    let operator_str = ps.pop_type(Syntax)?.symbol.clone();
-    if operator_str.as_ref() == "as" {
+    let operator_str : String = ps.pop_type(Syntax)?.symbol.as_ref().into();
+    if operator_str.as_str() == "as" {
       let right_expr = parse_type(ps)?;
       let args = vec!(left_expr, right_expr);
       Ok(ps.add_tree("as", args, infix_start))
     }
-    else if SPECIAL_OPERATORS.contains(operator_str.as_ref()) {
+    else if SPECIAL_OPERATORS.contains(operator_str.as_str()) {
       let right_expr = pratt_parse(ps, precedence)?;
       let args = vec!(left_expr, right_expr);
       Ok(ps.add_tree(operator_str, args, infix_start))
@@ -302,7 +300,7 @@ fn parse_literal<T : FromStr>(ps : &mut ParseState) -> Result<T, Error> {
 
 fn parse_simple_string(ps : &mut ParseState, t : TokenType) -> Result<Expr, Error> {
   let start = ps.peek_marker();
-  let s = ps.pop_type(t)?.symbol.clone();
+  let s = ps.pop_type(t)?.symbol.as_ref().into();
   Ok(ps.add_symbol(s, start))
 }
 
@@ -338,7 +336,7 @@ fn parse_type(ps : &mut ParseState) -> Result<Expr, Error> {
     Ok(fun_type_expr)
   }
   else {
-    let type_name = ps.pop_type(Symbol)?.symbol.clone();
+    let type_name : String = ps.pop_type(Symbol)?.symbol.as_ref().into();
     let mut params = vec!();
     if ps.accept(Syntax, "(") {
       loop {
@@ -374,7 +372,7 @@ fn parse_function(ps : &mut ParseState, keyword : &str) -> Result<Expr, Error> {
     }
     else {
       let start = ps.peek_marker();
-      arguments.push(ps.add_symbol("", start));
+      arguments.push(ps.add_symbol("".into(), start));
     }
     if !ps.accept(Syntax, ",") {
       break;
@@ -503,7 +501,7 @@ fn parse_type_definition(ps : &mut ParseState, kind : &str) -> Result<Expr, Erro
     }
     else {
       let start = ps.peek_marker();
-      args.push(ps.add_symbol("", start));
+      args.push(ps.add_symbol("".into(), start));
     }
   }
   ps.expect(Syntax, "end")?;
@@ -537,7 +535,7 @@ fn parse_type_instantiate(ps : &mut ParseState) -> Result<Expr, Error> {
     }
     else {
       let start = ps.peek_marker();
-      args.push(ps.add_symbol("", start));
+      args.push(ps.add_symbol("".into(), start));
       args.push(parse_expression(ps)?);
     }
   }
@@ -668,7 +666,7 @@ fn parse_expression_term(ps : &mut ParseState) -> Result<Expr, Error> {
       let start = ps.peek_marker();
       let s = {
         let t = ps.pop_type(StringLiteral)?;
-        ExprTag::LiteralString(t.symbol.clone())
+        ExprTag::literal_string(t.symbol.as_ref().into())
       };
       Ok(ps.add_leaf(s, start))
     }
@@ -700,6 +698,11 @@ fn parse_block_exprs(ps : &mut ParseState) -> Result<Vec<Expr>, Error> {
       }
     }
     exprs.push(parse_expression(ps)?);
+  }
+  if exprs.len() == 0 {
+    // There must be at least one expression in a block
+    let start = ps.peek_marker();
+    exprs.push(ps.add_leaf(ExprTag::LiteralUnit, start));
   }
   Ok(exprs)
 }

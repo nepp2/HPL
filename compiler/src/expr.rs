@@ -11,13 +11,26 @@ pub type RefStr = Rc<str>;
 
 #[repr(C, u8)]
 #[derive(Debug)]
-pub enum ExprEnum {
+pub enum ExprTag {
   Symbol(SStr),
   LiteralString(SStr),
   LiteralFloat(f64),
   LiteralInt(i64),
   LiteralBool(bool),
   LiteralUnit,
+}
+
+impl ExprTag {
+  pub fn literal_string(s : String) -> ExprTag {
+    let tag = ExprTag::LiteralString(SStr::from_str(s.as_str()));
+    std::mem::forget(s);
+    tag
+  }
+  pub fn symbol(s : String) -> ExprTag {
+    let tag = ExprTag::Symbol(SStr::from_str(s.as_str()));
+    std::mem::forget(s);
+    tag
+  }
 }
 
 #[repr(C)]
@@ -33,7 +46,7 @@ impl <T> SArray<T> {
     a
   }
 
-  fn as_slice(&self) -> &[T] {
+  pub fn as_slice(&self) -> &[T] {
     unsafe { std::slice::from_raw_parts(self.data, self.len as usize) }
   }
 }
@@ -47,40 +60,40 @@ impl <T> Drop for SArray<T> {
 }
 
 #[repr(C)]
-pub struct CExpr {
-  pub children : SArray<CExpr>,
+pub struct Expr {
+  pub children : SArray<Expr>,
   pub loc : TextLocation,
-  pub tag : ExprEnum,
+  pub tag : ExprTag,
 }
 
-impl CExpr {
+impl Expr {
 
-  fn new(tag : ExprEnum, children : Vec<CExpr>, loc : TextLocation) -> CExpr {
-    CExpr { children: SArray::new(children), loc, tag }
+  pub fn new(tag : ExprTag, children : Vec<Expr>, loc : TextLocation) -> Expr {
+    Expr { children: SArray::new(children), loc, tag }
   }
   
   // TODO: are these needed?
   // pub fn get_symbol(&self) -> SStr {
-  //   if self.tag == ExprEnum::Symbol { unsafe { self.data.s } } else { panic!() }
+  //   if self.tag == ExprTag::Symbol { unsafe { self.data.s } } else { panic!() }
   // }
   // pub fn get_string(&self) -> SStr {
-  //   if self.tag == ExprEnum::LiteralString { unsafe { self.data.s } } else { panic!() }
+  //   if self.tag == ExprTag::LiteralString { unsafe { self.data.s } } else { panic!() }
   // }
   // pub fn get_float(&self) -> f64 {
-  //   if self.tag == ExprEnum::LiteralFloat { unsafe { self.data.f } } else { panic!() }
+  //   if self.tag == ExprTag::LiteralFloat { unsafe { self.data.f } } else { panic!() }
   // }
   // pub fn get_int(&self) -> i64 {
-  //   if self.tag == ExprEnum::LiteralInt { unsafe { self.data.i } } else { panic!() }
+  //   if self.tag == ExprTag::LiteralInt { unsafe { self.data.i } } else { panic!() }
   // }
   // pub fn get_bool(&self) -> bool {
-  //   if self.tag == ExprEnum::LiteralBool { unsafe { self.data.b } } else { panic!() }
+  //   if self.tag == ExprTag::LiteralBool { unsafe { self.data.b } } else { panic!() }
   // }
 }
 
-impl Drop for CExpr {
+impl Drop for Expr {
   fn drop(&mut self) {
     match self.tag {
-      ExprEnum::Symbol(s) => {
+      ExprTag::Symbol(s) => {
         unsafe {
           String::from_raw_parts(s.ptr, s.length as usize, s.length as usize);
         }
@@ -90,15 +103,15 @@ impl Drop for CExpr {
   }
 }
 
-impl <'l> Into<TextLocation> for &'l CExpr {
+impl <'l> Into<TextLocation> for &'l Expr {
   fn into(self) -> TextLocation {
     self.loc
   }
 }
 
-impl CExpr {
+impl Expr {
   pub fn symbol_unwrap(&self) -> Result<&str, Error> {
-    if let ExprEnum::Symbol(s) = &self.tag {
+    if let ExprTag::Symbol(s) = &self.tag {
       Ok(s.as_str())
     }
     else{
@@ -108,9 +121,9 @@ impl CExpr {
 }
 
 
-impl fmt::Display for CExpr {
+impl fmt::Display for Expr {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    fn display_inner(e: &CExpr, f: &mut fmt::Formatter<'_>, indent : usize) -> fmt::Result {
+    fn display_inner(e: &Expr, f: &mut fmt::Formatter<'_>, indent : usize) -> fmt::Result {
       if e.children.len > 0 {
         let s = e.symbol_unwrap().unwrap();
         write!(f, "({}", s)?;
@@ -132,8 +145,8 @@ impl fmt::Display for CExpr {
         return Ok(());
       }
       match (&e.tag, e.children.as_slice()) {
-        (ExprEnum::Symbol(s), []) => write!(f, "{}", s.as_str()),
-        (ExprEnum::Symbol(s), children) => {
+        (ExprTag::Symbol(s), []) => write!(f, "{}", s.as_str()),
+        (ExprTag::Symbol(s), children) => {
           write!(f, "({}", s.as_str())?;
           if s.as_str() == "block" {
             let indent = indent + 2;
@@ -152,97 +165,14 @@ impl fmt::Display for CExpr {
           write!(f, ")")?;
           Ok(())
         }
-        (ExprEnum::LiteralString(s), _) => write!(f, "{}", s.as_str()),
-        (ExprEnum::LiteralFloat(v), _) => write!(f, "{}", v),
-        (ExprEnum::LiteralInt(v), _) => write!(f, "{}", v),
-        (ExprEnum::LiteralBool(v), _) => write!(f, "{}", v),
-        (ExprEnum::LiteralUnit, _) => write!(f, "()"),
+        (ExprTag::LiteralString(s), _) => write!(f, "{}", s.as_str()),
+        (ExprTag::LiteralFloat(v), _) => write!(f, "{}", v),
+        (ExprTag::LiteralInt(v), _) => write!(f, "{}", v),
+        (ExprTag::LiteralBool(v), _) => write!(f, "{}", v),
+        (ExprTag::LiteralUnit, _) => write!(f, "()"),
       }
     }
     display_inner(&self, f, 0)
-  }
-}
-
-// ################################################################################
-// ################################################################################
-// ################################################################################
-
-#[derive(PartialEq, Debug, Clone)]
-pub enum ExprTag {
-  Tree(RefStr),
-  Symbol(RefStr),
-  LiteralString(RefStr),
-  LiteralFloat(f64),
-  LiteralInt(i64),
-  LiteralBool(bool),
-  LiteralUnit,
-}
-
-/// Expression
-#[derive(PartialEq, Debug, Clone)]
-pub struct Expr {
-  pub tag : ExprTag,
-  pub children : Vec<Expr>,
-  pub loc : TextLocation,
-}
-
-impl fmt::Display for Expr {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    fn display_inner(e: &Expr, f: &mut fmt::Formatter<'_>, indent : usize) -> fmt::Result {
-      match &e.tag {
-        ExprTag::Tree(s) => {
-          write!(f, "({}", s)?;
-          if s.as_ref() == "block" {
-            let indent = indent + 2;
-            for c in e.children.iter() {
-              writeln!(f)?;
-              write!(f, "{:indent$}", "", indent=indent)?;
-              display_inner(c, f, indent)?
-            }
-          }
-          else {
-            for c in e.children.iter() {
-              write!(f, " ")?;
-              display_inner(c, f, indent)?
-            }
-          }
-          write!(f, ")")
-        }
-        ExprTag::Symbol(x) => write!(f, "{}", x),
-        ExprTag::LiteralString(x) => write!(f, "{}", x),
-        ExprTag::LiteralFloat(x) => write!(f, "{}", x),
-        ExprTag::LiteralInt(x) => write!(f, "{}", x),
-        ExprTag::LiteralBool(x) => write!(f, "{}", x),
-        ExprTag::LiteralUnit => write!(f, "()"),
-      }
-    }
-    display_inner(&self, f, 0)
-  }
-}
-
-impl Expr {
-  pub fn tree_symbol_unwrap(&self) -> Result<&RefStr, Error> {
-    if let ExprTag::Tree(s) = &self.tag {
-      Ok(s)
-    }
-    else{
-      error(self, format!("expected a tree, found {:?}", self.tag))
-    }
-  }
-
-  pub fn symbol_unwrap(&self) -> Result<&RefStr, Error> {
-    if let ExprTag::Symbol(s) = &self.tag {
-      Ok(s)
-    }
-    else {
-      error(self, format!("expected a symbol, found {:?}", self.tag))
-    }
-  }
-}
-
-impl <'l> Into<TextLocation> for &'l Expr {
-  fn into(self) -> TextLocation {
-    self.loc
   }
 }
 
