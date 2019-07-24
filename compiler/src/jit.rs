@@ -140,6 +140,7 @@ impl Interpreter {
 
     // TODO module.set_target(target: &Target);
 
+    // TODO: enable passes again (and figure out what to include)
     let pm = PassManager::create(&module);
     // pm.add_instruction_combining_pass();
     // pm.add_reassociate_pass();

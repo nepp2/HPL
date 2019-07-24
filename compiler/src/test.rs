@@ -273,9 +273,18 @@ rusty_fork_test! {
     assert_eq!(b.z, 45640.5);
   }
 
+  /// TODO: test that structs are passed into C functions correctly
   #[test]
   fn test_struct_abi() {
-    // TODO test that structs are passed into C functions correctly
+    // The naive approach doesn't work because windows does this:
+    //
+    //     define void @print({ i8*, i64 }* noalias nocapture dereferenceable(16) %s) unnamed_addr #3
+    // 
+    // Incidentally, to trust Godbolt for ABI comparisons on Windows, I have to pass
+    // an argument to rustc to stop it from assuming linux:
+    // 
+    //     --target x86_64-pc-windows-msvc
+    //
     panic!("test not implemented");
   }
 
@@ -294,21 +303,12 @@ rusty_fork_test! {
   }
 
   #[test]
-  fn test_dll_function_linking() {
-    // Seems to cause the symbols to be linked
-    #[allow(unused_imports)]
-    use dlltest::*;
-    
-    let a = "
-      cfun function_from_dll(a : i64, b : i64) : i64
-      function_from_dll(17, 7)
+  fn test_c_interface() {
+    let code = "
+      cfun test_add(a : i64, b : i64) : i64
+      test_add(17, 7)
     ";
-    let b = "
-      cfun another_function_from_dll(a : i64, b : i64) : i64
-      another_function_from_dll(17, 7)
-    ";
-    assert_result(a, Val::I64(24));
-    assert_result(b, Val::I64(24));
+    assert_result(code, Val::I64(24));
   }
 
   #[test]

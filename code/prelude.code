@@ -26,8 +26,3 @@ cfun thread_sleep(millis : u64)
 fun max(a : i64, b : i64)
   if a > b then a else b end
 end
-
-fun id()
-end
-
-cfun hello()

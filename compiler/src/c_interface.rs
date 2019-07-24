@@ -69,19 +69,15 @@ extern {
   pub fn malloc(size: usize) -> *mut u8;
 }
 
-/*
-  Doesn't work because windows does this:
-
-      define void @print({ i8*, i64 }* noalias nocapture dereferenceable(16) %s) unnamed_addr #3
-
-  To trust Godbolt, I have to pass an argument to rustc to stop it from assuming linux:
-
-      --target x86_64-pc-windows-msvc
-
-*/
 #[no_mangle]
 pub extern "C" fn print(s : ScriptString) {
   println!("{}", s.as_str());
+}
+
+/// defined for the test suite only
+#[no_mangle]
+pub extern "C" fn test_add(a : i64, b : i64) -> i64 {
+  a + b
 }
 
 #[no_mangle]
@@ -145,15 +141,16 @@ pub struct CLibraries {
 
 impl CLibraries {
   pub fn new() -> CLibraries {
-    let mut cache = HashMap::new();
-    cache.insert("load_library".into(), (load_library_c as *const()) as usize);
-    cache.insert("load_symbol".into(), (load_symbol as *const()) as usize);
-    cache.insert("malloc".into(), (malloc as *const()) as usize);
-    cache.insert("print".into(), (print as *const()) as usize);
-    cache.insert("thread_sleep".into(), (thread_sleep as *const()) as usize);
+    let mut sym = HashMap::new();
+    sym.insert("load_library".into(), (load_library_c as *const()) as usize);
+    sym.insert("load_symbol".into(), (load_symbol as *const()) as usize);
+    sym.insert("malloc".into(), (malloc as *const()) as usize);
+    sym.insert("print".into(), (print as *const()) as usize);
+    sym.insert("test_add".into(), (test_add as *const()) as usize);
+    sym.insert("thread_sleep".into(), (thread_sleep as *const()) as usize);
 
     CLibraries {
-      local_symbol_table: cache,
+      local_symbol_table: sym,
       shared_libraries: HashMap::new(),
       lib_handle_counter: 0,
     }
