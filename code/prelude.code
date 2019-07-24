@@ -9,7 +9,7 @@ struct string
   length : u64
 end
 
-cfun malloc(size: u64) : ptr(u8)
+cfun malloc(size: u32) : ptr(u8)
 
 struct lib_handle
   handle : u64

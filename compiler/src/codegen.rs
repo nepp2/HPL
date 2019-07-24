@@ -463,6 +463,20 @@ impl <'l> Gen<'l> {
     pointer(ptr)
   }
 
+  fn codegen_address_of_expression(&mut self, value : &AstNode) -> Result<GenVal, Error> {
+    let v = self.codegen_expression(value)?.unwrap();
+    match v.storage {
+      Storage::Register => {
+        let ptr = self.create_entry_block_alloca(v.value.get_type(), "reference");
+        self.builder.build_store(ptr, v.value);
+        Ok(reg(ptr.into()))
+      }
+      Storage::Pointer => {
+        Ok(reg(v.value))
+      }
+    }
+  }
+
   /// ensure necessary definitions are inserted and linking operations performed when a function is referenced
   fn get_linked_function_reference(&mut self, def : &FunctionDefinition) -> FunctionValue {
     if let Some(local_f) = self.module.get_function(&def.name) {
@@ -532,6 +546,7 @@ impl <'l> Gen<'l> {
             (Type::F64, "unary_-") => unary_op!(build_float_neg, FloatValue, a, self),
             (Type::I64, "unary_-") => unary_op!(build_int_neg, IntValue, a, self),
             (Type::Bool, "unary_!") => unary_op!(build_not, IntValue, a, self),
+            (_, "unary_ref") => self.codegen_address_of_expression(a)?,
             _ => return error(ast.loc, "encountered unrecognised intrinsic"),
           }
         }
