@@ -3,8 +3,7 @@
 
 use crate::error::{Error, error, error_raw, ErrorContent};
 use crate::expr::RefStr;
-use crate::typecheck::{
-  AstNode, Content, Type, Val, TypeDefinition, TypeKind, FunctionDefinition, VarScope};
+use crate::typecheck::*;
 
 use std::rc::Rc;
 use std::collections::HashMap;
@@ -149,6 +148,7 @@ enum ShortCircuitOp { And, Or }
 
 /// Code generates a single function (can spawn children to code-generate internal functions)
 pub struct Gen<'l> {
+  nodes: &'l mut Vec<AstNode>,
   context: &'l mut Context,
   module : &'l mut Module,
   target_data : &'l TargetData,
@@ -178,6 +178,7 @@ pub struct Gen<'l> {
 impl <'l> Gen<'l> {
 
   pub fn new(
+    nodes: &'l mut Vec<AstNode>,
     context: &'l mut Context,
     module : &'l mut Module,
     target_data : &'l TargetData,
@@ -194,7 +195,7 @@ impl <'l> Gen<'l> {
     let builder = context.create_builder();
     let variables = HashMap::new();
     Gen {
-      context, module,
+      nodes, context, module,
       target_data, builder,
       function_defs,
       external_globals,
@@ -208,11 +209,23 @@ impl <'l> Gen<'l> {
     }
   }
 
+  fn node(&mut self, id : Id) -> &AstNode {
+    &self.nodes[id]
+  }
+
+  fn tag(&mut self, id : Id) -> &Type {
+    &self.nodes[id].type_tag
+  }
+
+  fn error<T, S : Into<ErrorContent>>(&mut self, id : Id, s : S) -> Result<T, Error> {
+    error(self.node(id).loc, s)
+  }
+
   pub fn child_function_gen<'lc>(&'lc mut self, global_var_types: &'lc HashMap<RefStr, Type>)
     -> Gen<'lc>
   {
     Gen::new(
-      self.context, self.module, self.target_data, self.function_defs,  self.external_globals,
+      self.nodes, self.context, self.module, self.target_data, self.function_defs,  self.external_globals,
       self.external_functions, self.c_functions, global_var_types, self.type_definitions, self.pm)
   }
 
@@ -257,36 +270,36 @@ impl <'l> Gen<'l> {
     Ok(())
   }
 
-  fn codegen_value(&mut self, n : &AstNode) -> Result<BasicValueEnum, Error> {
+  fn codegen_value(&mut self, n : Id) -> Result<BasicValueEnum, Error> {
     Ok(self.codegen_expression_to_register(n)?.unwrap())
   }
 
-  fn codegen_float(&mut self, n : &AstNode) -> Result<FloatValue, Error> {
+  fn codegen_float(&mut self, n : Id) -> Result<FloatValue, Error> {
     let v = self.codegen_value(n)?;
     match v {
       BasicValueEnum::FloatValue(f) => Ok(f),
-      t => error(n.loc, format!("Expected float, found {:?}", t)),
+      t => self.error(n, format!("Expected float, found {:?}", t)),
     }
   }
 
-  fn codegen_int(&mut self, n : &AstNode) -> Result<IntValue, Error> {
+  fn codegen_int(&mut self, n : Id) -> Result<IntValue, Error> {
     let v = self.codegen_value(n)?;
     match v {
       BasicValueEnum::IntValue(i) => Ok(i),
-      t => error(n.loc, format!("Expected int, found {:?}", t)),
+      t => self.error(n, format!("Expected int, found {:?}", t)),
     }
   }
 
-  fn codegen_pointer(&mut self, n : &AstNode) -> Result<PointerValue, Error> {
+  fn codegen_pointer(&mut self, n : Id) -> Result<PointerValue, Error> {
     let v = self.codegen_value(n)?;
     match v {
       BasicValueEnum::PointerValue(p) => Ok(p),
-      t => error(n.loc, format!("Expected pointer, found {:?}", t)),
+      t => self.error(n, format!("Expected pointer, found {:?}", t)),
     }
   }
 
-  fn codegen_expression_to_register(&mut self, ast : &AstNode) -> Result<Option<BasicValueEnum>, Error> {
-    if let Some(v) = self.codegen_expression(ast)? {
+  fn codegen_expression_to_register(&mut self, node : Id) -> Result<Option<BasicValueEnum>, Error> {
+    if let Some(v) = self.codegen_expression(node)? {
       let reg_val = match v.storage {
         Storage::Pointer => {
           let ptr = *v.value.as_pointer_value();
@@ -303,7 +316,7 @@ impl <'l> Gen<'l> {
     }
   }
 
-  fn codegen_convert(&mut self, convert_node : &AstNode, value_to_convert : &AstNode) -> Result<GenVal, Error> {
+  fn codegen_convert(&mut self, convert_node : Id, value_to_convert : Id) -> Result<GenVal, Error> {
     fn int_type(gen : &Gen, width : u64) -> IntType {
       match width {
         1 => gen.context.bool_type(),
@@ -325,8 +338,8 @@ impl <'l> Gen<'l> {
       }
     }
 
-    let from_type = &value_to_convert.type_tag;
-    let to_type = &convert_node.type_tag;
+    let from_type = self.tag(value_to_convert);
+    let to_type = self.tag(convert_node);
     let from_llvm_type = self.to_basic_type(from_type).ok_or_else(|| error_raw(value_to_convert.loc, "can't cast from void"))?;
     let to_llvm_type = self.to_basic_type(to_type).ok_or_else(|| error_raw(convert_node.loc, "can't cast to void"))?;
     let n = value_to_convert;
@@ -407,7 +420,7 @@ impl <'l> Gen<'l> {
       let t = int_type(self, to_width);
       return Ok(convert_op!(build_float_to_unsigned_int, FloatValue, t, n, self));
     }
-    return error(convert_node.loc, "type cast not supported");
+    return self.error(convert_node, "type cast not supported");
   }
 
   fn codegen_short_circuit_op(&mut self, a : &AstNode, b : &AstNode, op : ShortCircuitOp)
@@ -509,7 +522,8 @@ impl <'l> Gen<'l> {
     return Ok(r.map(reg));
   }
 
-  fn codegen_expression(&mut self, ast : &AstNode) -> Result<Option<GenVal>, Error> {
+  fn codegen_expression(&mut self, id : Id) -> Result<Option<GenVal>, Error> {
+    let ast = self.node(id);
     let v : GenVal = match &ast.content {
       Content::FunctionCall(function_value, args) => {
         return self.codegen_function_call(function_value, args);
@@ -1020,7 +1034,7 @@ impl <'l> Gen<'l> {
     return t;
   }
 
-  fn codegen_return(&mut self, value_node : Option<&AstNode>) -> Result<(), Error> {
+  fn codegen_return(&mut self, value_node : Option<Id>) -> Result<(), Error> {
     if let Some(value_node) = value_node {
       let v = self.codegen_expression_to_register(value_node)?;
       self.builder.build_return(v.as_ref().map(|v| v as &BasicValue));
@@ -1059,18 +1073,18 @@ impl <'l> Gen<'l> {
 
   fn codegen_function(
     mut self,
-    function_node : &AstNode,
-    body : &AstNode,
+    function_node : Id,
+    body : Id,
     name : &str,
     args : &[RefStr],
     arg_types : &[Type])
       -> Result<FunctionValue, Error>
   {
-    let function = self.codegen_prototype(name, &body.type_tag, args, arg_types);
+    let function = self.codegen_prototype(name, &self.tag(body), args, arg_types);
 
     // this function is here because Rust doesn't have a proper try/catch yet
     fn generate(
-      function_node : &AstNode, body : &AstNode, function : FunctionValue,
+      function_node : Id, body : Id, function : FunctionValue,
       args : &[RefStr], gen : &mut Gen) -> Result<(), Error>
     {
       let entry = gen.context.append_basic_block(&function, "entry");
@@ -1080,7 +1094,7 @@ impl <'l> Gen<'l> {
       // set function parameters
       for (arg_value, arg_name) in function.get_param_iter().zip(args) {
         gen.init_variable(arg_name.clone(), VarScope::Local, arg_value)
-          .map_err(|c| error_raw(function_node.loc, c))?;
+          .map_err(|c| error_raw(gen.node(function_node).loc, c))?;
       }
 
       // compile body and emit return
@@ -1092,7 +1106,7 @@ impl <'l> Gen<'l> {
         Ok(())
       }
       else {
-        error(function_node.loc, "invalid generated function.")
+        error(gen.node(function_node).loc, "invalid generated function.")
       }
     }
 
@@ -1113,7 +1127,7 @@ impl <'l> Gen<'l> {
   }
 
   /// Code-generates a module, returning a reference to the top-level function in the module
-  pub fn codegen_module(self, ast : &AstNode) -> Result<FunctionValue, Error> {
-    self.codegen_function(&ast, &ast, "top_level", &[], &[])
+  pub fn codegen_module(self, node_id : Id) -> Result<FunctionValue, Error> {
+    self.codegen_function(node_id, node_id, "top_level", &[], &[])
   }
 }

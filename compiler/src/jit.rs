@@ -45,7 +45,8 @@ pub struct CompiledExpression {
   pub f : FunctionValue,
   pub ee : ExecutionEngine,
   pub m : Module,
-  pub ast : AstNode,
+  pub nodes : Vec<AstNode>,
+  pub root_node_id : Id,
 }
 
 pub struct Interpreter {
@@ -126,11 +127,12 @@ impl Interpreter {
     // TODO: provide an option for this?
     // println!("{}", display_expr(expr));
 
+    let mut nodes = vec!();
     let mut type_checker =
       TypeChecker::new(
-        true, HashMap::new(), &mut self.functions, &mut self.types,
+        &mut nodes, true, HashMap::new(), &mut self.functions, &mut self.types,
         &mut self.global_var_types, &self.c_libs.local_symbol_table, &mut self.cache);
-    let ast = type_checker.to_ast(expr)?;
+    let root_node_id = type_checker.to_ast(expr)?;
     let module_name = format!("module_{}", self.modules.len());
     let mut module = self.context.create_module(&module_name);
 
@@ -158,10 +160,10 @@ impl Interpreter {
     let f = {
       let jit =
         Gen::new(
-          &mut self.context, &mut module, &mut ee.get_target_data(), &self.functions, &mut external_globals,
+          &mut nodes, &mut self.context, &mut module, &mut ee.get_target_data(), &self.functions, &mut external_globals,
           &mut external_functions, &mut c_functions, &self.global_var_types,
           &self.types, &pm);
-      jit.codegen_module(&ast)?
+      jit.codegen_module(root_node_id)?
     };
     
     // TODO: provide an option for this?
@@ -205,7 +207,7 @@ impl Interpreter {
     // TODO: is this needed?
     ee.run_static_constructors();
 
-    self.modules.push(CompiledExpression { f, ee, m: module, ast });
+    self.modules.push(CompiledExpression { f, ee, m: module, nodes, root_node_id });
     Ok(self.modules.last().unwrap())
   }
 

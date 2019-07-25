@@ -25,7 +25,6 @@ pub enum Type {
   Struct(Rc<TypeDefinition>),
   Union(Rc<TypeDefinition>),
   Ptr(Box<Type>),
-  Unresolved()
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -117,31 +116,33 @@ impl PartialEq for TypeDefinition {
 #[derive(Debug, Clone, Copy)]
 pub enum VarScope { Local, Global }
 
+pub type Id = usize;
+
 #[derive(Debug)]
 pub enum Content {
   Literal(Val),
   VariableReference(RefStr),
-  VariableInitialise(RefStr, Box<AstNode>, VarScope),
-  Assignment(Box<(AstNode, AstNode)>),
-  IfThen(Box<(AstNode, AstNode)>),
-  IfThenElse(Box<(AstNode, AstNode, AstNode)>),
-  Block(Vec<AstNode>),
+  VariableInitialise(RefStr, Id, VarScope),
+  Assignment(Id, Id),
+  IfThen(Id, Id),
+  IfThenElse(Id, Id, Id),
+  Block(Vec<Id>),
   Quote(Box<Expr>),
   FunctionReference(RefStr),
-  FunctionDefinition(Rc<FunctionDefinition>, Box<AstNode>),
+  FunctionDefinition(Rc<FunctionDefinition>, Id),
   CFunctionPrototype(Rc<FunctionDefinition>),
   TypeDefinition(Rc<TypeDefinition>),
-  StructInstantiate(Rc<TypeDefinition>, Vec<AstNode>),
-  UnionInstantiate(Rc<TypeDefinition>, Box<(RefStr, AstNode)>),
-  FieldAccess(Box<(AstNode, RefStr)>, usize),
-  Index(Box<(AstNode, AstNode)>),
-  ArrayLiteral(Vec<AstNode>),
-  FunctionCall(Box<AstNode>, Vec<AstNode>),
-  IntrinsicCall(RefStr, Vec<AstNode>),
-  While(Box<(AstNode, AstNode)>),
-  ExplicitReturn(Option<Box<AstNode>>),
-  Convert(Box<AstNode>),
-  Deref(Box<AstNode>),
+  StructInstantiate(Rc<TypeDefinition>, Vec<Id>),
+  UnionInstantiate(Rc<TypeDefinition>, RefStr, Id),
+  FieldAccess(Id, RefStr, usize),
+  Index(Id, Id),
+  ArrayLiteral(Vec<Id>),
+  FunctionCall(Id, Vec<Id>),
+  IntrinsicCall(RefStr, Vec<Id>),
+  While(Id, Id),
+  ExplicitReturn(Option<Id>),
+  Convert(Id),
+  Deref(Id),
   SizeOf(Box<Type>),
   Break,
 }
@@ -164,15 +165,9 @@ impl AstNode {
   }
 }
 
-fn ast(expr : &Expr, type_tag : Type, content : Content) -> AstNode {
-  AstNode {
-    type_tag,
-    content,
-    loc: expr.loc,
-  }
-}
-
 pub struct TypeChecker<'l> {
+  nodes : &'l mut Vec<AstNode>,
+
   is_top_level : bool,
   variables: HashMap<RefStr, Type>,
   functions: &'l mut HashMap<RefStr, Rc<FunctionDefinition>>,
@@ -190,6 +185,7 @@ pub struct TypeChecker<'l> {
 impl <'l> TypeChecker<'l> {
 
   pub fn new(
+    nodes : &'l mut Vec<AstNode>,
     is_top_level : bool,
     variables : HashMap<RefStr, Type>,
     functions : &'l mut HashMap<RefStr, Rc<FunctionDefinition>>,
@@ -201,6 +197,7 @@ impl <'l> TypeChecker<'l> {
   {
     let global_map = global_variables.keys().map(|n| (n.clone(), n.clone())).collect();
     TypeChecker {
+      nodes,
       is_top_level,
       variables,
       functions,
@@ -210,6 +207,25 @@ impl <'l> TypeChecker<'l> {
       cache,
       scope_map: vec!(global_map),
     }
+  }
+
+  fn add(&mut self, expr : &Expr, type_tag : Type, content : Content) -> Id {
+    let n = AstNode {
+      type_tag,
+      content,
+      loc: expr.loc,
+    };
+    let i = self.nodes.len();
+    self.nodes.push(n);
+    i
+  }
+
+  fn node(&mut self, id : Id) -> &AstNode {
+    &self.nodes[id]
+  }
+
+  fn type_tag(&mut self, id : Id) -> &Type {
+    &self.nodes[id].type_tag
   }
 
   fn get_scoped_variable_name(&self, name : &RefStr) -> RefStr {
@@ -272,9 +288,9 @@ impl <'l> TypeChecker<'l> {
     }
   }
 
-  fn match_intrinsic(name : &str, args : &[AstNode]) -> Option<Type> {
+  fn match_intrinsic(&self, name : &str, args : &[Id]) -> Option<Type> {
     match args {
-      [a, b] => match (&a.type_tag, &b.type_tag) {
+      [a, b] => match (self.type_tag(*a), self.type_tag(*b)) {
         (Type::F64, Type::F64) => match name {
           "+" | "-" | "*" | "/" => Some(Type::F64),
           ">" | ">="| "<" | "<=" | "==" => Some(Type::Bool),
@@ -287,7 +303,7 @@ impl <'l> TypeChecker<'l> {
         }
         _ => None
       }
-      [a] => match (&a.type_tag, name) {
+      [a] => match (self.type_tag(*a), name) {
         (Type::F64, "unary_-") => Some(Type::F64),
         (Type::I64, "unary_-") => Some(Type::I64),
         (Type::Bool, "unary_!") => Some(Type::Bool),
@@ -298,7 +314,7 @@ impl <'l> TypeChecker<'l> {
     }
   }
 
-  fn to_type_definition(&mut self, expr : &Expr, exprs : &[Expr], kind : TypeKind) -> Result<AstNode, Error> {
+  fn to_type_definition(&mut self, expr : &Expr, exprs : &[Expr], kind : TypeKind) -> Result<Id, Error> {
     if exprs.len() < 1 {
       return error(expr, "malformed type definition");
     }
@@ -318,80 +334,79 @@ impl <'l> TypeChecker<'l> {
     }
     let def = Rc::new(TypeDefinition { name: self.cache.get(name), fields, kind });
     self.types.insert(self.cache.get(name), def.clone());
-    Ok(ast(expr, Type::Void, Content::TypeDefinition(def)))
+    Ok(self.add(expr, Type::Void, Content::TypeDefinition(def)))
   }
 
-  fn tree_to_ast(&mut self, expr : &Expr) -> Result<AstNode, Error> {
+  fn tree_to_ast(&mut self, expr : &Expr) -> Result<Id, Error> {
     let instr = expr.symbol_unwrap()?;
     let children = expr.children.as_slice();
     match (instr.as_ref(), children) {
       ("call", exprs) => {
         let args =
               exprs[1..].iter().map(|e| self.to_ast(e))
-              .collect::<Result<Vec<AstNode>, Error>>()?;
+              .collect::<Result<Vec<Id>, Error>>()?;
         if let Some(function_name) = exprs[0].symbol_unwrap().ok() {
-          let op_tag = TypeChecker::match_intrinsic(
-            function_name, args.as_slice());
+          let op_tag = self.match_intrinsic(function_name, args.as_slice());
           if let Some(op_tag) = op_tag {
-            return Ok(ast(expr, op_tag, Content::IntrinsicCall(self.cache.get(function_name), args)))
+            return Ok(self.add(expr, op_tag, Content::IntrinsicCall(self.cache.get(function_name), args)))
           }
         }
         let function_value = self.to_ast(&exprs[0])?;
-        if let Type::Fun(sig) = &function_value.type_tag {
+        if let Type::Fun(sig) = &self.node(function_value).type_tag {
           if sig.args.len() != args.len() {
             return error(expr, "incorrect number of arguments passed");
           }
           let return_type = sig.return_type.clone();
-          let content = Content::FunctionCall(Box::new(function_value), args);
-          return Ok(ast(expr, return_type, content));
+          let content = Content::FunctionCall(function_value, args);
+          return Ok(self.add(expr, return_type, content));
         }
         error(&exprs[0], "value is not a function")
       }
       ("sizeof", [t]) => {
         let type_tag = self.to_type(t)?;
-        return Ok(ast(expr, Type::U64, Content::SizeOf(Box::new(type_tag))));
+        return Ok(self.add(expr, Type::U64, Content::SizeOf(Box::new(type_tag))));
       }
       ("as", [a, b]) => {
         let a = self.to_ast(a)?;
         let t = self.to_type(b)?;
-        Ok(ast(expr, t, Content::Convert(Box::new(a))))
+        Ok(self.add(expr, t, Content::Convert(a)))
       }
       ("&&", [a, b]) => {
         let a = self.to_ast(a)?;
         let b = self.to_ast(b)?;
-        Ok(ast(expr, Type::Bool, Content::IntrinsicCall(self.cache.get(instr), vec!(a, b))))
+        Ok(self.add(expr, Type::Bool, Content::IntrinsicCall(self.cache.get(instr), vec!(a, b))))
       }
       ("||", [a, b]) => {
         let a = self.to_ast(a)?;
         let b = self.to_ast(b)?;
-        Ok(ast(expr, Type::Bool, Content::IntrinsicCall(self.cache.get(instr), vec!(a, b))))
+        Ok(self.add(expr, Type::Bool, Content::IntrinsicCall(self.cache.get(instr), vec!(a, b))))
       }
       ("let", exprs) => {
         let name = self.cache.get(exprs[0].symbol_unwrap()?);
-        let v = Box::new(self.to_ast(&exprs[1])?);
+        let v = self.to_ast(&exprs[1])?;
         // The first scope is used for function arguments. The second
         // is the top level of the function.
         let c = if self.is_top_level && self.scope_map.len() == 2 {
           // global variable
-          self.global_variables.insert(name.clone(), v.type_tag.clone());
+          self.global_variables.insert(name.clone(), self.type_tag(v).clone());
           Content::VariableInitialise(name, v, VarScope::Global)
         }
         else {
           // local variable
           let scoped_name = self.create_scoped_variable_name(name);
-          self.variables.insert(scoped_name.clone(), v.type_tag.clone());
+          self.variables.insert(scoped_name.clone(), self.type_tag(v).clone());
           Content::VariableInitialise(scoped_name, v, VarScope::Local)
         };
-        Ok(ast(expr, Type::Void, c))
+        Ok(self.add(expr, Type::Void, c))
       }
       // TODO this is a very stupid approach
       ("quote", [e]) => {
-        Ok(ast(expr, Type::Ptr(Box::new(Type::U8)), Content::Quote(Box::new(e.clone()))))
+        Ok(self.add(expr, Type::Ptr(Box::new(Type::U8)), Content::Quote(Box::new(e.clone()))))
       }
       ("=", [assign_expr, value_expr]) => {
         let a = self.to_ast(assign_expr)?;
         let b = self.to_ast(value_expr)?;
-        Ok(ast(expr, Type::Void, Content::Assignment(Box::new((a, b)))))
+        Ok(self.add(expr, Type::Void, Content::Assignment(a, b)))
       }
       ("return", exprs) => {
         if exprs.len() > 1 {
@@ -400,45 +415,45 @@ impl <'l> TypeChecker<'l> {
         let (return_val, type_tag) =
           if exprs.len() == 1 {
             let v = self.to_ast(&exprs[0])?;
-            let t = v.type_tag.clone();
-            (Some(Box::new(v)), t)
+            let t = self.type_tag(v).clone();
+            (Some(v), t)
           }
           else {
             (None, Type::Void)
           };
-        Ok(ast(expr, type_tag, Content::ExplicitReturn(return_val)))
+        Ok(self.add(expr, type_tag, Content::ExplicitReturn(return_val)))
       }
       ("while", [condition_node, body_node]) => {
         let condition = self.to_ast(condition_node)?;
         let body = self.to_ast(body_node)?;
-        Ok(ast(expr, Type::Void, Content::While(Box::new((condition, body)))))
+        Ok(self.add(expr, Type::Void, Content::While(condition, body)))
       }
       ("if", exprs) => {
         if exprs.len() > 3 {
           return error(expr, "malformed if expression");
         }
         let condition = self.to_ast(&exprs[0])?;
-        condition.assert_type(Type::Bool)?;
+        self.node(condition).assert_type(Type::Bool)?;
         let then_branch = self.to_ast(&exprs[1])?;
         if exprs.len() == 3 {
           let else_branch = self.to_ast(&exprs[2])?;
-          if then_branch.type_tag != else_branch.type_tag {
+          if self.type_tag(then_branch) != self.type_tag(else_branch) {
             return error(expr, "if/else branch type mismatch");
           }
-          let t = then_branch.type_tag.clone();
-          let c = Content::IfThenElse(Box::new((condition, then_branch, else_branch)));
-          Ok(ast(expr, t, c))
+          let t = self.type_tag(then_branch).clone();
+          let c = Content::IfThenElse(condition, then_branch, else_branch);
+          Ok(self.add(expr, t, c))
         }
         else {
-          Ok(ast(expr, Type::Void, Content::IfThen(Box::new((condition, then_branch)))))
+          Ok(self.add(expr, Type::Void, Content::IfThen(condition, then_branch)))
         }
       }
       ("block", exprs) => {
         self.scope_map.push(HashMap::new());
-        let nodes = exprs.iter().map(|e| self.to_ast(e)).collect::<Result<Vec<AstNode>, Error>>()?;
+        let nodes = exprs.iter().map(|e| self.to_ast(e)).collect::<Result<Vec<Id>, Error>>()?;
         self.scope_map.pop();
-        let tag = nodes.last().map(|n| n.type_tag.clone()).unwrap_or(Type::Void);
-        Ok(ast(expr, tag, Content::Block(nodes)))
+        let tag = nodes.last().map(|n| self.type_tag(*n).clone()).unwrap_or(Type::Void);
+        Ok(self.add(expr, tag, Content::Block(nodes)))
       }
       ("cfun", exprs) => {
         let name = self.cache.get(exprs[0].symbol_unwrap()?);
@@ -477,7 +492,7 @@ impl <'l> TypeChecker<'l> {
         });
         self.functions.insert(name, def.clone());
         
-        Ok(ast(expr, Type::Void, Content::CFunctionPrototype(def)))
+        Ok(self.add(expr, Type::Void, Content::CFunctionPrototype(def)))
       }
       ("fun", exprs) => {
         let name = self.cache.get(exprs[0].symbol_unwrap()?);
@@ -497,13 +512,13 @@ impl <'l> TypeChecker<'l> {
         let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
         let mut empty_global_map = HashMap::new(); // hide globals from child functions
         let mut type_checker =
-          TypeChecker::new(false, args, self.functions, self.types, &mut empty_global_map, self.local_symbol_table, self.cache);
+          TypeChecker::new(self.nodes, false, args, self.functions, self.types, &mut empty_global_map, self.local_symbol_table, self.cache);
         let body = type_checker.to_ast(function_body)?;
         if self.functions.contains_key(name.as_ref()) {
           return error(expr, "function with that name already defined");
         }
         let signature = Rc::new(FunctionSignature {
-          return_type: body.type_tag.clone(),
+          return_type: self.type_tag(body).clone(), // TODO this isn't necessarily true
           args: arg_types,
         });
         let def = Rc::new(FunctionDefinition {
@@ -513,7 +528,7 @@ impl <'l> TypeChecker<'l> {
           c_function_address: None,
         });
         self.functions.insert(name, def.clone());
-        Ok(ast(expr, Type::Void, Content::FunctionDefinition(def, Box::new(body))))
+        Ok(self.add(expr, Type::Void, Content::FunctionDefinition(def, body)))
       }
       ("union", exprs) => {
         self.to_type_definition(expr, exprs, TypeKind::Union)
@@ -533,7 +548,7 @@ impl <'l> TypeChecker<'l> {
             let value = self.to_ast(value)?;
             Ok((name, value))
           })
-          .collect::<Result<Vec<(&Expr, AstNode)>, Error>>()?;
+          .collect::<Result<Vec<(&Expr, Id)>, Error>>()?;
         let def =
           self.types.get(name)
           .ok_or_else(|| error_raw(name_expr, "no type with this name exists"))?;
@@ -548,12 +563,13 @@ impl <'l> TypeChecker<'l> {
               if name != "" && name != expected_name.as_ref() {
                 return error(*field, "incorrect field name");
               }
+              let value = self.node(*value);
               if &value.type_tag != expected_type {
                 return error(value.loc, format!("type mismatch. expected {:?}, found {:?}", expected_type, value.type_tag));
               }
             }
             let c = Content::StructInstantiate(def.clone(), fields.into_iter().map(|v| v.1).collect());
-            Ok(ast(expr, Type::Struct(def.clone()), c))
+            Ok(self.add(expr, Type::Struct(def.clone()), c))
           }
           TypeKind::Union => {
             if fields.len() != 1 {
@@ -564,25 +580,26 @@ impl <'l> TypeChecker<'l> {
             if def.fields.iter().find(|(n, _)| n == &name).is_none() {
               return error(field, "field does not exist in this union");
             }
-            let c = Content::UnionInstantiate(def.clone(), Box::new((name, value)));
-            Ok(ast(expr, Type::Union(def.clone()), c))
+            let c = Content::UnionInstantiate(def.clone(), name, value);
+            Ok(self.add(expr, Type::Union(def.clone()), c))
           }
         }
       }
       (".", [container_expr, field_expr]) => {
         let container_val = self.to_ast(container_expr)?;
         let field_name = self.cache.get(field_expr.symbol_unwrap()?);
-        let def = match &container_val.type_tag {
+        let container_type = self.type_tag(container_val);
+        let def = match container_type {
           Type::Struct(def) => def,
           Type::Union(def) => def,
-          _ => return error(container_expr, format!("expected struct or union, found {:?}", container_val.type_tag)),
+          _ => return error(container_expr, format!("expected struct or union, found {:?}", container_type)),
         };
         let (field_index, (_, field_type)) =
           def.fields.iter().enumerate().find(|(_, (n, _))| n==&field_name)
           .ok_or_else(|| error_raw(field_expr, "type does not have field with this name"))?;
         let field_type = field_type.clone();
-        let c = Content::FieldAccess(Box::new((container_val, field_name)), field_index);
-        Ok(ast(expr, field_type, c))
+        let c = Content::FieldAccess(container_val, field_name, field_index);
+        Ok(self.add(expr, field_type, c))
       }
       ("literal_array", exprs) => {
         let mut elements = vec!();
@@ -591,35 +608,36 @@ impl <'l> TypeChecker<'l> {
         }
         let t =
           if let Some(a) = elements.first() {
+            let a_type = self.type_tag(*a);
             for b in &elements[1..] {
-              if a.type_tag != b.type_tag {
+              if a_type != self.type_tag(*b) {
                 return error(expr, format!("array initialiser contains more than one type."));
               }
             }
-            a.type_tag.clone()
+            a_type.clone()
           }
           else {
             Type::Void
           };
-        Ok(ast(expr, Type::Ptr(Box::new(t)), Content::ArrayLiteral(elements)))
+        Ok(self.add(expr, Type::Ptr(Box::new(t)), Content::ArrayLiteral(elements)))
       }
       ("index", [array_expr, index_expr]) => {
         let array = self.to_ast(array_expr)?;
-        let inner_type = match &array.type_tag {
+        let inner_type = match self.type_tag(array) {
           Type::Ptr(t) => *(t).clone(),
           _ => return error(array_expr, "expected ptr"),
         };
         let index = self.to_ast(index_expr)?;
-        if index.type_tag != Type::I64 {
+        if self.type_tag(index) != &Type::I64 {
           return error(array_expr, "expected integer");
         }
-        Ok(ast(expr, inner_type, Content::Index(Box::new((array, index)))))
+        Ok(self.add(expr, inner_type, Content::Index(array, index)))
       }
       _ => return error(expr, "unsupported expression"),
     }
   }
 
-  pub fn to_ast(&mut self, expr : &Expr) -> Result<AstNode, Error> {
+  pub fn to_ast(&mut self, expr : &Expr) -> Result<Id, Error> {
     match &expr.tag {
       ExprTag::Symbol(s) => {
         // Is this a tree?
@@ -630,39 +648,39 @@ impl <'l> TypeChecker<'l> {
         // this is just a normal symbol
         let s = self.cache.get(s.as_str());
         if s.as_ref() == "break" {
-          return Ok(ast(expr, Type::Void, Content::Break));
+          return Ok(self.add(expr, Type::Void, Content::Break));
         }
         let name = self.get_scoped_variable_name(&s);
         let var_type =
           self.variables.get(name.as_ref())
           .or_else(|| self.global_variables.get(name.as_ref()));
         if let Some(t) = var_type {
-          return Ok(ast(expr, t.clone(), Content::VariableReference(name)));
+          return Ok(self.add(expr, t.clone(), Content::VariableReference(name)));
         }
         if let Some(def) = self.functions.get(&s) {
-          return Ok(ast(expr, Type::Fun(def.signature.clone()), Content::FunctionReference(s)));
+          return Ok(self.add(expr, Type::Fun(def.signature.clone()), Content::FunctionReference(s)));
         }
         error(expr, format!("unknown variable name '{}'", s))
       }
       ExprTag::LiteralString(s) => {
         let v = Val::String(s.as_str().to_string());
         let s = self.types.get("string").unwrap();
-        Ok(ast(expr, Type::Struct(s.clone()), Content::Literal(v)))
+        Ok(self.add(expr, Type::Struct(s.clone()), Content::Literal(v)))
       }
       ExprTag::LiteralFloat(f) => {
         let v = Val::F64(*f as f64);
-        Ok(ast(expr, Type::F64, Content::Literal(v)))
+        Ok(self.add(expr, Type::F64, Content::Literal(v)))
       }
       ExprTag::LiteralInt(v) => {
         let v = Val::I64(*v as i64);
-        Ok(ast(expr, Type::I64, Content::Literal(v)))
+        Ok(self.add(expr, Type::I64, Content::Literal(v)))
       }
       ExprTag::LiteralBool(b) => {
         let v = Val::Bool(*b);
-        Ok(ast(expr, Type::Bool, Content::Literal(v)))
+        Ok(self.add(expr, Type::Bool, Content::Literal(v)))
       },
       ExprTag::LiteralUnit => {
-        Ok(ast(expr, Type::Void, Content::Literal(Val::Void)))
+        Ok(self.add(expr, Type::Void, Content::Literal(Val::Void)))
       },
       // _ => error(expr, "unsupported expression"),
     }
