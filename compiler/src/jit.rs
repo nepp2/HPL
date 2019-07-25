@@ -130,7 +130,7 @@ impl Interpreter {
       TypeChecker::new(
         true, HashMap::new(), &mut self.functions, &mut self.types,
         &mut self.global_var_types, &self.c_libs.local_symbol_table, &mut self.cache);
-    let ast = type_checker.to_ast(expr)?;
+    let ast = type_checker.typecheck(expr)?;
     let module_name = format!("module_{}", self.modules.len());
     let mut module = self.context.create_module(&module_name);
 

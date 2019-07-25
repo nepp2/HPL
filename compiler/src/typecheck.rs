@@ -1,7 +1,6 @@
 
 use std::rc::Rc;
 use std::fmt::Write;
-use std::any::Any;
 
 use crate::error::{Error, error, error_raw, TextLocation};
 use crate::expr::{StringCache, RefStr, Expr, ExprTag};
@@ -22,10 +21,8 @@ pub enum Type {
   U8,
   Bool,
   Fun(Rc<FunctionSignature>),
-  Struct(Rc<TypeDefinition>),
-  Union(Rc<TypeDefinition>),
+  Def(RefStr),
   Ptr(Box<Type>),
-  Unresolved()
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -130,9 +127,9 @@ pub enum Content {
   FunctionReference(RefStr),
   FunctionDefinition(Rc<FunctionDefinition>, Box<AstNode>),
   CFunctionPrototype(Rc<FunctionDefinition>),
-  TypeDefinition(Rc<TypeDefinition>),
-  StructInstantiate(Rc<TypeDefinition>, Vec<AstNode>),
-  UnionInstantiate(Rc<TypeDefinition>, Box<(RefStr, AstNode)>),
+  TypeDefinition(RefStr),
+  StructInstantiate(RefStr, Vec<AstNode>),
+  UnionInstantiate(RefStr, Box<(RefStr, AstNode)>),
   FieldAccess(Box<(AstNode, RefStr)>, usize),
   Index(Box<(AstNode, AstNode)>),
   ArrayLiteral(Vec<AstNode>),
@@ -237,7 +234,11 @@ impl <'l> TypeChecker<'l> {
   }
 
   fn to_type(&mut self, expr : &Expr) -> Result<Type, Error> {
-    let name = expr.symbol_unwrap()?.as_ref();
+    self.to_type_internal(expr, true)
+  }
+
+  fn to_type_internal(&mut self, expr : &Expr, existence_check : bool) -> Result<Type, Error> {
+    let name = expr.symbol_unwrap()?;
     let params = expr.children.as_slice();
     if let Some(t) = Type::from_string(name) {
       if params.len() > 0 {
@@ -258,14 +259,16 @@ impl <'l> TypeChecker<'l> {
         Ok(Type::Ptr(Box::new(t)))
       }
       (name, params) => {
-        if let Some(t) = self.types.get(name) {
-          if params.len() > 0 {
-            return error(expr, "unexpected type parameters");
+        if params.len() > 0 {
+          return error(expr, "unexpected type parameters");
+        }
+        if existence_check {
+          if let Some(t) = self.types.get(name) {
+            return Ok(Type::Def(t.name.clone()));
           }
-          match t.kind {
-            TypeKind::Struct => return Ok(Type::Struct(t.clone())),
-            TypeKind::Union => return Ok(Type::Union(t.clone())),
-          }
+        }
+        else {
+          return Ok(Type::Def(self.cache.get(name)));
         }
         return error(expr, format!("type '{}' does not exist", name));
       }
@@ -298,33 +301,10 @@ impl <'l> TypeChecker<'l> {
     }
   }
 
-  fn to_type_definition(&mut self, expr : &Expr, exprs : &[Expr], kind : TypeKind) -> Result<AstNode, Error> {
-    if exprs.len() < 1 {
-      return error(expr, "malformed type definition");
-    }
-    let name_expr = &exprs[0];
-    let name = name_expr.symbol_unwrap()?;
-    if self.types.contains_key(name) {
-      return error(expr, "struct with this name already defined");
-    }
-    // TODO: check for duplicates?
-    let field_exprs = &exprs[1..];
-    let mut fields = vec![];
-    // TODO: record the field types, and check them!
-    for (field_name_expr, type_expr) in field_exprs.iter().tuples() {
-      let field_name = field_name_expr.symbol_unwrap()?.clone();
-      let type_tag = self.to_type(type_expr)?;
-      fields.push((self.cache.get(field_name), type_tag));
-    }
-    let def = Rc::new(TypeDefinition { name: self.cache.get(name), fields, kind });
-    self.types.insert(self.cache.get(name), def.clone());
-    Ok(ast(expr, Type::Void, Content::TypeDefinition(def)))
-  }
-
   fn tree_to_ast(&mut self, expr : &Expr) -> Result<AstNode, Error> {
     let instr = expr.symbol_unwrap()?;
     let children = expr.children.as_slice();
-    match (instr.as_ref(), children) {
+    match (instr, children) {
       ("call", exprs) => {
         let args =
               exprs[1..].iter().map(|e| self.to_ast(e))
@@ -516,10 +496,12 @@ impl <'l> TypeChecker<'l> {
         Ok(ast(expr, Type::Void, Content::FunctionDefinition(def, Box::new(body))))
       }
       ("union", exprs) => {
-        self.to_type_definition(expr, exprs, TypeKind::Union)
+        let name = exprs[0].symbol_unwrap()?;
+        Ok(ast(expr, Type::Void, Content::TypeDefinition(self.cache.get(name))))
       }
       ("struct", exprs) => {
-        self.to_type_definition(expr, exprs, TypeKind::Struct)
+        let name = exprs[0].symbol_unwrap()?;
+        Ok(ast(expr, Type::Void, Content::TypeDefinition(self.cache.get(name))))
       }
       ("type_instantiate", exprs) => {
         if exprs.len() < 1 || exprs.len() % 2 == 0 {
@@ -552,8 +534,8 @@ impl <'l> TypeChecker<'l> {
                 return error(value.loc, format!("type mismatch. expected {:?}, found {:?}", expected_type, value.type_tag));
               }
             }
-            let c = Content::StructInstantiate(def.clone(), fields.into_iter().map(|v| v.1).collect());
-            Ok(ast(expr, Type::Struct(def.clone()), c))
+            let c = Content::StructInstantiate(self.cache.get(name), fields.into_iter().map(|v| v.1).collect());
+            Ok(ast(expr, Type::Def(def.name.clone()), c))
           }
           TypeKind::Union => {
             if fields.len() != 1 {
@@ -564,8 +546,8 @@ impl <'l> TypeChecker<'l> {
             if def.fields.iter().find(|(n, _)| n == &name).is_none() {
               return error(field, "field does not exist in this union");
             }
-            let c = Content::UnionInstantiate(def.clone(), Box::new((name, value)));
-            Ok(ast(expr, Type::Union(def.clone()), c))
+            let c = Content::UnionInstantiate(self.cache.get(name), Box::new((name, value)));
+            Ok(ast(expr, Type::Def(def.name.clone()), c))
           }
         }
       }
@@ -573,8 +555,7 @@ impl <'l> TypeChecker<'l> {
         let container_val = self.to_ast(container_expr)?;
         let field_name = self.cache.get(field_expr.symbol_unwrap()?);
         let def = match &container_val.type_tag {
-          Type::Struct(def) => def,
-          Type::Union(def) => def,
+          Type::Def(def) => self.types.get(def).unwrap(),
           _ => return error(container_expr, format!("expected struct or union, found {:?}", container_val.type_tag)),
         };
         let (field_index, (_, field_type)) =
@@ -619,7 +600,7 @@ impl <'l> TypeChecker<'l> {
     }
   }
 
-  pub fn to_ast(&mut self, expr : &Expr) -> Result<AstNode, Error> {
+  fn to_ast(&mut self, expr : &Expr) -> Result<AstNode, Error> {
     match &expr.tag {
       ExprTag::Symbol(s) => {
         // Is this a tree?
@@ -647,7 +628,7 @@ impl <'l> TypeChecker<'l> {
       ExprTag::LiteralString(s) => {
         let v = Val::String(s.as_str().to_string());
         let s = self.types.get("string").unwrap();
-        Ok(ast(expr, Type::Struct(s.clone()), Content::Literal(v)))
+        Ok(ast(expr, Type::Def(s.name.clone()), Content::Literal(v)))
       }
       ExprTag::LiteralFloat(f) => {
         let v = Val::F64(*f as f64);
@@ -666,5 +647,58 @@ impl <'l> TypeChecker<'l> {
       },
       // _ => error(expr, "unsupported expression"),
     }
+  }
+
+  fn to_type_definitiondfsfsfds(&mut self, expr : &Expr, exprs : &[Expr], kind : TypeKind) -> Result<Rc<TypeDefinition>, Error> {
+    if exprs.len() < 1 {
+      return error(expr, "malformed type definition");
+    }
+    let name_expr = &exprs[0];
+    let name = name_expr.symbol_unwrap()?;
+    if self.types.contains_key(name) {
+      return error(expr, "struct with this name already defined");
+    }
+    // TODO: check for duplicates?
+    let field_exprs = &exprs[1..];
+    let mut fields = vec![];
+    // TODO: record the field types, and check them!
+    for (field_name_expr, type_expr) in field_exprs.iter().tuples() {
+      let field_name = field_name_expr.symbol_unwrap()?.clone();
+      let type_tag = self.to_type_internal(type_expr)?; // TODO the idea was to accept any type here, but keep a log of the types accepted to be checked later
+      fields.push((self.cache.get(field_name), type_tag));
+    }
+    Ok(Rc::new(TypeDefinition { name: self.cache.get(name), fields, kind }))
+  }
+
+  fn resolve_types(expr : &Expr) {
+    fn find_type_definitions<'e>(expr : &'e Expr, typedefs : &mut Vec<&'e Expr>) {
+      let children = expr.children.as_slice();
+      if children.len() == 0 { return }
+      if let ExprTag::Symbol(s) = &expr.tag {
+        match s.as_str() {
+          "union" => {
+            typedefs.push(expr);
+            return;
+          }
+          "struct" => {
+            typedefs.push(expr);
+            return;
+          }
+          _ => (),
+        }
+      }
+      for c in children {
+        find_type_definitions(c, typedefs);
+      }
+    }
+
+    let mut defs = vec!();
+    find_type_definitions(expr, &mut defs);
+    // TODO register the types as available (somehow)
+    // TODO process all of the types
+  }
+
+  pub fn typecheck(&mut self, expr : &Expr) -> Result<AstNode, Error> {
+    self.to_ast(expr)
   }
 }
