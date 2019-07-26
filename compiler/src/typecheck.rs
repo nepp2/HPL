@@ -114,6 +114,11 @@ impl PartialEq for TypeDefinition {
 #[derive(Debug, Clone, Copy)]
 pub enum VarScope { Local, Global }
 
+pub struct TypedFunction {
+  pub def : FunctionDefinition,
+  pub body : AstNode,
+}
+
 #[derive(Debug)]
 pub enum Content {
   Literal(Val),
@@ -233,11 +238,18 @@ impl <'l> TypeChecker<'l> {
     unique_name.clone()
   }
 
+  /// Converts expression into type. Returns error if type references a type definition that doesn't exist.
   fn to_type(&mut self, expr : &Expr) -> Result<Type, Error> {
-    self.to_type_internal(expr, true)
+    self.to_type_internal(expr, None)
   }
 
-  fn to_type_internal(&mut self, expr : &Expr, existence_check : bool) -> Result<Type, Error> {
+  /// Converts expression into type. Logs any unrecognised subtype referenced in the type.
+  fn to_type_with_logging(&mut self, expr : &Expr, new_types : &mut HashMap<RefStr, TextLocation>) -> Result<Type, Error> {
+    let t = self.to_type_internal(expr, Some(new_types))?;
+    Ok(t)
+  }
+
+  fn to_type_internal(&mut self, expr : &Expr, new_types : Option<&mut HashMap<RefStr, TextLocation>>) -> Result<Type, Error> {
     let name = expr.symbol_unwrap()?;
     let params = expr.children.as_slice();
     if let Some(t) = Type::from_string(name) {
@@ -248,29 +260,29 @@ impl <'l> TypeChecker<'l> {
     }
     if name == "fun" {
       let args =
-        params[0].children.as_slice().iter().map(|e| self.to_type(e))
+        params[0].children.as_slice().iter().map(|e| self.to_type_internal(e, new_types))
         .collect::<Result<Vec<Type>, Error>>()?;
-      let return_type = self.to_type(&params[1])?;
+      let return_type = self.to_type_internal(&params[1], new_types)?;
       return Ok(Type::Fun(Rc::new(FunctionSignature{ args, return_type})));
     }
     match (name, params) {
       ("ptr", [t]) => {
-        let t = self.to_type(t)?;
+        let t = self.to_type_internal(t, new_types)?;
         Ok(Type::Ptr(Box::new(t)))
       }
       (name, params) => {
         if params.len() > 0 {
           return error(expr, "unexpected type parameters");
         }
-        if existence_check {
-          if let Some(t) = self.types.get(name) {
-            return Ok(Type::Def(t.name.clone()));
+        if !self.types.contains_key(name) {
+          if let Some(new_types) = new_types {
+            new_types.insert(self.cache.get(name), expr.loc);
+          }
+          else {
+            return error(expr, format!("type '{}' does not exist", name));
           }
         }
-        else {
-          return Ok(Type::Def(self.cache.get(name)));
-        }
-        return error(expr, format!("type '{}' does not exist", name));
+        return Ok(Type::Def(self.cache.get(name)));
       }
     }
   }
@@ -649,56 +661,148 @@ impl <'l> TypeChecker<'l> {
     }
   }
 
-  fn to_type_definitiondfsfsfds(&mut self, expr : &Expr, exprs : &[Expr], kind : TypeKind) -> Result<Rc<TypeDefinition>, Error> {
-    if exprs.len() < 1 {
+  fn to_typed_function(&mut self, expr : &Expr) -> Result<TypedFunction, Error> {
+    if let ExprTag::Symbol(s) = &expr.tag {
+      let children = expr.children.as_slice();
+      match (s.as_str(), children) {
+        ("fun", exprs) => {
+          let name = self.cache.get(exprs[0].symbol_unwrap()?);
+          let args_exprs = exprs[1].children.as_slice();
+          let function_body = &exprs[2];
+          let mut arg_names = vec!();
+          let mut arg_types = vec!();
+          for (name_expr, type_expr) in args_exprs.iter().tuples() {
+            let name = self.cache.get(name_expr.symbol_unwrap()?);
+            let type_tag = self.to_type(type_expr)?;
+            if type_tag == Type::Void {
+              return error(expr, "functions args cannot be void");
+            }
+            arg_names.push(name);
+            arg_types.push(type_tag);
+          }
+          let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
+          let mut empty_global_map = HashMap::new(); // hide globals from child functions
+          let mut type_checker =
+            TypeChecker::new(false, args, self.functions, self.types, &mut empty_global_map, self.local_symbol_table, self.cache);
+          let body = type_checker.to_ast(function_body)?;
+          if self.functions.contains_key(name.as_ref()) {
+            return error(expr, "function with that name already defined");
+          }
+          let signature = Rc::new(FunctionSignature {
+            return_type: body.type_tag.clone(),
+            args: arg_types,
+          });
+          let def = Rc::new(FunctionDefinition {
+            name: name.clone(),
+            args: arg_names,
+            signature,
+            c_function_address: None,
+          });
+          return Ok(TypedFunction { def, body });
+        }
+        _ => (),
+      }
+    }
+    return error(expr, "unsupported expression");
+  }
+
+    fn body_to_typed_function(&mut self, body : &Expr) -> Result<TypedFunction, Error> {
+      let function_body = body;
+      let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
+      let mut empty_global_map = HashMap::new(); // hide globals from child functions
+      let mut type_checker =
+        TypeChecker::new(false, args, self.functions, self.types, &mut empty_global_map, self.local_symbol_table, self.cache);
+      let body = type_checker.to_ast(function_body)?;
+      if self.functions.contains_key(name.as_ref()) {
+        return error(expr, "function with that name already defined");
+      }
+      let signature = Rc::new(FunctionSignature {
+        return_type: body.type_tag.clone(),
+        args: arg_types,
+      });
+      let def = Rc::new(FunctionDefinition {
+        name: name.clone(),
+        args: arg_names,
+        signature,
+        c_function_address: None,
+      });
+      return Ok(TypedFunction { def, body });
+  }
+
+  fn to_type_definition(&mut self, expr : &Expr, new_types : &mut HashMap<RefStr, TextLocation>) -> Result<TypeDefinition, Error> {
+    let kind = match expr.symbol_unwrap()? {
+      "struct" => TypeKind::Struct,
+      "union" => TypeKind::Union,
+    };
+    let children = expr.children.as_slice();
+    if children.len() < 1 {
       return error(expr, "malformed type definition");
     }
-    let name_expr = &exprs[0];
+    let name_expr = &children[0];
     let name = name_expr.symbol_unwrap()?;
     if self.types.contains_key(name) {
       return error(expr, "struct with this name already defined");
     }
     // TODO: check for duplicates?
-    let field_exprs = &exprs[1..];
+    let field_exprs = &children[1..];
     let mut fields = vec![];
     // TODO: record the field types, and check them!
     for (field_name_expr, type_expr) in field_exprs.iter().tuples() {
       let field_name = field_name_expr.symbol_unwrap()?.clone();
-      let type_tag = self.to_type_internal(type_expr)?; // TODO the idea was to accept any type here, but keep a log of the types accepted to be checked later
+      let type_tag = self.to_type_with_logging(type_expr, new_types)?; // TODO the idea was to accept any type here, but keep a log of the types accepted to be checked later
       fields.push((self.cache.get(field_name), type_tag));
     }
-    Ok(Rc::new(TypeDefinition { name: self.cache.get(name), fields, kind }))
+    Ok(TypeDefinition { name: self.cache.get(name), fields, kind })
   }
 
-  fn resolve_types(expr : &Expr) {
-    fn find_type_definitions<'e>(expr : &'e Expr, typedefs : &mut Vec<&'e Expr>) {
+  pub fn typecheck(&mut self, expr : &Expr) -> Result<TypedModule, Error> {
+    fn find_definitions<'e>(expr : &'e Expr, types : &mut Vec<&'e Expr>, functions : &mut Vec<&'e Expr>) {
       let children = expr.children.as_slice();
       if children.len() == 0 { return }
       if let ExprTag::Symbol(s) = &expr.tag {
         match s.as_str() {
           "union" => {
-            typedefs.push(expr);
+            types.push(expr);
             return;
           }
           "struct" => {
-            typedefs.push(expr);
+            types.push(expr);
             return;
+          }
+          "fun" => {
+            functions.push(expr);
           }
           _ => (),
         }
       }
       for c in children {
-        find_type_definitions(c, typedefs);
+        find_definitions(c, types, functions);
       }
     }
 
-    let mut defs = vec!();
-    find_type_definitions(expr, &mut defs);
+    let mut types = vec!();
+    let mut functions = vec!();
+    find_definitions(expr, &mut types, &mut functions);
     // TODO register the types as available (somehow)
     // TODO process all of the types
+    let mut new_types = HashMap::new();
+    let types = types.iter().map(|e| self.to_type_definition(e, &mut new_types)).collect::<Result<Vec<TypeDefinition>, Error>>()?;
+    for t in types.iter() {
+      new_types.remove(&t.name);
+    }
+    let errors = new_types.iter().collect::<Vec<_>>();
+    errors.sort_by_key(|(_, loc)| loc.start.line);
+    if let Some((name, loc)) = errors.first() {
+      return error(*loc, format!("type '{}' does not exist", name));
+    }
+    let functions = functions.iter().map(|e| self.to_ast(e)).collect::<Result<Vec<AstNode>, Error>>()?;
+    let top_level_function = self.to_ast(expr)?;
+    Ok(TypedModule { top_level_function, types, functions })
   }
+}
 
-  pub fn typecheck(&mut self, expr : &Expr) -> Result<AstNode, Error> {
-    self.to_ast(expr)
-  }
+struct TypedModule {
+  top_level_function : TypedFunction,
+  types : Vec<TypeDefinition>,
+  functions : Vec<TypedFunction>,
 }
