@@ -116,46 +116,46 @@ pub enum VarScope { Local, Global }
 
 pub struct TypedFunction {
   pub def : FunctionDefinition,
-  pub body : AstNode,
+  pub body : TypedNode,
 }
 
 #[derive(Debug)]
 pub enum Content {
   Literal(Val),
   VariableReference(RefStr),
-  VariableInitialise(RefStr, Box<AstNode>, VarScope),
-  Assignment(Box<(AstNode, AstNode)>),
-  IfThen(Box<(AstNode, AstNode)>),
-  IfThenElse(Box<(AstNode, AstNode, AstNode)>),
-  Block(Vec<AstNode>),
+  VariableInitialise(RefStr, Box<TypedNode>, VarScope),
+  Assignment(Box<(TypedNode, TypedNode)>),
+  IfThen(Box<(TypedNode, TypedNode)>),
+  IfThenElse(Box<(TypedNode, TypedNode, TypedNode)>),
+  Block(Vec<TypedNode>),
   Quote(Box<Expr>),
   FunctionReference(RefStr),
-  FunctionDefinition(Rc<FunctionDefinition>, Box<AstNode>),
+  FunctionDefinition(Rc<FunctionDefinition>, Box<TypedNode>),
   CFunctionPrototype(Rc<FunctionDefinition>),
   TypeDefinition(RefStr),
-  StructInstantiate(RefStr, Vec<AstNode>),
-  UnionInstantiate(RefStr, Box<(RefStr, AstNode)>),
-  FieldAccess(Box<(AstNode, RefStr)>, usize),
-  Index(Box<(AstNode, AstNode)>),
-  ArrayLiteral(Vec<AstNode>),
-  FunctionCall(Box<AstNode>, Vec<AstNode>),
-  IntrinsicCall(RefStr, Vec<AstNode>),
-  While(Box<(AstNode, AstNode)>),
-  ExplicitReturn(Option<Box<AstNode>>),
-  Convert(Box<AstNode>),
-  Deref(Box<AstNode>),
+  StructInstantiate(RefStr, Vec<TypedNode>),
+  UnionInstantiate(RefStr, Box<(RefStr, TypedNode)>),
+  FieldAccess(Box<(TypedNode, RefStr)>, usize),
+  Index(Box<(TypedNode, TypedNode)>),
+  ArrayLiteral(Vec<TypedNode>),
+  FunctionCall(Box<TypedNode>, Vec<TypedNode>),
+  IntrinsicCall(RefStr, Vec<TypedNode>),
+  While(Box<(TypedNode, TypedNode)>),
+  ExplicitReturn(Option<Box<TypedNode>>),
+  Convert(Box<TypedNode>),
+  Deref(Box<TypedNode>),
   SizeOf(Box<Type>),
   Break,
 }
 
 #[derive(Debug)]
-pub struct AstNode {
+pub struct TypedNode {
   pub type_tag : Type,
   pub content : Content,
   pub loc : TextLocation,
 }
 
-impl AstNode {
+impl TypedNode {
   fn assert_type(&self, expected : Type) -> Result<(), Error> {
     if self.type_tag == expected {
       Ok(())
@@ -166,17 +166,34 @@ impl AstNode {
   }
 }
 
-fn ast(expr : &Expr, type_tag : Type, content : Content) -> AstNode {
-  AstNode {
+fn node(expr : &Expr, type_tag : Type, content : Content) -> TypedNode {
+  TypedNode {
     type_tag,
     content,
     loc: expr.loc,
   }
 }
 
+pub struct TypedModule {
+  pub types : HashMap<RefStr, TypeDefinition>,
+  pub functions : HashMap<RefStr, TypedFunction>,
+  pub globals : HashMap<RefStr, Type>,
+}
+
+/*
+  Namespacing examples:
+    - module + function name
+    - module + type
+    - module + function + type?
+    - varname + function + scope
+
+
+*/
+
 pub struct TypeChecker<'l> {
   is_top_level : bool,
   variables: HashMap<RefStr, Type>,
+  modules : &'l [TypedModule],
   functions: &'l mut HashMap<RefStr, Rc<FunctionDefinition>>,
   types : &'l mut HashMap<RefStr, Rc<TypeDefinition>>,
   global_variables : &'l mut HashMap<RefStr, Type>,
@@ -287,7 +304,7 @@ impl <'l> TypeChecker<'l> {
     }
   }
 
-  fn match_intrinsic(name : &str, args : &[AstNode]) -> Option<Type> {
+  fn match_intrinsic(name : &str, args : &[TypedNode]) -> Option<Type> {
     match args {
       [a, b] => match (&a.type_tag, &b.type_tag) {
         (Type::F64, Type::F64) => match name {
@@ -313,19 +330,19 @@ impl <'l> TypeChecker<'l> {
     }
   }
 
-  fn tree_to_ast(&mut self, expr : &Expr) -> Result<AstNode, Error> {
+  fn tree_to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
     let instr = expr.symbol_unwrap()?;
     let children = expr.children.as_slice();
     match (instr, children) {
       ("call", exprs) => {
         let args =
               exprs[1..].iter().map(|e| self.to_ast(e))
-              .collect::<Result<Vec<AstNode>, Error>>()?;
+              .collect::<Result<Vec<TypedNode>, Error>>()?;
         if let Some(function_name) = exprs[0].symbol_unwrap().ok() {
           let op_tag = TypeChecker::match_intrinsic(
             function_name, args.as_slice());
           if let Some(op_tag) = op_tag {
-            return Ok(ast(expr, op_tag, Content::IntrinsicCall(self.cache.get(function_name), args)))
+            return Ok(node(expr, op_tag, Content::IntrinsicCall(self.cache.get(function_name), args)))
           }
         }
         let function_value = self.to_ast(&exprs[0])?;
@@ -335,28 +352,28 @@ impl <'l> TypeChecker<'l> {
           }
           let return_type = sig.return_type.clone();
           let content = Content::FunctionCall(Box::new(function_value), args);
-          return Ok(ast(expr, return_type, content));
+          return Ok(node(expr, return_type, content));
         }
         error(&exprs[0], "value is not a function")
       }
       ("sizeof", [t]) => {
         let type_tag = self.to_type(t)?;
-        return Ok(ast(expr, Type::U64, Content::SizeOf(Box::new(type_tag))));
+        return Ok(node(expr, Type::U64, Content::SizeOf(Box::new(type_tag))));
       }
       ("as", [a, b]) => {
         let a = self.to_ast(a)?;
         let t = self.to_type(b)?;
-        Ok(ast(expr, t, Content::Convert(Box::new(a))))
+        Ok(node(expr, t, Content::Convert(Box::new(a))))
       }
       ("&&", [a, b]) => {
         let a = self.to_ast(a)?;
         let b = self.to_ast(b)?;
-        Ok(ast(expr, Type::Bool, Content::IntrinsicCall(self.cache.get(instr), vec!(a, b))))
+        Ok(node(expr, Type::Bool, Content::IntrinsicCall(self.cache.get(instr), vec!(a, b))))
       }
       ("||", [a, b]) => {
         let a = self.to_ast(a)?;
         let b = self.to_ast(b)?;
-        Ok(ast(expr, Type::Bool, Content::IntrinsicCall(self.cache.get(instr), vec!(a, b))))
+        Ok(node(expr, Type::Bool, Content::IntrinsicCall(self.cache.get(instr), vec!(a, b))))
       }
       ("let", exprs) => {
         let name = self.cache.get(exprs[0].symbol_unwrap()?);
@@ -374,16 +391,16 @@ impl <'l> TypeChecker<'l> {
           self.variables.insert(scoped_name.clone(), v.type_tag.clone());
           Content::VariableInitialise(scoped_name, v, VarScope::Local)
         };
-        Ok(ast(expr, Type::Void, c))
+        Ok(node(expr, Type::Void, c))
       }
       // TODO this is a very stupid approach
       ("quote", [e]) => {
-        Ok(ast(expr, Type::Ptr(Box::new(Type::U8)), Content::Quote(Box::new(e.clone()))))
+        Ok(node(expr, Type::Ptr(Box::new(Type::U8)), Content::Quote(Box::new(e.clone()))))
       }
       ("=", [assign_expr, value_expr]) => {
         let a = self.to_ast(assign_expr)?;
         let b = self.to_ast(value_expr)?;
-        Ok(ast(expr, Type::Void, Content::Assignment(Box::new((a, b)))))
+        Ok(node(expr, Type::Void, Content::Assignment(Box::new((a, b)))))
       }
       ("return", exprs) => {
         if exprs.len() > 1 {
@@ -398,12 +415,12 @@ impl <'l> TypeChecker<'l> {
           else {
             (None, Type::Void)
           };
-        Ok(ast(expr, type_tag, Content::ExplicitReturn(return_val)))
+        Ok(node(expr, type_tag, Content::ExplicitReturn(return_val)))
       }
       ("while", [condition_node, body_node]) => {
         let condition = self.to_ast(condition_node)?;
         let body = self.to_ast(body_node)?;
-        Ok(ast(expr, Type::Void, Content::While(Box::new((condition, body)))))
+        Ok(node(expr, Type::Void, Content::While(Box::new((condition, body)))))
       }
       ("if", exprs) => {
         if exprs.len() > 3 {
@@ -419,18 +436,18 @@ impl <'l> TypeChecker<'l> {
           }
           let t = then_branch.type_tag.clone();
           let c = Content::IfThenElse(Box::new((condition, then_branch, else_branch)));
-          Ok(ast(expr, t, c))
+          Ok(node(expr, t, c))
         }
         else {
-          Ok(ast(expr, Type::Void, Content::IfThen(Box::new((condition, then_branch)))))
+          Ok(node(expr, Type::Void, Content::IfThen(Box::new((condition, then_branch)))))
         }
       }
       ("block", exprs) => {
         self.scope_map.push(HashMap::new());
-        let nodes = exprs.iter().map(|e| self.to_ast(e)).collect::<Result<Vec<AstNode>, Error>>()?;
+        let nodes = exprs.iter().map(|e| self.to_ast(e)).collect::<Result<Vec<TypedNode>, Error>>()?;
         self.scope_map.pop();
         let tag = nodes.last().map(|n| n.type_tag.clone()).unwrap_or(Type::Void);
-        Ok(ast(expr, tag, Content::Block(nodes)))
+        Ok(node(expr, tag, Content::Block(nodes)))
       }
       ("cfun", exprs) => {
         let name = self.cache.get(exprs[0].symbol_unwrap()?);
@@ -469,7 +486,7 @@ impl <'l> TypeChecker<'l> {
         });
         self.functions.insert(name, def.clone());
         
-        Ok(ast(expr, Type::Void, Content::CFunctionPrototype(def)))
+        Ok(node(expr, Type::Void, Content::CFunctionPrototype(def)))
       }
       ("fun", exprs) => {
         let name = self.cache.get(exprs[0].symbol_unwrap()?);
@@ -505,15 +522,15 @@ impl <'l> TypeChecker<'l> {
           c_function_address: None,
         });
         self.functions.insert(name, def.clone());
-        Ok(ast(expr, Type::Void, Content::FunctionDefinition(def, Box::new(body))))
+        Ok(node(expr, Type::Void, Content::FunctionDefinition(def, Box::new(body))))
       }
       ("union", exprs) => {
         let name = exprs[0].symbol_unwrap()?;
-        Ok(ast(expr, Type::Void, Content::TypeDefinition(self.cache.get(name))))
+        Ok(node(expr, Type::Void, Content::TypeDefinition(self.cache.get(name))))
       }
       ("struct", exprs) => {
         let name = exprs[0].symbol_unwrap()?;
-        Ok(ast(expr, Type::Void, Content::TypeDefinition(self.cache.get(name))))
+        Ok(node(expr, Type::Void, Content::TypeDefinition(self.cache.get(name))))
       }
       ("type_instantiate", exprs) => {
         if exprs.len() < 1 || exprs.len() % 2 == 0 {
@@ -527,7 +544,7 @@ impl <'l> TypeChecker<'l> {
             let value = self.to_ast(value)?;
             Ok((name, value))
           })
-          .collect::<Result<Vec<(&Expr, AstNode)>, Error>>()?;
+          .collect::<Result<Vec<(&Expr, TypedNode)>, Error>>()?;
         let def =
           self.types.get(name)
           .ok_or_else(|| error_raw(name_expr, "no type with this name exists"))?;
@@ -547,7 +564,7 @@ impl <'l> TypeChecker<'l> {
               }
             }
             let c = Content::StructInstantiate(self.cache.get(name), fields.into_iter().map(|v| v.1).collect());
-            Ok(ast(expr, Type::Def(def.name.clone()), c))
+            Ok(node(expr, Type::Def(def.name.clone()), c))
           }
           TypeKind::Union => {
             if fields.len() != 1 {
@@ -559,7 +576,7 @@ impl <'l> TypeChecker<'l> {
               return error(field, "field does not exist in this union");
             }
             let c = Content::UnionInstantiate(self.cache.get(name), Box::new((name, value)));
-            Ok(ast(expr, Type::Def(def.name.clone()), c))
+            Ok(node(expr, Type::Def(def.name.clone()), c))
           }
         }
       }
@@ -575,7 +592,7 @@ impl <'l> TypeChecker<'l> {
           .ok_or_else(|| error_raw(field_expr, "type does not have field with this name"))?;
         let field_type = field_type.clone();
         let c = Content::FieldAccess(Box::new((container_val, field_name)), field_index);
-        Ok(ast(expr, field_type, c))
+        Ok(node(expr, field_type, c))
       }
       ("literal_array", exprs) => {
         let mut elements = vec!();
@@ -594,7 +611,7 @@ impl <'l> TypeChecker<'l> {
           else {
             Type::Void
           };
-        Ok(ast(expr, Type::Ptr(Box::new(t)), Content::ArrayLiteral(elements)))
+        Ok(node(expr, Type::Ptr(Box::new(t)), Content::ArrayLiteral(elements)))
       }
       ("index", [array_expr, index_expr]) => {
         let array = self.to_ast(array_expr)?;
@@ -606,13 +623,13 @@ impl <'l> TypeChecker<'l> {
         if index.type_tag != Type::I64 {
           return error(array_expr, "expected integer");
         }
-        Ok(ast(expr, inner_type, Content::Index(Box::new((array, index)))))
+        Ok(node(expr, inner_type, Content::Index(Box::new((array, index)))))
       }
       _ => return error(expr, "unsupported expression"),
     }
   }
 
-  fn to_ast(&mut self, expr : &Expr) -> Result<AstNode, Error> {
+  fn to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
     match &expr.tag {
       ExprTag::Symbol(s) => {
         // Is this a tree?
@@ -623,45 +640,45 @@ impl <'l> TypeChecker<'l> {
         // this is just a normal symbol
         let s = self.cache.get(s.as_str());
         if s.as_ref() == "break" {
-          return Ok(ast(expr, Type::Void, Content::Break));
+          return Ok(node(expr, Type::Void, Content::Break));
         }
         let name = self.get_scoped_variable_name(&s);
         let var_type =
           self.variables.get(name.as_ref())
           .or_else(|| self.global_variables.get(name.as_ref()));
         if let Some(t) = var_type {
-          return Ok(ast(expr, t.clone(), Content::VariableReference(name)));
+          return Ok(node(expr, t.clone(), Content::VariableReference(name)));
         }
         if let Some(def) = self.functions.get(&s) {
-          return Ok(ast(expr, Type::Fun(def.signature.clone()), Content::FunctionReference(s)));
+          return Ok(node(expr, Type::Fun(def.signature.clone()), Content::FunctionReference(s)));
         }
         error(expr, format!("unknown variable name '{}'", s))
       }
       ExprTag::LiteralString(s) => {
         let v = Val::String(s.as_str().to_string());
         let s = self.types.get("string").unwrap();
-        Ok(ast(expr, Type::Def(s.name.clone()), Content::Literal(v)))
+        Ok(node(expr, Type::Def(s.name.clone()), Content::Literal(v)))
       }
       ExprTag::LiteralFloat(f) => {
         let v = Val::F64(*f as f64);
-        Ok(ast(expr, Type::F64, Content::Literal(v)))
+        Ok(node(expr, Type::F64, Content::Literal(v)))
       }
       ExprTag::LiteralInt(v) => {
         let v = Val::I64(*v as i64);
-        Ok(ast(expr, Type::I64, Content::Literal(v)))
+        Ok(node(expr, Type::I64, Content::Literal(v)))
       }
       ExprTag::LiteralBool(b) => {
         let v = Val::Bool(*b);
-        Ok(ast(expr, Type::Bool, Content::Literal(v)))
+        Ok(node(expr, Type::Bool, Content::Literal(v)))
       },
       ExprTag::LiteralUnit => {
-        Ok(ast(expr, Type::Void, Content::Literal(Val::Void)))
+        Ok(node(expr, Type::Void, Content::Literal(Val::Void)))
       },
       // _ => error(expr, "unsupported expression"),
     }
   }
 
-  fn to_typed_function(&mut self, expr : &Expr) -> Result<TypedFunction, Error> {
+  fn typecheck_function(&mut self, expr : &Expr) -> Result<TypedFunction, Error> {
     if let ExprTag::Symbol(s) = &expr.tag {
       let children = expr.children.as_slice();
       match (s.as_str(), children) {
@@ -680,25 +697,8 @@ impl <'l> TypeChecker<'l> {
             arg_names.push(name);
             arg_types.push(type_tag);
           }
-          let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
           let mut empty_global_map = HashMap::new(); // hide globals from child functions
-          let mut type_checker =
-            TypeChecker::new(false, args, self.functions, self.types, &mut empty_global_map, self.local_symbol_table, self.cache);
-          let body = type_checker.to_ast(function_body)?;
-          if self.functions.contains_key(name.as_ref()) {
-            return error(expr, "function with that name already defined");
-          }
-          let signature = Rc::new(FunctionSignature {
-            return_type: body.type_tag.clone(),
-            args: arg_types,
-          });
-          let def = Rc::new(FunctionDefinition {
-            name: name.clone(),
-            args: arg_names,
-            signature,
-            c_function_address: None,
-          });
-          return Ok(TypedFunction { def, body });
+          return self.typecheck_function_body(name, arg_names, arg_types, function_body, &mut empty_global_map);
         }
         _ => (),
       }
@@ -706,27 +706,32 @@ impl <'l> TypeChecker<'l> {
     return error(expr, "unsupported expression");
   }
 
-    fn body_to_typed_function(&mut self, body : &Expr) -> Result<TypedFunction, Error> {
-      let function_body = body;
-      let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
-      let mut empty_global_map = HashMap::new(); // hide globals from child functions
-      let mut type_checker =
-        TypeChecker::new(false, args, self.functions, self.types, &mut empty_global_map, self.local_symbol_table, self.cache);
-      let body = type_checker.to_ast(function_body)?;
-      if self.functions.contains_key(name.as_ref()) {
-        return error(expr, "function with that name already defined");
-      }
-      let signature = Rc::new(FunctionSignature {
-        return_type: body.type_tag.clone(),
-        args: arg_types,
-      });
-      let def = Rc::new(FunctionDefinition {
-        name: name.clone(),
-        args: arg_names,
-        signature,
-        c_function_address: None,
-      });
-      return Ok(TypedFunction { def, body });
+  fn typecheck_top_level_function(&mut self, expr : &Expr) -> Result<TypedFunction, Error> {
+    let name = self.cache.get("top_level");
+    self.typecheck_function_body(name, vec!(), vec!(), expr, self.global_variables)
+  }
+
+  fn typecheck_function_body(
+    &mut self, name : RefStr,
+    arg_names : Vec<RefStr>, arg_types : Vec<Type>,
+    function_body : &Expr, global_map : &mut HashMap<RefStr, Type>)
+      -> Result<TypedFunction, Error>
+  {
+    let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
+    let mut type_checker =
+      TypeChecker::new(false, args, self.functions, self.types, global_map, self.local_symbol_table, self.cache);
+    let body = type_checker.to_ast(function_body)?;
+    let signature = Rc::new(FunctionSignature {
+      return_type: body.type_tag.clone(),
+      args: arg_types,
+    });
+    let def = FunctionDefinition {
+      name: name.clone(),
+      args: arg_names,
+      signature,
+      c_function_address: None,
+    };
+    return Ok(TypedFunction { def, body });
   }
 
   fn to_type_definition(&mut self, expr : &Expr, new_types : &mut HashMap<RefStr, TextLocation>) -> Result<TypeDefinition, Error> {
@@ -780,13 +785,13 @@ impl <'l> TypeChecker<'l> {
       }
     }
 
-    let mut types = vec!();
-    let mut functions = vec!();
-    find_definitions(expr, &mut types, &mut functions);
+    let mut type_exprs = vec!();
+    let mut function_exprs = vec!();
+    find_definitions(expr, &mut type_exprs, &mut function_exprs);
     // TODO register the types as available (somehow)
     // TODO process all of the types
     let mut new_types = HashMap::new();
-    let types = types.iter().map(|e| self.to_type_definition(e, &mut new_types)).collect::<Result<Vec<TypeDefinition>, Error>>()?;
+    let types = type_exprs.iter().map(|e| self.to_type_definition(e, &mut new_types)).collect::<Result<Vec<TypeDefinition>, Error>>()?;
     for t in types.iter() {
       new_types.remove(&t.name);
     }
@@ -795,14 +800,17 @@ impl <'l> TypeChecker<'l> {
     if let Some((name, loc)) = errors.first() {
       return error(*loc, format!("type '{}' does not exist", name));
     }
-    let functions = functions.iter().map(|e| self.to_ast(e)).collect::<Result<Vec<AstNode>, Error>>()?;
-    let top_level_function = self.to_ast(expr)?;
-    Ok(TypedModule { top_level_function, types, functions })
-  }
-}
+    let top_level_function = self.typecheck_top_level_function(expr)?;
+    let mut functions = vec!();
+    for e in function_exprs.iter() {
+      let f = self.typecheck_function(e)?;
+      functions.push(f);
+    }
 
-struct TypedModule {
-  top_level_function : TypedFunction,
-  types : Vec<TypeDefinition>,
-  functions : Vec<TypedFunction>,
+    let globals = HashMap::new(); // TODO BROKEN
+    let types = types.into_iter().map(|def| (def.name.clone(), def)).collect();
+    let functions = functions.into_iter().map(|f| (f.def.name.clone(), f)).collect();
+
+    Ok(TypedModule { types, functions, globals })
+  }
 }

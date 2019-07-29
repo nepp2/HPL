@@ -4,7 +4,7 @@
 use crate::error::{Error, error, error_raw, ErrorContent};
 use crate::expr::RefStr;
 use crate::typecheck::{
-  AstNode, Content, Type, Val, TypeDefinition, TypeKind, FunctionDefinition, VarScope};
+  TypedNode, Content, Type, Val, TypeDefinition, TypeKind, FunctionDefinition, VarScope};
 
 use std::rc::Rc;
 use std::collections::HashMap;
@@ -257,11 +257,11 @@ impl <'l> Gen<'l> {
     Ok(())
   }
 
-  fn codegen_value(&mut self, n : &AstNode) -> Result<BasicValueEnum, Error> {
+  fn codegen_value(&mut self, n : &TypedNode) -> Result<BasicValueEnum, Error> {
     Ok(self.codegen_expression_to_register(n)?.unwrap())
   }
 
-  fn codegen_float(&mut self, n : &AstNode) -> Result<FloatValue, Error> {
+  fn codegen_float(&mut self, n : &TypedNode) -> Result<FloatValue, Error> {
     let v = self.codegen_value(n)?;
     match v {
       BasicValueEnum::FloatValue(f) => Ok(f),
@@ -269,7 +269,7 @@ impl <'l> Gen<'l> {
     }
   }
 
-  fn codegen_int(&mut self, n : &AstNode) -> Result<IntValue, Error> {
+  fn codegen_int(&mut self, n : &TypedNode) -> Result<IntValue, Error> {
     let v = self.codegen_value(n)?;
     match v {
       BasicValueEnum::IntValue(i) => Ok(i),
@@ -277,7 +277,7 @@ impl <'l> Gen<'l> {
     }
   }
 
-  fn codegen_pointer(&mut self, n : &AstNode) -> Result<PointerValue, Error> {
+  fn codegen_pointer(&mut self, n : &TypedNode) -> Result<PointerValue, Error> {
     let v = self.codegen_value(n)?;
     match v {
       BasicValueEnum::PointerValue(p) => Ok(p),
@@ -285,8 +285,8 @@ impl <'l> Gen<'l> {
     }
   }
 
-  fn codegen_expression_to_register(&mut self, ast : &AstNode) -> Result<Option<BasicValueEnum>, Error> {
-    if let Some(v) = self.codegen_expression(ast)? {
+  fn codegen_expression_to_register(&mut self, node : &TypedNode) -> Result<Option<BasicValueEnum>, Error> {
+    if let Some(v) = self.codegen_expression(node)? {
       let reg_val = match v.storage {
         Storage::Pointer => {
           let ptr = *v.value.as_pointer_value();
@@ -303,7 +303,7 @@ impl <'l> Gen<'l> {
     }
   }
 
-  fn codegen_convert(&mut self, convert_node : &AstNode, value_to_convert : &AstNode) -> Result<GenVal, Error> {
+  fn codegen_convert(&mut self, convert_node : &TypedNode, value_to_convert : &TypedNode) -> Result<GenVal, Error> {
     fn int_type(gen : &Gen, width : u64) -> IntType {
       match width {
         1 => gen.context.bool_type(),
@@ -410,7 +410,7 @@ impl <'l> Gen<'l> {
     return error(convert_node.loc, "type cast not supported");
   }
 
-  fn codegen_short_circuit_op(&mut self, a : &AstNode, b : &AstNode, op : ShortCircuitOp)
+  fn codegen_short_circuit_op(&mut self, a : &TypedNode, b : &TypedNode, op : ShortCircuitOp)
     -> Result<GenVal, Error>
   {
     use ShortCircuitOp::*;
@@ -463,7 +463,7 @@ impl <'l> Gen<'l> {
     pointer(ptr)
   }
 
-  fn codegen_address_of_expression(&mut self, value : &AstNode) -> Result<GenVal, Error> {
+  fn codegen_address_of_expression(&mut self, value : &TypedNode) -> Result<GenVal, Error> {
     let v = self.codegen_expression(value)?.unwrap();
     match v.storage {
       Storage::Register => {
@@ -494,7 +494,7 @@ impl <'l> Gen<'l> {
     }
   }
 
-  fn codegen_function_call(&mut self, function_value : &AstNode, args : &[AstNode])
+  fn codegen_function_call(&mut self, function_value : &TypedNode, args : &[TypedNode])
     -> Result<Option<GenVal>, Error>
   {
     //let f = self.get_linked_function_reference(def);
@@ -509,8 +509,8 @@ impl <'l> Gen<'l> {
     return Ok(r.map(reg));
   }
 
-  fn codegen_expression(&mut self, ast : &AstNode) -> Result<Option<GenVal>, Error> {
-    let v : GenVal = match &ast.content {
+  fn codegen_expression(&mut self, node : &TypedNode) -> Result<Option<GenVal>, Error> {
+    let v : GenVal = match &node.content {
       Content::FunctionCall(function_value, args) => {
         return self.codegen_function_call(function_value, args);
       }
@@ -538,7 +538,7 @@ impl <'l> Gen<'l> {
             (Type::I64, "==") => compare_op!(build_int_compare, IntPredicate::EQ, IntValue, a, b, self),
             (Type::Bool, "&&") => self.codegen_short_circuit_op(a, b, ShortCircuitOp::And)?,
             (Type::Bool, "||") => self.codegen_short_circuit_op(a, b, ShortCircuitOp::Or)?,
-            _ => return error(ast.loc, "encountered unrecognised intrinsic"),
+            _ => return error(node.loc, "encountered unrecognised intrinsic"),
           }        
         }
         else if let [a] = args.as_slice() {
@@ -547,11 +547,11 @@ impl <'l> Gen<'l> {
             (Type::I64, "unary_-") => unary_op!(build_int_neg, IntValue, a, self),
             (Type::Bool, "unary_!") => unary_op!(build_not, IntValue, a, self),
             (_, "unary_ref") => self.codegen_address_of_expression(a)?,
-            _ => return error(ast.loc, "encountered unrecognised intrinsic"),
+            _ => return error(node.loc, "encountered unrecognised intrinsic"),
           }
         }
         else {
-          return error(ast.loc, "encountered unrecognised intrinsic");
+          return error(node.loc, "encountered unrecognised intrinsic");
         }
       }
       Content::SizeOf(t) => {
@@ -559,7 +559,7 @@ impl <'l> Gen<'l> {
         reg(self.size_of_type(t).into())
       }
       Content::Convert(n) => {
-        self.codegen_convert(ast, n)?
+        self.codegen_convert(node, n)?
       }
       Content::While(ns) => {
         let (cond_node, body_node) = (&ns.0, &ns.1);
@@ -595,7 +595,7 @@ impl <'l> Gen<'l> {
           return Ok(None);
         }
         else {
-          return error(ast.loc, "can only break inside a loop");
+          return error(node.loc, "can only break inside a loop");
         }
       }
       Content::IfThen(ns) => {
@@ -675,7 +675,7 @@ impl <'l> Gen<'l> {
       Content::FunctionDefinition(def, body) => {
         let global_var_types = HashMap::new();
         self.child_function_gen(&global_var_types).codegen_function(
-          ast, body, &def.name, &def.args, &def.signature.args)?;
+          node, body, &def.name, &def.args, &def.signature.args)?;
         return Ok(None);
       }
       Content::TypeDefinition(_def) => {
@@ -735,7 +735,7 @@ impl <'l> Gen<'l> {
         }
       }
       Content::ArrayLiteral(elements) => {
-        if let Type::Ptr(inner_type) = &ast.type_tag {
+        if let Type::Ptr(inner_type) = &node.type_tag {
           let element_type = self.to_basic_type(inner_type).unwrap();
           let length = self.context.i32_type().const_int(elements.len() as u64, false).into();
           let array_ptr = self.builder.build_array_malloc(element_type, length, "array_malloc");
@@ -779,7 +779,7 @@ impl <'l> Gen<'l> {
         let v = self.codegen_expression_to_register(value_node)?
           .ok_or_else(|| error_raw(value_node.loc, "expected value for initialiser, found void"))?;
         self.init_variable(name.clone(), *var_scope, v)
-          .map_err(|c| error_raw(ast.loc, c))?; 
+          .map_err(|c| error_raw(node.loc, c))?; 
         return Ok(None);
       }
       Content::VariableReference(name) => {
@@ -798,13 +798,13 @@ impl <'l> Gen<'l> {
           pointer(gv.as_pointer_value())
         }
         else {
-          return error(ast.loc, format!("unknown variable name '{}'.", name));
+          return error(node.loc, format!("unknown variable name '{}'.", name));
         }
       }
       Content::FunctionReference(name) => {
         let def =
           self.function_defs.get(name)
-          .ok_or_else(|| error_raw(ast.loc, format!("could not find function with name '{}'", name)))?;
+          .ok_or_else(|| error_raw(node.loc, format!("could not find function with name '{}'", name)))?;
         let f = self.get_linked_function_reference(def);
         reg(f.as_global_value().as_pointer_value().into())
       }
@@ -819,7 +819,7 @@ impl <'l> Gen<'l> {
         panic!();
       }
       Content::ExplicitReturn(n) => {
-        self.codegen_return(n.as_ref().map(|b| b as &AstNode))?;
+        self.codegen_return(n.as_ref().map(|b| b as &TypedNode))?;
         // create a dummy block to hold instructions after the return
         let f = self.builder.get_insert_block().unwrap().get_parent().unwrap();
         let dummy_block = self.context.append_basic_block(&f, "dummy_block");
@@ -1020,7 +1020,7 @@ impl <'l> Gen<'l> {
     return t;
   }
 
-  fn codegen_return(&mut self, value_node : Option<&AstNode>) -> Result<(), Error> {
+  fn codegen_return(&mut self, value_node : Option<&TypedNode>) -> Result<(), Error> {
     if let Some(value_node) = value_node {
       let v = self.codegen_expression_to_register(value_node)?;
       self.builder.build_return(v.as_ref().map(|v| v as &BasicValue));
@@ -1059,8 +1059,8 @@ impl <'l> Gen<'l> {
 
   fn codegen_function(
     mut self,
-    function_node : &AstNode,
-    body : &AstNode,
+    function_node : &TypedNode,
+    body : &TypedNode,
     name : &str,
     args : &[RefStr],
     arg_types : &[Type])
@@ -1070,7 +1070,7 @@ impl <'l> Gen<'l> {
 
     // this function is here because Rust doesn't have a proper try/catch yet
     fn generate(
-      function_node : &AstNode, body : &AstNode, function : FunctionValue,
+      function_node : &TypedNode, body : &TypedNode, function : FunctionValue,
       args : &[RefStr], gen : &mut Gen) -> Result<(), Error>
     {
       let entry = gen.context.append_basic_block(&function, "entry");
@@ -1113,7 +1113,7 @@ impl <'l> Gen<'l> {
   }
 
   /// Code-generates a module, returning a reference to the top-level function in the module
-  pub fn codegen_module(self, ast : &AstNode) -> Result<FunctionValue, Error> {
-    self.codegen_function(&ast, &ast, "top_level", &[], &[])
+  pub fn codegen_module(self, node : &TypedNode) -> Result<FunctionValue, Error> {
+    self.codegen_function(&node, &node, "top_level", &[], &[])
   }
 }

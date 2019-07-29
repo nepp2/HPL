@@ -5,7 +5,7 @@ use crate::lexer;
 use crate::parser;
 use crate::typecheck::{
   Type, Val, TypeDefinition, FunctionDefinition,
-  TypeChecker, AstNode };
+  TypeChecker, TypedNode };
 use crate::codegen::{dump_module, Gen};
 use crate::c_interface::CLibraries;
 
@@ -45,7 +45,7 @@ pub struct CompiledExpression {
   pub f : FunctionValue,
   pub ee : ExecutionEngine,
   pub m : Module,
-  pub ast : AstNode,
+  pub node : TypedNode,
 }
 
 pub struct Interpreter {
@@ -130,7 +130,7 @@ impl Interpreter {
       TypeChecker::new(
         true, HashMap::new(), &mut self.functions, &mut self.types,
         &mut self.global_var_types, &self.c_libs.local_symbol_table, &mut self.cache);
-    let ast = type_checker.typecheck(expr)?;
+    let node = type_checker.typecheck(expr)?;
     let module_name = format!("module_{}", self.modules.len());
     let mut module = self.context.create_module(&module_name);
 
@@ -161,7 +161,7 @@ impl Interpreter {
           &mut self.context, &mut module, &mut ee.get_target_data(), &self.functions, &mut external_globals,
           &mut external_functions, &mut c_functions, &self.global_var_types,
           &self.types, &pm);
-      jit.codegen_module(&ast)?
+      jit.codegen_module(&node)?
     };
     
     // TODO: provide an option for this?
@@ -205,7 +205,7 @@ impl Interpreter {
     // TODO: is this needed?
     ee.run_static_constructors();
 
-    self.modules.push(CompiledExpression { f, ee, m: module, ast });
+    self.modules.push(CompiledExpression { f, ee, m: module, node });
     Ok(self.modules.last().unwrap())
   }
 
@@ -245,7 +245,7 @@ impl Interpreter {
   pub fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
     let c = self.compile_expression(expr)?;
     let f = c.f.get_name().to_str().unwrap();
-    let result = match &c.ast.type_tag {
+    let result = match &c.node.type_tag {
       Type::Bool => Val::Bool(execute::<bool>(f, &c.ee)),
       Type::F64 => Val::F64(execute::<f64>(f, &c.ee)),
       Type::F32 => Val::F32(execute::<f32>(f, &c.ee)),
