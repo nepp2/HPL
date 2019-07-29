@@ -1,6 +1,7 @@
 
 use std::fmt;
 use std::rc::Rc;
+use std::cell::RefCell;
 use std::collections::HashSet;
 
 use crate::error::{Error, TextLocation, error };
@@ -195,9 +196,9 @@ impl fmt::Display for Expr {
   }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct StringCache {
-  symbols : HashSet<RefStr>,
+  symbols : RefCell<HashSet<RefStr>>,
 }
 
 impl StringCache {
@@ -205,13 +206,13 @@ impl StringCache {
     Default::default()
   }
 
-  pub fn get<T : AsRef<str> + Into<RefStr>>(&mut self, s : T) -> RefStr {
-    if let Some(symbol) = self.symbols.get(s.as_ref()) {
+  pub fn get<T : AsRef<str> + Into<RefStr>>(&self, s : T) -> RefStr {
+    if let Some(symbol) = self.symbols.borrow_mut().get(s.as_ref()) {
       symbol.clone()
     }
     else{
       let string : RefStr = s.into();
-      self.symbols.insert(string.clone());
+      self.symbols.borrow_mut().insert(string.clone());
       string
     }
   }
