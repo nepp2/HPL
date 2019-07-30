@@ -222,7 +222,7 @@ impl <'l> FunctionSanitiser<'l> {
     type_references : &'l mut HashMap<RefStr, TextLocation>,
     function_references : &'l mut HashMap<RefStr, TextLocation>,
     is_top_level : bool,
-    variables : HashSet<RefStr>,)
+    variables : HashSet<RefStr>)
       -> FunctionSanitiser<'l>
   {
     FunctionSanitiser {
@@ -547,7 +547,7 @@ impl <'l> FunctionSanitiser<'l> {
           signature,
           c_function_address: None,
         };
-        let body = node(expr, Type::Void, Content::CFunctionPrototype(def));
+        let body = node(expr, Type::Void, Content::Literal(Val::Void));
         let f = TypedFunction { def, body };
         self.new_module.functions.insert(name, f);
         Ok(node(expr, Type::Void, Content::Literal(Val::Void)))
@@ -569,9 +569,11 @@ impl <'l> FunctionSanitiser<'l> {
         }
         let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
         let mut empty_global_map = HashMap::new(); // hide globals from child functions
-        let mut type_checker =
-          TypeChecker::new(false, args, self.functions, self.types, &mut empty_global_map, self.local_symbol_table, self.cache);
-        let body = type_checker.to_ast(function_body)?;
+        let mut sanitiser =
+          FunctionSanitiser::new(
+            self.modules, self.cache, self.new_module, self.global_references,
+            self.type_references, self.function_references, false, args);
+        let body = sanitiser.to_ast(function_body)?;
         if self.functions.contains_key(name.as_ref()) {
           return error(expr, "function with that name already defined");
         }
