@@ -200,9 +200,10 @@ pub struct TypeChecker<'l> {
 struct FunctionSanitiser<'l> {
   modules : &'l [TypedModule],
   cache: &'l StringCache,
-  new_globals_referenced : &'l mut HashMap<RefStr, TextLocation>,
-  new_types_referenced : &'l mut HashMap<RefStr, TextLocation>,
-  new_functions_referenced : &'l mut HashMap<RefStr, TextLocation>,
+  new_module : &'l mut TypedModule,
+  global_references : &'l mut HashMap<RefStr, TextLocation>,
+  type_references : &'l mut HashMap<RefStr, TextLocation>,
+  function_references : &'l mut HashMap<RefStr, TextLocation>,
   is_top_level : bool,
   variables : HashSet<RefStr>,
 
@@ -216,9 +217,10 @@ impl <'l> FunctionSanitiser<'l> {
   pub fn new(
     modules : &'l [TypedModule],
     cache: &'l StringCache,
-    new_globals_referenced : &'l mut HashMap<RefStr, TextLocation>,
-    new_types_referenced : &'l mut HashMap<RefStr, TextLocation>,
-    new_functions_referenced : &'l mut HashMap<RefStr, TextLocation>,
+    new_module : &'l mut TypedModule,
+    global_references : &'l mut HashMap<RefStr, TextLocation>,
+    type_references : &'l mut HashMap<RefStr, TextLocation>,
+    function_references : &'l mut HashMap<RefStr, TextLocation>,
     is_top_level : bool,
     variables : HashSet<RefStr>,)
       -> FunctionSanitiser<'l>
@@ -226,9 +228,10 @@ impl <'l> FunctionSanitiser<'l> {
     FunctionSanitiser {
       modules,
       cache,
-      new_globals_referenced,
-      new_types_referenced,
-      new_functions_referenced,
+      new_module,
+      global_references,
+      type_references,
+      function_references,
       is_top_level,
       variables,
       scope_map: vec!(),
@@ -236,6 +239,10 @@ impl <'l> FunctionSanitiser<'l> {
   }
 
   fn get_type_def<'a>(&'a self, name : &str) -> Option<&'a TypeDefinition> {
+    panic!()
+  }
+
+  fn get_function_def<'a>(&'a self, name : &str) -> Option<&'a TypedFunction> {
     panic!()
   }
 
@@ -265,7 +272,7 @@ impl <'l> FunctionSanitiser<'l> {
           return error(expr, "unexpected type parameters");
         }
         if !self.get_type_def(name).is_some() {
-          self.new_types_referenced.insert(self.cache.get(name), expr.loc);
+          self.type_references.insert(self.cache.get(name), expr.loc);
         }
         Ok(Type::Def(self.cache.get(name)))
       }
@@ -340,9 +347,10 @@ impl <'l> FunctionSanitiser<'l> {
     let mut type_checker =
       FunctionSanitiser::new(
         self.modules, self.cache,
-        self.new_globals_referenced,
-        self.new_types_referenced,
-        self.new_functions_referenced,
+        self.new_module,
+        self.global_references,
+        self.type_references,
+        self.function_references,
         is_top_level, args);
     let body = type_checker.to_ast(function_body)?;
     let signature = Rc::new(FunctionSignature {
@@ -442,13 +450,13 @@ impl <'l> FunctionSanitiser<'l> {
         // is the top level of the function.
         let c = if self.is_top_level && self.scope_map.len() == 2 {
           // global variable
-          self.global_variables.insert(name.clone(), v.type_tag.clone());
+          self.new_module.globals.insert(name.clone(), v.type_tag.clone());
           Content::VariableInitialise(name, v, VarScope::Global)
         }
         else {
           // local variable
           let scoped_name = self.create_scoped_variable_name(name);
-          self.variables.insert(scoped_name.clone(), v.type_tag.clone());
+          self.variables.insert(scoped_name.clone());
           Content::VariableInitialise(scoped_name, v, VarScope::Local)
         };
         Ok(node(expr, Type::Void, c))
@@ -525,28 +533,24 @@ impl <'l> FunctionSanitiser<'l> {
           arg_types.push(type_tag);
         }
         let return_type = self.to_type(return_type_expr)?;
-        if self.functions.contains_key(name.as_ref()) {
+        if self.get_function_def(name.as_ref()).is_some() {
           return error(expr, "function with that name already defined");
         }
         let signature = Rc::new(FunctionSignature {
           return_type,
           args: arg_types,
         });
-        let address = self.local_symbol_table.get(&name).map(|v| *v);
-        if address.is_none() {
-          // TODO: check the signature of the function too
-          println!("Warning: C function '{}' not linked. LLVM linker may link it instead.", name);
-          // return error(expr, "tried to bind non-existing C function")
-        }
-        let def = Rc::new(FunctionDefinition {
+        println!("Warning: C function '{}' not linked. LLVM linker may link it instead.", name);
+        let def = FunctionDefinition {
           name: name.clone(),
           args: arg_names,
           signature,
-          c_function_address: address,
-        });
-        self.functions.insert(name, def.clone());
-        
-        Ok(node(expr, Type::Void, Content::CFunctionPrototype(def)))
+          c_function_address: None,
+        };
+        let body = node(expr, Type::Void, Content::CFunctionPrototype(def));
+        let f = TypedFunction { def, body };
+        self.new_module.functions.insert(name, f);
+        Ok(node(expr, Type::Void, Content::Literal(Val::Void)))
       }
       ("fun", exprs) => {
         let name = self.cache.get(exprs[0].symbol_unwrap()?);
@@ -585,12 +589,12 @@ impl <'l> FunctionSanitiser<'l> {
         Ok(node(expr, Type::Void, Content::FunctionDefinition(def, Box::new(body))))
       }
       ("union", exprs) => {
-        let name = exprs[0].symbol_unwrap()?;
-        Ok(node(expr, Type::Void, Content::TypeDefinition(self.cache.get(name))))
+        let def = self.to_type_definition(expr)?;
+        Ok(node(expr, Type::Void, Content::TypeDefinition(def.name.clone())))
       }
       ("struct", exprs) => {
-        let name = exprs[0].symbol_unwrap()?;
-        Ok(node(expr, Type::Void, Content::TypeDefinition(self.cache.get(name))))
+        let def = self.to_type_definition(expr)?;
+        Ok(node(expr, Type::Void, Content::TypeDefinition(def.name.clone())))
       }
       ("type_instantiate", exprs) => {
         if exprs.len() < 1 || exprs.len() % 2 == 0 {
@@ -742,68 +746,21 @@ impl <'l> FunctionSanitiser<'l> {
 impl <'l> TypeChecker<'l> {
 
   fn sanitise_to_structured_module(&self, expr: &Expr) -> Result<TypedModule, Error> {
-    ########### BIG TODO HERE ######################
-    // This "find definitions" pass is now totally unnecessary, because I'm not checking types up front. Whoops!
-    fn find_definitions<'e>(expr : &'e Expr, types : &mut Vec<&'e Expr>, functions : &mut Vec<&'e Expr>) {
-      let children = expr.children.as_slice();
-      if children.len() == 0 { return }
-      if let ExprTag::Symbol(s) = &expr.tag {
-        match s.as_str() {
-          "union" => {
-            types.push(expr);
-            return;
-          }
-          "struct" => {
-            types.push(expr);
-            return;
-          }
-          "fun" => {
-            functions.push(expr);
-          }
-          _ => (),
-        }
-      }
-      for c in children {
-        find_definitions(c, types, functions);
-      }
-    }
-
-    let mut type_exprs = vec!();
-    let mut function_exprs = vec!();
-    find_definitions(expr, &mut type_exprs, &mut function_exprs);
-    // TODO register the types as available (somehow)
-    // TODO process all of the types
-
-    let mut new_globals = HashMap::new();
-    let mut new_types = HashMap::new();
-    let mut new_functions = HashMap::new();
+    let mut new_module = TypedModule {
+      functions: HashMap::new(), types: HashMap::new(), globals: HashMap::new(),
+    };
+    let mut global_references = HashMap::new();
+    let mut type_references = HashMap::new();
+    let mut function_references = HashMap::new();
     let mut sanitiser = FunctionSanitiser::new(
-      self.modules, self.cache, &mut new_globals, &mut new_types,
-      &mut new_functions, true, HashSet::new());
-
-    let types = type_exprs.iter().map(|e| sanitiser.to_type_definition(e)).collect::<Result<Vec<TypeDefinition>, Error>>()?;
+      self.modules, self.cache, &mut new_module, &mut global_references,
+      &mut type_references, &mut function_references, true, HashSet::new());
 
     let top_level_function = sanitiser.sanitise_top_level_function(expr)?;
-    let mut functions = vec!();
-    for e in function_exprs.iter() {
-      let f = sanitiser.sanitise_function(e)?;
-      functions.push(f);
-    }
 
-    for t in types.iter() {
-      new_types.remove(&t.name);
-    }
-    let errors = new_types.iter().collect::<Vec<_>>();
-    errors.sort_by_key(|(_, loc)| loc.start.line);
-    if let Some((name, loc)) = errors.first() {
-      return error(*loc, format!("type '{}' does not exist", name));
-    }
+    // TODO: Check that everything referenced has been defined
 
-    let globals = HashMap::new(); // TODO BROKEN
-    let types = types.into_iter().map(|def| (def.name.clone(), def)).collect();
-    let functions = functions.into_iter().map(|f| (f.def.name.clone(), f)).collect();
-
-    Ok(TypedModule { types, functions, globals })
+    Ok(new_module)
   }
 
   fn to_typed_module(&self, expr: &Expr) -> Result<TypedModule, Error> {
