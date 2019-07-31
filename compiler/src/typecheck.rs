@@ -93,11 +93,18 @@ pub struct TypeDefinition {
 }
 
 #[derive(Debug)]
+pub enum FunctionImplementation {
+  Normal(TypedNode),
+  CFunction(usize),
+  Intrinsic,
+}
+
+#[derive(Debug)]
 pub struct FunctionDefinition {
   pub name : RefStr,
   pub args : Vec<RefStr>,
   pub signature : Rc<FunctionSignature>,
-  pub c_function_address : Option<usize>,
+  pub implementation : FunctionImplementation,
 }
 
 #[derive(Debug, PartialEq)]
@@ -115,11 +122,6 @@ impl PartialEq for TypeDefinition {
 #[derive(Debug, Clone, Copy)]
 pub enum VarScope { Local, Global }
 
-pub struct TypedFunction {
-  pub def : FunctionDefinition,
-  pub body : TypedNode,
-}
-
 #[derive(Debug)]
 pub enum Content {
   Literal(Val),
@@ -131,8 +133,8 @@ pub enum Content {
   Block(Vec<TypedNode>),
   Quote(Box<Expr>),
   FunctionReference(RefStr),
-  FunctionDefinition(Rc<FunctionDefinition>, Box<TypedNode>),
-  CFunctionPrototype(Rc<FunctionDefinition>),
+  FunctionDefinition(RefStr),
+  CFunctionPrototype(RefStr),
   TypeDefinition(RefStr),
   StructInstantiate(RefStr, Vec<TypedNode>),
   UnionInstantiate(RefStr, Box<(RefStr, TypedNode)>),
@@ -140,10 +142,10 @@ pub enum Content {
   Index(Box<(TypedNode, TypedNode)>),
   ArrayLiteral(Vec<TypedNode>),
   FunctionCall(Box<TypedNode>, Vec<TypedNode>),
-  IntrinsicCall(RefStr, Vec<TypedNode>),
+  ShortCircuit(RefStr, Vec<TypedNode>),
   While(Box<(TypedNode, TypedNode)>),
   ExplicitReturn(Option<Box<TypedNode>>),
-  Convert(Box<TypedNode>),
+  Convert(Box<(TypedNode, Type)>),
   Deref(Box<TypedNode>),
   SizeOf(Box<Type>),
   Break,
@@ -167,9 +169,10 @@ impl TypedNode {
   }
 }
 
-fn node(expr : &Expr, type_tag : Type, content : Content) -> TypedNode {
+/// Creates a node with an unresolved type
+fn node(expr : &Expr, content : Content) -> TypedNode {
   TypedNode {
-    type_tag,
+    type_tag: Type::Unresolved,
     content,
     loc: expr.loc,
   }
@@ -177,7 +180,7 @@ fn node(expr : &Expr, type_tag : Type, content : Content) -> TypedNode {
 
 pub struct TypedModule {
   pub types : HashMap<RefStr, TypeDefinition>,
-  pub functions : HashMap<RefStr, TypedFunction>,
+  pub functions : HashMap<RefStr, FunctionDefinition>,
   pub globals : HashMap<RefStr, Type>,
 }
 
@@ -242,7 +245,11 @@ impl <'l> FunctionSanitiser<'l> {
     panic!()
   }
 
-  fn get_function_def<'a>(&'a self, name : &str) -> Option<&'a TypedFunction> {
+  fn get_function_def<'a>(&'a self, name : &str) -> Option<&'a FunctionDefinition> {
+    panic!()
+  }
+
+  fn get_global_def<'a>(&'a self, name : &str) -> Option<&'a Type> {
     panic!()
   }
 
@@ -305,7 +312,7 @@ impl <'l> FunctionSanitiser<'l> {
     Ok(TypeDefinition { name: self.cache.get(name), fields, kind })
   }
 
-  fn sanitise_function(&mut self, expr : &Expr) -> Result<TypedFunction, Error> {
+  fn sanitise_function(&mut self, expr : &Expr) -> Result<FunctionDefinition, Error> {
     if let ExprTag::Symbol(s) = &expr.tag {
       let children = expr.children.as_slice();
       match (s.as_str(), children) {
@@ -332,7 +339,7 @@ impl <'l> FunctionSanitiser<'l> {
     return error(expr, "unsupported expression");
   }
 
-  fn sanitise_top_level_function(&mut self, expr : &Expr) -> Result<TypedFunction, Error> {
+  fn sanitise_top_level_function(&mut self, expr : &Expr) -> Result<FunctionDefinition, Error> {
     let name = self.cache.get("top_level");
     self.sanitise_function_body(name, vec!(), vec!(), expr, true)
   }
@@ -341,7 +348,7 @@ impl <'l> FunctionSanitiser<'l> {
     &mut self, name : RefStr,
     arg_names : Vec<RefStr>, arg_types : Vec<Type>,
     function_body : &Expr, is_top_level : bool)
-      -> Result<TypedFunction, Error>
+      -> Result<FunctionDefinition, Error>
   {
     let args = arg_names.iter().cloned().collect();
     let mut type_checker =
@@ -361,9 +368,9 @@ impl <'l> FunctionSanitiser<'l> {
       name: name.clone(),
       args: arg_names,
       signature,
-      c_function_address: None,
+      implementation: FunctionImplementation::Normal(body),
     };
-    return Ok(TypedFunction { def, body });
+    return Ok(def);
   }
 
   fn get_scoped_variable_name(&self, name : &RefStr) -> RefStr {
@@ -404,44 +411,30 @@ impl <'l> FunctionSanitiser<'l> {
     match (instr, children) {
       ("call", exprs) => {
         let args =
-              exprs[1..].iter().map(|e| self.to_ast(e))
-              .collect::<Result<Vec<TypedNode>, Error>>()?;
-        if let Some(function_name) = exprs[0].symbol_unwrap().ok() {
-          let op_tag = TypeChecker::match_intrinsic(
-            function_name, args.as_slice());
-          if let Some(op_tag) = op_tag {
-            return Ok(node(expr, op_tag, Content::IntrinsicCall(self.cache.get(function_name), args)))
-          }
-        }
+          exprs[1..].iter().map(|e| self.to_ast(e))
+          .collect::<Result<Vec<TypedNode>, Error>>()?;
         let function_value = self.to_ast(&exprs[0])?;
-        if let Type::Fun(sig) = &function_value.type_tag {
-          if sig.args.len() != args.len() {
-            return error(expr, "incorrect number of arguments passed");
-          }
-          let return_type = sig.return_type.clone();
-          let content = Content::FunctionCall(Box::new(function_value), args);
-          return Ok(node(expr, return_type, content));
-        }
-        error(&exprs[0], "value is not a function")
+        let content = Content::FunctionCall(Box::new(function_value), args);
+        return Ok(node(expr, content));
       }
       ("sizeof", [t]) => {
         let type_tag = self.to_type(t)?;
-        return Ok(node(expr, Type::U64, Content::SizeOf(Box::new(type_tag))));
+        return Ok(node(expr, Content::SizeOf(Box::new(type_tag))));
       }
       ("as", [a, b]) => {
         let a = self.to_ast(a)?;
         let t = self.to_type(b)?;
-        Ok(node(expr, t, Content::Convert(Box::new(a))))
+        Ok(node(expr, Content::Convert(Box::new((a, t)))))
       }
       ("&&", [a, b]) => {
         let a = self.to_ast(a)?;
         let b = self.to_ast(b)?;
-        Ok(node(expr, Type::Bool, Content::IntrinsicCall(self.cache.get(instr), vec!(a, b))))
+        Ok(node(expr, Content::ShortCircuit(self.cache.get(instr), vec!(a, b))))
       }
       ("||", [a, b]) => {
         let a = self.to_ast(a)?;
         let b = self.to_ast(b)?;
-        Ok(node(expr, Type::Bool, Content::IntrinsicCall(self.cache.get(instr), vec!(a, b))))
+        Ok(node(expr, Content::ShortCircuit(self.cache.get(instr), vec!(a, b))))
       }
       ("let", exprs) => {
         let name = self.cache.get(exprs[0].symbol_unwrap()?);
@@ -450,7 +443,7 @@ impl <'l> FunctionSanitiser<'l> {
         // is the top level of the function.
         let c = if self.is_top_level && self.scope_map.len() == 2 {
           // global variable
-          self.new_module.globals.insert(name.clone(), v.type_tag.clone());
+          self.new_module.globals.insert(name.clone(), Type::Unresolved);
           Content::VariableInitialise(name, v, VarScope::Global)
         }
         else {
@@ -459,36 +452,35 @@ impl <'l> FunctionSanitiser<'l> {
           self.variables.insert(scoped_name.clone());
           Content::VariableInitialise(scoped_name, v, VarScope::Local)
         };
-        Ok(node(expr, Type::Void, c))
+        Ok(node(expr, c))
       }
       // TODO this is a very stupid approach
       ("quote", [e]) => {
-        Ok(node(expr, Type::Ptr(Box::new(Type::U8)), Content::Quote(Box::new(e.clone()))))
+        Ok(node(expr, Content::Quote(Box::new(e.clone())))) // TODO: Type::Ptr(Box::new(Type::U8))
       }
       ("=", [assign_expr, value_expr]) => {
         let a = self.to_ast(assign_expr)?;
         let b = self.to_ast(value_expr)?;
-        Ok(node(expr, Type::Void, Content::Assignment(Box::new((a, b)))))
+        Ok(node(expr, Content::Assignment(Box::new((a, b)))))
       }
       ("return", exprs) => {
         if exprs.len() > 1 {
           return error(expr, format!("malformed return expression"));
         }
-        let (return_val, type_tag) =
+        let return_val =
           if exprs.len() == 1 {
             let v = self.to_ast(&exprs[0])?;
-            let t = v.type_tag.clone();
-            (Some(Box::new(v)), t)
+            Some(Box::new(v))
           }
           else {
-            (None, Type::Void)
+            None
           };
-        Ok(node(expr, type_tag, Content::ExplicitReturn(return_val)))
+        Ok(node(expr, Content::ExplicitReturn(return_val)))
       }
       ("while", [condition_node, body_node]) => {
         let condition = self.to_ast(condition_node)?;
         let body = self.to_ast(body_node)?;
-        Ok(node(expr, Type::Void, Content::While(Box::new((condition, body)))))
+        Ok(node(expr, Content::While(Box::new((condition, body)))))
       }
       ("if", exprs) => {
         if exprs.len() > 3 {
@@ -499,23 +491,26 @@ impl <'l> FunctionSanitiser<'l> {
         let then_branch = self.to_ast(&exprs[1])?;
         if exprs.len() == 3 {
           let else_branch = self.to_ast(&exprs[2])?;
+          /* TODO: remember
           if then_branch.type_tag != else_branch.type_tag {
             return error(expr, "if/else branch type mismatch");
           }
           let t = then_branch.type_tag.clone();
+          */
           let c = Content::IfThenElse(Box::new((condition, then_branch, else_branch)));
-          Ok(node(expr, t, c))
+          Ok(node(expr, c))
         }
         else {
-          Ok(node(expr, Type::Void, Content::IfThen(Box::new((condition, then_branch)))))
+          Ok(node(expr, Content::IfThen(Box::new((condition, then_branch)))))
         }
       }
       ("block", exprs) => {
         self.scope_map.push(HashMap::new());
         let nodes = exprs.iter().map(|e| self.to_ast(e)).collect::<Result<Vec<TypedNode>, Error>>()?;
         self.scope_map.pop();
-        let tag = nodes.last().map(|n| n.type_tag.clone()).unwrap_or(Type::Void);
-        Ok(node(expr, tag, Content::Block(nodes)))
+        // TODO: remember
+        // let tag = nodes.last().map(|n| n.type_tag.clone()).unwrap_or(Type::Void);
+        Ok(node(expr, Content::Block(nodes)))
       }
       ("cfun", exprs) => {
         let name = self.cache.get(exprs[0].symbol_unwrap()?);
@@ -545,12 +540,10 @@ impl <'l> FunctionSanitiser<'l> {
           name: name.clone(),
           args: arg_names,
           signature,
-          c_function_address: None,
+          implementation: FunctionImplementation::CFunction(0), //TODO: THIS IS BROKEN
         };
-        let body = node(expr, Type::Void, Content::Literal(Val::Void));
-        let f = TypedFunction { def, body };
-        self.new_module.functions.insert(name, f);
-        Ok(node(expr, Type::Void, Content::Literal(Val::Void)))
+        self.new_module.functions.insert(name.clone(), def);
+        Ok(node(expr, Content::CFunctionPrototype(name)))
       }
       ("fun", exprs) => {
         let name = self.cache.get(exprs[0].symbol_unwrap()?);
@@ -567,36 +560,36 @@ impl <'l> FunctionSanitiser<'l> {
           arg_names.push(name);
           arg_types.push(type_tag);
         }
-        let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
+        let args = arg_names.iter().cloned().collect();
         let mut empty_global_map = HashMap::new(); // hide globals from child functions
         let mut sanitiser =
           FunctionSanitiser::new(
             self.modules, self.cache, self.new_module, self.global_references,
             self.type_references, self.function_references, false, args);
         let body = sanitiser.to_ast(function_body)?;
-        if self.functions.contains_key(name.as_ref()) {
+        if self.get_function_def(name.as_ref()).is_some() {
           return error(expr, "function with that name already defined");
         }
         let signature = Rc::new(FunctionSignature {
-          return_type: body.type_tag.clone(),
+          return_type: Type::Unresolved,
           args: arg_types,
         });
-        let def = Rc::new(FunctionDefinition {
+        let def = FunctionDefinition {
           name: name.clone(),
           args: arg_names,
           signature,
-          c_function_address: None,
-        });
-        self.functions.insert(name, def.clone());
-        Ok(node(expr, Type::Void, Content::FunctionDefinition(def, Box::new(body))))
+          implementation: FunctionImplementation::Normal(body),
+        };
+        self.new_module.functions.insert(name.clone(), def);
+        Ok(node(expr, Content::FunctionDefinition(name)))
       }
       ("union", exprs) => {
         let def = self.to_type_definition(expr)?;
-        Ok(node(expr, Type::Void, Content::TypeDefinition(def.name.clone())))
+        Ok(node(expr, Content::TypeDefinition(def.name.clone())))
       }
       ("struct", exprs) => {
         let def = self.to_type_definition(expr)?;
-        Ok(node(expr, Type::Void, Content::TypeDefinition(def.name.clone())))
+        Ok(node(expr, Content::TypeDefinition(def.name.clone())))
       }
       ("type_instantiate", exprs) => {
         if exprs.len() < 1 || exprs.len() % 2 == 0 {
@@ -612,7 +605,7 @@ impl <'l> FunctionSanitiser<'l> {
           })
           .collect::<Result<Vec<(&Expr, TypedNode)>, Error>>()?;
         let def =
-          self.types.get(name)
+          self.get_type_def(name)
           .ok_or_else(|| error_raw(name_expr, "no type with this name exists"))?;
         match &def.kind {
           TypeKind::Struct => {
@@ -630,7 +623,7 @@ impl <'l> FunctionSanitiser<'l> {
               }
             }
             let c = Content::StructInstantiate(self.cache.get(name), fields.into_iter().map(|v| v.1).collect());
-            Ok(node(expr, Type::Def(def.name.clone()), c))
+            Ok(node(expr, c))
           }
           TypeKind::Union => {
             if fields.len() != 1 {
@@ -642,7 +635,7 @@ impl <'l> FunctionSanitiser<'l> {
               return error(field, "field does not exist in this union");
             }
             let c = Content::UnionInstantiate(self.cache.get(name), Box::new((name, value)));
-            Ok(node(expr, Type::Def(def.name.clone()), c))
+            Ok(node(expr, c))
           }
         }
       }
@@ -650,7 +643,7 @@ impl <'l> FunctionSanitiser<'l> {
         let container_val = self.to_ast(container_expr)?;
         let field_name = self.cache.get(field_expr.symbol_unwrap()?);
         let def = match &container_val.type_tag {
-          Type::Def(def) => self.types.get(def).unwrap(),
+          Type::Def(name) => self.get_type_def(name).unwrap(),
           _ => return error(container_expr, format!("expected struct or union, found {:?}", container_val.type_tag)),
         };
         let (field_index, (_, field_type)) =
@@ -658,7 +651,7 @@ impl <'l> FunctionSanitiser<'l> {
           .ok_or_else(|| error_raw(field_expr, "type does not have field with this name"))?;
         let field_type = field_type.clone();
         let c = Content::FieldAccess(Box::new((container_val, field_name)), field_index);
-        Ok(node(expr, field_type, c))
+        Ok(node(expr, c))
       }
       ("literal_array", exprs) => {
         let mut elements = vec!();
@@ -706,23 +699,23 @@ impl <'l> FunctionSanitiser<'l> {
         // this is just a normal symbol
         let s = self.cache.get(s.as_str());
         if s.as_ref() == "break" {
-          return Ok(node(expr, Type::Void, Content::Break));
+          return Ok(node(expr, Content::Break));
         }
         let name = self.get_scoped_variable_name(&s);
-        let var_type =
-          self.variables.get(name.as_ref())
-          .or_else(|| self.global_variables.get(name.as_ref()));
-        if let Some(t) = var_type {
-          return Ok(node(expr, t.clone(), Content::VariableReference(name)));
+        let is_variable =
+          self.variables.get(name.as_ref()).is_some() ||
+          self.get_global_def(name.as_ref()).is_some();
+        if is_variable {
+          return Ok(node(expr, Content::VariableReference(name)));
         }
-        if let Some(def) = self.functions.get(&s) {
-          return Ok(node(expr, Type::Fun(def.signature.clone()), Content::FunctionReference(s)));
+        if self.get_function_def(&s).is_some() {
+          return Ok(node(expr, Content::FunctionReference(s)));
         }
         error(expr, format!("unknown variable name '{}'", s))
       }
       ExprTag::LiteralString(s) => {
         let v = Val::String(s.as_str().to_string());
-        let s = self.types.get("string").unwrap();
+        let s = self.get_type_def("string").unwrap();
         Ok(node(expr, Type::Def(s.name.clone()), Content::Literal(v)))
       }
       ExprTag::LiteralFloat(f) => {
@@ -747,6 +740,22 @@ impl <'l> FunctionSanitiser<'l> {
 
 impl <'l> TypeChecker<'l> {
 
+  fn check_node(&self, n : &mut TypedNode) -> Result<(), Error> {
+    Ok(())
+  }
+
+  fn check_module(&self, module : &mut TypedModule) -> Result<(), Error> {
+    for def in module.functions.values_mut() {
+      match &mut def.implementation {
+        FunctionImplementation::Normal(body) => {
+          self.check_node(body)?;
+        }
+        _ => ()
+      }
+    }
+    Ok(())
+  }
+
   fn sanitise_to_structured_module(&self, expr: &Expr) -> Result<TypedModule, Error> {
     let mut new_module = TypedModule {
       functions: HashMap::new(), types: HashMap::new(), globals: HashMap::new(),
@@ -765,7 +774,7 @@ impl <'l> TypeChecker<'l> {
     Ok(new_module)
   }
 
-  fn to_typed_module(&self, expr: &Expr) -> Result<TypedModule, Error> {
+  pub fn to_typed_module(&self, expr: &Expr) -> Result<TypedModule, Error> {
     self.sanitise_to_structured_module(expr)
   }
 
