@@ -125,20 +125,19 @@ pub enum VarScope { Local, Global }
 #[derive(Debug)]
 pub enum Content {
   Literal(Val),
-  VariableReference(RefStr),
+  SymbolReference(RefStr),
   VariableInitialise(RefStr, Box<TypedNode>, VarScope),
   Assignment(Box<(TypedNode, TypedNode)>),
   IfThen(Box<(TypedNode, TypedNode)>),
   IfThenElse(Box<(TypedNode, TypedNode, TypedNode)>),
   Block(Vec<TypedNode>),
   Quote(Box<Expr>),
-  FunctionReference(RefStr),
   FunctionDefinition(RefStr),
   CFunctionPrototype(RefStr),
   TypeDefinition(RefStr),
   StructInstantiate(RefStr, Vec<TypedNode>),
   UnionInstantiate(RefStr, Box<(RefStr, TypedNode)>),
-  FieldAccess(Box<(TypedNode, RefStr)>, usize),
+  FieldAccess(Box<(TypedNode, RefStr)>),
   Index(Box<(TypedNode, TypedNode)>),
   ArrayLiteral(Vec<TypedNode>),
   FunctionCall(Box<TypedNode>, Vec<TypedNode>),
@@ -178,10 +177,14 @@ fn node(expr : &Expr, content : Content) -> TypedNode {
   }
 }
 
+enum SymbolDefinition {
+  GlobalDef(Type),
+  FunctionDef(FunctionDefinition),
+  TypeDef(TypeDefinition),
+}
+
 pub struct TypedModule {
-  pub types : HashMap<RefStr, TypeDefinition>,
-  pub functions : HashMap<RefStr, FunctionDefinition>,
-  pub globals : HashMap<RefStr, Type>,
+  pub symbols : HashMap<RefStr, SymbolDefinition>,
 }
 
 /* TODO
@@ -204,9 +207,7 @@ struct FunctionSanitiser<'l> {
   modules : &'l [TypedModule],
   cache: &'l StringCache,
   new_module : &'l mut TypedModule,
-  global_references : &'l mut HashMap<RefStr, TextLocation>,
-  type_references : &'l mut HashMap<RefStr, TextLocation>,
-  function_references : &'l mut HashMap<RefStr, TextLocation>,
+  symbol_references : &'l mut HashMap<RefStr, TextLocation>,
   is_top_level : bool,
   variables : HashSet<RefStr>,
 
@@ -221,9 +222,7 @@ impl <'l> FunctionSanitiser<'l> {
     modules : &'l [TypedModule],
     cache: &'l StringCache,
     new_module : &'l mut TypedModule,
-    global_references : &'l mut HashMap<RefStr, TextLocation>,
-    type_references : &'l mut HashMap<RefStr, TextLocation>,
-    function_references : &'l mut HashMap<RefStr, TextLocation>,
+    symbol_references : &'l mut HashMap<RefStr, TextLocation>,
     is_top_level : bool,
     variables : HashSet<RefStr>)
       -> FunctionSanitiser<'l>
@@ -232,25 +231,15 @@ impl <'l> FunctionSanitiser<'l> {
       modules,
       cache,
       new_module,
-      global_references,
-      type_references,
-      function_references,
+      symbol_references,
       is_top_level,
       variables,
       scope_map: vec!(),
     }
   }
 
-  fn get_type_def<'a>(&'a self, name : &str) -> Option<&'a TypeDefinition> {
-    panic!()
-  }
-
-  fn get_function_def<'a>(&'a self, name : &str) -> Option<&'a FunctionDefinition> {
-    panic!()
-  }
-
-  fn get_global_def<'a>(&'a self, name : &str) -> Option<&'a Type> {
-    panic!()
+  fn find_symbol(&self, name : &str)-> Option<&SymbolDefinition> {
+    self.modules.iter().flat_map(|m| m.symbols.get(name)).nth(0)
   }
 
   fn to_type(&self, expr : &Expr) -> Result<Type, Error> {
@@ -278,8 +267,8 @@ impl <'l> FunctionSanitiser<'l> {
         if params.len() > 0 {
           return error(expr, "unexpected type parameters");
         }
-        if !self.get_type_def(name).is_some() {
-          self.type_references.insert(self.cache.get(name), expr.loc);
+        if !self.find_symbol(name).is_some() {
+          self.symbol_references.insert(self.cache.get(name), expr.loc);
         }
         Ok(Type::Def(self.cache.get(name)))
       }
@@ -297,8 +286,8 @@ impl <'l> FunctionSanitiser<'l> {
     }
     let name_expr = &children[0];
     let name = name_expr.symbol_unwrap()?;
-    if self.get_type_def(name).is_some() {
-      return error(expr, "type with this name already defined");
+    if self.find_symbol(name).is_some() {
+      return error(expr, "symbol with this name already defined");
     }
     // TODO: check for duplicates?
     let field_exprs = &children[1..];
@@ -355,9 +344,7 @@ impl <'l> FunctionSanitiser<'l> {
       FunctionSanitiser::new(
         self.modules, self.cache,
         self.new_module,
-        self.global_references,
-        self.type_references,
-        self.function_references,
+        self.symbol_references,
         is_top_level, args);
     let body = type_checker.to_ast(function_body)?;
     let signature = Rc::new(FunctionSignature {
@@ -382,19 +369,11 @@ impl <'l> FunctionSanitiser<'l> {
     return name.clone();
   }
 
-  fn global_exists(&self, name : &str)-> bool {
-    self.modules.iter().find(|m| m.globals.contains_key(name)).is_some()
-  } 
-
-  fn type_def_exists(&self, name : &str)-> bool {
-    self.modules.iter().find(|m| m.types.contains_key(name)).is_some()
-  } 
-
   fn create_scoped_variable_name(&mut self, name : RefStr) -> RefStr {
     let mut unique_name = name.to_string();
     let mut i = 0;
-    while self.global_exists(unique_name.as_str()) ||
-      self.variables.contains(unique_name.as_str())
+    while self.variables.contains(unique_name.as_str()) ||
+      self.find_symbol(unique_name.as_str()).is_some()
     {
       unique_name.clear();
       i += 1;
@@ -443,7 +422,7 @@ impl <'l> FunctionSanitiser<'l> {
         // is the top level of the function.
         let c = if self.is_top_level && self.scope_map.len() == 2 {
           // global variable
-          self.new_module.globals.insert(name.clone(), Type::Unresolved);
+          self.new_module.symbols.insert(name.clone(), SymbolDefinition::GlobalDef(Type::Unresolved));
           Content::VariableInitialise(name, v, VarScope::Global)
         }
         else {
@@ -456,7 +435,7 @@ impl <'l> FunctionSanitiser<'l> {
       }
       // TODO this is a very stupid approach
       ("quote", [e]) => {
-        Ok(node(expr, Content::Quote(Box::new(e.clone())))) // TODO: Type::Ptr(Box::new(Type::U8))
+        Ok(node(expr, Content::Quote(Box::new(e.clone()))))
       }
       ("=", [assign_expr, value_expr]) => {
         let a = self.to_ast(assign_expr)?;
@@ -561,7 +540,6 @@ impl <'l> FunctionSanitiser<'l> {
           arg_types.push(type_tag);
         }
         let args = arg_names.iter().cloned().collect();
-        let mut empty_global_map = HashMap::new(); // hide globals from child functions
         let mut sanitiser =
           FunctionSanitiser::new(
             self.modules, self.cache, self.new_module, self.global_references,
@@ -646,10 +624,10 @@ impl <'l> FunctionSanitiser<'l> {
           Type::Def(name) => self.get_type_def(name).unwrap(),
           _ => return error(container_expr, format!("expected struct or union, found {:?}", container_val.type_tag)),
         };
-        let (field_index, (_, field_type)) =
-          def.fields.iter().enumerate().find(|(_, (n, _))| n==&field_name)
-          .ok_or_else(|| error_raw(field_expr, "type does not have field with this name"))?;
-        let field_type = field_type.clone();
+        // TODO remember:
+        // let (field_index, (_, field_type)) =
+        //   def.fields.iter().enumerate().find(|(_, (n, _))| n==&field_name)
+        //   .ok_or_else(|| error_raw(field_expr, "type does not have field with this name"))?;
         let c = Content::FieldAccess(Box::new((container_val, field_name)), field_index);
         Ok(node(expr, c))
       }
@@ -670,19 +648,21 @@ impl <'l> FunctionSanitiser<'l> {
           else {
             Type::Void
           };
-        Ok(node(expr, Type::Ptr(Box::new(t)), Content::ArrayLiteral(elements)))
+        // TODO remember: Ok(node(expr, Type::Ptr(Box::new(t)), Content::ArrayLiteral(elements)))
+        Ok(node(expr, Content::ArrayLiteral(elements)))
       }
       ("index", [array_expr, index_expr]) => {
         let array = self.to_ast(array_expr)?;
-        let inner_type = match &array.type_tag {
-          Type::Ptr(t) => *(t).clone(),
-          _ => return error(array_expr, "expected ptr"),
-        };
+        // TODO remember:
+        // let inner_type = match &array.type_tag {
+        //   Type::Ptr(t) => *(t).clone(),
+        //   _ => return error(array_expr, "expected ptr"),
+        // };
         let index = self.to_ast(index_expr)?;
-        if index.type_tag != Type::I64 {
-          return error(array_expr, "expected integer");
-        }
-        Ok(node(expr, inner_type, Content::Index(Box::new((array, index)))))
+        // if index.type_tag != Type::I64 {
+        //   return error(index_expr, "expected integer");
+        // }
+        Ok(node(expr, Content::Index(Box::new((array, index)))))
       }
       _ => return error(expr, "unsupported expression"),
     }
@@ -706,32 +686,31 @@ impl <'l> FunctionSanitiser<'l> {
           self.variables.get(name.as_ref()).is_some() ||
           self.get_global_def(name.as_ref()).is_some();
         if is_variable {
-          return Ok(node(expr, Content::VariableReference(name)));
+          return Ok(node(expr, Content::SymbolReference(name)));
         }
         if self.get_function_def(&s).is_some() {
-          return Ok(node(expr, Content::FunctionReference(s)));
+          return Ok(node(expr, Content::SymbolReference(s)));
         }
         error(expr, format!("unknown variable name '{}'", s))
       }
       ExprTag::LiteralString(s) => {
         let v = Val::String(s.as_str().to_string());
-        let s = self.get_type_def("string").unwrap();
-        Ok(node(expr, Type::Def(s.name.clone()), Content::Literal(v)))
+        Ok(node(expr, Content::Literal(v)))
       }
       ExprTag::LiteralFloat(f) => {
         let v = Val::F64(*f as f64);
-        Ok(node(expr, Type::F64, Content::Literal(v)))
+        Ok(node(expr, Content::Literal(v)))
       }
       ExprTag::LiteralInt(v) => {
         let v = Val::I64(*v as i64);
-        Ok(node(expr, Type::I64, Content::Literal(v)))
+        Ok(node(expr, Content::Literal(v)))
       }
       ExprTag::LiteralBool(b) => {
         let v = Val::Bool(*b);
-        Ok(node(expr, Type::Bool, Content::Literal(v)))
+        Ok(node(expr, Content::Literal(v)))
       },
       ExprTag::LiteralUnit => {
-        Ok(node(expr, Type::Void, Content::Literal(Val::Void)))
+        Ok(node(expr, Content::Literal(Val::Void)))
       },
       // _ => error(expr, "unsupported expression"),
     }
@@ -740,12 +719,175 @@ impl <'l> FunctionSanitiser<'l> {
 
 impl <'l> TypeChecker<'l> {
 
+  fn symbol_type(&self, name : &str) -> Result<Type, Error> {
+    panic!()
+  }
+
+  fn symbol(&self, name : &str) -> Result<SymbolDefinition, Error> {
+    panic!()
+  }
+
+  fn unwrap_definition(&self, n : &TypedNode) -> Result<&TypeDefinition, Error> {
+    match &n.type_tag {
+      Type::Def(def) => match self.symbol(def)? {
+        SymbolDefinition::TypeDef(def) => return Ok(&def),
+        _ => (),
+      },
+      _ => (),
+    }
+    error(n.loc, "expected struct or union")
+  }
+
+  fn unwrap_function_type(&self, n : &TypedNode) -> Result<&FunctionDefinition, Error> {
+    panic!()
+  }
+
   fn check_node(&self, n : &mut TypedNode) -> Result<(), Error> {
+    use Content::*;
+    if n.type_tag != Type::Unresolved {
+      return Ok(());
+    }
+    let t : Type = match &n.content {
+      SymbolReference(name) => {
+        self.symbol_type(name)?
+      }
+      VariableInitialise(name, value, scope) => {
+        match scope {
+          VarScope::Global => {
+
+          }
+          VarScope::Local => {
+            // TODO: add a value to some hashmap or something
+          }
+        }
+        Type::Void
+      }
+      Assignment(ns) => {
+        let (assignee, value) = (&mut ns.0, &mut ns.1);
+        // TODO: check that the assignee and value are compatible
+        Type::Void
+      }
+      IfThen(ns) => {
+        let (condition, then_branch) = (&mut ns.0, &mut ns.1);
+        // TODO: check that the condition is a bool
+        Type::Void
+      }
+      IfThenElse(ns) => {
+        let (condition, then_branch, else_branch) = (&mut ns.0, &mut &ns.1, &mut &ns.2);
+        self.check_node(condition)?;
+        self.check_node(then_branch)?;
+        self.check_node(else_branch)?;
+        // TODO: check that the condition is a bool
+        // TODO: check that the two branches have the same return type
+        else_branch.type_tag.clone()
+      }
+      Block(ns) => {
+        if let Some(n) = ns.last() {
+          n.type_tag.clone()
+        }
+        else {
+          Type::Void
+        }
+      }
+      Quote(n) => {
+        Type::Ptr(Box::new(Type::U8))
+      }
+      FunctionDefinition(_) => Type::Void,
+      CFunctionPrototype(_) => Type::Void,
+      TypeDefinition(_) => Type::Void,
+      StructInstantiate(struct_name, ns) => {
+        let t = self.symbol_type(struct_name)?;
+        // TODO: check that this is a struct
+        // TODO: check that the nodes match the fields
+        t.clone()
+      }
+      UnionInstantiate(union_name, initialiser) => {
+        let t = self.symbol_type(union_name)?;
+        // TODO: check that this is a union
+        // TODO: check that the node matches the field
+        t.clone()
+      }
+      FieldAccess(x) => {
+        let (container, field_name) = (&mut x.0, &x.1);
+        let def = self.unwrap_definition(container)?;
+        let (_, field_type) =
+          def.fields.iter().find(|(n, _)| n==field_name)
+          .ok_or_else(|| error_raw(n.loc, "type does not have field with this name"))?;
+        field_type.clone()
+      }
+      Index(ns) => {
+        let (array, index) = (&mut ns.0, &mut ns.1);
+        // TODO: check index type
+        // TODO: check array type
+        match &array.type_tag {
+          Type::Ptr(t) => (*t).clone(),
+          _ => return error(array.loc, "expected array"),
+        }
+      }
+      ArrayLiteral(ns) => {
+        // TODO: check that all the types are the same
+        Type::Ptr(Box::new(ns[0].type_tag.clone()))
+      }
+      FunctionCall(f, args) => {
+        // TODO: check function type
+        // TODO: check args
+        let def = self.unwrap_function_type(f)?;
+        def.signature.return_type.clone()
+      }
+      ShortCircuit(operation, ns) => {
+        // TODO: check operand types
+        Type::Bool
+      }
+      While(ns) => {
+        let (condition, block) = (&mut ns.0, &mut ns.1);
+        // TODO: check condition type
+        Type::Void
+      }
+      ExplicitReturn(n) => {
+        if let Some(n) = &*n {
+          n.type_tag.clone()
+        }
+        else {
+          Type::Void
+        }
+      }
+      Convert(x) => {
+        let (n, t) = (&mut x.0, &mut x.1);
+        t.clone()
+      }
+      Deref(p) => {
+        match &p.type_tag {
+          Type::Ptr(t) => (**t).clone(),
+          _ => return error(n.loc, "expected pointer")
+        }
+      }
+      SizeOf(t) => {
+        Type::U64
+      }
+      Break => Type::Void,
+      Literal(val) => {
+        match val {
+          Val::Bool(_) => Type::Bool,
+          Val::F32(_) => Type::F32,
+          Val::F64(_) => Type::F64,
+          Val::U8(_) => Type::U8,
+          Val::U16(_) => Type::U16,
+          Val::U32(_) => Type::U32,
+          Val::U64(_) => Type::U64,
+          Val::I32(_) => Type::I32,
+          Val::I64(_) => Type::I64,
+          Val::String(s) => Type::Def(self.cache.get("string")), // TODO: this could collide with a local variable!
+          Val::Void => Type::Void,
+        }
+      }
+    };
+    n.type_tag = t;
     Ok(())
   }
 
   fn check_module(&self, module : &mut TypedModule) -> Result<(), Error> {
-    for def in module.functions.values_mut() {
+
+    for def in module.symbols.values_mut() {
       match &mut def.implementation {
         FunctionImplementation::Normal(body) => {
           self.check_node(body)?;
@@ -757,15 +899,10 @@ impl <'l> TypeChecker<'l> {
   }
 
   fn sanitise_to_structured_module(&self, expr: &Expr) -> Result<TypedModule, Error> {
-    let mut new_module = TypedModule {
-      functions: HashMap::new(), types: HashMap::new(), globals: HashMap::new(),
-    };
-    let mut global_references = HashMap::new();
-    let mut type_references = HashMap::new();
-    let mut function_references = HashMap::new();
+    let mut new_module = TypedModule { symbols: HashMap::new() };
+    let mut symbol_references = HashMap::new();
     let mut sanitiser = FunctionSanitiser::new(
-      self.modules, self.cache, &mut new_module, &mut global_references,
-      &mut type_references, &mut function_references, true, HashSet::new());
+      self.modules, self.cache, &mut new_module, &mut symbol_references, true, HashSet::new());
 
     let top_level_function = sanitiser.sanitise_top_level_function(expr)?;
 
