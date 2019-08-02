@@ -125,7 +125,7 @@ pub enum VarScope { Local, Global }
 #[derive(Debug)]
 pub enum Content {
   Literal(Val),
-  SymbolReference(RefStr),
+  SymbolReference(RefStr, VarScope),
   VariableInitialise(RefStr, Box<TypedNode>, VarScope),
   Assignment(Box<(TypedNode, TypedNode)>),
   IfThen(Box<(TypedNode, TypedNode)>),
@@ -135,8 +135,7 @@ pub enum Content {
   FunctionDefinition(RefStr),
   CFunctionPrototype(RefStr),
   TypeDefinition(RefStr),
-  StructInstantiate(RefStr, Vec<TypedNode>),
-  UnionInstantiate(RefStr, Box<(RefStr, TypedNode)>),
+  TypeInstantiate(RefStr, Vec<(RefStr, TypedNode)>),
   FieldAccess(Box<(TypedNode, RefStr)>),
   Index(Box<(TypedNode, TypedNode)>),
   ArrayLiteral(Vec<TypedNode>),
@@ -204,10 +203,8 @@ pub struct TypeChecker<'l> {
 }
 
 struct FunctionSanitiser<'l> {
-  modules : &'l [TypedModule],
   cache: &'l StringCache,
   new_module : &'l mut TypedModule,
-  symbol_references : &'l mut HashMap<RefStr, TextLocation>,
   is_top_level : bool,
   variables : HashSet<RefStr>,
 
@@ -219,27 +216,19 @@ struct FunctionSanitiser<'l> {
 impl <'l> FunctionSanitiser<'l> {
 
   pub fn new(
-    modules : &'l [TypedModule],
     cache: &'l StringCache,
     new_module : &'l mut TypedModule,
-    symbol_references : &'l mut HashMap<RefStr, TextLocation>,
     is_top_level : bool,
     variables : HashSet<RefStr>)
       -> FunctionSanitiser<'l>
   {
     FunctionSanitiser {
-      modules,
       cache,
       new_module,
-      symbol_references,
       is_top_level,
       variables,
       scope_map: vec!(),
     }
-  }
-
-  fn find_symbol(&self, name : &str)-> Option<&SymbolDefinition> {
-    self.modules.iter().flat_map(|m| m.symbols.get(name)).nth(0)
   }
 
   fn to_type(&self, expr : &Expr) -> Result<Type, Error> {
@@ -267,9 +256,6 @@ impl <'l> FunctionSanitiser<'l> {
         if params.len() > 0 {
           return error(expr, "unexpected type parameters");
         }
-        if !self.find_symbol(name).is_some() {
-          self.symbol_references.insert(self.cache.get(name), expr.loc);
-        }
         Ok(Type::Def(self.cache.get(name)))
       }
     }
@@ -286,9 +272,6 @@ impl <'l> FunctionSanitiser<'l> {
     }
     let name_expr = &children[0];
     let name = name_expr.symbol_unwrap()?;
-    if self.find_symbol(name).is_some() {
-      return error(expr, "symbol with this name already defined");
-    }
     // TODO: check for duplicates?
     let field_exprs = &children[1..];
     let mut fields = vec![];
@@ -341,11 +324,7 @@ impl <'l> FunctionSanitiser<'l> {
   {
     let args = arg_names.iter().cloned().collect();
     let mut type_checker =
-      FunctionSanitiser::new(
-        self.modules, self.cache,
-        self.new_module,
-        self.symbol_references,
-        is_top_level, args);
+      FunctionSanitiser::new(self.cache, self.new_module, is_top_level, args);
     let body = type_checker.to_ast(function_body)?;
     let signature = Rc::new(FunctionSignature {
       return_type: body.type_tag.clone(),
@@ -507,9 +486,6 @@ impl <'l> FunctionSanitiser<'l> {
           arg_types.push(type_tag);
         }
         let return_type = self.to_type(return_type_expr)?;
-        if self.get_function_def(name.as_ref()).is_some() {
-          return error(expr, "function with that name already defined");
-        }
         let signature = Rc::new(FunctionSignature {
           return_type,
           args: arg_types,
@@ -521,7 +497,7 @@ impl <'l> FunctionSanitiser<'l> {
           signature,
           implementation: FunctionImplementation::CFunction(0), //TODO: THIS IS BROKEN
         };
-        self.new_module.functions.insert(name.clone(), def);
+        self.new_module.symbols.insert(name.clone(), SymbolDefinition::FunctionDef(def));
         Ok(node(expr, Content::CFunctionPrototype(name)))
       }
       ("fun", exprs) => {
@@ -541,13 +517,8 @@ impl <'l> FunctionSanitiser<'l> {
         }
         let args = arg_names.iter().cloned().collect();
         let mut sanitiser =
-          FunctionSanitiser::new(
-            self.modules, self.cache, self.new_module, self.global_references,
-            self.type_references, self.function_references, false, args);
+          FunctionSanitiser::new(self.cache, self.new_module, false, args);
         let body = sanitiser.to_ast(function_body)?;
-        if self.get_function_def(name.as_ref()).is_some() {
-          return error(expr, "function with that name already defined");
-        }
         let signature = Rc::new(FunctionSignature {
           return_type: Type::Unresolved,
           args: arg_types,
@@ -558,7 +529,7 @@ impl <'l> FunctionSanitiser<'l> {
           signature,
           implementation: FunctionImplementation::Normal(body),
         };
-        self.new_module.functions.insert(name.clone(), def);
+        self.new_module.symbols.insert(name.clone(), SymbolDefinition::FunctionDef(def));
         Ok(node(expr, Content::FunctionDefinition(name)))
       }
       ("union", exprs) => {
@@ -578,57 +549,26 @@ impl <'l> FunctionSanitiser<'l> {
         let name = name_expr.symbol_unwrap()?;
         let fields =
           field_exprs.iter().tuples().map(|(name, value)| {
+            let name = self.cache.get(name.symbol_unwrap()?);
             let value = self.to_ast(value)?;
             Ok((name, value))
           })
-          .collect::<Result<Vec<(&Expr, TypedNode)>, Error>>()?;
-        let def =
-          self.get_type_def(name)
-          .ok_or_else(|| error_raw(name_expr, "no type with this name exists"))?;
-        match &def.kind {
-          TypeKind::Struct => {
-            if fields.len() != def.fields.len() {
-              return error(expr, "wrong number of fields");
-            }
-            let field_iter = fields.iter().zip(def.fields.iter());
-            for ((field, value), (expected_name, expected_type)) in field_iter {
-              let name = field.symbol_unwrap()?;
-              if name != "" && name != expected_name.as_ref() {
-                return error(*field, "incorrect field name");
-              }
-              if &value.type_tag != expected_type {
-                return error(value.loc, format!("type mismatch. expected {:?}, found {:?}", expected_type, value.type_tag));
-              }
-            }
-            let c = Content::StructInstantiate(self.cache.get(name), fields.into_iter().map(|v| v.1).collect());
-            Ok(node(expr, c))
-          }
-          TypeKind::Union => {
-            if fields.len() != 1 {
-              return error(expr, "must instantiate exactly one field");
-            }
-            let (field, value) = fields.into_iter().nth(0).unwrap();
-            let name = self.cache.get(field.symbol_unwrap()?);
-            if def.fields.iter().find(|(n, _)| n == &name).is_none() {
-              return error(field, "field does not exist in this union");
-            }
-            let c = Content::UnionInstantiate(self.cache.get(name), Box::new((name, value)));
-            Ok(node(expr, c))
-          }
-        }
+          .collect::<Result<Vec<(RefStr, TypedNode)>, Error>>()?;
+        let c = Content::TypeInstantiate(self.cache.get(name), fields);
+        Ok(node(expr, c))
       }
       (".", [container_expr, field_expr]) => {
         let container_val = self.to_ast(container_expr)?;
         let field_name = self.cache.get(field_expr.symbol_unwrap()?);
-        let def = match &container_val.type_tag {
-          Type::Def(name) => self.get_type_def(name).unwrap(),
-          _ => return error(container_expr, format!("expected struct or union, found {:?}", container_val.type_tag)),
-        };
         // TODO remember:
+        // let def = match &container_val.type_tag {
+        //   Type::Def(name) => self.get_type_def(name).unwrap(),
+        //   _ => return error(container_expr, format!("expected struct or union, found {:?}", container_val.type_tag)),
+        // };
         // let (field_index, (_, field_type)) =
         //   def.fields.iter().enumerate().find(|(_, (n, _))| n==&field_name)
         //   .ok_or_else(|| error_raw(field_expr, "type does not have field with this name"))?;
-        let c = Content::FieldAccess(Box::new((container_val, field_name)), field_index);
+        let c = Content::FieldAccess(Box::new((container_val, field_name)));
         Ok(node(expr, c))
       }
       ("literal_array", exprs) => {
@@ -682,16 +622,12 @@ impl <'l> FunctionSanitiser<'l> {
           return Ok(node(expr, Content::Break));
         }
         let name = self.get_scoped_variable_name(&s);
-        let is_variable =
-          self.variables.get(name.as_ref()).is_some() ||
-          self.get_global_def(name.as_ref()).is_some();
-        if is_variable {
-          return Ok(node(expr, Content::SymbolReference(name)));
+        if self.variables.get(name.as_ref()).is_some() {
+          return Ok(node(expr, Content::SymbolReference(name, VarScope::Local)));
         }
-        if self.get_function_def(&s).is_some() {
-          return Ok(node(expr, Content::SymbolReference(s)));
+        else {
+          return Ok(node(expr, Content::SymbolReference(name, VarScope::Global)));
         }
-        error(expr, format!("unknown variable name '{}'", s))
       }
       ExprTag::LiteralString(s) => {
         let v = Val::String(s.as_str().to_string());
@@ -718,6 +654,10 @@ impl <'l> FunctionSanitiser<'l> {
 }
 
 impl <'l> TypeChecker<'l> {
+
+  fn find_symbol(&self, name : &str)-> Option<&SymbolDefinition> {
+    self.modules.iter().flat_map(|m| m.symbols.get(name)).nth(0)
+  }
 
   fn symbol_type(&self, name : &str) -> Result<Type, Error> {
     panic!()
@@ -748,8 +688,11 @@ impl <'l> TypeChecker<'l> {
       return Ok(());
     }
     let t : Type = match &n.content {
-      SymbolReference(name) => {
-        self.symbol_type(name)?
+      SymbolReference(name, scope) => {
+        match scope {
+          VarScope::Global => self.symbol_type(name)?,
+          VarScope::Local => panic!(),
+        }
       }
       VariableInitialise(name, value, scope) => {
         match scope {
@@ -792,20 +735,53 @@ impl <'l> TypeChecker<'l> {
       Quote(n) => {
         Type::Ptr(Box::new(Type::U8))
       }
-      FunctionDefinition(_) => Type::Void,
-      CFunctionPrototype(_) => Type::Void,
-      TypeDefinition(_) => Type::Void,
-      StructInstantiate(struct_name, ns) => {
-        let t = self.symbol_type(struct_name)?;
-        // TODO: check that this is a struct
-        // TODO: check that the nodes match the fields
-        t.clone()
+      FunctionDefinition(name) => {
+        if self.find_symbol(name.as_ref()).is_some() {
+          return error(n.loc, "symbol with that name already defined");
+        }
+        Type::Void
       }
-      UnionInstantiate(union_name, initialiser) => {
-        let t = self.symbol_type(union_name)?;
-        // TODO: check that this is a union
-        // TODO: check that the node matches the field
-        t.clone()
+      CFunctionPrototype(name) => {
+        if self.find_symbol(name.as_ref()).is_some() {
+          return error(n.loc, "symbol with that name already defined");
+        }
+        Type::Void
+      }
+      TypeDefinition(name) => {
+
+        Type::Void
+      }
+      TypeInstantiate(name, fields) => {
+        let t = self.symbol_type(name)?;
+        let def =
+          self.find_symbol(name)
+          .and_then(|s| match s { SymbolDefinition::TypeDef(t) => Some(t), _ => None})
+          .ok_or_else(|| error_raw(n.loc, "no struct with this name exists"))?;
+        match def.kind {
+          TypeKind::Struct => {
+            if fields.len() != def.fields.len() {
+              return error(n.loc, "wrong number of fields");
+            }
+            for ((field, value), (expected_name, expected_type)) in fields.iter().zip(def.fields.iter()) {
+              if field.as_ref() != "" && field != expected_name {
+                return error(n.loc, "incorrect field name");
+              }
+              if &value.type_tag != expected_type {
+                return error(value.loc, format!("type mismatch. expected {:?}, found {:?}", expected_type, value.type_tag));
+              }
+            }
+          }
+          TypeKind::Union => {
+            if fields.len() != 1 {
+              return error(n.loc, "must instantiate exactly one field");
+            }
+            let (field, value) = fields.into_iter().nth(0).unwrap();
+            if def.fields.iter().find(|(n, _)| n == field).is_none() {
+              return error(n.loc, "field does not exist in this union");
+            }
+          }
+        }
+        Type::Def(name.clone())
       }
       FieldAccess(x) => {
         let (container, field_name) = (&mut x.0, &x.1);
@@ -820,7 +796,7 @@ impl <'l> TypeChecker<'l> {
         // TODO: check index type
         // TODO: check array type
         match &array.type_tag {
-          Type::Ptr(t) => (*t).clone(),
+          Type::Ptr(t) => (**t).clone(),
           _ => return error(array.loc, "expected array"),
         }
       }
@@ -900,13 +876,10 @@ impl <'l> TypeChecker<'l> {
 
   fn sanitise_to_structured_module(&self, expr: &Expr) -> Result<TypedModule, Error> {
     let mut new_module = TypedModule { symbols: HashMap::new() };
-    let mut symbol_references = HashMap::new();
-    let mut sanitiser = FunctionSanitiser::new(
-      self.modules, self.cache, &mut new_module, &mut symbol_references, true, HashSet::new());
+    let mut sanitiser =
+      FunctionSanitiser::new(self.cache, &mut new_module, true, HashSet::new());
 
     let top_level_function = sanitiser.sanitise_top_level_function(expr)?;
-
-    // TODO: Check that everything referenced has been defined
 
     Ok(new_module)
   }
