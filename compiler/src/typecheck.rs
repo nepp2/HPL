@@ -125,8 +125,10 @@ pub enum VarScope { Local, Global }
 #[derive(Debug)]
 pub enum Content {
   Literal(Val),
-  SymbolReference(RefStr, VarScope),
-  VariableInitialise(RefStr, Box<TypedNode>, VarScope),
+  SymbolReference(RefStr),
+  LocalVariableReference(RefStr, i32),
+  DefineLocalVariable(RefStr, i32, Box<TypedNode>),
+  DefineGlobalVariable(RefStr, Box<TypedNode>),
   Assignment(Box<(TypedNode, TypedNode)>),
   IfThen(Box<(TypedNode, TypedNode)>),
   IfThenElse(Box<(TypedNode, TypedNode, TypedNode)>),
@@ -206,11 +208,11 @@ struct FunctionSanitiser<'l> {
   cache: &'l StringCache,
   new_module : &'l mut TypedModule,
   is_top_level : bool,
-  variables : HashSet<RefStr>,
+  unique_variable_ids : i32,
 
   /// Tracks which variables are available, when.
   /// Used to rename variables with clashing names.
-  scope_map: Vec<HashMap<RefStr, RefStr>>,
+  variable_scope: Vec<HashMap<RefStr, i32>>,
 }
 
 impl <'l> FunctionSanitiser<'l> {
@@ -222,12 +224,14 @@ impl <'l> FunctionSanitiser<'l> {
     variables : HashSet<RefStr>)
       -> FunctionSanitiser<'l>
   {
+    let first_scope : HashMap<RefStr, i32> =
+      variables.into_iter().enumerate().map(|(i, v)| (v, i as i32)).collect();
     FunctionSanitiser {
       cache,
       new_module,
       is_top_level,
-      variables,
-      scope_map: vec!(),
+      unique_variable_ids: first_scope.len() as i32,
+      variable_scope: vec!(first_scope),
     }
   }
 
@@ -339,28 +343,15 @@ impl <'l> FunctionSanitiser<'l> {
     return Ok(def);
   }
 
-  fn get_scoped_variable_name(&self, name : &RefStr) -> RefStr {
-    for m in self.scope_map.iter().rev() {
-      if let Some(n) = m.get(name) {
-        return n.clone();
-      }
-    }
-    return name.clone();
+  fn get_local_variable_id(&self, name : &RefStr) -> Option<i32> {
+    self.variable_scope.iter().rev().flat_map(|m| m.get(name).map(|x| *x)).nth(0)
   }
 
-  fn create_scoped_variable_name(&mut self, name : RefStr) -> RefStr {
-    let mut unique_name = name.to_string();
-    let mut i = 0;
-    while self.variables.contains(unique_name.as_str()) ||
-      self.find_symbol(unique_name.as_str()).is_some()
-    {
-      unique_name.clear();
-      i += 1;
-      write!(&mut unique_name, "{}#{}", name, i).unwrap();
-    }
-    let unique_name : RefStr = unique_name.into();
-    self.scope_map.last_mut().unwrap().insert(name, unique_name.clone());
-    unique_name.clone()
+  fn create_unique_variable_id(&mut self, name : RefStr) -> i32 {
+    let i = self.unique_variable_ids;
+    self.unique_variable_ids += 1;
+    self.variable_scope.last_mut().unwrap().insert(name, i);
+    i
   }
 
   fn tree_to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
@@ -399,16 +390,15 @@ impl <'l> FunctionSanitiser<'l> {
         let v = Box::new(self.to_ast(&exprs[1])?);
         // The first scope is used for function arguments. The second
         // is the top level of the function.
-        let c = if self.is_top_level && self.scope_map.len() == 2 {
+        let c = if self.is_top_level && self.variable_scope.len() == 2 {
           // global variable
           self.new_module.symbols.insert(name.clone(), SymbolDefinition::GlobalDef(Type::Unresolved));
-          Content::VariableInitialise(name, v, VarScope::Global)
+          Content::DefineGlobalVariable(name, v)
         }
         else {
           // local variable
-          let scoped_name = self.create_scoped_variable_name(name);
-          self.variables.insert(scoped_name.clone());
-          Content::VariableInitialise(scoped_name, v, VarScope::Local)
+          let variable_id = self.create_unique_variable_id(name.clone());
+          Content::DefineLocalVariable(name, variable_id, v)
         };
         Ok(node(expr, c))
       }
@@ -463,9 +453,9 @@ impl <'l> FunctionSanitiser<'l> {
         }
       }
       ("block", exprs) => {
-        self.scope_map.push(HashMap::new());
+        self.variable_scope.push(HashMap::new());
         let nodes = exprs.iter().map(|e| self.to_ast(e)).collect::<Result<Vec<TypedNode>, Error>>()?;
-        self.scope_map.pop();
+        self.variable_scope.pop();
         // TODO: remember
         // let tag = nodes.last().map(|n| n.type_tag.clone()).unwrap_or(Type::Void);
         Ok(node(expr, Content::Block(nodes)))
@@ -621,12 +611,12 @@ impl <'l> FunctionSanitiser<'l> {
         if s.as_ref() == "break" {
           return Ok(node(expr, Content::Break));
         }
-        let name = self.get_scoped_variable_name(&s);
-        if self.variables.get(name.as_ref()).is_some() {
-          return Ok(node(expr, Content::SymbolReference(name, VarScope::Local)));
+        let local_var_id = self.get_local_variable_id(&s);
+        if let Some(id) = local_var_id {
+          return Ok(node(expr, Content::LocalVariableReference(s, id)));
         }
         else {
-          return Ok(node(expr, Content::SymbolReference(name, VarScope::Global)));
+          return Ok(node(expr, Content::SymbolReference(s)));
         }
       }
       ExprTag::LiteralString(s) => {
@@ -688,21 +678,18 @@ impl <'l> TypeChecker<'l> {
       return Ok(());
     }
     let t : Type = match &n.content {
-      SymbolReference(name, scope) => {
-        match scope {
-          VarScope::Global => self.symbol_type(name)?,
-          VarScope::Local => panic!(),
-        }
+      SymbolReference(name) => {
+        self.symbol_type(name)?
       }
-      VariableInitialise(name, value, scope) => {
-        match scope {
-          VarScope::Global => {
-
-          }
-          VarScope::Local => {
-            // TODO: add a value to some hashmap or something
-          }
-        }
+      LocalVariableReference(name, id) => {
+        panic!()
+      }
+      DefineGlobalVariable(name, value) => {
+        // resolve the type and assign it to the new module
+        Type::Void
+      }
+      DefineLocalVariable(name, id, value) => {
+        // TODO: add a value to some hashmap or something
         Type::Void
       }
       Assignment(ns) => {
