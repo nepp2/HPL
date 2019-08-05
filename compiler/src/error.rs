@@ -49,6 +49,11 @@ impl TextLocation {
       end: end.into(),
     }
   }
+
+  pub fn zero() -> TextLocation {
+    let z = TextMarker{ line: 0, col: 0 };
+    TextLocation::new(z, z)
+  }
 }
 
 impl <S : Into<String>> From<S> for ErrorContent {
