@@ -224,6 +224,12 @@ impl <'l> TypeChecker<'l> {
     }
   }
 
+  fn symbol_defined(&self, name : &str) -> bool {
+    self.find_global(name).is_some()
+      || self.find_function(name).is_some()
+      || self.find_type_def(name).is_some()
+  }
+
   fn find_global(&self, name : &str) -> Option<&Type> {
     panic!()
   }
@@ -366,13 +372,17 @@ impl <'l> TypeChecker<'l> {
         Ok(node(expr, Type::Bool, Content::IntrinsicCall(self.cache.get(instr), vec!(a, b))))
       }
       ("let", exprs) => {
-        let name = self.cache.get(exprs[0].symbol_unwrap()?);
+        let name_expr = &exprs[0];
+        let name = self.cache.get(name_expr.symbol_unwrap()?);
         let v = Box::new(self.to_ast(&exprs[1])?);
         // The first scope is used for function arguments. The second
         // is the top level of the function.
         let c = if self.is_top_level && self.scope_map.len() == 2 {
           // global variable
-          self.global_variables.insert(name.clone(), v.type_tag.clone());
+          if self.symbol_defined(&name) {
+            return error(name_expr.loc, "symbol with this name already defined");
+          }
+          self.new_module.globals.insert(name.clone(), v.type_tag.clone());
           Content::VariableInitialise(name, v, VarScope::Global)
         }
         else {
@@ -440,7 +450,11 @@ impl <'l> TypeChecker<'l> {
         Ok(node(expr, tag, Content::Block(nodes)))
       }
       ("cfun", exprs) => {
-        let name = self.cache.get(exprs[0].symbol_unwrap()?);
+        let name_expr = &exprs[0];
+        let name = self.cache.get(name_expr.symbol_unwrap()?);
+        if self.symbol_defined(&name) {
+          return error(name_expr.loc, "symbol with this name already defined");
+        }
         let args_exprs = exprs[1].children.as_slice();
         let return_type_expr = &exprs[2];
         let mut arg_names = vec!();
@@ -455,9 +469,6 @@ impl <'l> TypeChecker<'l> {
           arg_types.push(type_tag);
         }
         let return_type = self.to_type(return_type_expr)?;
-        if self.find_function(name.as_ref()).is_some() {
-          return error(expr, "function with that name already defined");
-        }
         let signature = Rc::new(FunctionSignature {
           return_type,
           args: arg_types,
@@ -474,12 +485,16 @@ impl <'l> TypeChecker<'l> {
           signature,
           c_function_address: address,
         });
-        self.functions.insert(name, def.clone());
+        self.new_module.functions.insert(name, def.clone());
         
         Ok(node(expr, Type::Void, Content::CFunctionPrototype(def)))
       }
       ("fun", exprs) => {
-        let name = self.cache.get(exprs[0].symbol_unwrap()?);
+        let name_expr = &exprs[0];
+        let name = self.cache.get(name_expr.symbol_unwrap()?);
+        if self.symbol_defined(&name) {
+          return error(name_expr.loc, "symbol with this name already defined");
+        }
         let args_exprs = exprs[1].children.as_slice();
         let function_body = &exprs[2];
         let mut arg_names = vec!();
@@ -499,9 +514,6 @@ impl <'l> TypeChecker<'l> {
             false, self.new_module, self.modules, args,
             self.local_symbol_table, self.cache);
         let body = type_checker.to_ast(function_body)?;
-        if self.functions.contains_key(name.as_ref()) {
-          return error(expr, "function with that name already defined");
-        }
         let signature = Rc::new(FunctionSignature {
           return_type: body.type_tag.clone(),
           args: arg_types,
@@ -512,7 +524,7 @@ impl <'l> TypeChecker<'l> {
           signature,
           c_function_address: None,
         });
-        self.functions.insert(name, def.clone());
+        self.new_module.functions.insert(name, def.clone());
         Ok(node(expr, Type::Void, Content::FunctionDefinition(def, Box::new(body))))
       }
       ("union", exprs) => {
