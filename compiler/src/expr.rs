@@ -209,12 +209,13 @@ impl StringCache {
   }
 
   pub fn get<T : AsRef<str> + Into<RefStr>>(&self, s : T) -> RefStr {
-    if let Some(symbol) = self.symbols.borrow_mut().get(s.as_ref()) {
+    let mut symbols = self.symbols.borrow_mut();
+    if let Some(symbol) = symbols.get(s.as_ref()) {
       symbol.clone()
     }
     else{
       let string : RefStr = s.into();
-      self.symbols.borrow_mut().insert(string.clone());
+      symbols.insert(string.clone());
       string
     }
   }

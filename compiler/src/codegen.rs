@@ -682,40 +682,49 @@ impl <'l> Gen<'l> {
         // TODO: is nothing required here?
         return Ok(None);
       }
-      Content::StructInstantiate(def, args) => {
+      Content::StructInstantiate(struct_name, args) => {
         let a : Result<Vec<BasicValueEnum>, Error> =
           args.iter().map(|a| self.codegen_value(a)).collect();
+        let def = self.type_definitions.get(struct_name).unwrap();
         self.codegen_struct_initialise(def, a?.as_slice())
       }
-      Content::UnionInstantiate(def, arg) => {
+      Content::UnionInstantiate(union_name, arg) => {
         let val = self.codegen_value(&arg.1)?;
+        let def = self.type_definitions.get(union_name).unwrap();
         self.codegen_union_initialise(def, val)
       }
-      Content::FieldAccess(x, field_index) => {
+      Content::FieldAccess(x) => {
         let (type_val_node, field_name) = (&x.0, &x.1);
         let v = self.codegen_expression(type_val_node)?.unwrap();
-        match &type_val_node.type_tag {
-          Type::Struct(_) => {
+        let def = match &type_val_node.type_tag {
+          Type::Def(name) => self.type_definitions.get(name).unwrap(),
+          _ => panic!(),
+        };
+        match def.kind {
+          TypeKind::Struct => {
+            let (field_index, _) =
+              def.fields.iter().enumerate()
+              .find(|(_, (n, _))| n==field_name).unwrap();
             match v.storage {
               Storage::Register => {
                 // if the struct is in a register, dereference the field into a register
                 let reg_val =
                   self.builder.build_extract_value(
-                    *v.value.as_struct_value(), *field_index as u32, field_name).unwrap();
+                    *v.value.as_struct_value(), field_index as u32, field_name).unwrap();
                 reg(reg_val)
               }
               Storage::Pointer => {
                 // if this is a pointer to the struct, get a pointer to the field
                 let ptr = *v.value.as_pointer_value();
                 let field_ptr = unsafe {
-                  self.builder.build_struct_gep(ptr, *field_index as u32, field_name)
+                  self.builder.build_struct_gep(ptr, field_index as u32, field_name)
                 };
                 pointer(field_ptr)
               }
             }
           }
-          Type::Union(def) => {
-            let t = self.to_basic_type(&def.fields[*field_index].1);
+          TypeKind::Union => {
+            let t = self.to_basic_type(&node.type_tag);
             match v.storage {
               Storage::Register => {
                 // if the struct is in a register, dereference the field into a register
@@ -731,7 +740,6 @@ impl <'l> Gen<'l> {
               }
             }
           }
-          _ => panic!(),
         }
       }
       Content::ArrayLiteral(elements) => {
@@ -888,8 +896,10 @@ impl <'l> Gen<'l> {
         let t = self.to_function_type(sig.args.as_slice(), &sig.return_type);
         Some(t.ptr_type(AddressSpace::Generic).into())
       }
-      Type::Struct(def) => Some(self.struct_type(def).as_basic_type_enum()),
-      Type::Union(def) => Some(self.struct_type(def).as_basic_type_enum()),
+      Type::Def(name) => {
+        let def = self.type_definitions.get(name).unwrap();
+        Some(self.struct_type(def).as_basic_type_enum())
+      }
       Type::Ptr(t) => {
         let bt = self.to_basic_type(t);
         Some(self.pointer_to_type(bt).into())

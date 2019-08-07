@@ -79,7 +79,7 @@ impl Type {
   }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TypeKind {
   Struct, Union
 }
@@ -92,11 +92,18 @@ pub struct TypeDefinition {
 }
 
 #[derive(Debug)]
+pub enum FunctionImplementation {
+  Normal(TypedNode),
+  CFunction(Option<usize>),
+  Intrinsic,
+}
+
+#[derive(Debug)]
 pub struct FunctionDefinition {
   pub name : RefStr,
   pub args : Vec<RefStr>,
   pub signature : Rc<FunctionSignature>,
-  pub c_function_address : Option<usize>,
+  pub implementation : FunctionImplementation,
 }
 
 #[derive(Debug, PartialEq)]
@@ -111,31 +118,26 @@ impl PartialEq for TypeDefinition {
   }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum VarScope { Local, Global }
-
-pub struct TypedFunction {
-  pub def : FunctionDefinition,
-  pub body : TypedNode,
-}
-
 #[derive(Debug)]
 pub enum Content {
   Literal(Val),
+  SymbolReference(RefStr),
+  GlobalDefinition(RefStr, Box<TypedNode>),
+  GlobalReference(RefStr),
+  VariableDefinition(RefStr, Box<TypedNode>),
   VariableReference(RefStr),
-  VariableInitialise(RefStr, Box<TypedNode>, VarScope),
   Assignment(Box<(TypedNode, TypedNode)>),
   IfThen(Box<(TypedNode, TypedNode)>),
   IfThenElse(Box<(TypedNode, TypedNode, TypedNode)>),
   Block(Vec<TypedNode>),
   Quote(Box<Expr>),
   FunctionReference(RefStr),
-  FunctionDefinition(Rc<FunctionDefinition>, Box<TypedNode>),
-  CFunctionPrototype(Rc<FunctionDefinition>),
+  FunctionDefinition(RefStr),
+  CFunctionPrototype(RefStr),
   TypeDefinition(RefStr),
   StructInstantiate(RefStr, Vec<TypedNode>),
   UnionInstantiate(RefStr, Box<(RefStr, TypedNode)>),
-  FieldAccess(Box<(TypedNode, RefStr)>),
+  FieldAccess(Box<(TypedNode, RefStr)>, usize),
   Index(Box<(TypedNode, TypedNode)>),
   ArrayLiteral(Vec<TypedNode>),
   FunctionCall(Box<TypedNode>, Vec<TypedNode>),
@@ -176,8 +178,14 @@ fn node(expr : &Expr, type_tag : Type, content : Content) -> TypedNode {
 
 pub struct TypedModule {
   pub types : HashMap<RefStr, TypeDefinition>,
-  pub functions : HashMap<RefStr, TypedFunction>,
+  pub functions : HashMap<RefStr, FunctionDefinition>,
   pub globals : HashMap<RefStr, Type>,
+}
+
+impl TypedModule {
+  fn new() -> TypedModule {
+    TypedModule{ types: HashMap::new(), functions: HashMap::new(), globals: HashMap::new() }
+  }
 }
 
 /*
@@ -186,49 +194,51 @@ pub struct TypedModule {
     - module + type
     - module + function + type?
     - varname + function + scope
-
-
 */
 
 pub struct TypeChecker<'l> {
-  is_top_level : bool,
-  variables: HashMap<RefStr, Type>,
-  //modules : &'l [TypedModule],
-  functions: &'l mut HashMap<RefStr, Rc<FunctionDefinition>>,
-  types : &'l mut HashMap<RefStr, Rc<TypeDefinition>>,
-  global_variables : &'l mut HashMap<RefStr, Type>,
+  new_module : &'l TypedModule,
+  modules : &'l [TypedModule],
   local_symbol_table : &'l HashMap<RefStr, usize>,
+
+  cache: &'l StringCache,
+}
+
+pub struct FunctionChecker<'l> {
+  is_top_level : bool,
+  typecheck : &'l TypeChecker<'l>,
+  variables: HashMap<RefStr, Type>,
+  new_symbols : TypedModule,
 
   /// Tracks which variables are available, when.
   /// Used to rename variables with clashing names.
   scope_map: Vec<HashMap<RefStr, RefStr>>,
 
-  cache: &'l mut StringCache,
+  cache: &'l StringCache,
 }
 
-impl <'l> TypeChecker<'l> {
+impl <'l> FunctionChecker<'l> {
 
-  pub fn new(
-    is_top_level : bool,
-    variables : HashMap<RefStr, Type>,
-    functions : &'l mut HashMap<RefStr, Rc<FunctionDefinition>>,
-    types : &'l mut HashMap<RefStr, Rc<TypeDefinition>>,
-    global_variables : &'l mut HashMap<RefStr, Type>,
-    local_symbol_table : &'l HashMap<RefStr, usize>,
-    cache : &'l mut StringCache)
-      -> TypeChecker<'l>
-  {
-    let global_map = global_variables.keys().map(|n| (n.clone(), n.clone())).collect();
-    TypeChecker {
-      is_top_level,
-      variables,
-      functions,
-      types,
-      global_variables,
-      local_symbol_table,
-      cache,
-      scope_map: vec!(global_map),
-    }
+  fn symbol_defined(&self, name : &str) -> bool {
+    self.find_global(name).is_some()
+      || self.find_function(name).is_some()
+      || self.find_type_def(name).is_some()
+  }
+
+  fn find_global(&self, name : &str) -> Option<&Type> {
+    panic!()
+  }
+
+  fn find_function(&self, name : &str) -> Option<&FunctionDefinition> {
+    panic!()
+  }
+
+  fn find_type_def(&self, name : &str) -> Option<&TypeDefinition> {
+    panic!()
+  }
+
+  fn to_type(&self, expr : &Expr) -> Result<Type, Error> {
+    self.typecheck.to_type(expr)
   }
 
   fn get_scoped_variable_name(&self, name : &RefStr) -> RefStr {
@@ -243,7 +253,7 @@ impl <'l> TypeChecker<'l> {
   fn create_scoped_variable_name(&mut self, name : RefStr) -> RefStr {
     let mut unique_name = name.to_string();
     let mut i = 0;
-    while self.global_variables.contains_key(unique_name.as_str()) ||
+    while self.find_global(unique_name.as_str()).is_some() ||
       self.variables.contains_key(unique_name.as_str())
     {
       unique_name.clear();
@@ -253,63 +263,6 @@ impl <'l> TypeChecker<'l> {
     let unique_name : RefStr = unique_name.into();
     self.scope_map.last_mut().unwrap().insert(name, unique_name.clone());
     unique_name.clone()
-  }
-
-  /// Converts expression into type. Returns error if type references a type definition that doesn't exist.
-  fn to_type(&mut self, expr : &Expr) -> Result<Type, Error> {
-    let name = expr.symbol_unwrap()?;
-    let params = expr.children.as_slice();
-    if let Some(t) = Type::from_string(name) {
-      if params.len() > 0 {
-        return error(expr, "unexpected type parameters");
-      }
-      return Ok(t);
-    }
-    if name == "fun" {
-      let args =
-        params[0].children.as_slice().iter().map(|e| self.to_type(e))
-        .collect::<Result<Vec<Type>, Error>>()?;
-      let return_type = self.to_type(&params[1])?;
-      return Ok(Type::Fun(Rc::new(FunctionSignature{ args, return_type})));
-    }
-    match (name, params) {
-      ("ptr", [t]) => {
-        let t = self.to_type(t)?;
-        Ok(Type::Ptr(Box::new(t)))
-      }
-      (name, params) => {
-        if params.len() > 0 {
-          return error(expr, "unexpected type parameters");
-        }
-        if !self.types.contains_key(name) {
-          return error(expr, format!("type '{}' does not exist", name));
-        }
-        return Ok(Type::Def(self.cache.get(name)));
-      }
-    }
-  }
-
-  fn to_type_definition(&mut self, expr : &Expr, exprs : &[Expr], kind : TypeKind) -> Result<TypedNode, Error> {
-    if exprs.len() < 1 {
-      return error(expr, "malformed type definition");
-    }
-    let name_expr = &exprs[0];
-    let name = name_expr.symbol_unwrap()?;
-    if self.types.contains_key(name) {
-      return error(expr, "struct with this name already defined");
-    }
-    // TODO: check for duplicates?
-    let field_exprs = &exprs[1..];
-    let mut fields = vec![];
-    // TODO: record the field types, and check them!
-    for (field_name_expr, type_expr) in field_exprs.iter().tuples() {
-      let field_name = field_name_expr.symbol_unwrap()?.clone();
-      let type_tag = self.to_type(type_expr)?;
-      fields.push((self.cache.get(field_name), type_tag));
-    }
-    let def = Rc::new(TypeDefinition { name: self.cache.get(name), fields, kind });
-    self.types.insert(self.cache.get(name), def.clone());
-    Ok(node(expr, Type::Void, Content::TypeDefinition(def.name.clone())))
   }
 
   fn match_intrinsic(name : &str, args : &[TypedNode]) -> Option<Type> {
@@ -347,7 +300,7 @@ impl <'l> TypeChecker<'l> {
               exprs[1..].iter().map(|e| self.to_ast(e))
               .collect::<Result<Vec<TypedNode>, Error>>()?;
         if let Some(function_name) = exprs[0].symbol_unwrap().ok() {
-          let op_tag = TypeChecker::match_intrinsic(
+          let op_tag = FunctionChecker::match_intrinsic(
             function_name, args.as_slice());
           if let Some(op_tag) = op_tag {
             return Ok(node(expr, op_tag, Content::IntrinsicCall(self.cache.get(function_name), args)))
@@ -384,20 +337,24 @@ impl <'l> TypeChecker<'l> {
         Ok(node(expr, Type::Bool, Content::IntrinsicCall(self.cache.get(instr), vec!(a, b))))
       }
       ("let", exprs) => {
-        let name = self.cache.get(exprs[0].symbol_unwrap()?);
+        let name_expr = &exprs[0];
+        let name = self.cache.get(name_expr.symbol_unwrap()?);
         let v = Box::new(self.to_ast(&exprs[1])?);
         // The first scope is used for function arguments. The second
         // is the top level of the function.
         let c = if self.is_top_level && self.scope_map.len() == 2 {
           // global variable
-          self.global_variables.insert(name.clone(), v.type_tag.clone());
-          Content::VariableInitialise(name, v, VarScope::Global)
+          if self.symbol_defined(&name) {
+            return error(name_expr.loc, "symbol with this name already defined");
+          }
+          self.new_module.globals.insert(name.clone(), v.type_tag.clone());
+          Content::GlobalDefinition(name, v)
         }
         else {
           // local variable
           let scoped_name = self.create_scoped_variable_name(name);
           self.variables.insert(scoped_name.clone(), v.type_tag.clone());
-          Content::VariableInitialise(scoped_name, v, VarScope::Local)
+          Content::VariableDefinition(scoped_name, v)
         };
         Ok(node(expr, Type::Void, c))
       }
@@ -458,7 +415,11 @@ impl <'l> TypeChecker<'l> {
         Ok(node(expr, tag, Content::Block(nodes)))
       }
       ("cfun", exprs) => {
-        let name = self.cache.get(exprs[0].symbol_unwrap()?);
+        let name_expr = &exprs[0];
+        let name = self.cache.get(name_expr.symbol_unwrap()?);
+        if self.symbol_defined(&name) {
+          return error(name_expr.loc, "symbol with this name already defined");
+        }
         let args_exprs = exprs[1].children.as_slice();
         let return_type_expr = &exprs[2];
         let mut arg_names = vec!();
@@ -473,31 +434,32 @@ impl <'l> TypeChecker<'l> {
           arg_types.push(type_tag);
         }
         let return_type = self.to_type(return_type_expr)?;
-        if self.functions.contains_key(name.as_ref()) {
-          return error(expr, "function with that name already defined");
-        }
         let signature = Rc::new(FunctionSignature {
           return_type,
           args: arg_types,
         });
-        let address = self.local_symbol_table.get(&name).map(|v| *v);
+        let address = self.typecheck.local_symbol_table.get(&name).map(|v| *v);
         if address.is_none() {
           // TODO: check the signature of the function too
           println!("Warning: C function '{}' not linked. LLVM linker may link it instead.", name);
           // return error(expr, "tried to bind non-existing C function")
         }
-        let def = Rc::new(FunctionDefinition {
+        let def = FunctionDefinition {
           name: name.clone(),
           args: arg_names,
           signature,
-          c_function_address: address,
-        });
-        self.functions.insert(name, def.clone());
+          implementation: FunctionImplementation::CFunction(address),
+        };
+        self.new_module.functions.insert(name.clone(), def);
         
-        Ok(node(expr, Type::Void, Content::CFunctionPrototype(def)))
+        Ok(node(expr, Type::Void, Content::CFunctionPrototype(name)))
       }
       ("fun", exprs) => {
-        let name = self.cache.get(exprs[0].symbol_unwrap()?);
+        let name_expr = &exprs[0];
+        let name = self.cache.get(name_expr.symbol_unwrap()?);
+        if self.symbol_defined(&name) {
+          return error(name_expr.loc, "symbol with this name already defined");
+        }
         let args_exprs = exprs[1].children.as_slice();
         let function_body = &exprs[2];
         let mut arg_names = vec!();
@@ -512,31 +474,31 @@ impl <'l> TypeChecker<'l> {
           arg_types.push(type_tag);
         }
         let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
-        let mut empty_global_map = HashMap::new(); // hide globals from child functions
         let mut type_checker =
-          TypeChecker::new(false, args, self.functions, self.types, &mut empty_global_map, self.local_symbol_table, self.cache);
+          TypeChecker::new(
+            false, self.new_module, self.modules, args,
+            self.local_symbol_table, self.cache);
         let body = type_checker.to_ast(function_body)?;
-        if self.functions.contains_key(name.as_ref()) {
-          return error(expr, "function with that name already defined");
-        }
         let signature = Rc::new(FunctionSignature {
           return_type: body.type_tag.clone(),
           args: arg_types,
         });
-        let def = Rc::new(FunctionDefinition {
+        let def = FunctionDefinition {
           name: name.clone(),
           args: arg_names,
           signature,
-          c_function_address: None,
-        });
-        self.functions.insert(name, def.clone());
-        Ok(node(expr, Type::Void, Content::FunctionDefinition(def, Box::new(body))))
+          implementation: FunctionImplementation::Normal(body),
+        };
+        self.new_module.functions.insert(name.clone(), def);
+        Ok(node(expr, Type::Void, Content::FunctionDefinition(name)))
       }
       ("union", exprs) => {
-        self.to_type_definition(expr, exprs, TypeKind::Union)
+        let name = exprs[0].symbol_unwrap()?;
+        Ok(node(expr, Type::Void, Content::TypeDefinition(self.cache.get(name))))
       }
       ("struct", exprs) => {
-        self.to_type_definition(expr, exprs, TypeKind::Struct)
+        let name = exprs[0].symbol_unwrap()?;
+        Ok(node(expr, Type::Void, Content::TypeDefinition(self.cache.get(name))))
       }
       ("type_instantiate", exprs) => {
         if exprs.len() < 1 || exprs.len() % 2 == 0 {
@@ -552,7 +514,7 @@ impl <'l> TypeChecker<'l> {
           })
           .collect::<Result<Vec<(&Expr, TypedNode)>, Error>>()?;
         let def =
-          self.types.get(name)
+          self.find_type_def(name)
           .ok_or_else(|| error_raw(name_expr, "no type with this name exists"))?;
         match &def.kind {
           TypeKind::Struct => {
@@ -577,11 +539,11 @@ impl <'l> TypeChecker<'l> {
               return error(expr, "must instantiate exactly one field");
             }
             let (field, value) = fields.into_iter().nth(0).unwrap();
-            let field_name = self.cache.get(field.symbol_unwrap()?);
-            if def.fields.iter().find(|(n, _)| n == &field_name).is_none() {
+            let name = self.cache.get(field.symbol_unwrap()?);
+            if def.fields.iter().find(|(n, _)| n == &name).is_none() {
               return error(field, "field does not exist in this union");
             }
-            let c = Content::UnionInstantiate(self.cache.get(name), Box::new((field_name, value)));
+            let c = Content::UnionInstantiate(self.cache.get(name), Box::new((name, value)));
             Ok(node(expr, Type::Def(def.name.clone()), c))
           }
         }
@@ -590,14 +552,14 @@ impl <'l> TypeChecker<'l> {
         let container_val = self.to_ast(container_expr)?;
         let field_name = self.cache.get(field_expr.symbol_unwrap()?);
         let def = match &container_val.type_tag {
-          Type::Def(def) => self.types.get(def).unwrap(),
+          Type::Def(def) => self.find_type_def(def).unwrap(),
           _ => return error(container_expr, format!("expected struct or union, found {:?}", container_val.type_tag)),
         };
-        let (_, field_type) =
-          def.fields.iter().find(|(n, _)| n==&field_name)
+        let (field_index, (_, field_type)) =
+          def.fields.iter().enumerate().find(|(_, (n, _))| n==&field_name)
           .ok_or_else(|| error_raw(field_expr, "type does not have field with this name"))?;
         let field_type = field_type.clone();
-        let c = Content::FieldAccess(Box::new((container_val, field_name)));
+        let c = Content::FieldAccess(Box::new((container_val, field_name)), field_index);
         Ok(node(expr, field_type, c))
       }
       ("literal_array", exprs) => {
@@ -635,7 +597,7 @@ impl <'l> TypeChecker<'l> {
     }
   }
 
-  pub fn to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
+  fn to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
     match &expr.tag {
       ExprTag::Symbol(s) => {
         // Is this a tree?
@@ -649,20 +611,20 @@ impl <'l> TypeChecker<'l> {
           return Ok(node(expr, Type::Void, Content::Break));
         }
         let name = self.get_scoped_variable_name(&s);
-        let var_type =
-          self.variables.get(name.as_ref())
-          .or_else(|| self.global_variables.get(name.as_ref()));
-        if let Some(t) = var_type {
+        if let Some(t) = self.variables.get(name.as_ref()) {
           return Ok(node(expr, t.clone(), Content::VariableReference(name)));
         }
-        if let Some(def) = self.functions.get(&s) {
+        if let Some(t) = self.find_global(name.as_ref()) {
+          return Ok(node(expr, t.clone(), Content::GlobalReference(name)));
+        }
+        if let Some(def) = self.find_function(&s) {
           return Ok(node(expr, Type::Fun(def.signature.clone()), Content::FunctionReference(s)));
         }
         error(expr, format!("unknown variable name '{}'", s))
       }
       ExprTag::LiteralString(s) => {
         let v = Val::String(s.as_str().to_string());
-        let s = self.types.get("string").unwrap();
+        let s = self.find_type_def("string").unwrap();
         Ok(node(expr, Type::Def(s.name.clone()), Content::Literal(v)))
       }
       ExprTag::LiteralFloat(f) => {
@@ -683,114 +645,244 @@ impl <'l> TypeChecker<'l> {
       // _ => error(expr, "unsupported expression"),
     }
   }
+}
 
-  // fn typecheck_function(&mut self, expr : &Expr) -> Result<TypedFunction, Error> {
-  //   if let ExprTag::Symbol(s) = &expr.tag {
-  //     let children = expr.children.as_slice();
-  //     match (s.as_str(), children) {
-  //       ("fun", exprs) => {
-  //         let name = self.cache.get(exprs[0].symbol_unwrap()?);
-  //         let args_exprs = exprs[1].children.as_slice();
-  //         let function_body = &exprs[2];
-  //         let mut arg_names = vec!();
-  //         let mut arg_types = vec!();
-  //         for (name_expr, type_expr) in args_exprs.iter().tuples() {
-  //           let name = self.cache.get(name_expr.symbol_unwrap()?);
-  //           let type_tag = self.to_type(type_expr)?;
-  //           if type_tag == Type::Void {
-  //             return error(expr, "functions args cannot be void");
-  //           }
-  //           arg_names.push(name);
-  //           arg_types.push(type_tag);
-  //         }
-  //         let mut empty_global_map = HashMap::new(); // hide globals from child functions
-  //         return self.typecheck_function_body(name, arg_names, arg_types, function_body, &mut empty_global_map);
-  //       }
-  //       _ => (),
-  //     }
-  //   }
-  //   return error(expr, "unsupported expression");
-  // }
+impl <'l> TypeChecker<'l> {
 
-  // fn typecheck_top_level_function(&mut self, expr : &Expr) -> Result<TypedFunction, Error> {
-  //   let name = self.cache.get("top_level");
-  //   self.typecheck_function_body(name, vec!(), vec!(), expr, self.global_variables)
-  // }
+  pub fn new(
+    new_module : &'l TypedModule,
+    modules : &'l [TypedModule],
+    local_symbol_table : &'l HashMap<RefStr, usize>,
+    cache : &'l mut StringCache)
+      -> TypeChecker<'l>
+  {
+    TypeChecker {
+      new_module,
+      modules,
+      local_symbol_table,
+      cache,
+    }
+  }
 
-  // fn typecheck_function_body(
-  //   &mut self, name : RefStr,
-  //   arg_names : Vec<RefStr>, arg_types : Vec<Type>,
-  //   function_body : &Expr, global_map : &mut HashMap<RefStr, Type>)
-  //     -> Result<TypedFunction, Error>
-  // {
-  //   let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
-  //   let mut type_checker =
-  //     TypeChecker::new(false, args, self.functions, self.types, global_map, self.local_symbol_table, self.cache);
-  //   let body = type_checker.to_ast(function_body)?;
-  //   let signature = Rc::new(FunctionSignature {
-  //     return_type: body.type_tag.clone(),
-  //     args: arg_types,
-  //   });
-  //   let def = FunctionDefinition {
-  //     name: name.clone(),
-  //     args: arg_names,
-  //     signature,
-  //     c_function_address: None,
-  //   };
-  //   return Ok(TypedFunction { def, body });
-  // }
+  fn function_checker(&'l self, is_top_level : bool, variables : HashMap<RefStr, Type>) -> FunctionChecker<'l> {
+    FunctionChecker::<'l> {
+      is_top_level,
+      typecheck: self,
+      variables,
+      new_symbols: TypedModule::new(),
+      scope_map: vec!(),
+      cache: self.cache,
+    }
+  }
 
-//   pub fn typecheck(&mut self, expr : &Expr) -> Result<TypedModule, Error> {
-//     fn find_definitions<'e>(expr : &'e Expr, types : &mut Vec<&'e Expr>, functions : &mut Vec<&'e Expr>) {
-//       let children = expr.children.as_slice();
-//       if children.len() == 0 { return }
-//       if let ExprTag::Symbol(s) = &expr.tag {
-//         match s.as_str() {
-//           "union" => {
-//             types.push(expr);
-//             return;
-//           }
-//           "struct" => {
-//             types.push(expr);
-//             return;
-//           }
-//           "fun" => {
-//             functions.push(expr);
-//           }
-//           _ => (),
-//         }
-//       }
-//       for c in children {
-//         find_definitions(c, types, functions);
-//       }
-//     }
+  fn typecheck_function(&mut self, expr : &Expr) -> Result<(FunctionDefinition, TypedModule), Error> {
+    if let ExprTag::Symbol(s) = &expr.tag {
+      let children = expr.children.as_slice();
+      match (s.as_str(), children) {
+        ("fun", exprs) => {
+          let name = self.cache.get(exprs[0].symbol_unwrap()?);
+          if self.symbol_defined(&name) {
+            return error(name_expr.loc, "symbol with this name already defined");
+          }
+          let args_exprs = exprs[1].children.as_slice();
+          let function_body = &exprs[2];
+          let mut arg_names = vec!();
+          let mut arg_types = vec!();
+          for (name_expr, type_expr) in args_exprs.iter().tuples() {
+            let name = self.cache.get(name_expr.symbol_unwrap()?);
+            let type_tag = self.to_type(type_expr)?;
+            arg_names.push(name);
+            arg_types.push(type_tag);
+          }
+          return self.typecheck_function_body(name, arg_names, arg_types, function_body, false);
+        }
+        ("block", exprs) => {
+          // this is a top-level function
+          let name = self.cache.get("top_level");
+          return self.typecheck_function_body(name, vec!(), vec!(), expr, true);
+        }
+        _ => (),
+      }
+    }
+    return error(expr, "unsupported expression");
+  }
 
-//     let mut type_exprs = vec!();
-//     let mut function_exprs = vec!();
-//     find_definitions(expr, &mut type_exprs, &mut function_exprs);
-//     // TODO register the types as available (somehow)
-//     // TODO process all of the types
-//     let mut new_types = HashMap::new();
-//     let types = type_exprs.iter().map(|e| self.to_type_definition(e, &mut new_types)).collect::<Result<Vec<TypeDefinition>, Error>>()?;
-//     for t in types.iter() {
-//       new_types.remove(&t.name);
-//     }
-//     let errors = new_types.iter().collect::<Vec<_>>();
-//     errors.sort_by_key(|(_, loc)| loc.start.line);
-//     if let Some((name, loc)) = errors.first() {
-//       return error(*loc, format!("type '{}' does not exist", name));
-//     }
-//     let top_level_function = self.typecheck_top_level_function(expr)?;
-//     let mut functions = vec!();
-//     for e in function_exprs.iter() {
-//       let f = self.typecheck_function(e)?;
-//       functions.push(f);
-//     }
+  fn typecheck_function_body(
+    &mut self, name : RefStr,
+    arg_names : Vec<RefStr>, arg_types : Vec<Type>,
+    function_body : &Expr, is_top_level : bool)
+      -> Result<(FunctionDefinition, TypedModule), Error>
+  {
+    let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
+    let mut function_checker = self.function_checker(is_top_level, args);
+    let body = function_checker.to_ast(function_body)?;
+    let signature = Rc::new(FunctionSignature {
+      return_type: body.type_tag.clone(),
+      args: arg_types,
+    });
+    let def = FunctionDefinition {
+      name: name.clone(),
+      args: arg_names,
+      signature,
+      implementation: FunctionImplementation::Normal(body),
+    };
+    return Ok((def, function_checker.new_symbols));
+  }
 
-//     let globals = HashMap::new(); // TODO BROKEN
-//     let types = types.into_iter().map(|def| (def.name.clone(), def)).collect();
-//     let functions = functions.into_iter().map(|f| (f.def.name.clone(), f)).collect();
+  fn find_type_def(&self, name : &str) -> Option<&TypeDefinition> {
+    panic!()
+  }
 
-//     Ok(TypedModule { types, functions, globals })
-//   }
+  /// Converts expression into type. Returns error if type references a type definition that doesn't exist.
+  fn to_type(&mut self, expr : &Expr) -> Result<Type, Error> {
+    let name = expr.symbol_unwrap()?;
+    let params = expr.children.as_slice();
+    if let Some(t) = Type::from_string(name) {
+      if params.len() > 0 {
+        return error(expr, "unexpected type parameters");
+      }
+      return Ok(t);
+    }
+    if name == "fun" {
+      let args =
+        params[0].children.as_slice().iter().map(|e| self.to_type(e))
+        .collect::<Result<Vec<Type>, Error>>()?;
+      let return_type = self.to_type(&params[1])?;
+      return Ok(Type::Fun(Rc::new(FunctionSignature{ args, return_type})));
+    }
+    match (name, params) {
+      ("ptr", [t]) => {
+        let t = self.to_type(t)?;
+        Ok(Type::Ptr(Box::new(t)))
+      }
+      (name, params) => {
+        if params.len() > 0 {
+          return error(expr, "unexpected type parameters");
+        }
+        if self.find_type_def(name).is_none() {
+          return error(expr, format!("type '{}' does not exist", name));
+        }
+        return Ok(Type::Def(self.cache.get(name)));
+      }
+    }
+  }
+
+  fn to_type_definition(&mut self, expr : &Expr) -> Result<TypeDefinition, Error> {
+    let kind = match expr.symbol_unwrap()? {
+      "struct" => TypeKind::Struct,
+      "union" => TypeKind::Union,
+    };
+    let children = expr.children.as_slice();
+    if children.len() < 1 {
+      return error(expr, "malformed type definition");
+    }
+    let name_expr = &children[0];
+    let name = name_expr.symbol_unwrap()?;
+    if self.find_type_def(name).is_some() {
+      return error(expr, "struct with this name already defined");
+    }
+    // TODO: check for duplicates?
+    let field_exprs = &children[1..];
+    let mut fields = vec![];
+    // TODO: record the field types, and check them!
+    for (field_name_expr, type_expr) in field_exprs.iter().tuples() {
+      let field_name = field_name_expr.symbol_unwrap()?.clone();
+      let type_tag = self.to_type(type_expr)?;
+      fields.push((self.cache.get(field_name), type_tag));
+    }
+    Ok(TypeDefinition { name: self.cache.get(name), fields, kind })
+  }
+
+  pub fn typecheck_module(&self, expr : &Expr) -> Result<TypedModule, Error> {
+    let mut type_exprs = vec!();
+    let mut function_exprs = vec!(expr);
+    find_symbols(expr, &mut type_exprs, &mut function_exprs);
+
+    let mut module = TypedModule { types: HashMap::new(), functions: HashMap::new(), globals: HashMap::new() };
+
+    // check type definitions
+    for e in type_exprs.into_iter() {
+      let def = self.to_type_definition(e)?;
+      module.types.insert(def.name.clone(), def);
+    }
+    let mut fns = vec!();
+    loop {
+      let mut errors = vec!();
+      fns.append(&mut function_exprs);
+      let mut initial_functions_count = fns.len();
+      for function_expr in fns.drain(0..) {
+        let r = self.typecheck_function(function_expr);
+        match r {
+          Ok((def, new_symbols)) => {
+            module.functions.insert(def.name.clone(), def);
+            module.functions.extend(new_symbols.functions);
+            module.types.extend(new_symbols.types);
+            module.globals.extend(new_symbols.globals);
+          }
+          Err(e) => {
+            function_exprs.push(function_expr);
+            errors.push(e);
+          }
+        }
+      }
+      if function_exprs.is_empty() {
+        break;
+      }
+      if function_exprs.len() == initial_functions_count {
+        return Err(errors[0]);
+      }
+    }
+
+    // Try to compile the top-level, because it has the globals
+
+
+    // let mut new_types = HashMap::new();
+    // let types = type_exprs.iter().map(|e| self.to_type_definition(e, &mut new_types)).collect::<Result<Vec<TypeDefinition>, Error>>()?;
+    // for t in types.iter() {
+    //   new_types.remove(&t.name);
+    // }
+    // let errors = new_types.iter().collect::<Vec<_>>();
+    // errors.sort_by_key(|(_, loc)| loc.start.line);
+    // if let Some((name, loc)) = errors.first() {
+    //   return error(*loc, format!("type '{}' does not exist", name));
+    // }
+    // let top_level_function = self.typecheck_top_level_function(expr)?;
+    // let mut functions = vec!();
+    // for e in function_exprs.iter() {
+    //   let f = self.typecheck_function(e)?;
+    //   functions.push(f);
+    // }
+
+    // let globals = HashMap::new(); // TODO BROKEN
+    // let types = types.into_iter().map(|def| (def.name.clone(), def)).collect();
+    // let functions = functions.into_iter().map(|f| (f.def.name.clone(), f)).collect();
+
+    // Ok(TypedModule { types, functions, globals })
+    panic!()
+  }
+
+}
+
+fn find_symbols<'e>(expr : &'e Expr, types : &mut Vec<&'e Expr>, functions : &mut Vec<&'e Expr>) {
+  let children = expr.children.as_slice();
+  if children.len() == 0 { return }
+  if let ExprTag::Symbol(s) = &expr.tag {
+    match s.as_str() {
+      "union" => {
+      types.push(expr);
+      return;
+      }
+      "struct" => {
+      types.push(expr);
+      return;
+      }
+      "fun" => {
+      functions.push(expr);
+      }
+      _ => (),
+    }
+  }
+  for c in children {
+    find_symbols(c, types, functions);
+  }
 }
