@@ -4,7 +4,8 @@
 use crate::error::{Error, error, error_raw, ErrorContent};
 use crate::expr::RefStr;
 use crate::typecheck::{
-  TypedNode, Content, Type, Val, TypeDefinition, TypeKind, FunctionDefinition, VarScope};
+  TypedNode, Content, Type, Val, TypeDefinition, TypeKind,
+  FunctionDefinition, VarScope, TypedModule, FunctionImplementation };
 
 use std::rc::Rc;
 use std::collections::HashMap;
@@ -26,6 +27,12 @@ use inkwell::targets::TargetData;
 
 pub fn dump_module(module : &Module) {
   println!("{}", module.print_to_string().to_string())
+}
+
+macro_rules! unwrap_enum {
+  ( $enum_name:ident, $variant_name:ident, $v:expr) => { 
+    if let $enum_name::$variant_name(x) = $v { x } else { panic!() }
+  };
 }
 
 macro_rules! codegen_type {
@@ -153,7 +160,7 @@ pub struct Gen<'l> {
   module : &'l mut Module,
   target_data : &'l TargetData,
   builder: Builder,
-  function_defs: &'l HashMap<RefStr, Rc<FunctionDefinition>>,
+  type_info : &'l TypedModule,
 
   /// Used by the JIT to link globals between modules
   external_globals: &'l mut HashMap<RefStr, GlobalValue>,
@@ -164,10 +171,8 @@ pub struct Gen<'l> {
   /// Used by the JIT to link c functions
   c_functions: &'l mut HashMap<RefStr, (FunctionValue, usize)>,
 
-  global_var_types: &'l HashMap<RefStr, Type>,
   variables: HashMap<RefStr, PointerValue>,
   struct_types: HashMap<RefStr, StructType>,
-  type_definitions: &'l HashMap<RefStr, Rc<TypeDefinition>>,
 
   /// A stack of values indicating the entry and exit labels for each loop
   loop_labels: Vec<LoopLabels>,
@@ -181,12 +186,10 @@ impl <'l> Gen<'l> {
     context: &'l mut Context,
     module : &'l mut Module,
     target_data : &'l TargetData,
-    function_defs: &'l HashMap<RefStr, Rc<FunctionDefinition>>,
+    type_info : &'l TypedModule,
     external_globals: &'l mut HashMap<RefStr, GlobalValue>,
     external_functions: &'l mut HashMap<RefStr, FunctionValue>,
     c_functions: &'l mut HashMap<RefStr, (FunctionValue, usize)>,
-    global_var_types: &'l HashMap<RefStr, Type>,
-    type_definitions: &'l HashMap<RefStr, Rc<TypeDefinition>>,
     pm : &'l PassManager<FunctionValue>,
   )
       -> Gen<'l>
@@ -196,24 +199,23 @@ impl <'l> Gen<'l> {
     Gen {
       context, module,
       target_data, builder,
-      function_defs,
+      type_info,
       external_globals,
       external_functions,
       c_functions,
-      global_var_types, variables,
+      variables,
       struct_types: HashMap::new(),
-      type_definitions,
       loop_labels: vec!(),
       pm,
     }
   }
 
-  pub fn child_function_gen<'lc>(&'lc mut self, global_var_types: &'lc HashMap<RefStr, Type>)
+  pub fn child_function_gen<'lc>(&'lc mut self)
     -> Gen<'lc>
   {
     Gen::new(
-      self.context, self.module, self.target_data, self.function_defs,  self.external_globals,
-      self.external_functions, self.c_functions, global_var_types, self.type_definitions, self.pm)
+      self.context, self.module, self.target_data, self.type_info, self.external_globals,
+      self.external_functions, self.c_functions, self.pm)
   }
 
   fn create_entry_block_alloca(&self, t : BasicTypeEnum, name : &str) -> PointerValue {
@@ -484,11 +486,13 @@ impl <'l> Gen<'l> {
     }
     else{
       let f = self.codegen_prototype(&def.name, &def.signature.return_type, &def.args, &def.signature.args);
-      if let Some(address) = def.c_function_address {
-        self.c_functions.insert(def.name.clone(), (f, address));
-      }
-      else {
-        self.external_functions.insert(def.name.clone(), f);
+      match def.implementation {
+        FunctionImplementation::CFunction(Some(address)) => {
+          self.c_functions.insert(def.name.clone(), (f, address));
+        }
+        _ => {
+          self.external_functions.insert(def.name.clone(), f);
+        }
       }
       f
     }
@@ -672,9 +676,10 @@ impl <'l> Gen<'l> {
       Content::CFunctionPrototype(_def) => {
         return Ok(None);
       }
-      Content::FunctionDefinition(def, body) => {
-        let global_var_types = HashMap::new();
-        self.child_function_gen(&global_var_types).codegen_function(
+      Content::FunctionDefinition(name) => {
+        let def = self.type_info.functions.get(name).unwrap();
+        let body = unwrap_enum!(FunctionImplementation, Normal, &def.implementation);
+        self.child_function_gen().codegen_function(
           node, body, &def.name, &def.args, &def.signature.args)?;
         return Ok(None);
       }
@@ -685,19 +690,19 @@ impl <'l> Gen<'l> {
       Content::StructInstantiate(struct_name, args) => {
         let a : Result<Vec<BasicValueEnum>, Error> =
           args.iter().map(|a| self.codegen_value(a)).collect();
-        let def = self.type_definitions.get(struct_name).unwrap();
+        let def = self.type_info.types.get(struct_name).unwrap();
         self.codegen_struct_initialise(def, a?.as_slice())
       }
       Content::UnionInstantiate(union_name, arg) => {
         let val = self.codegen_value(&arg.1)?;
-        let def = self.type_definitions.get(union_name).unwrap();
+        let def = self.type_info.types.get(union_name).unwrap();
         self.codegen_union_initialise(def, val)
       }
       Content::FieldAccess(x) => {
         let (type_val_node, field_name) = (&x.0, &x.1);
         let v = self.codegen_expression(type_val_node)?.unwrap();
         let def = match &type_val_node.type_tag {
-          Type::Def(name) => self.type_definitions.get(name).unwrap(),
+          Type::Def(name) => self.type_info.types.get(name).unwrap(),
           _ => panic!(),
         };
         match def.kind {
@@ -798,7 +803,7 @@ impl <'l> Gen<'l> {
           let ptr = gv.as_pointer_value();
           pointer(ptr)
         }
-        else if let Some(type_tag) = self.global_var_types.get(name) {
+        else if let Some(type_tag) = self.type_info.globals.get(name) {
           let t = self.to_basic_type(type_tag).unwrap();
           let gv = self.module.add_global(t, Some(AddressSpace::Generic), &name);
           gv.set_constant(false);
@@ -811,7 +816,7 @@ impl <'l> Gen<'l> {
       }
       Content::FunctionReference(name) => {
         let def =
-          self.function_defs.get(name)
+          self.type_info.functions.get(name)
           .ok_or_else(|| error_raw(node.loc, format!("could not find function with name '{}'", name)))?;
         let f = self.get_linked_function_reference(def);
         reg(f.as_global_value().as_pointer_value().into())
@@ -859,7 +864,7 @@ impl <'l> Gen<'l> {
             let cast_to = self.context.i8_type().ptr_type(AddressSpace::Generic);
             let string_pointer = self.builder.build_pointer_cast(ptr, cast_to, "string_pointer");
             let string_length = self.context.i64_type().const_int(vs.len() as u64, false);
-            let def = self.type_definitions.get("string").unwrap();
+            let def = self.type_info.types.get("string").unwrap();
             self.codegen_struct_initialise(def, &[string_pointer.into(), string_length.into()])
           }
         }
@@ -897,7 +902,7 @@ impl <'l> Gen<'l> {
         Some(t.ptr_type(AddressSpace::Generic).into())
       }
       Type::Def(name) => {
-        let def = self.type_definitions.get(name).unwrap();
+        let def = self.type_info.types.get(name).unwrap();
         Some(self.struct_type(def).as_basic_type_enum())
       }
       Type::Ptr(t) => {

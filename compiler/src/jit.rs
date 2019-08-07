@@ -5,7 +5,7 @@ use crate::lexer;
 use crate::parser;
 use crate::typecheck::{
   Type, Val, TypeDefinition, FunctionDefinition,
-  TypeChecker, TypedNode };
+  TypeChecker, TypedNode, TypedModule };
 use crate::codegen::{dump_module, Gen};
 use crate::c_interface::CLibraries;
 
@@ -53,9 +53,7 @@ pub struct Interpreter {
   pub context : Context,
   pub modules : Vec<CompiledExpression>,
   pub c_libs : CLibraries,
-  pub functions : HashMap<RefStr, Rc<FunctionDefinition>>,
-  pub types : HashMap<RefStr, Rc<TypeDefinition>>,
-  pub global_var_types: HashMap<RefStr, Type>,
+  pub module : TypedModule,
 }
 
 impl Interpreter {
@@ -79,14 +77,9 @@ impl Interpreter {
     let context = Context::create();
     let modules = vec!();
     let c_libs = CLibraries::new();
-    let functions = HashMap::new();
-    let types = HashMap::new();
-    let global_var_types = HashMap::new();
-
-    let mut i = 
-      Interpreter {
-        cache, context, modules, c_libs,
-        functions, types, global_var_types };
+    let module = TypedModule::new();
+    
+    let mut i = Interpreter { cache, context, modules, c_libs, module };
     
     // load prelude
     if let Err(e) = i.load_prelude() {
@@ -128,8 +121,7 @@ impl Interpreter {
 
     let mut type_checker =
       TypeChecker::new(
-        true, HashMap::new(), &mut self.functions, &mut self.types,
-        &mut self.global_var_types, &self.c_libs.local_symbol_table, &mut self.cache);
+        true, HashMap::new(), &mut self.module, &self.c_libs.local_symbol_table, &mut self.cache);
     let node = type_checker.to_ast(expr)?;
     let module_name = format!("module_{}", self.modules.len());
     let mut module = self.context.create_module(&module_name);
@@ -158,9 +150,8 @@ impl Interpreter {
     let f = {
       let jit =
         Gen::new(
-          &mut self.context, &mut module, &mut ee.get_target_data(), &self.functions, &mut external_globals,
-          &mut external_functions, &mut c_functions, &self.global_var_types,
-          &self.types, &pm);
+          &mut self.context, &mut module, &mut ee.get_target_data(), &mut self.module, &mut external_globals,
+          &mut external_functions, &mut c_functions, &pm);
       jit.codegen_module(&node)?
     };
     
