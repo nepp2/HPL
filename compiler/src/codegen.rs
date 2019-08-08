@@ -5,7 +5,8 @@ use crate::error::{Error, error, error_raw, ErrorContent};
 use crate::expr::RefStr;
 use crate::typecheck::{
   TypedNode, Content, Type, Val, TypeDefinition, TypeKind,
-  FunctionDefinition, VarScope, TypedModule, FunctionImplementation };
+  FunctionDefinition, VarScope, TypedModule, FunctionImplementation,
+  TOP_LEVEL_FUNCTION_NAME };
 
 use std::rc::Rc;
 use std::collections::HashMap;
@@ -1128,7 +1129,7 @@ impl <'l> Gen<'l> {
   }
 
   /// Code-generates a module, returning a reference to the top-level function in the module
-  pub fn codegen_module(self, node : &TypedNode) -> Result<FunctionValue, Error> {
-    self.codegen_function(&node, &node, "top_level", &[], &[])
+  pub fn codegen_module(self, node : &TypedNode) -> Result<(), Error> {
+    self.codegen_function(&node, &node, TOP_LEVEL_FUNCTION_NAME, &[], &[])
   }
 }

@@ -3,9 +3,10 @@ use crate::error::{Error, error, error_raw};
 use crate::expr::{StringCache, RefStr, Expr};
 use crate::lexer;
 use crate::parser;
+use crate::typecheck;
 use crate::typecheck::{
   Type, Val, TypeDefinition, FunctionDefinition,
-  TypeChecker, TypedNode, TypedModule };
+  TypeChecker, TypedNode, TypedModule, TOP_LEVEL_FUNCTION_NAME };
 use crate::codegen::{dump_module, Gen};
 use crate::c_interface::CLibraries;
 
@@ -42,7 +43,6 @@ fn execute<T>(function_name : &str, ee : &ExecutionEngine) -> T {
 }
 
 pub struct CompiledExpression {
-  pub f : FunctionValue,
   pub ee : ExecutionEngine,
   pub m : Module,
   pub node : TypedNode,
@@ -119,10 +119,7 @@ impl Interpreter {
     // TODO: provide an option for this?
     // println!("{}", display_expr(expr));
 
-    let mut type_checker =
-      TypeChecker::new(
-        true, HashMap::new(), &mut self.module, &self.c_libs.local_symbol_table, &self.cache);
-    let node = type_checker.to_ast(expr)?;
+    let mut typed_module = typecheck::to_typed_module(&self.c_libs.local_symbol_table, &self.cache, expr)?;
     let module_name = format!("module_{}", self.modules.len());
     let mut module = self.context.create_module(&module_name);
 
@@ -147,12 +144,12 @@ impl Interpreter {
     let mut external_globals : HashMap<RefStr, GlobalValue> = HashMap::new();
     let mut external_functions : HashMap<RefStr, FunctionValue> = HashMap::new();
     let mut c_functions : HashMap<RefStr, (FunctionValue, usize)> = HashMap::new();
-    let f = {
+    {
       let jit =
         Gen::new(
           &mut self.context, &mut module, &mut ee.get_target_data(), &mut self.module, &mut external_globals,
           &mut external_functions, &mut c_functions, &pm);
-      jit.codegen_module(&node)?
+      jit.codegen_module(&typed_module)?
     };
     
     // TODO: provide an option for this?
@@ -196,15 +193,14 @@ impl Interpreter {
     // TODO: is this needed?
     ee.run_static_constructors();
 
-    self.modules.push(CompiledExpression { f, ee, m: module, node });
+    self.modules.push(CompiledExpression { ee, m: module, node });
     Ok(self.modules.last().unwrap())
   }
 
   pub fn run_unwrapped<T>(&mut self, code : &str) -> Result<T, Error> {
     let expr = self.parse_string(code)?;
     let c = self.compile_expression(&expr)?;
-    let f = c.f.get_name().to_str().unwrap();
-    let v : T = execute(f, &c.ee);
+    let v : T = execute(TOP_LEVEL_FUNCTION_NAME, &c.ee);
     Ok(v)
   }
 
@@ -235,7 +231,7 @@ impl Interpreter {
 
   pub fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
     let c = self.compile_expression(expr)?;
-    let f = c.f.get_name().to_str().unwrap();
+    let f = TOP_LEVEL_FUNCTION_NAME;
     let result = match &c.node.type_tag {
       Type::Bool => Val::Bool(execute::<bool>(f, &c.ee)),
       Type::F64 => Val::F64(execute::<f64>(f, &c.ee)),

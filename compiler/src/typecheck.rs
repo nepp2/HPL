@@ -8,6 +8,9 @@ use crate::expr::{StringCache, RefStr, Expr, ExprTag};
 use std::collections::HashMap;
 use itertools::Itertools;
 
+use im_rc::HashMap as ImMap;
+
+
 #[derive(Clone, PartialEq, Debug)]
 pub enum Type {
   Void,
@@ -118,6 +121,8 @@ impl PartialEq for TypeDefinition {
   }
 }
 
+pub static TOP_LEVEL_FUNCTION_NAME : &'static str = "top_level";
+
 #[derive(Debug, Clone, Copy)]
 pub enum VarScope { Local, Global }
 
@@ -176,15 +181,16 @@ fn node(expr : &Expr, type_tag : Type, content : Content) -> TypedNode {
   }
 }
 
+#[derive(Clone)]
 pub struct TypedModule {
-  pub types : HashMap<RefStr, TypeDefinition>,
-  pub functions : HashMap<RefStr, FunctionDefinition>,
-  pub globals : HashMap<RefStr, Type>,
+  pub types : ImMap<RefStr, Rc<TypeDefinition>>,
+  pub functions : ImMap<RefStr, Rc<FunctionDefinition>>,
+  pub globals : ImMap<RefStr, Type>,
 }
 
 impl TypedModule {
   pub fn new() -> TypedModule {
-    TypedModule{ types: HashMap::new(), functions: HashMap::new(), globals: HashMap::new() }
+    TypedModule{ types: ImMap::new(), functions: ImMap::new(), globals: ImMap::new() }
   }
 }
 
@@ -310,7 +316,7 @@ impl <'l> TypeChecker<'l> {
     }
     let name = self.cache.get(name);
     let def = TypeDefinition { name: name.clone(), fields, kind };
-    self.module.types.insert(name.clone(), def);
+    self.module.types.insert(name.clone(), Rc::new(def));
     Ok(node(expr, Type::Void, Content::TypeDefinition(name)))
   }
 
@@ -494,7 +500,7 @@ impl <'l> TypeChecker<'l> {
           signature,
           implementation: FunctionImplementation::CFunction(address),
         };
-        self.module.functions.insert(name.clone(), def);
+        self.module.functions.insert(name.clone(), Rc::new(def));
         
         Ok(node(expr, Type::Void, Content::CFunctionPrototype(name)))
       }
@@ -530,7 +536,7 @@ impl <'l> TypeChecker<'l> {
           signature,
           implementation: FunctionImplementation::Normal(body),
         };
-        self.module.functions.insert(name.clone(), def);
+        self.module.functions.insert(name.clone(), Rc::new(def));
         Ok(node(expr, Type::Void, Content::FunctionDefinition(name)))
       }
       ("union", exprs) => {
@@ -684,114 +690,27 @@ impl <'l> TypeChecker<'l> {
       // _ => error(expr, "unsupported expression"),
     }
   }
+}
 
-  // fn typecheck_function(&mut self, expr : &Expr) -> Result<TypedFunction, Error> {
-  //   if let ExprTag::Symbol(s) = &expr.tag {
-  //     let children = expr.children.as_slice();
-  //     match (s.as_str(), children) {
-  //       ("fun", exprs) => {
-  //         let name = self.cache.get(exprs[0].symbol_unwrap()?);
-  //         let args_exprs = exprs[1].children.as_slice();
-  //         let function_body = &exprs[2];
-  //         let mut arg_names = vec!();
-  //         let mut arg_types = vec!();
-  //         for (name_expr, type_expr) in args_exprs.iter().tuples() {
-  //           let name = self.cache.get(name_expr.symbol_unwrap()?);
-  //           let type_tag = self.to_type(type_expr)?;
-  //           if type_tag == Type::Void {
-  //             return error(expr, "functions args cannot be void");
-  //           }
-  //           arg_names.push(name);
-  //           arg_types.push(type_tag);
-  //         }
-  //         let mut empty_global_map = HashMap::new(); // hide globals from child functions
-  //         return self.typecheck_function_body(name, arg_names, arg_types, function_body, &mut empty_global_map);
-  //       }
-  //       _ => (),
-  //     }
-  //   }
-  //   return error(expr, "unsupported expression");
-  // }
-
-  // fn typecheck_top_level_function(&mut self, expr : &Expr) -> Result<TypedFunction, Error> {
-  //   let name = self.cache.get("top_level");
-  //   self.typecheck_function_body(name, vec!(), vec!(), expr, self.global_variables)
-  // }
-
-  // fn typecheck_function_body(
-  //   &mut self, name : RefStr,
-  //   arg_names : Vec<RefStr>, arg_types : Vec<Type>,
-  //   function_body : &Expr, global_map : &mut HashMap<RefStr, Type>)
-  //     -> Result<TypedFunction, Error>
-  // {
-  //   let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
-  //   let mut type_checker =
-  //     TypeChecker::new(false, args, self.functions, self.types, global_map, self.local_symbol_table, self.cache);
-  //   let body = type_checker.to_ast(function_body)?;
-  //   let signature = Rc::new(FunctionSignature {
-  //     return_type: body.type_tag.clone(),
-  //     args: arg_types,
-  //   });
-  //   let def = FunctionDefinition {
-  //     name: name.clone(),
-  //     args: arg_names,
-  //     signature,
-  //     c_function_address: None,
-  //   };
-  //   return Ok(TypedFunction { def, body });
-  // }
-
-//   pub fn typecheck(&mut self, expr : &Expr) -> Result<TypedModule, Error> {
-//     fn find_definitions<'e>(expr : &'e Expr, types : &mut Vec<&'e Expr>, functions : &mut Vec<&'e Expr>) {
-//       let children = expr.children.as_slice();
-//       if children.len() == 0 { return }
-//       if let ExprTag::Symbol(s) = &expr.tag {
-//         match s.as_str() {
-//           "union" => {
-//             types.push(expr);
-//             return;
-//           }
-//           "struct" => {
-//             types.push(expr);
-//             return;
-//           }
-//           "fun" => {
-//             functions.push(expr);
-//           }
-//           _ => (),
-//         }
-//       }
-//       for c in children {
-//         find_definitions(c, types, functions);
-//       }
-//     }
-
-//     let mut type_exprs = vec!();
-//     let mut function_exprs = vec!();
-//     find_definitions(expr, &mut type_exprs, &mut function_exprs);
-//     // TODO register the types as available (somehow)
-//     // TODO process all of the types
-//     let mut new_types = HashMap::new();
-//     let types = type_exprs.iter().map(|e| self.to_type_definition(e, &mut new_types)).collect::<Result<Vec<TypeDefinition>, Error>>()?;
-//     for t in types.iter() {
-//       new_types.remove(&t.name);
-//     }
-//     let errors = new_types.iter().collect::<Vec<_>>();
-//     errors.sort_by_key(|(_, loc)| loc.start.line);
-//     if let Some((name, loc)) = errors.first() {
-//       return error(*loc, format!("type '{}' does not exist", name));
-//     }
-//     let top_level_function = self.typecheck_top_level_function(expr)?;
-//     let mut functions = vec!();
-//     for e in function_exprs.iter() {
-//       let f = self.typecheck_function(e)?;
-//       functions.push(f);
-//     }
-
-//     let globals = HashMap::new(); // TODO BROKEN
-//     let types = types.into_iter().map(|def| (def.name.clone(), def)).collect();
-//     let functions = functions.into_iter().map(|f| (f.def.name.clone(), f)).collect();
-
-//     Ok(TypedModule { types, functions, globals })
-//   }
+pub fn to_typed_module(local_symbol_table : &HashMap<RefStr, usize>, modules : &[TypedModule], cache : &StringCache, expr : &Expr) -> Result<TypedModule, Error> {
+  let mut module = TypedModule::new();
+  let mut type_checker =
+    TypeChecker::new(true, HashMap::new(), &mut module, local_symbol_table, cache);
+  let body = type_checker.to_ast(expr)?;
+  let name = cache.get(TOP_LEVEL_FUNCTION_NAME);
+  if module.functions.contains_key(name.as_ref()) {
+    return error(expr, "function with that name already defined");
+  }
+  let signature = Rc::new(FunctionSignature {
+    return_type: body.type_tag.clone(),
+    args: vec!(),
+  });
+  let def = FunctionDefinition {
+    name: name.clone(),
+    args: vec!(),
+    signature,
+    implementation: FunctionImplementation::Normal(body),
+  };
+  module.functions.insert(name.clone(), Rc::new(def));
+  Ok(module)
 }
