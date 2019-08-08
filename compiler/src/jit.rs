@@ -45,15 +45,15 @@ fn execute<T>(function_name : &str, ee : &ExecutionEngine) -> T {
 pub struct CompiledExpression {
   pub ee : ExecutionEngine,
   pub m : Module,
-  pub node : TypedNode,
+  pub typed_module : TypedModule,
 }
 
 pub struct Interpreter {
   pub cache : StringCache,
   pub context : Context,
-  pub modules : Vec<CompiledExpression>,
+  pub expressions : Vec<CompiledExpression>,
   pub c_libs : CLibraries,
-  pub module : TypedModule,
+  pub global_module : TypedModule,
 }
 
 impl Interpreter {
@@ -75,11 +75,11 @@ impl Interpreter {
 
     let cache = StringCache::new();
     let context = Context::create();
-    let modules = vec!();
+    let expressions = vec!();
     let c_libs = CLibraries::new();
-    let module = TypedModule::new();
+    let global_module = TypedModule::new();
     
-    let mut i = Interpreter { cache, context, modules, c_libs, module };
+    let mut i = Interpreter { cache, context, expressions, c_libs, global_module };
     
     // load prelude
     if let Err(e) = i.load_prelude() {
@@ -119,8 +119,14 @@ impl Interpreter {
     // TODO: provide an option for this?
     // println!("{}", display_expr(expr));
 
-    let mut typed_module = typecheck::to_typed_module(&self.c_libs.local_symbol_table, &self.cache, expr)?;
-    let module_name = format!("module_{}", self.modules.len());
+    let typed_module = typecheck::to_typed_module(&self.c_libs.local_symbol_table, &[self.global_module.clone()], &self.cache, expr)?;
+
+    // add module contents to the global interpreter module
+    self.global_module.functions = self.global_module.functions.clone().union(typed_module.functions.clone());
+    self.global_module.types = self.global_module.types.clone().union(typed_module.types.clone());
+    self.global_module.globals = self.global_module.globals.clone().union(typed_module.globals.clone());
+
+    let module_name = format!("expression_{}", self.expressions.len());
     let mut module = self.context.create_module(&module_name);
 
     let ee =
@@ -147,7 +153,7 @@ impl Interpreter {
     {
       let jit =
         Gen::new(
-          &mut self.context, &mut module, &mut ee.get_target_data(), &mut self.module, &mut external_globals,
+          &mut self.context, &mut module, &mut ee.get_target_data(), &mut self.global_module, &mut external_globals,
           &mut external_functions, &mut c_functions, &pm);
       jit.codegen_module(&typed_module)?
     };
@@ -162,7 +168,7 @@ impl Interpreter {
 
     // Link global variables
     for (global_name, global_value) in external_globals.iter() {
-      for c in self.modules.iter() {
+      for c in self.expressions.iter() {
         if let Some(g) = c.m.get_global(global_name) {
           if g.get_linkage() == Linkage::Internal {
             unsafe {
@@ -177,7 +183,7 @@ impl Interpreter {
 
     // Link external functions
     for (function_name, function_value) in external_functions.iter() {
-      for c in self.modules.iter() {
+      for c in self.expressions.iter() {
         if let Some(f) = c.m.get_function(function_name) {
           if f.count_basic_blocks() > 0 {
             unsafe {
@@ -193,8 +199,8 @@ impl Interpreter {
     // TODO: is this needed?
     ee.run_static_constructors();
 
-    self.modules.push(CompiledExpression { ee, m: module, node });
-    Ok(self.modules.last().unwrap())
+    self.expressions.push(CompiledExpression { ee, m: module, typed_module });
+    Ok(self.expressions.last().unwrap())
   }
 
   pub fn run_unwrapped<T>(&mut self, code : &str) -> Result<T, Error> {
@@ -232,7 +238,8 @@ impl Interpreter {
   pub fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
     let c = self.compile_expression(expr)?;
     let f = TOP_LEVEL_FUNCTION_NAME;
-    let result = match &c.node.type_tag {
+    let def = c.typed_module.functions.get(TOP_LEVEL_FUNCTION_NAME).unwrap();
+    let result = match &def.signature.return_type {
       Type::Bool => Val::Bool(execute::<bool>(f, &c.ee)),
       Type::F64 => Val::F64(execute::<f64>(f, &c.ee)),
       Type::F32 => Val::F32(execute::<f32>(f, &c.ee)),

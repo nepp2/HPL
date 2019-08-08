@@ -1129,7 +1129,17 @@ impl <'l> Gen<'l> {
   }
 
   /// Code-generates a module, returning a reference to the top-level function in the module
-  pub fn codegen_module(self, node : &TypedNode) -> Result<(), Error> {
-    self.codegen_function(&node, &node, TOP_LEVEL_FUNCTION_NAME, &[], &[])
+  pub fn codegen_module(mut self, module : &TypedModule) -> Result<(), Error> {
+    let gen = &mut self;
+    for (name, f) in module.functions.iter() {
+      match &f.implementation {
+        FunctionImplementation::Normal(body) => {
+          let child = gen.child_function_gen();
+          child.codegen_function(body, body, name, f.args.as_slice(), f.signature.args.as_slice())?;
+        }
+        _ => (),
+      }
+    }
+    Ok(())
   }
 }

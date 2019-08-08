@@ -39,15 +39,15 @@ struct expr_tag
   data : expr_data
 end
 
-struct expr_array
-  data : ptr(expr)
-  length : u64
-end
+# struct expr_array
+#   data : ptr(expr)
+#   length : u64
+# end
 
-struct expr
-  children : expr_array
-  loc : text_location
-  tag : expr_tag
-end
+# struct expr
+#   children : expr_array
+#   loc : text_location
+#   tag : expr_tag
+# end
 
 cfun print_expr(e : ptr(u8))
