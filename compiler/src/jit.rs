@@ -46,7 +46,7 @@ pub struct CompiledExpression {
   pub typed_module : TypedModule,
 }
 
-pub struct Interpreter {
+pub struct InterpreterInner {
   pub cache : StringCache,
   pub context : Context,
   pub expressions : Vec<CompiledExpression>,
@@ -54,38 +54,44 @@ pub struct Interpreter {
   pub global_module : TypedModule,
 }
 
-impl Interpreter {
-  pub fn new() -> Interpreter {
+pub type Interpreter = Box<InterpreterInner>;
 
-    unsafe {
-      if !LOADED_SYMBOLS {
-        // TODO: delete?
-        Target::initialize_native(&InitializationConfig::default()).expect("Failed to initialize native target");
+pub fn interpreter() -> Interpreter {
+  unsafe {
+    if !LOADED_SYMBOLS {
+      // TODO: delete?
+      Target::initialize_native(&InitializationConfig::default()).expect("Failed to initialize native target");
 
-        // This makes sure that any symbols in the main executable can be
-        // linked to the code we generate with the JIT. This includes any
-        // DLLs used by the main exe.
-        LLVMLoadLibraryPermanently(std::ptr::null());
+      // This makes sure that any symbols in the main executable can be
+      // linked to the code we generate with the JIT. This includes any
+      // DLLs used by the main exe.
+      LLVMLoadLibraryPermanently(std::ptr::null());
 
-        LOADED_SYMBOLS = true;
-      }
+      LOADED_SYMBOLS = true;
     }
-
-    let cache = StringCache::new();
-    let context = Context::create();
-    let expressions = vec!();
-    let c_symbols = CSymbols::new();
-    let global_module = TypedModule::new();
-    
-    let mut i = Interpreter { cache, context, expressions, c_symbols, global_module };
-    
-    // load prelude
-    if let Err(e) = i.load_prelude() {
-      println!("error loading prelude, {}", e);
-    }
-    
-    return i;
   }
+
+  let cache = StringCache::new();
+  let context = Context::create();
+  let expressions = vec!();
+  let c_symbols = CSymbols::new();
+  let global_module = TypedModule::new();
+  
+  let mut i = Box::new(InterpreterInner { cache, context, expressions, c_symbols, global_module });
+
+  let i_raw = (&mut *i) as *mut InterpreterInner;
+
+  i.c_symbols.populate(i_raw);
+  
+  // load prelude
+  if let Err(e) = i.load_prelude() {
+    println!("error loading prelude, {}", e);
+  }
+  
+  return i;
+}
+
+impl InterpreterInner {
 
   fn load_module(&mut self, code : &str) -> Result<(), Error> {
     let expr = self.parse_string(code)?;

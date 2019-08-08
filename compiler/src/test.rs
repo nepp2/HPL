@@ -1,6 +1,6 @@
 
 use crate::error::Error;
-use crate::jit::Interpreter;
+use crate::jit::{Interpreter, interpreter};
 use crate::typecheck::Val;
 use crate::c_interface::SStr;
 
@@ -21,7 +21,7 @@ fn assert_result_with_interpreter(i : &mut Interpreter, code : &str, expected_re
 }
 
 fn assert_result(code : &str, expected_result : Val){
-  let mut i = Interpreter::new();
+  let mut i = interpreter();
   assert_result_with_interpreter(&mut i, code, expected_result)
 }
 
@@ -217,7 +217,7 @@ rusty_fork_test! {
 
   #[test]
   fn test_jit_module_variable_linking() {
-    let mut i = Interpreter::new();
+    let mut i = interpreter();
     let a = "let foo = 5";
     let b = "foo";
     assert_result_with_interpreter(&mut i, a, Val::Void);
@@ -226,7 +226,7 @@ rusty_fork_test! {
 
   #[test]
   fn test_jit_module_function_linking() {
-    let mut i = Interpreter::new();
+    let mut i = interpreter();
     let a = "
       fun foobar()
         843
@@ -248,7 +248,7 @@ rusty_fork_test! {
 
   #[test]
   fn test_struct_format() {
-    let mut i = Interpreter::new();
+    let mut i = interpreter();
     #[repr(C)]
     struct Blah {
       x : i32,
@@ -291,7 +291,7 @@ rusty_fork_test! {
   // TODO: this test isn't very good
   #[test]
   fn test_string() {
-    let mut i = Interpreter::new();
+    let mut i = interpreter();
     let code = r#"
       fun main(a : ptr(string))
         a[0] = "Hello world"

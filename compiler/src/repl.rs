@@ -2,13 +2,13 @@
 use crate::lexer;
 use crate::parser;
 use crate::parser::ReplParseResult::{Complete, Incomplete};
-use crate::jit::Interpreter;
+use crate::jit::interpreter;
 
 use rustyline::Editor;
 
 pub fn run_repl() {
   let mut rl = Editor::<()>::new();
-  let mut i = Interpreter::new();
+  let mut i = interpreter();
 
   loop {
     let mut input_line = rl.readline("repl> ").unwrap();

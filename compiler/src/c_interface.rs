@@ -1,6 +1,6 @@
 // external C interface for the compiler (so that the language can use it)
 
-use crate::jit::Interpreter;
+use crate::jit::{InterpreterInner, Interpreter, interpreter};
 use crate::lexer;
 use crate::expr::{RefStr, Expr};
 
@@ -16,7 +16,7 @@ use std::{thread, time};
 
 #[no_mangle]
 pub extern fn create_interpreter() -> *mut Interpreter {
-  Box::into_raw(Box::new(Interpreter::new()))
+  Box::into_raw(Box::new(interpreter()))
 }
 
 #[no_mangle]
@@ -157,7 +157,15 @@ pub struct CSymbols {
 
 impl CSymbols {
   pub fn new() -> CSymbols {
-    let mut sym = HashMap::new();
+    CSymbols {
+      local_symbol_table: HashMap::new(),
+      shared_libraries: HashMap::new(),
+      lib_handle_counter: 0,
+    }
+  }
+
+  pub fn populate(&mut self, i : *mut InterpreterInner) {
+    let sym = &mut self.local_symbol_table;
     sym.insert("load_library".into(), (load_library_c as *const()) as usize);
     sym.insert("load_symbol".into(), (load_symbol as *const()) as usize);
     sym.insert("malloc".into(), (malloc as *const()) as usize);
@@ -165,11 +173,6 @@ impl CSymbols {
     sym.insert("print_expr".into(), (print_expr as *const()) as usize);
     sym.insert("test_add".into(), (test_add as *const()) as usize);
     sym.insert("thread_sleep".into(), (thread_sleep as *const()) as usize);
-
-    CSymbols {
-      local_symbol_table: sym,
-      shared_libraries: HashMap::new(),
-      lib_handle_counter: 0,
-    }
+    sym.insert("interpreter".into(), (i as *const()) as usize);
   }
 }

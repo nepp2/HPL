@@ -26,7 +26,7 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::env;
 
-use crate::jit::Interpreter;
+use crate::jit::interpreter;
 use crate::typecheck::Val;
 use crate::error::Error;
 
@@ -42,7 +42,7 @@ fn load_and_run(path : &str) {
   let mut f = File::open(path).expect("file not found");
   let mut code = String::new();
   f.read_to_string(&mut code).unwrap();
-  let mut i = Interpreter::new();
+  let mut i = interpreter();
   let result = i.run(&code);
   println!("{}", print_result(result));
 }
