@@ -181,11 +181,17 @@ fn node(expr : &Expr, type_tag : Type, content : Content) -> TypedNode {
   }
 }
 
+pub struct GlobalDefinition {
+  name : RefStr,
+  type_tag : Type,
+  c_address : Option<usize>,
+}
+
 #[derive(Clone)]
 pub struct TypedModule {
   pub types : ImMap<RefStr, Rc<TypeDefinition>>,
   pub functions : ImMap<RefStr, Rc<FunctionDefinition>>,
-  pub globals : ImMap<RefStr, Type>,
+  pub globals : ImMap<RefStr, Rc<GlobalDefinition>>,
 }
 
 impl TypedModule {
@@ -245,7 +251,7 @@ impl <'l> TypeChecker<'l> {
     f(self.module).get(name).or_else(|| self.modules.iter().flat_map(|m| f(m).get(name)).nth(0))
   }
 
-  fn find_global(&self, name : &str) -> Option<&Type> {
+  fn find_global(&self, name : &str) -> Option<&Rc<GlobalDefinition>> {
     self.find_f(name, |m| &m.globals)
   }
 
@@ -257,8 +263,8 @@ impl <'l> TypeChecker<'l> {
     self.find_f(name, |m| &m.types)
   }
 
-  fn add_global(&mut self, name : RefStr, t : Type) {
-    self.module.globals.insert(name, t);
+  fn add_global(&mut self, name : RefStr, def : Rc<GlobalDefinition>) {
+    self.module.globals.insert(name, def);
   }
 
   fn add_function(&mut self, name : RefStr, def : FunctionDefinition) {
