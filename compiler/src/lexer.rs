@@ -32,7 +32,7 @@ struct CStream<'l> {
   loc : StreamLocation,
   tokens : Vec<Token>,
   errors : Vec<Error>,
-  symbols : &'l mut StringCache,
+  symbols : &'l StringCache,
   current_token : String,
 }
 
@@ -52,7 +52,7 @@ impl From<StreamLocation> for TextMarker {
 
 impl <'l> CStream<'l> {
 
-  fn new(chars : Vec<char>, symbols : &mut StringCache) -> CStream {
+  fn new(chars : Vec<char>, symbols : &StringCache) -> CStream {
     CStream {
       chars,
       loc : StreamLocation { pos: 0, line: 1, line_start: 0 },
@@ -321,7 +321,7 @@ impl <'l> CStream<'l> {
   }
 }
 
-pub fn lex(code : &str, symbols : &mut StringCache) -> Result<Vec<Token>, Vec<Error>> {
+pub fn lex(code : &str, symbols : &StringCache) -> Result<Vec<Token>, Vec<Error>> {
 
   fn lex_with_errors(cs : &mut CStream) -> Result<(), Error> {
     while cs.has_chars() {

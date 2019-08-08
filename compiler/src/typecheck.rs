@@ -208,7 +208,7 @@ pub struct TypeChecker<'l> {
   /// Used to rename variables with clashing names.
   scope_map: Vec<HashMap<RefStr, RefStr>>,
 
-  cache: &'l mut StringCache,
+  cache: &'l StringCache,
 }
 
 impl <'l> TypeChecker<'l> {
@@ -218,7 +218,7 @@ impl <'l> TypeChecker<'l> {
     variables : HashMap<RefStr, Type>,
     module : &'l mut TypedModule,
     local_symbol_table : &'l HashMap<RefStr, usize>,
-    cache : &'l mut StringCache)
+    cache : &'l StringCache)
       -> TypeChecker<'l>
   {
     let global_map = module.globals.keys().map(|n| (n.clone(), n.clone())).collect();

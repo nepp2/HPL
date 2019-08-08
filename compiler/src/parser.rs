@@ -10,14 +10,14 @@ static EXPECTED_TOKEN_ERROR : &str = "Expected token. Found nothing.";
 struct ParseState<'l> {
   tokens : Vec<Token>,
   pos : usize,
-  cache : &'l mut StringCache,
+  cache : &'l StringCache,
 }
 
 use TokenType::*;
 
 impl <'l> ParseState<'l> {
 
-  fn new(tokens : Vec<Token>, cache : &mut StringCache,) -> ParseState {
+  fn new(tokens : Vec<Token>, cache : &StringCache,) -> ParseState {
     ParseState { tokens, pos: 0, cache }
   }
 
@@ -714,7 +714,7 @@ fn parse_block(ps : &mut ParseState) -> Result<Expr, Error> {
   Ok(ps.add_tree("block", exprs, start))
 }
 
-pub fn parse(tokens : Vec<Token>, symbols : &mut StringCache) -> Result<Expr, Error> {
+pub fn parse(tokens : Vec<Token>, symbols : &StringCache) -> Result<Expr, Error> {
   let mut ps = ParseState::new(tokens, symbols);
   let e = parse_block(&mut ps)?;
   if ps.has_tokens() {

@@ -198,6 +198,8 @@ impl fmt::Display for Expr {
   }
 }
 
+/// This cache uses internal mutability to cache strings. It should be safe,
+/// because the strings themselves are immutable.
 #[derive(Default, Clone)]
 pub struct StringCache {
   symbols : RefCell<HashSet<RefStr>>,

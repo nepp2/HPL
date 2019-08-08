@@ -105,9 +105,9 @@ impl Interpreter {
 
   fn parse_string(&mut self, code : &str) -> Result<Expr, Error> {
     let tokens =
-      lexer::lex(code, &mut self.cache)
+      lexer::lex(code, &self.cache)
       .map_err(|mut es| es.remove(0))?;
-    parser::parse(tokens, &mut self.cache)
+    parser::parse(tokens, &self.cache)
   }
 
   pub fn run(&mut self, code : &str) -> Result<Val, Error> {;
@@ -121,7 +121,7 @@ impl Interpreter {
 
     let mut type_checker =
       TypeChecker::new(
-        true, HashMap::new(), &mut self.module, &self.c_libs.local_symbol_table, &mut self.cache);
+        true, HashMap::new(), &mut self.module, &self.c_libs.local_symbol_table, &self.cache);
     let node = type_checker.to_ast(expr)?;
     let module_name = format!("module_{}", self.modules.len());
     let mut module = self.context.create_module(&module_name);
