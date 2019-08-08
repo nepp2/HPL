@@ -5,10 +5,8 @@ use crate::error::{Error, error, error_raw, ErrorContent};
 use crate::expr::RefStr;
 use crate::typecheck::{
   TypedNode, Content, Type, Val, TypeDefinition, TypeKind,
-  FunctionDefinition, VarScope, TypedModule, FunctionImplementation,
-  TOP_LEVEL_FUNCTION_NAME };
+  FunctionDefinition, VarScope, TypedModule, FunctionImplementation };
 
-use std::rc::Rc;
 use std::collections::HashMap;
 
 use inkwell::AddressSpace;

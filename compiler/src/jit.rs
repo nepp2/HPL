@@ -5,12 +5,10 @@ use crate::lexer;
 use crate::parser;
 use crate::typecheck;
 use crate::typecheck::{
-  Type, Val, TypeDefinition, FunctionDefinition,
-  TypeChecker, TypedNode, TypedModule, TOP_LEVEL_FUNCTION_NAME };
-use crate::codegen::{dump_module, Gen};
-use crate::c_interface::CLibraries;
+  Type, Val, TypedModule, TOP_LEVEL_FUNCTION_NAME };
+use crate::codegen::Gen; // TODO {dump_module}
+use crate::c_interface::CSymbols;
 
-use std::rc::Rc;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
@@ -52,7 +50,7 @@ pub struct Interpreter {
   pub cache : StringCache,
   pub context : Context,
   pub expressions : Vec<CompiledExpression>,
-  pub c_libs : CLibraries,
+  pub c_symbols : CSymbols,
   pub global_module : TypedModule,
 }
 
@@ -76,10 +74,10 @@ impl Interpreter {
     let cache = StringCache::new();
     let context = Context::create();
     let expressions = vec!();
-    let c_libs = CLibraries::new();
+    let c_symbols = CSymbols::new();
     let global_module = TypedModule::new();
     
-    let mut i = Interpreter { cache, context, expressions, c_libs, global_module };
+    let mut i = Interpreter { cache, context, expressions, c_symbols, global_module };
     
     // load prelude
     if let Err(e) = i.load_prelude() {
@@ -119,7 +117,7 @@ impl Interpreter {
     // TODO: provide an option for this?
     // println!("{}", display_expr(expr));
 
-    let typed_module = typecheck::to_typed_module(&self.c_libs.local_symbol_table, &[self.global_module.clone()], &self.cache, expr)?;
+    let typed_module = typecheck::to_typed_module(&self.c_symbols.local_symbol_table, &[self.global_module.clone()], &self.cache, expr)?;
 
     // add module contents to the global interpreter module
     self.global_module.functions = self.global_module.functions.clone().union(typed_module.functions.clone());

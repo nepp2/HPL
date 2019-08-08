@@ -4,8 +4,7 @@ use std::time::Duration;
 use std::thread;
 use std::default::Default;
 
-use std::process::{Command, Stdio, Child };
-use std::io::{Read, BufReader, BufRead};
+use std::io::{BufReader, BufRead};
 use std::str;
 
 use subprocess::{Popen, PopenConfig, Redirection};
@@ -31,15 +30,6 @@ pub fn run_process(path : &str) -> Popen {
     println!("Watcher stdout thread terminating");
   });
   p
-  // let exe = std::env::current_exe().unwrap();
-  // let exe = exe.to_str().unwrap();
-  // let mut child =
-  //   Command::new(exe)
-  //     .args(&["run", path])
-  //     .stdin(Stdio::piped())
-  //     .stdout(Stdio::piped());
-  //     .spawn().expect("failed to execute child");
-  // child
 }
 
 pub fn watch(path : &str) {

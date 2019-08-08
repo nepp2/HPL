@@ -149,14 +149,14 @@ pub extern "C" fn print_expr(e : &Expr) {
   println!("{}", e);
 }
 
-pub struct CLibraries {
+pub struct CSymbols {
   pub local_symbol_table : HashMap<RefStr, usize>,
   pub shared_libraries : HashMap<usize, (RefStr, Library)>,
   pub lib_handle_counter : usize,
 }
 
-impl CLibraries {
-  pub fn new() -> CLibraries {
+impl CSymbols {
+  pub fn new() -> CSymbols {
     let mut sym = HashMap::new();
     sym.insert("load_library".into(), (load_library_c as *const()) as usize);
     sym.insert("load_symbol".into(), (load_symbol as *const()) as usize);
@@ -166,7 +166,7 @@ impl CLibraries {
     sym.insert("test_add".into(), (test_add as *const()) as usize);
     sym.insert("thread_sleep".into(), (thread_sleep as *const()) as usize);
 
-    CLibraries {
+    CSymbols {
       local_symbol_table: sym,
       shared_libraries: HashMap::new(),
       lib_handle_counter: 0,
