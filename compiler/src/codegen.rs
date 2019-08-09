@@ -182,6 +182,9 @@ pub struct Gen<'l> {
   /// Used by the JIT to link c functions
   c_functions: &'l mut HashMap<RefStr, (FunctionValue, usize)>,
 
+  /// Used by the JIT to link c globals
+  c_globals: &'l mut HashMap<RefStr, (GlobalValue, usize)>,
+
   struct_types: HashMap<RefStr, StructType>,
 
   pm : &'l PassManager<FunctionValue>,
@@ -208,6 +211,7 @@ impl <'l> Gen<'l> {
     external_globals: &'l mut HashMap<RefStr, GlobalValue>,
     external_functions: &'l mut HashMap<RefStr, FunctionValue>,
     c_functions: &'l mut HashMap<RefStr, (FunctionValue, usize)>,
+    c_globals: &'l mut HashMap<RefStr, (GlobalValue, usize)>,
     pm : &'l PassManager<FunctionValue>,
   )
       -> Gen<'l>
@@ -219,6 +223,7 @@ impl <'l> Gen<'l> {
       external_globals,
       external_functions,
       c_functions,
+      c_globals,
       struct_types: HashMap::new(),
       pm,
     }
@@ -1018,7 +1023,12 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
           let t = self.gen.to_basic_type(&def.type_tag).unwrap();
           let gv = self.gen.module.add_global(t, Some(AddressSpace::Generic), &name);
           gv.set_constant(false);
-          self.gen.external_globals.insert(name.clone(), gv);
+          if let Some(address) = def.c_address {
+            self.gen.c_globals.insert(name.clone(), (gv, address));
+          }
+          else {
+            self.gen.external_globals.insert(name.clone(), gv);
+          }
           pointer(gv.as_pointer_value())
         }
         else {

@@ -154,11 +154,12 @@ impl InterpreterInner {
     let mut external_globals : HashMap<RefStr, GlobalValue> = HashMap::new();
     let mut external_functions : HashMap<RefStr, FunctionValue> = HashMap::new();
     let mut c_functions : HashMap<RefStr, (FunctionValue, usize)> = HashMap::new();
+    let mut c_globals : HashMap<RefStr, (GlobalValue, usize)> = HashMap::new();
     {
       let jit =
         Gen::new(
           &mut self.context, &mut module, &mut ee.get_target_data(), &mut self.global_module, &mut external_globals,
-          &mut external_functions, &mut c_functions, &pm);
+          &mut external_functions, &mut c_functions, &mut c_globals, &pm);
       jit.codegen_module(&typed_module)?
     };
     
@@ -168,6 +169,11 @@ impl InterpreterInner {
     // Link c functions
     for (function_value, address) in c_functions.values() {
       ee.add_global_mapping(function_value, *address);
+    }
+
+    // Link c globals
+    for (global_value, address) in c_globals.values() {
+      ee.add_global_mapping(global_value, *address);
     }
 
     // Link global variables
