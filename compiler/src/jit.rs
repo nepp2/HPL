@@ -172,31 +172,44 @@ impl InterpreterInner {
 
     // Link global variables
     for (global_name, global_value) in external_globals.iter() {
-      for c in self.expressions.iter() {
-        if let Some(g) = c.m.get_global(global_name) {
-          if g.get_linkage() == Linkage::Internal {
-            unsafe {
-              let address = c.ee.get_global_address(global_name).unwrap();
-              ee.add_global_mapping(global_value, address as usize);
-              break;
-            }
-          }
+      let c = 
+        self.expressions.iter()
+        .filter(|c| {
+          c.m.get_global(global_name)
+          .filter(|g| g.get_linkage() == Linkage::Internal)
+          .is_some()
+        })
+        .nth(0);
+      if let Some(c) = c {
+        unsafe {
+          let address = c.ee.get_global_address(global_name).unwrap();
+          ee.add_global_mapping(global_value, address as usize);
+          break;
         }
+      }
+      else {
+        panic!("compile error: external global '{}' not found", global_name);
       }
     }
 
     // Link external functions
     for (function_name, function_value) in external_functions.iter() {
-      for c in self.expressions.iter() {
-        if let Some(f) = c.m.get_function(function_name) {
-          if f.count_basic_blocks() > 0 {
-            unsafe {
-              let address = c.ee.get_function_address(function_name).unwrap();
-              ee.add_global_mapping(function_value, address as usize);
-              break;
-            }
-          }
+      let c = 
+        self.expressions.iter()
+        .filter(|c| {
+          c.m.get_function(function_name)
+          .filter(|f| f.count_basic_blocks() > 0)
+          .is_some()
+        })
+        .nth(0);
+      if let Some(c) = c {
+        unsafe {
+          let address = c.ee.get_function_address(function_name).unwrap();
+          ee.add_global_mapping(function_value, address as usize);
         }
+      }
+      else {
+        panic!("compile error: external function '{}' not found", function_name);
       }
     }
 

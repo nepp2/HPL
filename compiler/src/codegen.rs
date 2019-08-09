@@ -28,11 +28,12 @@ pub fn dump_module(module : &Module) {
   println!("{}", module.print_to_string().to_string())
 }
 
-macro_rules! unwrap_enum {
-  ( $enum_name:ident, $variant_name:ident, $v:expr) => { 
-    if let $enum_name::$variant_name(x) = $v { x } else { panic!() }
-  };
-}
+// TODO: maybe add this macro to a utils lib?
+// macro_rules! unwrap_enum {
+//   ( $enum_name:ident, $variant_name:ident, $v:expr) => { 
+//     if let $enum_name::$variant_name(x) = $v { x } else { panic!() }
+//   };
+// }
 
 macro_rules! codegen_type {
   (PointerValue, $e:ident, $gen:ident) => { $gen.codegen_pointer($e) };
@@ -150,15 +151,26 @@ fn basic_type(t : AnyTypeEnum) -> Option<BasicTypeEnum> {
   Some(bt)
 }
 
+fn name_basic_type(t : &BasicValueEnum, s : &str) {
+  use BasicValueEnum::*;
+  match t {
+    ArrayValue(v) => v.set_name(s),
+    IntValue(v) => v.set_name(s),
+    FloatValue(v) => v.set_name(s),
+    PointerValue(v) => v.set_name(s),
+    StructValue(v) => v.set_name(s),
+    VectorValue(v) => v.set_name(s),
+  }
+}
+
 #[derive(Copy, Clone)]
 enum ShortCircuitOp { And, Or }
 
-/// Code generates a single function (can spawn children to code-generate internal functions)
+/// Code generates a module
 pub struct Gen<'l> {
   context: &'l mut Context,
   module : &'l mut Module,
   target_data : &'l TargetData,
-  builder: Builder,
   type_info : &'l TypedModule,
 
   /// Used by the JIT to link globals between modules
@@ -170,13 +182,20 @@ pub struct Gen<'l> {
   /// Used by the JIT to link c functions
   c_functions: &'l mut HashMap<RefStr, (FunctionValue, usize)>,
 
-  variables: HashMap<RefStr, PointerValue>,
   struct_types: HashMap<RefStr, StructType>,
+
+  pm : &'l PassManager<FunctionValue>,
+}
+
+/// Code generates a single function (can spawn children to code-generate internal functions)
+pub struct GenFunction<'l, 'lg> {
+  gen : &'l mut Gen<'lg>,
+  builder: Builder,
+
+  variables: HashMap<RefStr, PointerValue>,
 
   /// A stack of values indicating the entry and exit labels for each loop
   loop_labels: Vec<LoopLabels>,
-
-  pm : &'l PassManager<FunctionValue>,
 }
 
 impl <'l> Gen<'l> {
@@ -193,28 +212,225 @@ impl <'l> Gen<'l> {
   )
       -> Gen<'l>
   {
-    let builder = context.create_builder();
-    let variables = HashMap::new();
     Gen {
       context, module,
-      target_data, builder,
+      target_data,
       type_info,
       external_globals,
       external_functions,
       c_functions,
-      variables,
       struct_types: HashMap::new(),
-      loop_labels: vec!(),
       pm,
     }
   }
 
-  pub fn child_function_gen<'lc>(&'lc mut self)
-    -> Gen<'lc>
+  /// Code-generates a module, returning a reference to the top-level function in the module
+  pub fn codegen_module(mut self, module : &TypedModule) -> Result<(), Error> {
+    // generate the prototypes first (so the functions find each other)
+    let mut functions_to_codegen = vec!();
+    for (name, def) in module.functions.iter() {
+      match &def.implementation {
+        FunctionImplementation::Normal(body) => {
+          let p = self.codegen_prototype(name, &body.type_tag, def.args.as_slice(), def.signature.args.as_slice());
+          functions_to_codegen.push((p, def, body));
+        }
+        _ => (),
+      }
+    }
+    // codegen the functions
+    for (p, def, body) in functions_to_codegen {
+      let gen_function = GenFunction::new(&mut self);
+      gen_function.codegen_function(p, body, def.args.as_slice())?;
+    }
+    Ok(())
+  }
+
+  fn codegen_prototype(
+    &mut self, name : &str,
+    return_type : &Type,
+    args : &[RefStr],
+    arg_types : &[Type])
+      -> FunctionValue
   {
-    Gen::new(
-      self.context, self.module, self.target_data, self.type_info, self.external_globals,
-      self.external_functions, self.c_functions, self.pm)
+    let fn_type = self.to_function_type(arg_types, return_type);
+    let function = self.module.add_function(name, fn_type, None);
+
+    let i : u32 = !0; //LLVMAttributeFunctionIndex;
+    //function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("norecurse"), 0));
+    function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("nounwind"), 0));
+    function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("nonlazybind"), 0));
+    //function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("readnone"), 0));
+    function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("uwtable"), 0));
+    function.add_attribute(i, self.context.create_string_attribute("probe-stack", "__rust_probestack"));
+    function.add_attribute(i, self.context.create_string_attribute("target-cpu", "x86-64"));
+
+    // set arguments names
+    for (i, arg) in function.get_param_iter().enumerate() {
+      name_basic_type(&arg, args[i].as_ref());
+    }
+    function
+  }
+
+  fn to_basic_type(&mut self, t : &Type) -> Option<BasicTypeEnum> {
+    match t {
+      Type::Void => None,
+      Type::F64 => Some(self.context.f64_type().into()),
+      Type::F32 => Some(self.context.f32_type().into()),
+      Type::I64 => Some(self.context.i64_type().into()),
+      Type::I32 => Some(self.context.i32_type().into()),
+      Type::U64 => Some(self.context.i64_type().into()),
+      Type::U32 => Some(self.context.i32_type().into()),
+      Type::U16 => Some(self.context.i16_type().into()),
+      Type::U8 => Some(self.context.i8_type().into()),
+      Type::Bool => Some(self.context.bool_type().into()),
+      Type::Fun(sig) => {
+        let t = self.to_function_type(sig.args.as_slice(), &sig.return_type);
+        Some(t.ptr_type(AddressSpace::Generic).into())
+      }
+      Type::Def(name) => {
+        let def = self.type_info.types.get(name).unwrap();
+        Some(self.struct_type(def).as_basic_type_enum())
+      }
+      Type::Ptr(t) => {
+        let bt = self.to_basic_type(t);
+        Some(self.pointer_to_type(bt).into())
+      }
+    }
+  }
+
+
+  fn to_function_type(&mut self, arg_types : &[Type], return_type : &Type) -> FunctionType {
+    let arg_types =
+      arg_types.iter().map(|t| self.to_basic_type(t).unwrap())
+      .collect::<Vec<BasicTypeEnum>>();
+    let arg_types = arg_types.as_slice();
+
+    let return_type = self.to_basic_type(return_type);
+    self.function_type(return_type, arg_types)
+  }
+
+  fn function_type(&self, return_type : Option<BasicTypeEnum>, arg_types : &[BasicTypeEnum])
+    -> FunctionType
+  {
+    if let Some(return_type) = return_type {
+      use BasicTypeEnum::*;
+      match return_type {
+        ArrayType(t) => t.fn_type(arg_types, false),
+        IntType(t) => t.fn_type(arg_types, false),
+        FloatType(t) => t.fn_type(arg_types, false),
+        PointerType(t) => t.fn_type(arg_types, false),
+        StructType(t) => t.fn_type(arg_types, false),
+        VectorType(t) => t.fn_type(arg_types, false),
+      }
+    }
+    else {
+      self.context.void_type().fn_type(arg_types, false)
+    }
+  }
+
+  fn array_of_type(&self, t : BasicTypeEnum, length : u32) -> ArrayType {
+    use BasicTypeEnum::*;
+    match t {
+      ArrayType(t) => t.array_type(length),
+      IntType(t) => t.array_type(length),
+      FloatType(t) => t.array_type(length),
+      PointerType(t) => t.array_type(length),
+      StructType(t) => t.array_type(length),
+      VectorType(t) => t.array_type(length),
+    }
+  }
+
+  fn size_of_type(&self, t : Option<BasicTypeEnum>) -> IntValue {
+    if let Some(t) = t {
+    use BasicTypeEnum::*;
+      match t {
+        ArrayType(t) => t.size_of().unwrap(),
+        IntType(t) => t.size_of(),
+        FloatType(t) => t.size_of(),
+        PointerType(t) => t.size_of(),
+        StructType(t) => t.size_of().unwrap(),
+        VectorType(t) => t.size_of().unwrap(),
+      }
+    }
+    else {
+      self.context.i64_type().const_zero()
+    }
+  }
+
+  fn pointer_to_type(&self, t : Option<BasicTypeEnum>) -> PointerType {
+    if let Some(t) = t {
+    use BasicTypeEnum::*;
+      match t {
+        ArrayType(t) => t.ptr_type(AddressSpace::Generic),
+        IntType(t) => t.ptr_type(AddressSpace::Generic),
+        FloatType(t) => t.ptr_type(AddressSpace::Generic),
+        PointerType(t) => t.ptr_type(AddressSpace::Generic),
+        StructType(t) => t.ptr_type(AddressSpace::Generic),
+        VectorType(t) => t.ptr_type(AddressSpace::Generic),
+      }
+    }
+    else {
+      self.context.void_type().ptr_type(AddressSpace::Generic)
+    }
+  }
+
+  fn struct_type(&mut self, def : &TypeDefinition) -> StructType {
+    if let Some(t) = self.struct_types.get(&def.name) {
+      return *t;
+    }
+    let t = match def.kind {
+      TypeKind::Struct => {
+        let types =
+          def.fields.iter().map(|(_, t)| {
+            self.to_basic_type(t).unwrap()
+          })
+          .collect::<Vec<BasicTypeEnum>>();
+        self.context.struct_type(&types, false)
+      }
+      TypeKind::Union => {
+        let mut union_bitwidth = 0;
+        let mut bt : Option<BasicTypeEnum> = None;
+        let mut widest_alignment = 0;
+        for (_, t) in def.fields.iter() {
+          if let Some(t) = self.to_basic_type(t) {
+            let alignment = self.target_data.get_preferred_alignment(&t);
+            if alignment > widest_alignment {
+              widest_alignment = alignment;
+              bt = Some(t)
+            }
+            let width = self.target_data.get_bit_size(&t);
+            if width > union_bitwidth {
+              union_bitwidth = width;
+            }
+          }
+        }
+        if let Some(t) = bt {
+          let val_bitwidth = self.target_data.get_bit_size(&t);
+          assert!(union_bitwidth >= val_bitwidth);
+          let difference = union_bitwidth - val_bitwidth;
+          assert!(difference % 8 == 0);
+          let padding = self.context.i8_type().array_type(difference as u32 / 8);
+          self.context.struct_type(&[t, padding.into()], true)
+        }
+        else {
+          let padding = self.context.i8_type().array_type(union_bitwidth as u32 / 8);
+          self.context.struct_type(&[padding.into()], true)
+        }
+      }
+    };
+    self.struct_types.insert(def.name.clone(), t);
+    return t;
+  }
+
+
+}
+
+impl <'l, 'lg> GenFunction<'l, 'lg> {
+
+  pub fn new(gen: &'l mut Gen<'lg>) -> GenFunction<'l, 'lg> {
+    let builder = gen.context.create_builder();
+    let variables = HashMap::new();
+    GenFunction{ gen, builder, variables, loop_labels: vec!() }
   }
 
   fn create_entry_block_alloca(&self, t : BasicTypeEnum, name : &str) -> PointerValue {
@@ -231,7 +447,7 @@ impl <'l> Gen<'l> {
   }
 
   fn add_global(&mut self, initial_value : BasicValueEnum, is_constant : bool, name : &str) -> PointerValue {
-    let gv = self.module.add_global(initial_value.get_type(), Some(AddressSpace::Generic), name);
+    let gv = self.gen.module.add_global(initial_value.get_type(), Some(AddressSpace::Generic), name);
     gv.set_initializer(&initial_value);
     gv.set_constant(is_constant);
     gv.set_linkage(Linkage::Internal);
@@ -328,61 +544,61 @@ impl <'l> Gen<'l> {
 
     let from_type = &value_to_convert.type_tag;
     let to_type = &convert_node.type_tag;
-    let from_llvm_type = self.to_basic_type(from_type).ok_or_else(|| error_raw(value_to_convert.loc, "can't cast from void"))?;
-    let to_llvm_type = self.to_basic_type(to_type).ok_or_else(|| error_raw(convert_node.loc, "can't cast to void"))?;
+    let from_llvm_type = self.gen.to_basic_type(from_type).ok_or_else(|| error_raw(value_to_convert.loc, "can't cast from void"))?;
+    let to_llvm_type = self.gen.to_basic_type(to_type).ok_or_else(|| error_raw(convert_node.loc, "can't cast to void"))?;
     let n = value_to_convert;
     
     let from_float = from_type.float();
     let from_signed = from_type.signed_int();
     let from_unsigned = from_type.unsigned_int();
     let from_int = from_signed || from_unsigned;
-    let from_width = self.target_data.get_bit_size(&from_llvm_type);
+    let from_width = self.gen.target_data.get_bit_size(&from_llvm_type);
     let from_pointer = from_type.pointer();
 
     let to_float = to_type.float();
     let to_signed = to_type.signed_int();
     let to_unsigned = to_type.unsigned_int();
     let to_int = to_signed || to_unsigned;
-    let to_width = self.target_data.get_bit_size(&to_llvm_type);
+    let to_width = self.gen.target_data.get_bit_size(&to_llvm_type);
     let to_pointer = to_type.pointer();
 
     // Pointer casts
     if from_pointer && to_unsigned {
-      let t = int_type(self, to_width);
+      let t = int_type(&self.gen, to_width);
       return Ok(convert_op!(build_ptr_to_int, PointerValue, t, n, self));
     }
     if from_unsigned && to_pointer {
-      let t = *self.to_basic_type(to_type).unwrap().as_pointer_type();
+      let t = *self.gen.to_basic_type(to_type).unwrap().as_pointer_type();
       return Ok(convert_op!(build_int_to_ptr, IntValue, t, n, self));
     }
     if from_pointer && to_pointer {
-      let t = *self.to_basic_type(to_type).unwrap().as_pointer_type();
+      let t = *self.gen.to_basic_type(to_type).unwrap().as_pointer_type();
       return Ok(convert_op!(build_pointer_cast, PointerValue, t, n, self));
     }
 
     // truncate
     if to_width < from_width {
       if from_int && to_int {
-        let t = int_type(self, to_width);
+        let t = int_type(&self.gen, to_width);
         return Ok(convert_op!(build_int_truncate, IntValue, t, n, self));
       }
       if from_float && to_float {
-        let t = float_type(self, to_width);
+        let t = float_type(&self.gen, to_width);
         return Ok(convert_op!(build_float_trunc, FloatValue, t, n, self));
       }
     }
     // extend
     if to_width > from_width {
       if from_signed && to_int {
-        let t = int_type(self, to_width);
+        let t = int_type(&self.gen, to_width);
         return Ok(convert_op!(build_int_s_extend, IntValue, t, n, self));
       }
       if from_unsigned && to_int {
-        let t = int_type(self, to_width);
+        let t = int_type(&self.gen, to_width);
         return Ok(convert_op!(build_int_z_extend, IntValue, t, n, self));
       }
       if from_float && to_float {
-        let t = float_type(self, to_width);
+        let t = float_type(&self.gen, to_width);
         return Ok(convert_op!(build_float_ext, FloatValue, t, n, self));
       }
     }
@@ -393,19 +609,19 @@ impl <'l> Gen<'l> {
     }
     // float/int conversions
     if from_signed && to_float {
-      let t = float_type(self, to_width);
+      let t = float_type(&self.gen, to_width);
       return Ok(convert_op!(build_signed_int_to_float, IntValue, t, n, self));
     }
     if from_unsigned && to_float {
-      let t = float_type(self, to_width);
+      let t = float_type(&self.gen, to_width);
       return Ok(convert_op!(build_unsigned_int_to_float, IntValue, t, n, self));
     }
     if from_float && to_signed {
-      let t = int_type(self, to_width);
+      let t = int_type(&self.gen, to_width);
       return Ok(convert_op!(build_float_to_signed_int, FloatValue, t, n, self));
     }
     if from_float && to_unsigned {
-      let t = int_type(self, to_width);
+      let t = int_type(&self.gen, to_width);
       return Ok(convert_op!(build_float_to_unsigned_int, FloatValue, t, n, self));
     }
     return error(convert_node.loc, "type cast not supported");
@@ -416,14 +632,14 @@ impl <'l> Gen<'l> {
   {
     use ShortCircuitOp::*;
     let short_circuit_outcome = match op {
-      And => self.context.bool_type().const_int(0, false),
-      Or => self.context.bool_type().const_int(1, false),
+      And => self.gen.context.bool_type().const_int(0, false),
+      Or => self.gen.context.bool_type().const_int(1, false),
     };
     // create basic blocks
     let a_start_block = self.builder.get_insert_block().unwrap();
     let f = a_start_block.get_parent().unwrap();
-    let b_start_block = self.context.append_basic_block(&f, "b_block");
-    let end_block = self.context.append_basic_block(&f, "end");
+    let b_start_block = self.gen.context.append_basic_block(&f, "b_block");
+    let end_block = self.gen.context.append_basic_block(&f, "end");
     // compute a
     let a_value = self.codegen_int(a)?;
     let a_end_block = self.builder.get_insert_block().unwrap();
@@ -438,7 +654,7 @@ impl <'l> Gen<'l> {
     self.builder.build_unconditional_branch(&end_block);
     // end block
     self.builder.position_at_end(&end_block);
-    let phi = self.builder.build_phi(self.context.bool_type(), "result");
+    let phi = self.builder.build_phi(self.gen.context.bool_type(), "result");
     phi.add_incoming(&[
       (&short_circuit_outcome, &a_end_block),
       (&b_value, &b_end_block),
@@ -447,7 +663,7 @@ impl <'l> Gen<'l> {
   }
 
   fn codegen_struct_initialise(&mut self, def : &TypeDefinition, args : &[BasicValueEnum]) -> GenVal {
-    let t = self.struct_type(def);
+    let t = self.gen.struct_type(def);
     let mut sv = t.get_undef();
     for (i, v) in args.iter().enumerate() {
       sv = self.builder.build_insert_value(sv, *v, i as u32, "insert_field").unwrap().into_struct_value();
@@ -456,9 +672,9 @@ impl <'l> Gen<'l> {
   }
 
   fn codegen_union_initialise(&mut self, def : &TypeDefinition, val : BasicValueEnum) -> GenVal {
-    let union_type = self.struct_type(def).as_basic_type_enum();
+    let union_type = self.gen.struct_type(def).as_basic_type_enum();
     let ptr = self.create_entry_block_alloca(union_type, &def.name);
-    let variant_type = self.pointer_to_type(Some(val.get_type()));
+    let variant_type = self.gen.pointer_to_type(Some(val.get_type()));
     let variant_ptr = self.builder.build_pointer_cast(ptr, variant_type, "union_cast");
     self.builder.build_store(variant_ptr, val);
     pointer(ptr)
@@ -480,17 +696,17 @@ impl <'l> Gen<'l> {
 
   /// ensure necessary definitions are inserted and linking operations performed when a function is referenced
   fn get_linked_function_reference(&mut self, def : &FunctionDefinition) -> FunctionValue {
-    if let Some(local_f) = self.module.get_function(&def.name) {
+    if let Some(local_f) = self.gen.module.get_function(&def.name) {
       local_f
     }
     else{
-      let f = self.codegen_prototype(&def.name, &def.signature.return_type, &def.args, &def.signature.args);
+      let f = self.gen.codegen_prototype(&def.name, &def.signature.return_type, &def.args, &def.signature.args);
       match def.implementation {
         FunctionImplementation::CFunction(Some(address)) => {
-          self.c_functions.insert(def.name.clone(), (f, address));
+          self.gen.c_functions.insert(def.name.clone(), (f, address));
         }
         _ => {
-          self.external_functions.insert(def.name.clone(), f);
+          self.gen.external_functions.insert(def.name.clone(), f);
         }
       }
       f
@@ -558,8 +774,8 @@ impl <'l> Gen<'l> {
         }
       }
       Content::SizeOf(t) => {
-        let t = self.to_basic_type(&t);
-        reg(self.size_of_type(t).into())
+        let t = self.gen.to_basic_type(&t);
+        reg(self.gen.size_of_type(t).into())
       }
       Content::Convert(n) => {
         self.codegen_convert(node, n)?
@@ -567,9 +783,9 @@ impl <'l> Gen<'l> {
       Content::While(ns) => {
         let (cond_node, body_node) = (&ns.0, &ns.1);
         let f = self.builder.get_insert_block().unwrap().get_parent().unwrap();
-        let cond_block = self.context.append_basic_block(&f, "cond");
-        let body_block = self.context.append_basic_block(&f, "loop_body");
-        let exit_block = self.context.append_basic_block(&f, "loop_exit");
+        let cond_block = self.gen.context.append_basic_block(&f, "cond");
+        let body_block = self.gen.context.append_basic_block(&f, "loop_body");
+        let exit_block = self.gen.context.append_basic_block(&f, "loop_exit");
         let labels = LoopLabels { condition: cond_block, exit: exit_block };
         // jump to condition
         self.builder.build_unconditional_branch(&labels.condition);
@@ -593,7 +809,7 @@ impl <'l> Gen<'l> {
           self.builder.build_unconditional_branch(&labels.exit);
           // create a dummy block to hold instructions after the break
           let f = self.builder.get_insert_block().unwrap().get_parent().unwrap();
-          let dummy_block = self.context.append_basic_block(&f, "dummy_block");
+          let dummy_block = self.gen.context.append_basic_block(&f, "dummy_block");
           self.builder.position_at_end(&dummy_block);
           return Ok(None);
         }
@@ -605,8 +821,8 @@ impl <'l> Gen<'l> {
         let (cond_node, then_node) = (&ns.0, &ns.1);
         let block = self.builder.get_insert_block().unwrap();
         let f = block.get_parent().unwrap();
-        let then_block = self.context.append_basic_block(&f, "then");
-        let end_block = self.context.append_basic_block(&f, "endif");
+        let then_block = self.gen.context.append_basic_block(&f, "then");
+        let end_block = self.gen.context.append_basic_block(&f, "endif");
         // conditional branch
         let cond_value = self.codegen_int(cond_node)?;
         self.builder.build_conditional_branch(cond_value, &then_block, &end_block);
@@ -623,9 +839,9 @@ impl <'l> Gen<'l> {
         // create basic blocks
         let block = self.builder.get_insert_block().unwrap();
         let f = block.get_parent().unwrap();
-        let then_start_block = self.context.append_basic_block(&f, "then");
-        let else_start_block = self.context.append_basic_block(&f, "else");
-        let end_block = self.context.append_basic_block(&f, "endif");
+        let then_start_block = self.gen.context.append_basic_block(&f, "then");
+        let else_start_block = self.gen.context.append_basic_block(&f, "else");
+        let end_block = self.gen.context.append_basic_block(&f, "endif");
         // conditional branch
         let cond_value = self.codegen_int(cond_node)?;
         self.builder.build_conditional_branch(
@@ -668,18 +884,14 @@ impl <'l> Gen<'l> {
       }
       Content::Quote(e) => {
         let v = Box::into_raw(e.clone()) as u64;
-        let v = self.context.i64_type().const_int(v, false);
-        let t = self.context.i8_type().ptr_type(AddressSpace::Generic);
+        let v = self.gen.context.i64_type().const_int(v, false);
+        let t = self.gen.context.i8_type().ptr_type(AddressSpace::Generic);
         reg(self.builder.build_int_to_ptr(v, t, "quote_expr").into())
       }
       Content::CFunctionPrototype(_def) => {
         return Ok(None);
       }
-      Content::FunctionDefinition(name) => {
-        let def = self.type_info.functions.get(name).unwrap();
-        let body = unwrap_enum!(FunctionImplementation, Normal, &def.implementation);
-        self.child_function_gen().codegen_function(
-          node, body, &def.name, &def.args, &def.signature.args)?;
+      Content::FunctionDefinition(_name) => {
         return Ok(None);
       }
       Content::TypeDefinition(_def) => {
@@ -689,19 +901,19 @@ impl <'l> Gen<'l> {
       Content::StructInstantiate(struct_name, args) => {
         let a : Result<Vec<BasicValueEnum>, Error> =
           args.iter().map(|a| self.codegen_value(a)).collect();
-        let def = self.type_info.types.get(struct_name).unwrap();
+        let def = self.gen.type_info.types.get(struct_name).unwrap();
         self.codegen_struct_initialise(def, a?.as_slice())
       }
       Content::UnionInstantiate(union_name, arg) => {
         let val = self.codegen_value(&arg.1)?;
-        let def = self.type_info.types.get(union_name).unwrap();
+        let def = self.gen.type_info.types.get(union_name).unwrap();
         self.codegen_union_initialise(def, val)
       }
       Content::FieldAccess(x) => {
         let (type_val_node, field_name) = (&x.0, &x.1);
         let v = self.codegen_expression(type_val_node)?.unwrap();
         let def = match &type_val_node.type_tag {
-          Type::Def(name) => self.type_info.types.get(name).unwrap(),
+          Type::Def(name) => self.gen.type_info.types.get(name).unwrap(),
           _ => panic!(),
         };
         match def.kind {
@@ -728,7 +940,7 @@ impl <'l> Gen<'l> {
             }
           }
           TypeKind::Union => {
-            let t = self.to_basic_type(&node.type_tag);
+            let t = self.gen.to_basic_type(&node.type_tag);
             match v.storage {
               Storage::Register => {
                 // if the struct is in a register, dereference the field into a register
@@ -739,7 +951,7 @@ impl <'l> Gen<'l> {
               Storage::Pointer => {
                 // if this is a pointer to the struct, get a pointer to the field
                 let ptr = *v.value.as_pointer_value();
-                let field_ptr = self.builder.build_pointer_cast(ptr, self.pointer_to_type(t), "union_cast");
+                let field_ptr = self.builder.build_pointer_cast(ptr, self.gen.pointer_to_type(t), "union_cast");
                 pointer(field_ptr)
               }
             }
@@ -748,12 +960,12 @@ impl <'l> Gen<'l> {
       }
       Content::ArrayLiteral(elements) => {
         if let Type::Ptr(inner_type) = &node.type_tag {
-          let element_type = self.to_basic_type(inner_type).unwrap();
-          let length = self.context.i32_type().const_int(elements.len() as u64, false).into();
+          let element_type = self.gen.to_basic_type(inner_type).unwrap();
+          let length = self.gen.context.i32_type().const_int(elements.len() as u64, false).into();
           let array_ptr = self.builder.build_array_malloc(element_type, length, "array_malloc");
           for (i, e) in elements.iter().enumerate() {
             let v = self.codegen_value(e)?;
-            let index = self.context.i32_type().const_int(i as u64, false).into();
+            let index = self.gen.context.i32_type().const_int(i as u64, false).into();
             let element_ptr = unsafe { self.builder.build_gep(array_ptr, &[index], "element_ptr") };
             self.builder.build_store(element_ptr, v);
           }
@@ -798,15 +1010,15 @@ impl <'l> Gen<'l> {
         if let Some(ptr) = self.variables.get(name) {
           pointer(*ptr)
         }
-        else if let Some(gv) = self.external_globals.get(name) {
+        else if let Some(gv) = self.gen.external_globals.get(name) {
           let ptr = gv.as_pointer_value();
           pointer(ptr)
         }
-        else if let Some(type_tag) = self.type_info.globals.get(name) {
-          let t = self.to_basic_type(type_tag).unwrap();
-          let gv = self.module.add_global(t, Some(AddressSpace::Generic), &name);
+        else if let Some(def) = self.gen.type_info.globals.get(name) {
+          let t = self.gen.to_basic_type(&def.type_tag).unwrap();
+          let gv = self.gen.module.add_global(t, Some(AddressSpace::Generic), &name);
           gv.set_constant(false);
-          self.external_globals.insert(name.clone(), gv);
+          self.gen.external_globals.insert(name.clone(), gv);
           pointer(gv.as_pointer_value())
         }
         else {
@@ -815,7 +1027,7 @@ impl <'l> Gen<'l> {
       }
       Content::FunctionReference(name) => {
         let def =
-          self.type_info.functions.get(name)
+          self.gen.type_info.functions.get(name)
           .ok_or_else(|| error_raw(node.loc, format!("could not find function with name '{}'", name)))?;
         let f = self.get_linked_function_reference(def);
         reg(f.as_global_value().as_pointer_value().into())
@@ -834,204 +1046,42 @@ impl <'l> Gen<'l> {
         self.codegen_return(n.as_ref().map(|b| b as &TypedNode))?;
         // create a dummy block to hold instructions after the return
         let f = self.builder.get_insert_block().unwrap().get_parent().unwrap();
-        let dummy_block = self.context.append_basic_block(&f, "dummy_block");
+        let dummy_block = self.gen.context.append_basic_block(&f, "dummy_block");
         self.builder.position_at_end(&dummy_block);
         return Ok(None);
       }
       Content::Literal(v) => {
         match v {
-          Val::F64(f) => reg(self.context.f64_type().const_float(*f).into()),
-          Val::F32(f) => reg(self.context.f32_type().const_float(*f as f64).into()),
-          Val::I64(i) => reg(self.context.i64_type().const_int(*i as u64, false).into()), // TODO the signed values should maybe pass "true" here?
-          Val::I32(i) => reg(self.context.i32_type().const_int(*i as u64, false).into()),
-          Val::U64(i) => reg(self.context.i64_type().const_int(*i as u64, false).into()),
-          Val::U32(i) => reg(self.context.i32_type().const_int(*i as u64, false).into()),
-          Val::U16(i) => reg(self.context.i16_type().const_int(*i as u64, false).into()),
-          Val::U8(i) => reg(self.context.i8_type().const_int(*i as u64, false).into()),
+          Val::F64(f) => reg(self.gen.context.f64_type().const_float(*f).into()),
+          Val::F32(f) => reg(self.gen.context.f32_type().const_float(*f as f64).into()),
+          Val::I64(i) => reg(self.gen.context.i64_type().const_int(*i as u64, false).into()), // TODO the signed values should maybe pass "true" here?
+          Val::I32(i) => reg(self.gen.context.i32_type().const_int(*i as u64, false).into()),
+          Val::U64(i) => reg(self.gen.context.i64_type().const_int(*i as u64, false).into()),
+          Val::U32(i) => reg(self.gen.context.i32_type().const_int(*i as u64, false).into()),
+          Val::U16(i) => reg(self.gen.context.i16_type().const_int(*i as u64, false).into()),
+          Val::U8(i) => reg(self.gen.context.i8_type().const_int(*i as u64, false).into()),
           Val::Bool(b) =>
-            reg(self.context.bool_type().const_int(if *b { 1 } else { 0 }, false).into()),
+            reg(self.gen.context.bool_type().const_int(if *b { 1 } else { 0 }, false).into()),
           Val::Void => return Ok(None),
           Val::String(s) => {
             let vs : &[u8] = s.as_ref();
-            let byte = self.context.i8_type();
+            let byte = self.gen.context.i8_type();
             let vs : Vec<IntValue> =
               vs.iter().map(|v|
                 byte.const_int(*v as u64, false).into()).collect();
-            let const_array : BasicValueEnum = self.context.i8_type().const_array(vs.as_slice()).into();
+            let const_array : BasicValueEnum = self.gen.context.i8_type().const_array(vs.as_slice()).into();
             let name = &s.as_str()[0..std::cmp::min(s.len(), 10)];
             let ptr = self.add_global(const_array, true, name);
-            let cast_to = self.context.i8_type().ptr_type(AddressSpace::Generic);
+            let cast_to = self.gen.context.i8_type().ptr_type(AddressSpace::Generic);
             let string_pointer = self.builder.build_pointer_cast(ptr, cast_to, "string_pointer");
-            let string_length = self.context.i64_type().const_int(vs.len() as u64, false);
-            let def = self.type_info.types.get("string").unwrap();
+            let string_length = self.gen.context.i64_type().const_int(vs.len() as u64, false);
+            let def = self.gen.type_info.types.get("string").unwrap();
             self.codegen_struct_initialise(def, &[string_pointer.into(), string_length.into()])
           }
         }
       }
     };
     Ok(Some(v))
-  }
-
-  fn name_basic_type(t : &BasicValueEnum, s : &str) {
-    use BasicValueEnum::*;
-    match t {
-      ArrayValue(v) => v.set_name(s),
-      IntValue(v) => v.set_name(s),
-      FloatValue(v) => v.set_name(s),
-      PointerValue(v) => v.set_name(s),
-      StructValue(v) => v.set_name(s),
-      VectorValue(v) => v.set_name(s),
-    }
-  }
-
-  fn to_basic_type(&mut self, t : &Type) -> Option<BasicTypeEnum> {
-    match t {
-      Type::Void => None,
-      Type::F64 => Some(self.context.f64_type().into()),
-      Type::F32 => Some(self.context.f32_type().into()),
-      Type::I64 => Some(self.context.i64_type().into()),
-      Type::I32 => Some(self.context.i32_type().into()),
-      Type::U64 => Some(self.context.i64_type().into()),
-      Type::U32 => Some(self.context.i32_type().into()),
-      Type::U16 => Some(self.context.i16_type().into()),
-      Type::U8 => Some(self.context.i8_type().into()),
-      Type::Bool => Some(self.context.bool_type().into()),
-      Type::Fun(sig) => {
-        let t = self.to_function_type(sig.args.as_slice(), &sig.return_type);
-        Some(t.ptr_type(AddressSpace::Generic).into())
-      }
-      Type::Def(name) => {
-        let def = self.type_info.types.get(name).unwrap();
-        Some(self.struct_type(def).as_basic_type_enum())
-      }
-      Type::Ptr(t) => {
-        let bt = self.to_basic_type(t);
-        Some(self.pointer_to_type(bt).into())
-      }
-    }
-  }
-
-  fn array_of_type(&self, t : BasicTypeEnum, length : u32) -> ArrayType {
-    use BasicTypeEnum::*;
-    match t {
-      ArrayType(t) => t.array_type(length),
-      IntType(t) => t.array_type(length),
-      FloatType(t) => t.array_type(length),
-      PointerType(t) => t.array_type(length),
-      StructType(t) => t.array_type(length),
-      VectorType(t) => t.array_type(length),
-    }
-  }
-
-  fn size_of_type(&self, t : Option<BasicTypeEnum>) -> IntValue {
-    if let Some(t) = t {
-    use BasicTypeEnum::*;
-      match t {
-        ArrayType(t) => t.size_of().unwrap(),
-        IntType(t) => t.size_of(),
-        FloatType(t) => t.size_of(),
-        PointerType(t) => t.size_of(),
-        StructType(t) => t.size_of().unwrap(),
-        VectorType(t) => t.size_of().unwrap(),
-      }
-    }
-    else {
-      self.context.i64_type().const_zero()
-    }
-  }
-
-  fn pointer_to_type(&self, t : Option<BasicTypeEnum>) -> PointerType {
-    if let Some(t) = t {
-    use BasicTypeEnum::*;
-      match t {
-        ArrayType(t) => t.ptr_type(AddressSpace::Generic),
-        IntType(t) => t.ptr_type(AddressSpace::Generic),
-        FloatType(t) => t.ptr_type(AddressSpace::Generic),
-        PointerType(t) => t.ptr_type(AddressSpace::Generic),
-        StructType(t) => t.ptr_type(AddressSpace::Generic),
-        VectorType(t) => t.ptr_type(AddressSpace::Generic),
-      }
-    }
-    else {
-      self.context.void_type().ptr_type(AddressSpace::Generic)
-    }
-  }
-
-  fn to_function_type(&mut self, arg_types : &[Type], return_type : &Type) -> FunctionType {
-    let arg_types =
-      arg_types.iter().map(|t| self.to_basic_type(t).unwrap())
-      .collect::<Vec<BasicTypeEnum>>();
-    let arg_types = arg_types.as_slice();
-
-    let return_type = self.to_basic_type(return_type);
-    self.function_type(return_type, arg_types)
-  }
-
-  fn function_type(&self, return_type : Option<BasicTypeEnum>, arg_types : &[BasicTypeEnum])
-    -> FunctionType
-  {
-    if let Some(return_type) = return_type {
-      use BasicTypeEnum::*;
-      match return_type {
-        ArrayType(t) => t.fn_type(arg_types, false),
-        IntType(t) => t.fn_type(arg_types, false),
-        FloatType(t) => t.fn_type(arg_types, false),
-        PointerType(t) => t.fn_type(arg_types, false),
-        StructType(t) => t.fn_type(arg_types, false),
-        VectorType(t) => t.fn_type(arg_types, false),
-      }
-    }
-    else {
-      self.context.void_type().fn_type(arg_types, false)
-    }
-  }
-
-  fn struct_type(&mut self, def : &TypeDefinition) -> StructType {
-    if let Some(t) = self.struct_types.get(&def.name) {
-      return *t;
-    }
-    let t = match def.kind {
-      TypeKind::Struct => {
-        let types =
-          def.fields.iter().map(|(_, t)| {
-            self.to_basic_type(t).unwrap()
-          })
-          .collect::<Vec<BasicTypeEnum>>();
-        self.context.struct_type(&types, false)
-      }
-      TypeKind::Union => {
-        let mut union_bitwidth = 0;
-        let mut bt : Option<BasicTypeEnum> = None;
-        let mut widest_alignment = 0;
-        for (_, t) in def.fields.iter() {
-          if let Some(t) = self.to_basic_type(t) {
-            let alignment = self.target_data.get_preferred_alignment(&t);
-            if alignment > widest_alignment {
-              widest_alignment = alignment;
-              bt = Some(t)
-            }
-            let width = self.target_data.get_bit_size(&t);
-            if width > union_bitwidth {
-              union_bitwidth = width;
-            }
-          }
-        }
-        if let Some(t) = bt {
-          let val_bitwidth = self.target_data.get_bit_size(&t);
-          assert!(union_bitwidth >= val_bitwidth);
-          let difference = union_bitwidth - val_bitwidth;
-          assert!(difference % 8 == 0);
-          let padding = self.context.i8_type().array_type(difference as u32 / 8);
-          self.context.struct_type(&[t, padding.into()], true)
-        }
-        else {
-          let padding = self.context.i8_type().array_type(union_bitwidth as u32 / 8);
-          self.context.struct_type(&[padding.into()], true)
-        }
-      }
-    };
-    self.struct_types.insert(def.name.clone(), t);
-    return t;
   }
 
   fn codegen_return(&mut self, value_node : Option<&TypedNode>) -> Result<(), Error> {
@@ -1045,99 +1095,54 @@ impl <'l> Gen<'l> {
     Ok(())
   }
 
-  fn codegen_prototype(
-    &mut self, name : &str,
-    return_type : &Type,
-    args : &[RefStr],
-    arg_types : &[Type])
-      -> FunctionValue
-  {
-    let fn_type = self.to_function_type(arg_types, return_type);
-    let function = self.module.add_function(name, fn_type, None);
-
-    let i : u32 = !0; //LLVMAttributeFunctionIndex;
-    //function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("norecurse"), 0));
-    function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("nounwind"), 0));
-    function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("nonlazybind"), 0));
-    //function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("readnone"), 0));
-    function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("uwtable"), 0));
-    function.add_attribute(i, self.context.create_string_attribute("probe-stack", "__rust_probestack"));
-    function.add_attribute(i, self.context.create_string_attribute("target-cpu", "x86-64"));
-
-    // set arguments names
-    for (i, arg) in function.get_param_iter().enumerate() {
-      Gen::name_basic_type(&arg, args[i].as_ref());
-    }
-    function
-  }
-
   fn codegen_function(
     mut self,
-    function_node : &TypedNode,
+    prototype_handle : FunctionValue,
     body : &TypedNode,
-    name : &str,
-    args : &[RefStr],
-    arg_types : &[Type])
+    args : &[RefStr])
       -> Result<FunctionValue, Error>
   {
-    let function = self.codegen_prototype(name, &body.type_tag, args, arg_types);
-
     // this function is here because Rust doesn't have a proper try/catch yet
     fn generate(
-      function_node : &TypedNode, body : &TypedNode, function : FunctionValue,
-      args : &[RefStr], gen : &mut Gen) -> Result<(), Error>
+      function : FunctionValue, body : &TypedNode,
+      args : &[RefStr], genf : &mut GenFunction) -> Result<(), Error>
     {
-      let entry = gen.context.append_basic_block(&function, "entry");
+      let entry = genf.gen.context.append_basic_block(&function, "entry");
 
-      gen.builder.position_at_end(&entry);
+      genf.builder.position_at_end(&entry);
 
       // set function parameters
       for (arg_value, arg_name) in function.get_param_iter().zip(args) {
-        gen.init_variable(arg_name.clone(), VarScope::Local, arg_value)
-          .map_err(|c| error_raw(function_node.loc, c))?;
+        genf.init_variable(arg_name.clone(), VarScope::Local, arg_value)
+          .map_err(|c| error_raw(body.loc, c))?;
       }
 
       // compile body and emit return
-      gen.codegen_return(Some(body))?;
+      genf.codegen_return(Some(body))?;
 
       // return the whole thing after verification and optimization
       if function.verify(true) {
-        gen.pm.run_on(&function);
+        genf.gen.pm.run_on(&function);
         Ok(())
       }
       else {
-        error(function_node.loc, "invalid generated function.")
+        error(body.loc, "invalid generated function.")
       }
     }
 
-    match generate(function_node, body, function, args, &mut self) {
-      Ok(_) => Ok(function),
+    match generate(prototype_handle, body, args, &mut self) {
+      Ok(_) => Ok(prototype_handle),
       Err(e) => {
-        dump_module(self.module);
+        dump_module(self.gen.module);
         // This library uses copy semantics for a resource can be deleted,
         // because it is usually not deleted. As a result, it's possible to
         // get use-after-free bugs, so this operation is unsafe. I'm sure
         // this design could be improved.
         unsafe {
-          function.delete();
+          prototype_handle.delete();
         }
         Err(e)
       }
     }
-  }
-
-  /// Code-generates a module, returning a reference to the top-level function in the module
-  pub fn codegen_module(mut self, module : &TypedModule) -> Result<(), Error> {
-    let gen = &mut self;
-    for (name, f) in module.functions.iter() {
-      match &f.implementation {
-        FunctionImplementation::Normal(body) => {
-          let child = gen.child_function_gen();
-          child.codegen_function(body, body, name, f.args.as_slice(), f.signature.args.as_slice())?;
-        }
-        _ => (),
-      }
-    }
-    Ok(())
   }
 }
