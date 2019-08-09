@@ -696,7 +696,7 @@ impl <'l> TypeChecker<'l> {
         if let Some(def) = self.find_function(&s) {
           return Ok(node(expr, Type::Fun(def.signature.clone()), Content::FunctionReference(s)));
         }
-        error(expr, format!("unknown variable name '{}'", s))
+        error(expr, format!("unknown symbol '{}'", s))
       }
       ExprTag::LiteralString(s) => {
         let v = Val::String(s.as_str().to_string());

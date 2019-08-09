@@ -1,5 +1,5 @@
 
-use crate::error::Error;
+use crate::error::{Error, ErrorContent};
 use crate::jit::{Interpreter, interpreter};
 use crate::typecheck::Val;
 use crate::c_interface::SStr;
@@ -23,6 +23,21 @@ fn assert_result_with_interpreter(i : &mut Interpreter, code : &str, expected_re
 fn assert_result(code : &str, expected_result : Val){
   let mut i = interpreter();
   assert_result_with_interpreter(&mut i, code, expected_result)
+}
+
+fn assert_error(code : &str, error_substring : &str){
+  let mut i = interpreter();
+  let result = i.run(code);
+  if let Err(e) = &result {
+    if let ErrorContent::Message(s) = &e.message {
+      if s.contains(error_substring) {
+        return; // success
+      }
+    }
+  }
+  panic!(
+    "error in code '{}'. Expected error containing string '{:?}'. Actual result was '{:?}'",
+    code, error_substring, result_string(result));
 }
 
 // Runs the tests in isolated processes, because they do unsafe things and could pollute each other.
@@ -340,6 +355,41 @@ rusty_fork_test! {
     assert_result(code, Val::I64(10));
   }
 
+  #[test]
+  fn test_out_of_order_functions(){
+    let code = "
+      let a = foo()
+      fun foo()
+        10
+      end
+      a
+    ";
+    assert_result(code, Val::I64(10));
+  }
+
+  #[test]
+  fn test_nonexistent_types(){
+    let code = "
+      struct foo
+        data : sijfsiofssdfio
+      end
+      10
+    ";
+    assert_error(code, "sijfsiofssdfio");
+  }
+
+  #[test]
+  fn test_cyclic_structs(){
+    let code = "
+      struct tree
+        data : string
+        children : ptr(tree)
+      end
+      5
+    ";
+    assert_result(code, Val::I64(5));
+  }
+
 }
 
 /*
@@ -361,47 +411,6 @@ fn test_for_loop() {
     t
   ";
   assert_result(range_code, Val::I64(10));
-}
-
-#[test]
-fn test_brace_syntax_quirks(){
-  // This test demonstrates a problem with the struct initialisation syntax
-  let code = "
-    struct a { }
-    let b = a()
-  ";
-  // TODO: fix this problem
-  assert_result(code, Val::Void);
-}
-
-// TODO: unclear if multiple dispatch will be supported again
-#[test]
-fn test_dispatch(){
-  let fundef_code = "
-    fun add(a : float, b : float) {
-      a + b
-    }
-
-    fun add(a : bool, b : bool) {
-      a == b
-    }
-  ";
-  let cases = vec![
-    ("add(-3, 5)", Val::I64(2)),
-    ("add(true, false)", Val::Bool(false)),
-    ("add(false, false)", Val::Bool(true)),
-  ];
-  for (code, expected_result) in cases {
-    let mut i = Interpreter::new();
-    let def_result = i.run(fundef_code);
-    assert!(def_result.is_ok(), "Error: {:?}", result_string(def_result));
-    let expected = Ok(expected_result);
-    let result = i.run(code);
-    assert!(
-      result == expected,
-      "error in code '{}'. Expected result '{:?}'. Actual result was '{:?}'",
-      code, result_string(expected), result_string(result));
-  }
 }
 
 */
