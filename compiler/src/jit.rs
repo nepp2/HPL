@@ -172,7 +172,8 @@ impl InterpreterInner {
     }
 
     // Link c globals
-    for (global_value, address) in c_globals.values() {
+    for (name, (global_value, address)) in c_globals.iter() {
+      println!("Global value link: {}, {}", name, address);
       ee.add_global_mapping(global_value, *address);
     }
 

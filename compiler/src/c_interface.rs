@@ -75,6 +75,9 @@ static ROOT : &'static str = "";
 #[cfg(test)]
 static ROOT : &'static str = "../";
 
+#[no_mangle]
+static TEST_GLOBAL : i64 = 47;
+
 extern {
   pub fn malloc(size: usize) -> *mut u8;
 }
@@ -174,5 +177,6 @@ impl CSymbols {
     sym.insert("test_add".into(), (test_add as *const()) as usize);
     sym.insert("thread_sleep".into(), (thread_sleep as *const()) as usize);
     sym.insert("interpreter".into(), (i as *const()) as usize);
+    sym.insert("test_global".into(), (&TEST_GLOBAL as *const i64) as usize);
   }
 }

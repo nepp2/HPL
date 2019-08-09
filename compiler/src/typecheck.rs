@@ -138,7 +138,7 @@ pub enum Content {
   Quote(Box<Expr>),
   FunctionReference(RefStr),
   FunctionDefinition(RefStr),
-  CFunctionPrototype(RefStr),
+  CBind(RefStr),
   TypeDefinition(RefStr),
   StructInstantiate(RefStr, Vec<TypedNode>),
   UnionInstantiate(RefStr, Box<(RefStr, TypedNode)>),
@@ -311,7 +311,9 @@ impl <'l> TypeChecker<'l> {
     }
     if name == "fun" {
       let args =
-        params[0].children.as_slice().iter().map(|e| self.to_type(e))
+        params[0].children.as_slice()
+        .iter().tuples()
+        .map(|(_, e)| self.to_type(e))
         .collect::<Result<Vec<Type>, Error>>()?;
       let return_type = self.to_type(&params[1])?;
       return Ok(Type::Fun(Rc::new(FunctionSignature{ args, return_type})));
@@ -503,44 +505,35 @@ impl <'l> TypeChecker<'l> {
         let tag = nodes.last().map(|n| n.type_tag.clone()).unwrap_or(Type::Void);
         Ok(node(expr, tag, Content::Block(nodes)))
       }
-      ("cfun", exprs) => {
-        let name = self.cache.get(exprs[0].symbol_unwrap()?);
-        let args_exprs = exprs[1].children.as_slice();
-        let return_type_expr = &exprs[2];
-        let mut arg_names = vec!();
-        let mut arg_types = vec!();
-        for (name_expr, type_expr) in args_exprs.iter().tuples() {
-          let name = self.cache.get(name_expr.symbol_unwrap()?);
-          let type_tag = self.to_type(type_expr)?;
-          if type_tag == Type::Void {
-            return error(expr, "functions args cannot be void");
-          }
-          arg_names.push(name);
-          arg_types.push(type_tag);
-        }
-        let return_type = self.to_type(return_type_expr)?;
-        if self.find_function(name.as_ref()).is_some() {
-          return error(expr, "function with that name already defined");
-        }
-        let signature = Rc::new(FunctionSignature {
-          return_type,
-          args: arg_types,
-        });
+      ("cbind", [name_expr, type_expr]) => {
+        let name = self.cache.get(name_expr.symbol_unwrap()?);
+        let type_tag = self.to_type(type_expr)?;
         let address = self.local_symbol_table.get(&name).map(|v| *v);
         if address.is_none() {
           // TODO: check the signature of the function too
-          println!("Warning: C function '{}' not linked. LLVM linker may link it instead.", name);
+          println!("Warning: C binding '{}' not linked. LLVM linker may link it instead.", name);
           // return error(expr, "tried to bind non-existing C function")
         }
-        let def = FunctionDefinition {
-          name: name.clone(),
-          args: arg_names,
-          signature,
-          implementation: FunctionImplementation::CFunction(address),
-        };
-        self.add_function(name.clone(), def);
-        
-        Ok(node(expr, Type::Void, Content::CFunctionPrototype(name)))
+        // TODO: Why is it necessary to treat function pointers specially? If I treat
+        // them as globals the tests stop passing, but I'm not sure why.
+        if let Type::Fun(sig) = &type_tag {
+          let args =
+            sig.args.iter().enumerate().
+            map(|(i, _)| ((i + 65) as u8 as char).to_string().into())
+            .collect();
+          let def = FunctionDefinition {
+            name: name.clone(),
+            args,
+            signature: sig.clone(),
+            implementation: FunctionImplementation::CFunction(address),
+          };
+          self.add_function(name.clone(), def);
+        }
+        else {
+          let def = GlobalDefinition { name: name.clone(), type_tag, c_address: address };
+          self.add_global(name.clone(), def);
+        }
+        Ok(node(expr, Type::Void, Content::CBind(name)))
       }
       ("fun", exprs) => {
         let name = self.cache.get(exprs[0].symbol_unwrap()?);

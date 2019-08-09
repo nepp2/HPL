@@ -5,7 +5,7 @@ use crate::error::{Error, TextLocation, TextMarker, error_raw};
 
 lazy_static! {
   static ref KEYWORDS : HashSet<&'static str> =
-    vec!["fun", "cfun", "if", "else", "type", "while", "struct", "for",
+    vec!["fun", "cbind", "if", "else", "type", "while", "struct", "for",
     "break", "return", "let", "true", "false", "quote", "then", "as",
     "import", "in", "end", "do", "macro", "sizeof", "union", "ref"].into_iter().collect();
 }
@@ -48,7 +48,6 @@ impl From<StreamLocation> for TextMarker {
     TextMarker { line : v.line, col: v.pos - v.line_start }
   }
 }
-
 
 impl <'l> CStream<'l> {
 

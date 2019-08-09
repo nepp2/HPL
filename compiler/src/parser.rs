@@ -316,8 +316,16 @@ fn parse_type(ps : &mut ParseState) -> Result<Expr, Error> {
     let args_start = ps.peek_marker();
     ps.expect(Syntax, "(")?;
     loop {
-      if ps.peek()?.token_type != Symbol {
+      if ps.peek()?.symbol.as_ref() == ")" {
         break;
+      }
+      if ps.peek_ahead(1).filter(|p| p.symbol.as_ref() == ":").is_some() {
+        arguments.push(parse_simple_symbol(ps)?);
+        ps.expect(Syntax, ":")?;
+      }
+      else {
+        let start = ps.peek_marker();
+        arguments.push(ps.add_symbol("".into(), start));        
       }
       arguments.push(parse_type(ps)?);
       if !ps.accept(Syntax, ",") {
@@ -326,7 +334,7 @@ fn parse_type(ps : &mut ParseState) -> Result<Expr, Error> {
     }
     ps.expect(Syntax, ")")?;
     let args_expr = ps.add_tree("args", arguments, args_start);
-    let return_type = if ps.accept(Syntax, ":") {
+    let return_type = if ps.accept(Syntax, "=>") {
       parse_type(ps)?
     }
     else {
@@ -390,34 +398,14 @@ fn parse_fun(ps : &mut ParseState) -> Result<Expr, Error> {
   parse_function(ps, "fun")
 }
 
-fn parse_cfun(ps : &mut ParseState) -> Result<Expr, Error> {
+fn parse_cbind(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
-  ps.expect(Syntax, "cfun")?;
-  let fun_name = parse_simple_symbol(ps)?;
-  let mut arguments = vec!();
-  let args_start = ps.peek_marker();
-  ps.expect(Syntax, "(")?;
-  loop {
-    if ps.peek()?.token_type != Symbol {
-      break;
-    }
-    arguments.push(parse_simple_symbol(ps)?);
-    ps.expect(Syntax, ":")?;
-    arguments.push(parse_type(ps)?);
-    if !ps.accept(Syntax, ",") {
-      break;
-    }
-  }
-  ps.expect(Syntax, ")")?;
-  let args_expr = ps.add_tree("args", arguments, args_start);
-  let return_type = if ps.accept(Syntax, ":") {
-    parse_type(ps)?
-  }
-  else {
-    ps.add_tree("()", vec!(), start)
-  };
-  let cfun_expr = ps.add_tree("cfun", vec![fun_name, args_expr, return_type], start);
-  Ok(cfun_expr)
+  ps.expect(Syntax, "cbind")?;
+  let name = parse_simple_symbol(ps)?;
+  ps.expect(Syntax, ":")?;
+  let type_expr = parse_type(ps)?;
+  let cbind_expr = ps.add_tree("cbind", vec![name, type_expr], start);
+  Ok(cbind_expr)
 }
 
 fn parse_macro(ps : &mut ParseState) -> Result<Expr, Error> {
@@ -580,7 +568,7 @@ fn parse_syntax(ps : &mut ParseState) -> Result<Expr, Error> {
     "quote" => parse_quote(ps),
     "let" => parse_let(ps),
     "fun" => parse_fun(ps),
-    "cfun" => parse_cfun(ps),
+    "cbind" => parse_cbind(ps),
     "macro" => parse_macro(ps),
     "if" => parse_if(ps),
     "for" => parse_for(ps),

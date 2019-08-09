@@ -893,7 +893,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         let t = self.gen.context.i8_type().ptr_type(AddressSpace::Generic);
         reg(self.builder.build_int_to_ptr(v, t, "quote_expr").into())
       }
-      Content::CFunctionPrototype(_def) => {
+      Content::CBind(_def) => {
         return Ok(None);
       }
       Content::FunctionDefinition(_name) => {

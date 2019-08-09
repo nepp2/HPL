@@ -9,19 +9,19 @@ struct string
   length : u64
 end
 
-cfun malloc(size: u32) : ptr(u8)
+cbind malloc : fun(size: u32) => ptr(u8)
 
 struct lib_handle
   handle : u64
 end
 
-cfun load_library(name : ptr(string)) : lib_handle
+cbind load_library : fun(name : ptr(string)) => lib_handle
 
-cfun load_symbol(handle : lib_handle, name : ptr(string)) : ptr(u8)
+cbind load_symbol : fun(handle : lib_handle, name : ptr(string)) => ptr(u8)
 
-cfun print(s : ptr(string))
+cbind print : fun(s : ptr(string))
 
-cfun thread_sleep(millis : u64)
+cbind thread_sleep : fun(millis : u64)
 
 fun max(a : i64, b : i64)
   if a > b then a else b end
@@ -50,4 +50,4 @@ end
 #   tag : expr_tag
 # end
 
-cfun print_expr(e : ptr(u8))
+cbind print_expr : fun(e : ptr(u8))

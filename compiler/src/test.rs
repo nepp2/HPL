@@ -303,12 +303,21 @@ rusty_fork_test! {
   }
 
   #[test]
-  fn test_c_interface() {
+  fn test_c_function_bind() {
     let code = "
-      cfun test_add(a : i64, b : i64) : i64
+      cbind test_add : fun(a : i64, b : i64) => i64
       test_add(17, 7)
     ";
     assert_result(code, Val::I64(24));
+  }
+
+  #[test]
+  fn test_c_global_bind() {
+    let code = "
+      cbind test_global : i64
+      test_global
+    ";
+    assert_result(code, Val::I64(47));
   }
 
   #[test]
@@ -317,7 +326,7 @@ rusty_fork_test! {
       fun foo(a : i64, b : i64)
         a + b
       end
-      fun fold(a : ptr(i64), len : i64, v : i64, f : fun(i64, i64) : i64)
+      fun fold(a : ptr(i64), len : i64, v : i64, f : fun(i64, i64) => i64)
         let i = 0
         while i < len
           v = f(v, a[i])
