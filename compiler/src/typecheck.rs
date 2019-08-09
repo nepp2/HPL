@@ -182,9 +182,9 @@ fn node(expr : &Expr, type_tag : Type, content : Content) -> TypedNode {
 }
 
 pub struct GlobalDefinition {
-  name : RefStr,
-  type_tag : Type,
-  c_address : Option<usize>,
+  pub name : RefStr,
+  pub type_tag : Type,
+  pub c_address : Option<usize>,
 }
 
 #[derive(Clone)]
@@ -263,8 +263,8 @@ impl <'l> TypeChecker<'l> {
     self.find_f(name, |m| &m.types)
   }
 
-  fn add_global(&mut self, name : RefStr, def : Rc<GlobalDefinition>) {
-    self.module.globals.insert(name, def);
+  fn add_global(&mut self, name : RefStr, def : GlobalDefinition) {
+    self.module.globals.insert(name, Rc::new(def));
   }
 
   fn add_function(&mut self, name : RefStr, def : FunctionDefinition) {
@@ -435,7 +435,8 @@ impl <'l> TypeChecker<'l> {
         // is the top level of the function.
         let c = if self.is_top_level && self.scope_map.len() == 2 {
           // global variable
-          self.add_global(name.clone(), v.type_tag.clone());
+          let def = GlobalDefinition { name: name.clone(), type_tag: v.type_tag.clone(), c_address: None };
+          self.add_global(name.clone(), def);
           Content::VariableInitialise(name, v, VarScope::Global)
         }
         else {
@@ -695,7 +696,7 @@ impl <'l> TypeChecker<'l> {
         let name = self.get_scoped_variable_name(&s);
         let var_type =
           self.variables.get(name.as_ref())
-          .or_else(|| self.find_global(name.as_ref()));
+          .or_else(|| self.find_global(name.as_ref()).map(|def| &def.type_tag));
         if let Some(t) = var_type {
           return Ok(node(expr, t.clone(), Content::VariableReference(name)));
         }
