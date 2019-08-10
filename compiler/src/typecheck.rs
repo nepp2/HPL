@@ -327,10 +327,11 @@ impl <'l> TypeChecker<'l> {
         if params.len() > 0 {
           return error(expr, "unexpected type parameters");
         }
-        if !self.find_type_def(name).is_some() {
+        let name = self.cache.get(name);
+        if self.find_type_def(&name).is_none() {
           return error(expr, format!("type '{}' does not exist", name));
         }
-        return Ok(Type::Def(self.cache.get(name)));
+        return Ok(Type::Def(name));
       }
     }
   }
@@ -723,7 +724,39 @@ impl <'l> TypeChecker<'l> {
   }
 }
 
+fn find_symbols<'e>(expr : &'e Expr, types : &mut Vec<&'e Expr>, functions : &mut Vec<&'e Expr>) {
+  let children = expr.children.as_slice();
+  if children.len() == 0 { return }
+  if let ExprTag::Symbol(s) = &expr.tag {
+    match s.as_str() {
+      "union" => {
+      types.push(expr);
+      return;
+      }
+      "struct" => {
+      types.push(expr);
+      return;
+      }
+      "fun" => {
+      functions.push(expr);
+      }
+      _ => (),
+    }
+  }
+  for c in children {
+    find_symbols(c, types, functions);
+  }
+}
+
 pub fn to_typed_module(local_symbol_table : &HashMap<RefStr, usize>, modules : &[TypedModule], cache : &StringCache, expr : &Expr) -> Result<TypedModule, Error> {
+  let mut types = vec!();
+  let mut functions = vec!();
+  find_symbols(expr, &mut types, &mut functions);
+  broken here
+  // Doesn't do cyclic structs yet. Plan is to preprocess them, but I think
+  // I'll need to restructure the type checker first. Into a structure that's
+  // like ModuleTypeCheck and FunctionTypeCheck or something.
+
   let mut module = TypedModule::new();
   let mut type_checker =
     TypeChecker::new(true, HashMap::new(), &mut module, modules, local_symbol_table, cache);
