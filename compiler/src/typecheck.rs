@@ -211,17 +211,22 @@ impl TypedModule {
 */
 
 pub struct TypeChecker<'l> {
-  is_top_level : bool,
-  variables: HashMap<RefStr, Type>,
   module : &'l mut TypedModule,
   modules : &'l [TypedModule],
   local_symbol_table : &'l HashMap<RefStr, usize>,
 
+  cache: &'l StringCache,
+}
+
+pub struct FunctionChecker<'l, 'lt> {
+  t : &'l TypeChecker<'lt>,
+
+  is_top_level : bool,
+  variables: HashMap<RefStr, Type>,
+
   /// Tracks which variables are available, when.
   /// Used to rename variables with clashing names.
   scope_map: Vec<HashMap<RefStr, RefStr>>,
-
-  cache: &'l StringCache,
 }
 
 impl <'l> TypeChecker<'l> {
