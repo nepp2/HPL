@@ -27,6 +27,16 @@ fun max(a : i64, b : i64)
   if a > b then a else b end
 end
 
+struct text_marker
+  line : u64
+  col : u64
+end
+
+struct text_location
+  from : text_marker
+  to : text_marker
+end
+
 union expr_data
   s : string
   f : f64
@@ -39,15 +49,15 @@ struct expr_tag
   data : expr_data
 end
 
-# struct expr_array
-#   data : ptr(expr)
-#   length : u64
-# end
+struct expr_array
+  data : ptr(expr)
+  length : u64
+end
 
-# struct expr
-#   children : expr_array
-#   loc : text_location
-#   tag : expr_tag
-# end
+struct expr
+  children : expr_array
+  loc : text_location
+  tag : expr_tag
+end
 
 cbind print_expr : fun(e : ptr(u8))
