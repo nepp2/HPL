@@ -2,8 +2,7 @@
 use std::rc::Rc;
 use std::fmt::Write;
 
-use crate::error;
-use crate::error::{Error, error, error_raw, TextLocation, ErrorContent};
+use crate::error::{Error, error, error_raw, TextLocation};
 use crate::expr::{StringCache, RefStr, Expr, ExprTag};
 
 use std::collections::HashMap;
@@ -211,20 +210,23 @@ impl TypedModule {
 
 */
 
-enum TypeError {
-  Error(Error),
-  SymbolResolveFailure(RefStr, TextLocation),
-}
+// TODO: This extra error type is part of the strategy for supporting cyclic function references.
+// This also involves making global definitions incremental using ImMap, to prevent failures from defining things twice.
+//
+// enum TypeError {
+//   Error(Error),
+//   SymbolResolveFailure(RefStr, TextLocation),
+// }
 
-fn type_error<T, L : Into<TextLocation>, S : Into<ErrorContent>>(loc : L, message : S) -> Result<T, TypeError> {
-  Err(error::error_raw(loc, message).into())
-}
+// fn type_error<T, L : Into<TextLocation>, S : Into<ErrorContent>>(loc : L, message : S) -> Result<T, TypeError> {
+//   Err(error::error_raw(loc, message).into())
+// }
 
-impl From<Error> for TypeError {
-  fn from(e : Error) -> TypeError {
-    TypeError::Error(e)
-  }
-}
+// impl From<Error> for TypeError {
+//   fn from(e : Error) -> TypeError {
+//     TypeError::Error(e)
+//   }
+// }
 
 struct SymbolResolveFailure {
   symbol_needed : RefStr,
