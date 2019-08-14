@@ -228,9 +228,9 @@ impl TypedModule {
 //   }
 // }
 
-struct SymbolResolveFailure {
-  symbol_needed : RefStr,
-  failure_location : TextLocation,
+struct SymbolReference {
+  symbol_name : RefStr,
+  reference_location : TextLocation,
 }
 
 pub struct TypeChecker<'l> {
@@ -238,7 +238,7 @@ pub struct TypeChecker<'l> {
   modules : &'l [TypedModule],
   local_symbol_table : &'l HashMap<RefStr, usize>,
 
-  unresolved_type_definitions : Vec<SymbolResolveFailure>,
+  type_definition_references : Vec<SymbolReference>,
 
   cache: &'l StringCache,
 }
@@ -267,7 +267,7 @@ impl <'l> TypeChecker<'l> {
       module,
       modules,
       local_symbol_table,
-      unresolved_type_definitions: vec!(),
+      type_definition_references: vec!(),
       cache,
     }
   }
@@ -326,9 +326,7 @@ impl <'l> TypeChecker<'l> {
           return error(expr, "unexpected type parameters").map_err(|e| e.into());
         }
         let name = self.cache.get(name);
-        if self.find_type_def(&name).is_none() {
-          self.unresolved_type_definitions.push(SymbolResolveFailure{ symbol_needed: name.clone(), failure_location: expr.loc });
-        }
+        self.type_definition_references.push(SymbolReference{ symbol_name: name.clone(), reference_location: expr.loc });
         return Ok(Type::Def(name));
       }
     }
@@ -819,10 +817,10 @@ pub fn to_typed_module(local_symbol_table : &HashMap<RefStr, usize>, modules : &
   let body = function_checker.to_ast(expr)?;
 
   // Check any unresolved symbols
-  let unresolved_types : Vec<_> = type_checker.unresolved_type_definitions.drain(0..).collect();
+  let unresolved_types : Vec<_> = type_checker.type_definition_references.drain(0..).collect();
   for t in unresolved_types {
-    if type_checker.find_type_def(&t.symbol_needed).is_none() {
-      return error(t.failure_location, format!("type definition '{}' not found", t.symbol_needed));
+    if type_checker.find_type_def(&t.symbol_name).is_none() {
+      return error(t.reference_location, format!("type definition '{}' not found", t.symbol_name));
     }
   }
 
