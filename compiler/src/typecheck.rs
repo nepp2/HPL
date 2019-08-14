@@ -773,7 +773,7 @@ fn match_intrinsic(name : &str, args : &[TypedNode]) -> Option<Type> {
   }
 }
 
-fn find_symbols<'e>(expr : &'e Expr, types : &mut Vec<&'e Expr>, functions : &mut Vec<&'e Expr>) {
+fn find_type_definitions<'e>(expr : &'e Expr, types : &mut Vec<&'e Expr>) {
   let children = expr.children.as_slice();
   if children.len() == 0 { return }
   if let ExprTag::Symbol(s) = &expr.tag {
@@ -786,14 +786,11 @@ fn find_symbols<'e>(expr : &'e Expr, types : &mut Vec<&'e Expr>, functions : &mu
       types.push(expr);
       return;
       }
-      "fun" => {
-      functions.push(expr);
-      }
       _ => (),
     }
   }
   for c in children {
-    find_symbols(c, types, functions);
+    find_type_definitions(c, types);
   }
 }
 
@@ -803,8 +800,7 @@ pub fn to_typed_module(local_symbol_table : &HashMap<RefStr, usize>, modules : &
     TypeChecker::new(&mut module, modules, local_symbol_table, cache);
   
   let mut types = vec!();
-  let mut functions = vec!();
-  find_symbols(expr, &mut types, &mut functions);
+  find_type_definitions(expr, &mut types);
 
   // Process the types
   for e in types {
