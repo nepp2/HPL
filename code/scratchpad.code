@@ -129,47 +129,55 @@ end
 
 print_expr(e)
 
-sdl_init(SDL_INIT_VIDEO);
+fun run_sdl_thing()
 
-let c = malloc(4 as u32)
-c[0] = 65 as u8
-c[1] = 65 as u8
-c[2] = 65 as u8
-c[3] = 0 as u8
+  sdl_init(SDL_INIT_VIDEO);
 
-let win =
-  sdl_create_window(
-    c,
-    SDL_WINDOWPOS_UNDEFINED,
-    SDL_WINDOWPOS_UNDEFINED,
-    500 as i32,
-    400 as i32,
-    SDL_WINDOW_SHOWN);
+  let c = malloc(4 as u32)
+  c[0] = 65 as u8
+  c[1] = 65 as u8
+  c[2] = 65 as u8
+  c[3] = 0 as u8
 
-let renderer = sdl_create_renderer(win, -1 as i32, SDL_RENDERER_ACCELERATED as u32)
+  let win =
+    sdl_create_window(
+      c,
+      SDL_WINDOWPOS_UNDEFINED,
+      SDL_WINDOWPOS_UNDEFINED,
+      500 as i32,
+      400 as i32,
+      SDL_WINDOW_SHOWN);
 
-let event =
-  [sdl_event{
-    event_type: 0 as u32,
-    timestamp: 0 as u32,
-    content: sdl_event_content{ none: 0 }
-  }]
-let s = [string {[0 as u8], 1 as u64}]
+  let renderer = sdl_create_renderer(win, -1 as i32, SDL_RENDERER_ACCELERATED as u32)
 
-while true
-  sdl_poll_event(event)
-  let t = event[0].event_type as i64
-  if t == SDL_QUIT
-    break
-  else if t == SDL_KEYDOWN
-    let c = event[0].content.keyboard.keysym.sym as u8
-    s[0].data[0] = c
-    print(s)
+  let event =
+    [sdl_event{
+      event_type: 0 as u32,
+      timestamp: 0 as u32,
+      content: sdl_event_content{ none: 0 }
+    }]
+  let s = [string {[0 as u8], 1 as u64}]
+
+  while true
+    sdl_poll_event(event)
+    let t = event[0].event_type as i64
+    if t == SDL_QUIT
+      break
+    else if t == SDL_KEYDOWN
+      let c = event[0].content.keyboard.keysym.sym as u8
+      s[0].data[0] = c
+      print(s)
+    end
+
+    sdl_set_draw_color(renderer, 255 as u8, 0 as u8, 0 as u8, 255 as u8)
+    sdl_clear(renderer)
+    sdl_present(renderer)
+
+    thread_sleep(16 as u64)
   end
 
-  sdl_set_draw_color(renderer, 255 as u8, 0 as u8, 0 as u8, 255 as u8)
-  sdl_clear(renderer)
-  sdl_present(renderer)
-
-  thread_sleep(16 as u64)
 end
+
+# run_sdl_thing()
+
+4

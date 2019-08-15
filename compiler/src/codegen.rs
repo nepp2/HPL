@@ -231,6 +231,15 @@ impl <'l> Gen<'l> {
 
   /// Code-generates a module, returning a reference to the top-level function in the module
   pub fn codegen_module(mut self, module : &TypedModule) -> Result<(), Error> {
+
+    // declare the local globals
+    for (name, def) in module.globals.iter() {
+      if def.c_address.is_none() {
+        let t = self.to_basic_type(&def.type_tag).unwrap();
+        self.add_global(const_null(t), false, &name);
+      }
+    }
+
     // generate the prototypes first (so the functions find each other)
     let mut functions_to_codegen = vec!();
     for (name, def) in module.functions.iter() {
@@ -427,6 +436,14 @@ impl <'l> Gen<'l> {
     return t;
   }
 
+  fn add_global(&mut self, initial_value : BasicValueEnum, is_constant : bool, name : &str) -> PointerValue {
+    let gv = self.module.add_global(initial_value.get_type(), Some(AddressSpace::Generic), name);
+    gv.set_initializer(&initial_value);
+    gv.set_constant(is_constant);
+    gv.set_linkage(Linkage::Internal);
+    //gv.set_alignment(8); // TODO: is this needed?
+    gv.as_pointer_value()
+  }
 
 }
 
@@ -451,15 +468,6 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
     pointer
   }
 
-  fn add_global(&mut self, initial_value : BasicValueEnum, is_constant : bool, name : &str) -> PointerValue {
-    let gv = self.gen.module.add_global(initial_value.get_type(), Some(AddressSpace::Generic), name);
-    gv.set_initializer(&initial_value);
-    gv.set_constant(is_constant);
-    gv.set_linkage(Linkage::Internal);
-    //gv.set_alignment(8); // TODO: is this needed?
-    gv.as_pointer_value()
-  }
-
   fn init_variable(&mut self, name : RefStr, var_scope : VarScope, value : BasicValueEnum)
     -> Result<(), ErrorContent>
   {
@@ -468,7 +476,8 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
     }
     let pointer = match var_scope {
       VarScope::Global => {
-        self.add_global(const_null(value.get_type()), false, &name)
+        let gv = self.gen.module.get_global(&name).unwrap();
+        gv.as_pointer_value()
       }
       VarScope::Local => {
         self.create_entry_block_alloca(value.get_type(), &name)
@@ -1015,6 +1024,9 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         if let Some(ptr) = self.variables.get(name) {
           pointer(*ptr)
         }
+        else if let Some(gv) = self.gen.module.get_global(name) {
+          pointer(gv.as_pointer_value())
+        }
         else if let Some(gv) = self.gen.external_globals.get(name) {
           let ptr = gv.as_pointer_value();
           pointer(ptr)
@@ -1081,7 +1093,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
                 byte.const_int(*v as u64, false).into()).collect();
             let const_array : BasicValueEnum = self.gen.context.i8_type().const_array(vs.as_slice()).into();
             let name = &s.as_str()[0..std::cmp::min(s.len(), 10)];
-            let ptr = self.add_global(const_array, true, name);
+            let ptr = self.gen.add_global(const_array, true, name);
             let cast_to = self.gen.context.i8_type().ptr_type(AddressSpace::Generic);
             let string_pointer = self.builder.build_pointer_cast(ptr, cast_to, "string_pointer");
             let string_length = self.gen.context.i64_type().const_int(vs.len() as u64, false);
