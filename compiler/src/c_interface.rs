@@ -4,6 +4,8 @@ use crate::jit::{InterpreterInner, Interpreter, interpreter};
 use crate::lexer;
 use crate::expr::{RefStr, Expr};
 
+use std::fs::File;
+use std::io::Read;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::collections::HashMap;
@@ -13,16 +15,6 @@ use std::fmt;
 use libloading::{Library, Symbol};
 
 use std::{thread, time};
-
-#[no_mangle]
-pub extern fn create_interpreter() -> *mut Interpreter {
-  Box::into_raw(Box::new(interpreter()))
-}
-
-#[no_mangle]
-pub extern fn drop_interpreter(i : *mut Interpreter) {
-  unsafe { Box::from_raw(i) };
-}
 
 #[no_mangle]
 pub extern fn lex_string(i : *mut Interpreter, code : *mut c_char) {
@@ -80,6 +72,24 @@ static TEST_GLOBAL : i64 = 47;
 
 extern {
   pub fn malloc(size: usize) -> *mut u8;
+}
+
+#[no_mangle]
+pub extern "C" fn load_quote(i : *mut Interpreter, s : SStr) -> *mut u8 {
+  let code_path = format!("{}code/{}.code", ROOT, s.as_str());
+  let mut f = File::open(code_path).expect("file not found");
+  let mut code = String::new();
+  f.read_to_string(&mut code).unwrap();
+  let i = unsafe { &mut *i };
+  let expr = Box::new(i.parse_string(&code).unwrap());
+  Box::into_raw(expr) as *mut u8
+}
+
+#[no_mangle]
+pub extern "C" fn load_expr_as_module(i : *mut Interpreter, expr : *mut u8) -> *mut u8 {
+  let i = unsafe { &mut *i };
+  let expr = unsafe { &mut *(expr as *mut Expr) };
+  
 }
 
 #[no_mangle]
@@ -176,7 +186,7 @@ impl CSymbols {
     sym.insert("print_expr".into(), (print_expr as *const()) as usize);
     sym.insert("test_add".into(), (test_add as *const()) as usize);
     sym.insert("thread_sleep".into(), (thread_sleep as *const()) as usize);
-    sym.insert("interpreter".into(), (i as *const()) as usize);
+    sym.insert("compiler".into(), (i as *const()) as usize);
     sym.insert("test_global".into(), (&TEST_GLOBAL as *const i64) as usize);
   }
 }

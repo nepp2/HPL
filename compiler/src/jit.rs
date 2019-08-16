@@ -107,7 +107,7 @@ impl InterpreterInner {
     Ok(())
   }
 
-  fn parse_string(&mut self, code : &str) -> Result<Expr, Error> {
+  pub fn parse_string(&mut self, code : &str) -> Result<Expr, Error> {
     let tokens =
       lexer::lex(code, &self.cache)
       .map_err(|mut es| es.remove(0))?;
