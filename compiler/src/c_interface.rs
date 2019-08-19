@@ -78,11 +78,12 @@ extern {
 pub extern "C" fn load_quote(i : *mut Interpreter, s : SStr) -> *mut u8 {
   let code_path = format!("{}code/{}.code", ROOT, s.as_str());
   let mut f = File::open(code_path).expect("file not found");
-  let mut code = String::new();
-  f.read_to_string(&mut code).unwrap();
-  let i = unsafe { &mut *i };
-  let expr = Box::new(i.parse_string(&code).unwrap());
-  Box::into_raw(expr) as *mut u8
+  // let mut code = String::new();
+  // f.read_to_string(&mut code).unwrap();
+  // let i = unsafe { &mut *i };
+  // let expr = Box::new(i.parse_string(&code).unwrap());
+  // Box::into_raw(expr) as *mut u8
+  0 as *mut u8
 }
 
 #[no_mangle]
@@ -158,7 +159,6 @@ pub extern "C" fn load_symbol(lib_handle : usize, symbol_name : SStr) -> usize {
   }
 }
 
-/// TODO: This is not thread-safe!
 #[no_mangle]
 pub extern "C" fn print_expr(e : &Expr) {
   println!("{}", e);

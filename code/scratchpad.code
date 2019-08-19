@@ -3,7 +3,7 @@
 
 let e = load_quote(compiler, ["sdl2"])
 
-print_expr(e)
+# print_expr(e)
 
 let sdl_demo = quote
 
