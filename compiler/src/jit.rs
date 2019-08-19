@@ -120,110 +120,9 @@ impl InterpreterInner {
   }
 
   pub fn compile_expression(&mut self, expr : &Expr) -> Result<&CompiledExpression, Error> {
-    // TODO: provide an option for this?
-    // println!("{}", display_expr(expr));
-
-    let typed_module = typecheck::to_typed_module(&self.c_symbols.local_symbol_table, &[self.global_module.clone()], &self.cache, expr)?;
-
-    // add module contents to the global interpreter module
-    self.global_module.functions = self.global_module.functions.clone().union(typed_module.functions.clone());
-    self.global_module.types = self.global_module.types.clone().union(typed_module.types.clone());
-    self.global_module.globals = self.global_module.globals.clone().union(typed_module.globals.clone());
-
-    let module_name = format!("expression_{}", self.expressions.len());
-    let mut module = self.context.create_module(&module_name);
-
-    let ee =
-      module.create_jit_execution_engine(OptimizationLevel::None)
-      .map_err(|e| error_raw(expr, e.to_string()))?;
-
-    // TODO module.set_target(target: &Target);
-
-    // TODO: enable passes again (and figure out what to include)
-    let pm = PassManager::create(&module);
-    // pm.add_instruction_combining_pass();
-    // pm.add_reassociate_pass();
-    // pm.add_gvn_pass();
-    // pm.add_cfg_simplification_pass();
-    // pm.add_basic_alias_analysis_pass();
-    // pm.add_promote_memory_to_register_pass();
-    // pm.add_instruction_combining_pass();
-    // pm.add_reassociate_pass();  
-    pm.initialize();
-
-    let mut external_globals : HashMap<RefStr, GlobalValue> = HashMap::new();
-    let mut external_functions : HashMap<RefStr, FunctionValue> = HashMap::new();
-    let mut c_functions : HashMap<RefStr, (FunctionValue, usize)> = HashMap::new();
-    let mut c_globals : HashMap<RefStr, (GlobalValue, usize)> = HashMap::new();
-    {
-      let jit =
-        Gen::new(
-          &mut self.context, &mut module, &mut ee.get_target_data(), &mut self.global_module, &mut external_globals,
-          &mut external_functions, &mut c_functions, &mut c_globals, &pm);
-      jit.codegen_module(&typed_module)?
-    };
-    
-    // TODO: provide an option for this?
-    // dump_module(&module);
-
-    // Link c functions
-    for (function_value, address) in c_functions.values() {
-      ee.add_global_mapping(function_value, *address);
-    }
-
-    // Link c globals
-    for (name, (global_value, address)) in c_globals.iter() {
-      println!("Global value link: {}, {}", name, address);
-      ee.add_global_mapping(global_value, *address);
-    }
-
-    // Link global variables
-    for (global_name, global_value) in external_globals.iter() {
-      let c = 
-        self.expressions.iter()
-        .filter(|c| {
-          c.m.get_global(global_name)
-          .filter(|g| g.get_linkage() == Linkage::Internal)
-          .is_some()
-        })
-        .nth(0);
-      if let Some(c) = c {
-        unsafe {
-          let address = c.ee.get_global_address(global_name).unwrap();
-          ee.add_global_mapping(global_value, address as usize);
-          break;
-        }
-      }
-      else {
-        panic!("compile error: external global '{}' not found", global_name);
-      }
-    }
-
-    // Link external functions
-    for (function_name, function_value) in external_functions.iter() {
-      let c = 
-        self.expressions.iter()
-        .filter(|c| {
-          c.m.get_function(function_name)
-          .filter(|f| f.count_basic_blocks() > 0)
-          .is_some()
-        })
-        .nth(0);
-      if let Some(c) = c {
-        unsafe {
-          let address = c.ee.get_function_address(function_name).unwrap();
-          ee.add_global_mapping(function_value, address as usize);
-        }
-      }
-      else {
-        panic!("compile error: external function '{}' not found", function_name);
-      }
-    }
-
-    // TODO: is this needed?
-    ee.run_static_constructors();
-
-    self.expressions.push(CompiledExpression { ee, m: module, typed_module });
+    let modules : Vec<_> = self.expressions.iter().collect();
+    let ce = compile_expression(expr, modules.as_slice(), &self.c_symbols, &mut self.context, &self.cache)?;
+    self.expressions.push(ce);
     Ok(self.expressions.last().unwrap())
   }
 
@@ -292,4 +191,109 @@ impl InterpreterInner {
     //self.modules.push((module, ee));
     Ok(result)
   }
+}
+
+pub fn compile_expression(expr : &Expr, external_modules : &[&CompiledExpression], c_symbols : &CSymbols, context : &mut Context, cache : &StringCache) -> Result<CompiledExpression, Error> {
+  // TODO: provide an option for this?
+  // println!("{}", expr);
+
+  let mut modules : Vec<_> = external_modules.iter().map(|c| &c.typed_module).collect();
+
+  let typed_module = typecheck::to_typed_module(&c_symbols.local_symbol_table, modules.as_slice(), cache, expr)?;
+
+  modules.push(&typed_module);
+
+  let module_name = format!("module_{}", modules.len());
+  let mut module = context.create_module(&module_name);
+
+  let ee =
+    module.create_jit_execution_engine(OptimizationLevel::None)
+    .map_err(|e| error_raw(expr, e.to_string()))?;
+
+  // TODO module.set_target(target: &Target);
+
+  // TODO: enable passes again (and figure out what to include)
+  let pm = PassManager::create(&module);
+  // pm.add_instruction_combining_pass();
+  // pm.add_reassociate_pass();
+  // pm.add_gvn_pass();
+  // pm.add_cfg_simplification_pass();
+  // pm.add_basic_alias_analysis_pass();
+  // pm.add_promote_memory_to_register_pass();
+  // pm.add_instruction_combining_pass();
+  // pm.add_reassociate_pass();  
+  pm.initialize();
+
+  let mut external_globals : HashMap<RefStr, GlobalValue> = HashMap::new();
+  let mut external_functions : HashMap<RefStr, FunctionValue> = HashMap::new();
+  let mut c_functions : HashMap<RefStr, (FunctionValue, usize)> = HashMap::new();
+  let mut c_globals : HashMap<RefStr, (GlobalValue, usize)> = HashMap::new();
+  {
+    let jit =
+      Gen::new(
+        context, &mut module, &mut ee.get_target_data(), modules.as_slice(), &mut external_globals,
+        &mut external_functions, &mut c_functions, &mut c_globals, &pm);
+    jit.codegen_module(&typed_module)?
+  };
+
+  // TODO: provide an option for this?
+  // dump_module(&module);
+
+  // Link c functions
+  for (function_value, address) in c_functions.values() {
+    ee.add_global_mapping(function_value, *address);
+  }
+
+  // Link c globals
+  for (global_value, address) in c_globals.values() {
+    ee.add_global_mapping(global_value, *address);
+  }
+
+  // Link global variables
+  for (global_name, global_value) in external_globals.iter() {
+    let c = 
+      external_modules.iter()
+      .filter(|c| {
+        c.m.get_global(global_name)
+        .filter(|g| g.get_linkage() == Linkage::Internal)
+        .is_some()
+      })
+      .nth(0);
+    if let Some(c) = c {
+      unsafe {
+        let address = c.ee.get_global_address(global_name).unwrap();
+        ee.add_global_mapping(global_value, address as usize);
+        break;
+      }
+    }
+    else {
+      panic!("compile error: external global '{}' not found", global_name);
+    }
+  }
+
+  // Link external functions
+  for (function_name, function_value) in external_functions.iter() {
+    let c = 
+      external_modules.iter()
+      .filter(|c| {
+        c.m.get_function(function_name)
+        .filter(|f| f.count_basic_blocks() > 0)
+        .is_some()
+      })
+      .nth(0);
+    if let Some(c) = c {
+      unsafe {
+        let address = c.ee.get_function_address(function_name).unwrap();
+        ee.add_global_mapping(function_value, address as usize);
+      }
+    }
+    else {
+      panic!("compile error: external function '{}' not found", function_name);
+    }
+  }
+
+  // TODO: is this needed?
+  ee.run_static_constructors();
+
+  Ok(CompiledExpression { ee, m: module, typed_module })
 }

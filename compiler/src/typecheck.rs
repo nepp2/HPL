@@ -235,7 +235,7 @@ struct SymbolReference {
 
 pub struct TypeChecker<'l> {
   module : &'l mut TypedModule,
-  modules : &'l [TypedModule],
+  modules : &'l [&'l TypedModule],
   local_symbol_table : &'l HashMap<RefStr, usize>,
 
   type_definition_references : Vec<SymbolReference>,
@@ -258,7 +258,7 @@ impl <'l> TypeChecker<'l> {
 
   pub fn new(
     module : &'l mut TypedModule,
-    modules : &'l [TypedModule],
+    modules : &'l [&'l TypedModule],
     local_symbol_table : &'l HashMap<RefStr, usize>,
     cache : &'l StringCache)
       -> TypeChecker<'l>
@@ -794,7 +794,7 @@ fn find_type_definitions<'e>(expr : &'e Expr, types : &mut Vec<&'e Expr>) {
   }
 }
 
-pub fn to_typed_module(local_symbol_table : &HashMap<RefStr, usize>, modules : &[TypedModule], cache : &StringCache, expr : &Expr) -> Result<TypedModule, Error> {
+pub fn to_typed_module(local_symbol_table : &HashMap<RefStr, usize>, modules : &[&TypedModule], cache : &StringCache, expr : &Expr) -> Result<TypedModule, Error> {
   let mut module = TypedModule::new();
   let mut type_checker =
     TypeChecker::new(&mut module, modules, local_symbol_table, cache);

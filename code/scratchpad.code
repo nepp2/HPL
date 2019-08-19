@@ -1,140 +1,9 @@
 
-# struct sdl_keysym
-#   scancode : u32
-#   sym : u32
-#   mod : u16
-#   unused : u32
-# end
-
-# struct sdl_window_event
-#   window_id : u32
-#   event : u8
-#   data1 : i32
-#   data2 : i32
-# end
-
-# struct sdl_keyboard_event
-#   window_id : u32
-#   state : u8
-#   repeat : u8
-#   keysym : sdl_keysym
-# end
-
-# struct sdl_padding
-#   a0 : i64
-#   a1 : i64
-#   a2 : i64
-#   a3 : i64
-#   a4 : i64
-#   a5 : i64
-#   a6 : i64
-#   a7 : i64
-#   a8 : i64
-#   a9 : i64
-#   a10 : i64
-#   a11 : i64
-#   a12 : i64
-#   a13 : i64
-#   a14 : i64
-#   a15 : i64
-#   a16 : i64
-#   a17 : i64
-#   a18 : i64
-#   a19 : i64
-# end
-
-# union sdl_event_content
-#   none : i64
-#   window : sdl_window_event
-#   keyboard : sdl_keyboard_event
-#   padding : sdl_padding
-# end
-
-# struct sdl_event
-#   event_type : u32
-#   timestamp : u32
-#   content : sdl_event_content
-# end
-
-# struct sdl_rect
-#   x : i32, y : i32, w : i32, h : i32
-# end
-
-# let SDL_QUIT = 256
-
-# let SDL_WINDOWEVENT = 512
-
-# let SDL_KEYDOWN = 768
-# let SDL_KEYUP = 769
-# let SDL_TEXTEDITING =  770
-# let SDL_TEXTINPUT = 771
-
-# let SDL_RENDERER_SOFTWARE = 1
-# let SDL_RENDERER_ACCELERATED = 2
-# let SDL_RENDERER_PRESENTVSYNC = 4
-# let SDL_RENDERER_TARGETTEXTURE = 8
-
-# let sdl2 = load_library(ref "SDL2")
-# let sdl_init = load_symbol(sdl2, ref "SDL_Init") as fun(u32) => i32
-
-# # title, x, y, w, h, flags
-# let sdl_create_window =
-#   load_symbol(sdl2, ref "SDL_CreateWindow")
-#     as fun(ptr(u8), i32, i32, i32, i32, u32) => ptr(u8)
-
-# # window, index, flags
-# let sdl_create_renderer =
-#   load_symbol(sdl2, ref "SDL_CreateRenderer")
-#     as fun(ptr(u8), i32, u32) => ptr(u8)
-
-# # renderer
-# let sdl_clear =
-#   load_symbol(sdl2, ref "SDL_RenderClear")
-#     as fun(ptr(u8)) => i32
-
-# # renderer, r, g, b, a
-# let sdl_set_draw_color =
-#   load_symbol(sdl2, ref "SDL_SetRenderDrawColor")
-#     as fun(ptr(u8), u8, u8, u8, u8) => i32
-
-# # renderer
-# let sdl_present =
-#   load_symbol(sdl2, ref "SDL_RenderPresent")
-#     as fun(ptr(u8))
-
-# # renderer, rect
-# let sdl_fill_rect =
-#   load_symbol(sdl2, ref "SDL_RenderFillRect")
-#     as fun(ptr(u8), ptr(sdl_rect))
-
-# # event
-# let sdl_poll_event =
-#   load_symbol(sdl2, ref "SDL_PollEvent")
-#     as fun(ptr(sdl_event)) => i32
-
-# let SDL_INIT_VIDEO = 32 as u32
-# let SDL_WINDOWPOS_UNDEFINED = 536805376 as i32
-# let SDL_WINDOW_OPENGL = 2 as u32
-# let SDL_WINDOW_SHOWN = 4 as u32
-
-# let q = load_quote("sdl2")
-# let sdl2 = compile_module(q, [prelude])
-
-open sdl2
-
-
-
-############################
-
-# let e = quote
-#   let c = malloc(4 as u32)
-#   c[0] = 65 as u8
-#   c[1] = 65 as u8
-#   c[2] = 65 as u8
-#   c[3] = 0 as u8
-# end
-
 # print_expr(e)
+
+let e = load_quote(compiler, ["sdl2"])
+
+print_expr(e)
 
 let sdl_demo = quote
 
@@ -190,7 +59,5 @@ let sdl_demo = quote
   run_sdl_thing()
 
 end
-
-let sdl2 = compile_module(q, [prelude, sdl2])
 
 4

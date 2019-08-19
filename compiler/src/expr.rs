@@ -105,18 +105,9 @@ impl Expr {
   }
 }
 
-// TODO: this is a very dodgy drop operation. Seems like string pointers could easily outlive this object,
-// but still be deallocated.
 impl Drop for Expr {
   fn drop(&mut self) {
-    let s = match self.tag {
-      ExprTag::Symbol(s) => s,
-      ExprTag::LiteralString(s) => s,
-      _ => return,
-    };
-    unsafe {
-      String::from_raw_parts(s.ptr, s.length as usize, s.length as usize);
-    }
+    // TODO: strings should be cleared somehow. this leaks memory badly.
   }
 }
 

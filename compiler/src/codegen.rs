@@ -5,9 +5,11 @@ use crate::error::{Error, error, error_raw, ErrorContent};
 use crate::expr::RefStr;
 use crate::typecheck::{
   TypedNode, Content, Type, Val, TypeDefinition, TypeKind,
-  FunctionDefinition, VarScope, TypedModule, FunctionImplementation };
+  FunctionDefinition, VarScope, TypedModule, FunctionImplementation,
+  GlobalDefinition };
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use inkwell::AddressSpace;
 use inkwell::basic_block::BasicBlock;
@@ -113,16 +115,17 @@ struct LoopLabels {
   exit : BasicBlock,
 }
 
-/*
-impl From<Option<BasicValueEnum>> for GenVal {
-  fn from(v : Option<BasicValueEnum>) -> GenVal {
-    match v {
-      Some(v) => GenVal::Register(v),
-      None => GenVal::Void,
-    }
-  }
+fn find_type_def<'l>(type_info : &'l [&'l TypedModule], name : &str) -> Option<&'l Rc<TypeDefinition>> {
+  type_info.iter().flat_map(|i| i.types.get(name)).nth(0)
 }
-*/
+
+fn find_function_def<'l>(type_info : &'l [&'l TypedModule], name : &str) -> Option<&'l Rc<FunctionDefinition>> {
+  type_info.iter().flat_map(|i| i.functions.get(name)).nth(0)
+}
+
+fn find_global_def<'l>(type_info : &'l [&'l TypedModule], name : &str) -> Option<&'l Rc<GlobalDefinition>> {
+  type_info.iter().flat_map(|i| i.globals.get(name)).nth(0)
+}
 
 fn const_null(t : BasicTypeEnum) -> BasicValueEnum {
   use BasicTypeEnum::*;
@@ -171,7 +174,7 @@ pub struct Gen<'l> {
   context: &'l mut Context,
   module : &'l mut Module,
   target_data : &'l TargetData,
-  type_info : &'l TypedModule,
+  type_info : &'l [&'l TypedModule],
 
   /// Used by the JIT to link globals between modules
   external_globals: &'l mut HashMap<RefStr, GlobalValue>,
@@ -207,7 +210,7 @@ impl <'l> Gen<'l> {
     context: &'l mut Context,
     module : &'l mut Module,
     target_data : &'l TargetData,
-    type_info : &'l TypedModule,
+    type_info : &'l [&'l TypedModule],
     external_globals: &'l mut HashMap<RefStr, GlobalValue>,
     external_functions: &'l mut HashMap<RefStr, FunctionValue>,
     c_functions: &'l mut HashMap<RefStr, (FunctionValue, usize)>,
@@ -231,7 +234,6 @@ impl <'l> Gen<'l> {
 
   /// Code-generates a module, returning a reference to the top-level function in the module
   pub fn codegen_module(mut self, module : &TypedModule) -> Result<(), Error> {
-
     // declare the local globals
     for (name, def) in module.globals.iter() {
       if def.c_address.is_none() {
@@ -251,11 +253,13 @@ impl <'l> Gen<'l> {
         _ => (),
       }
     }
+
     // codegen the functions
     for (p, def, body) in functions_to_codegen {
       let gen_function = GenFunction::new(&mut self);
       gen_function.codegen_function(p, body, def.args.as_slice())?;
     }
+
     Ok(())
   }
 
@@ -285,6 +289,19 @@ impl <'l> Gen<'l> {
     function
   }
 
+  // special case for handling struct/union fields to prevent infinite recursion
+  fn to_basic_type_no_cycle(&mut self, t : &Type) -> Option<BasicTypeEnum> {
+    match t {
+      Type::Ptr(_t) => {
+        let t = self.context.void_type().ptr_type(AddressSpace::Generic);
+        Some(t.into())
+      }
+      _ => {
+        self.to_basic_type(t)
+      }
+    }
+  }
+
   fn to_basic_type(&mut self, t : &Type) -> Option<BasicTypeEnum> {
     match t {
       Type::Void => None,
@@ -302,8 +319,8 @@ impl <'l> Gen<'l> {
         Some(t.ptr_type(AddressSpace::Generic).into())
       }
       Type::Def(name) => {
-        let def = self.type_info.types.get(name).unwrap();
-        Some(self.struct_type(def).as_basic_type_enum())
+        let def = find_type_def(&self.type_info, name).unwrap();
+        Some(self.composite_type(def).as_basic_type_enum())
       }
       Type::Ptr(t) => {
         let bt = self.to_basic_type(t);
@@ -388,7 +405,7 @@ impl <'l> Gen<'l> {
     }
   }
 
-  fn struct_type(&mut self, def : &TypeDefinition) -> StructType {
+  fn composite_type(&mut self, def : &TypeDefinition) -> StructType {
     if let Some(t) = self.struct_types.get(&def.name) {
       return *t;
     }
@@ -396,7 +413,7 @@ impl <'l> Gen<'l> {
       TypeKind::Struct => {
         let types =
           def.fields.iter().map(|(_, t)| {
-            self.to_basic_type(t).unwrap()
+            self.to_basic_type_no_cycle(t).unwrap()
           })
           .collect::<Vec<BasicTypeEnum>>();
         self.context.struct_type(&types, false)
@@ -406,7 +423,7 @@ impl <'l> Gen<'l> {
         let mut bt : Option<BasicTypeEnum> = None;
         let mut widest_alignment = 0;
         for (_, t) in def.fields.iter() {
-          if let Some(t) = self.to_basic_type(t) {
+          if let Some(t) = self.to_basic_type_no_cycle(t) {
             let alignment = self.target_data.get_preferred_alignment(&t);
             if alignment > widest_alignment {
               widest_alignment = alignment;
@@ -677,16 +694,24 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
   }
 
   fn codegen_struct_initialise(&mut self, def : &TypeDefinition, args : &[BasicValueEnum]) -> GenVal {
-    let t = self.gen.struct_type(def);
+    let t = self.gen.composite_type(def);
     let mut sv = t.get_undef();
     for (i, v) in args.iter().enumerate() {
-      sv = self.builder.build_insert_value(sv, *v, i as u32, "insert_field").unwrap().into_struct_value();
+      let field_val = if let BasicValueEnum::PointerValue(pv) = v {
+        // Cast all pointer types to void before assigning to struct fields
+        let void_ptr_type = self.gen.context.void_type().ptr_type(AddressSpace::Generic);
+        self.builder.build_pointer_cast(*pv, void_ptr_type, "void_cast").into()
+      }
+      else {
+        *v
+      };
+      sv = self.builder.build_insert_value(sv, field_val, i as u32, "insert_field").unwrap().into_struct_value();
     }
     reg(sv.into())
   }
 
   fn codegen_union_initialise(&mut self, def : &TypeDefinition, val : BasicValueEnum) -> GenVal {
-    let union_type = self.gen.struct_type(def).as_basic_type_enum();
+    let union_type = self.gen.composite_type(def).as_basic_type_enum();
     let ptr = self.create_entry_block_alloca(union_type, &def.name);
     let variant_type = self.gen.pointer_to_type(Some(val.get_type()));
     let variant_ptr = self.builder.build_pointer_cast(ptr, variant_type, "union_cast");
@@ -915,19 +940,19 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
       Content::StructInstantiate(struct_name, args) => {
         let a : Result<Vec<BasicValueEnum>, Error> =
           args.iter().map(|a| self.codegen_value(a)).collect();
-        let def = self.gen.type_info.types.get(struct_name).unwrap();
+        let def = find_type_def(&self.gen.type_info, struct_name).unwrap();
         self.codegen_struct_initialise(def, a?.as_slice())
       }
       Content::UnionInstantiate(union_name, arg) => {
         let val = self.codegen_value(&arg.1)?;
-        let def = self.gen.type_info.types.get(union_name).unwrap();
+        let def = find_type_def(&self.gen.type_info, union_name).unwrap();
         self.codegen_union_initialise(def, val)
       }
       Content::FieldAccess(x) => {
         let (type_val_node, field_name) = (&x.0, &x.1);
         let v = self.codegen_expression(type_val_node)?.unwrap();
         let def = match &type_val_node.type_tag {
-          Type::Def(name) => self.gen.type_info.types.get(name).unwrap(),
+          Type::Def(name) => find_type_def(&self.gen.type_info, name).unwrap(),
           _ => panic!(),
         };
         match def.kind {
@@ -946,9 +971,15 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
               Storage::Pointer => {
                 // if this is a pointer to the struct, get a pointer to the field
                 let ptr = *v.value.as_pointer_value();
-                let field_ptr = unsafe {
+                let field_ptr_untyped = unsafe {
                   self.builder.build_struct_gep(ptr, field_index as u32, field_name)
                 };
+                let t = self.gen.to_basic_type(&node.type_tag);
+                // this cast is necessary because all pointer fields are tagged as void pointers
+                // in the IR, due to an issue with generating cyclic references
+                let field_ptr =
+                  self.builder.build_pointer_cast(
+                    field_ptr_untyped, self.gen.pointer_to_type(t), "field_cast");
                 pointer(field_ptr)
               }
             }
@@ -1031,7 +1062,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
           let ptr = gv.as_pointer_value();
           pointer(ptr)
         }
-        else if let Some(def) = self.gen.type_info.globals.get(name) {
+        else if let Some(def) = find_global_def(&self.gen.type_info, name) {
           let t = self.gen.to_basic_type(&def.type_tag).unwrap();
           let gv = self.gen.module.add_global(t, Some(AddressSpace::Generic), &name);
           gv.set_constant(false);
@@ -1049,7 +1080,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
       }
       Content::FunctionReference(name) => {
         let def =
-          self.gen.type_info.functions.get(name)
+          find_function_def(&self.gen.type_info, name)
           .ok_or_else(|| error_raw(node.loc, format!("could not find function with name '{}'", name)))?;
         let f = self.get_linked_function_reference(def);
         reg(f.as_global_value().as_pointer_value().into())
@@ -1097,7 +1128,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
             let cast_to = self.gen.context.i8_type().ptr_type(AddressSpace::Generic);
             let string_pointer = self.builder.build_pointer_cast(ptr, cast_to, "string_pointer");
             let string_length = self.gen.context.i64_type().const_int(vs.len() as u64, false);
-            let def = self.gen.type_info.types.get("string").unwrap();
+            let def = find_type_def(&self.gen.type_info, "string").unwrap();
             self.codegen_struct_initialise(def, &[string_pointer.into(), string_length.into()])
           }
         }

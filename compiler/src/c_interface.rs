@@ -1,6 +1,6 @@
 // external C interface for the compiler (so that the language can use it)
 
-use crate::jit::{InterpreterInner, Interpreter, interpreter};
+use crate::jit::{InterpreterInner, Interpreter, compile_expression, CompiledExpression};
 use crate::lexer;
 use crate::expr::{RefStr, Expr};
 
@@ -86,10 +86,12 @@ pub extern "C" fn load_quote(i : *mut Interpreter, s : SStr) -> *mut u8 {
 }
 
 #[no_mangle]
-pub extern "C" fn load_expr_as_module(i : *mut Interpreter, expr : *mut u8) -> *mut u8 {
+pub extern "C" fn compile_expr(i : *mut Interpreter, expr : *mut u8, modules : &[&CompiledExpression]) -> *mut u8 {
   let i = unsafe { &mut *i };
   let expr = unsafe { &mut *(expr as *mut Expr) };
-  
+  let m = compile_expression(expr, modules, &i.c_symbols, &mut i.context, &i.cache).unwrap();
+  let b = Box::new(m);
+  Box::into_raw(b) as *mut u8
 }
 
 #[no_mangle]
@@ -186,7 +188,9 @@ impl CSymbols {
     sym.insert("print_expr".into(), (print_expr as *const()) as usize);
     sym.insert("test_add".into(), (test_add as *const()) as usize);
     sym.insert("thread_sleep".into(), (thread_sleep as *const()) as usize);
-    sym.insert("compiler".into(), (i as *const()) as usize);
+    sym.insert("compiler".into(), i as usize);
+    sym.insert("load_quote".into(),  (load_quote as *const()) as usize);
+    sym.insert("compile_expr".into(),  (compile_expr as *const()) as usize);
     sym.insert("test_global".into(), (&TEST_GLOBAL as *const i64) as usize);
   }
 }

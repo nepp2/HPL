@@ -23,6 +23,12 @@ cbind print : fun(s : ptr(string))
 
 cbind thread_sleep : fun(millis : u64)
 
+cbind compiler : ptr(u8)
+
+cbind load_quote : fun(compiler : ptr(u8), name : ptr(string)) => ptr(expr)
+
+cbind compile_expr : fun(compiler : ptr(u8), expr : ptr(expr), modules : ptr(ptr(u8))) => ptr(u8)
+
 fun max(a : i64, b : i64)
   if a > b then a else b end
 end
@@ -60,4 +66,4 @@ struct expr
   tag : expr_tag
 end
 
-cbind print_expr : fun(e : ptr(u8))
+cbind print_expr : fun(e : ptr(expr))
