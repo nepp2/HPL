@@ -1,6 +1,6 @@
 // external C interface for the compiler (so that the language can use it)
 
-use crate::jit::{InterpreterInner, Interpreter, compile_expression, CompiledExpression};
+use crate::jit::{InterpreterInner, compile_expression, CompiledExpression};
 use crate::lexer;
 use crate::expr::{RefStr, Expr};
 
@@ -17,7 +17,7 @@ use libloading::{Library, Symbol};
 use std::{thread, time};
 
 #[no_mangle]
-pub extern fn lex_string(i : *mut Interpreter, code : *mut c_char) {
+pub extern fn lex_string(i : *mut InterpreterInner, code : *mut c_char) {
   let i = unsafe { &mut *i };
   let code = unsafe { CStr::from_ptr(code) };
   let _tokens =
@@ -75,19 +75,18 @@ extern {
 }
 
 #[no_mangle]
-pub extern "C" fn load_quote(i : *mut Interpreter, s : SStr) -> *mut u8 {
+pub extern "C" fn load_quote(i : *mut InterpreterInner, s : SStr) -> *mut u8 {
   let code_path = format!("{}code/{}.code", ROOT, s.as_str());
   let mut f = File::open(code_path).expect("file not found");
-  // let mut code = String::new();
-  // f.read_to_string(&mut code).unwrap();
-  // let i = unsafe { &mut *i };
-  // let expr = Box::new(i.parse_string(&code).unwrap());
-  // Box::into_raw(expr) as *mut u8
-  0 as *mut u8
+  let mut code = String::new();
+  f.read_to_string(&mut code).unwrap();
+  let i = unsafe { &mut *i };
+  let expr = Box::new(i.parse_string(&code).unwrap());
+  Box::into_raw(expr) as *mut u8
 }
 
 #[no_mangle]
-pub extern "C" fn compile_expr(i : *mut Interpreter, expr : *mut u8, modules : &[&CompiledExpression]) -> *mut u8 {
+pub extern "C" fn compile_expr(i : *mut InterpreterInner, expr : *mut u8, modules : &[&CompiledExpression]) -> *mut u8 {
   let i = unsafe { &mut *i };
   let expr = unsafe { &mut *(expr as *mut Expr) };
   let m = compile_expression(expr, modules, &i.c_symbols, &mut i.context, &i.cache).unwrap();
@@ -188,9 +187,14 @@ impl CSymbols {
     sym.insert("print_expr".into(), (print_expr as *const()) as usize);
     sym.insert("test_add".into(), (test_add as *const()) as usize);
     sym.insert("thread_sleep".into(), (thread_sleep as *const()) as usize);
-    sym.insert("compiler".into(), i as usize);
     sym.insert("load_quote".into(),  (load_quote as *const()) as usize);
     sym.insert("compile_expr".into(),  (compile_expr as *const()) as usize);
     sym.insert("test_global".into(), (&TEST_GLOBAL as *const i64) as usize);
+
+    // This is a bit confusing. When we link to a global we do it by passing a
+    // pointer. Since this global *is* a pointer, we have to pass a pointer to
+    // a pointer, which requires another permanent heap allocation for indirection.
+    let i = Box::into_raw(Box::new(i));
+    sym.insert("compiler".into(), i as usize);
   }
 }

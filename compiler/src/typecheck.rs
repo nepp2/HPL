@@ -779,12 +779,15 @@ fn find_type_definitions<'e>(expr : &'e Expr, types : &mut Vec<&'e Expr>) {
   if let ExprTag::Symbol(s) = &expr.tag {
     match s.as_str() {
       "union" => {
-      types.push(expr);
-      return;
+        types.push(expr);
+        return;
       }
       "struct" => {
-      types.push(expr);
-      return;
+        types.push(expr);
+        return;
+      }
+      "quote" => {
+        return
       }
       _ => (),
     }

@@ -240,12 +240,14 @@ pub fn compile_expression(expr : &Expr, external_modules : &[&CompiledExpression
   // dump_module(&module);
 
   // Link c functions
-  for (function_value, address) in c_functions.values() {
+  for (_name, (function_value, address)) in c_functions.iter() {
+    // println!("c function '{}' - {}", name, address);
     ee.add_global_mapping(function_value, *address);
   }
 
   // Link c globals
-  for (global_value, address) in c_globals.values() {
+  for (_name, (global_value, address)) in c_globals.iter() {
+    // println!("c global '{}' - {}", name, address);
     ee.add_global_mapping(global_value, *address);
   }
 
