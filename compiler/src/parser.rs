@@ -115,11 +115,11 @@ impl <'l> ParseState<'l> {
     self.add_expr(tag, vec!(), loc)
   }
 
-  fn add_tree<T : Into<String>>
+  fn add_construct<T : Into<String>>
     (&mut self, s : T, children : Vec<Expr>, start : TextMarker) -> Expr
   {
     let loc = self.loc(start);
-    let tag = ExprTag::symbol(s.into());
+    let tag = ExprTag::construct(s.into());
     self.add_expr(tag, children, loc)
   }
 
@@ -225,7 +225,7 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
     let indexing_expr = parse_expression(ps)?;
     ps.expect(Syntax, "]")?;
     let args = vec!(indexee_expr, indexing_expr);
-    Ok(ps.add_tree("index", args, start))
+    Ok(ps.add_construct("index", args, start))
   }
 
   fn parse_function_call(ps : &mut ParseState, function_expr : Expr) -> Result<Expr, Error> {
@@ -241,7 +241,7 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
       }
       ps.expect(Syntax, ")")?;
     }
-    Ok(ps.add_tree("call", exprs, start))
+    Ok(ps.add_construct("call", exprs, start))
   }
 
   fn parse_prefix(ps : &mut ParseState) -> Result<Expr, Error> {
@@ -254,7 +254,7 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
       let operator = ps.add_symbol(op_string, start);
       let expr = parse_expression_term(ps)?;
       let args = vec![operator, expr];
-      Ok(ps.add_tree("call", args, start))
+      Ok(ps.add_construct("call", args, start))
     }
     // else assume it's an expression term
     else {
@@ -269,18 +269,18 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
     if operator_str.as_str() == "as" {
       let right_expr = parse_type(ps)?;
       let args = vec!(left_expr, right_expr);
-      Ok(ps.add_tree("as", args, infix_start))
+      Ok(ps.add_construct("as", args, infix_start))
     }
     else if SPECIAL_OPERATORS.contains(operator_str.as_str()) {
       let right_expr = pratt_parse(ps, precedence)?;
       let args = vec!(left_expr, right_expr);
-      Ok(ps.add_tree(operator_str, args, infix_start))
+      Ok(ps.add_construct(operator_str, args, infix_start))
     }
     else {
       let operator = ps.add_symbol(operator_str, operator_start);
       let right_expr = pratt_parse(ps, precedence)?;
       let args = vec!(operator, left_expr, right_expr);
-      Ok(ps.add_tree("call", args, infix_start))
+      Ok(ps.add_construct("call", args, infix_start))
     }
   }
 
@@ -333,14 +333,14 @@ fn parse_type(ps : &mut ParseState) -> Result<Expr, Error> {
       }
     }
     ps.expect(Syntax, ")")?;
-    let args_expr = ps.add_tree("args", arguments, args_start);
+    let args_expr = ps.add_construct("args", arguments, args_start);
     let return_type = if ps.accept(Syntax, "=>") {
       parse_type(ps)?
     }
     else {
-      ps.add_tree("()", vec!(), start)
+      ps.add_construct("()", vec!(), start)
     };
-    let fun_type_expr = ps.add_tree("fun", vec![args_expr, return_type], start);
+    let fun_type_expr = ps.add_construct("fun", vec![args_expr, return_type], start);
     Ok(fun_type_expr)
   }
   else {
@@ -358,7 +358,7 @@ fn parse_type(ps : &mut ParseState) -> Result<Expr, Error> {
       }
       ps.expect(Syntax, ")")?;
     }
-    let type_expr = ps.add_tree(type_name, params, start);
+    let type_expr = ps.add_construct(type_name, params, start);
     Ok(type_expr)
   }
 }
@@ -387,10 +387,10 @@ fn parse_function(ps : &mut ParseState, keyword : &str) -> Result<Expr, Error> {
     }
   }
   ps.expect(Syntax, ")")?;
-  let args_expr = ps.add_tree("args", arguments, args_start);
+  let args_expr = ps.add_construct("args", arguments, args_start);
   let function_block = parse_block(ps)?;
   ps.expect(Syntax, "end")?;
-  let fun_expr = ps.add_tree("fun", vec![fun_name, args_expr, function_block], start);
+  let fun_expr = ps.add_construct("fun", vec![fun_name, args_expr, function_block], start);
   Ok(fun_expr)
 }
 
@@ -404,7 +404,7 @@ fn parse_cbind(ps : &mut ParseState) -> Result<Expr, Error> {
   let name = parse_simple_symbol(ps)?;
   ps.expect(Syntax, ":")?;
   let type_expr = parse_type(ps)?;
-  let cbind_expr = ps.add_tree("cbind", vec![name, type_expr], start);
+  let cbind_expr = ps.add_construct("cbind", vec![name, type_expr], start);
   Ok(cbind_expr)
 }
 
@@ -418,7 +418,7 @@ fn parse_let(ps : &mut ParseState) -> Result<Expr, Error> {
   let var_name = parse_simple_symbol(ps)?;
   ps.expect(Syntax, "=")?;
   let initialiser = parse_expression(ps)?;
-  Ok(ps.add_tree("let", vec!(var_name, initialiser), start))
+  Ok(ps.add_construct("let", vec!(var_name, initialiser), start))
 }
 
 fn parse_if(ps : &mut ParseState) -> Result<Expr, Error> {
@@ -442,7 +442,7 @@ fn parse_if(ps : &mut ParseState) -> Result<Expr, Error> {
   else {
     ps.expect(Syntax, "end")?;
   }
-  Ok(ps.add_tree("if", args, start))
+  Ok(ps.add_construct("if", args, start))
 }
 
 fn parse_while(ps : &mut ParseState) -> Result<Expr, Error> {
@@ -452,7 +452,7 @@ fn parse_while(ps : &mut ParseState) -> Result<Expr, Error> {
   let loop_block = parse_block(ps)?;
   ps.expect(Syntax, "end")?;
   let args = vec!(conditional, loop_block);
-  Ok(ps.add_tree("while", args, start))
+  Ok(ps.add_construct("while", args, start))
 }
 
 fn parse_for(ps : &mut ParseState) -> Result<Expr, Error> {
@@ -464,7 +464,7 @@ fn parse_for(ps : &mut ParseState) -> Result<Expr, Error> {
   let loop_block = parse_block(ps)?;
   ps.expect(Syntax, "end")?;
   let args = vec!(loop_var, iterator, loop_block);
-  Ok(ps.add_tree("for", args, start))
+  Ok(ps.add_construct("for", args, start))
 }
 
 fn parse_type_definition(ps : &mut ParseState, kind : &str) -> Result<Expr, Error> {
@@ -493,7 +493,7 @@ fn parse_type_definition(ps : &mut ParseState, kind : &str) -> Result<Expr, Erro
     }
   }
   ps.expect(Syntax, "end")?;
-  Ok(ps.add_tree(kind, args, start))
+  Ok(ps.add_construct(kind, args, start))
 }
 
 fn parse_type_instantiate(ps : &mut ParseState) -> Result<Expr, Error> {
@@ -528,7 +528,7 @@ fn parse_type_instantiate(ps : &mut ParseState) -> Result<Expr, Error> {
     }
   }
   ps.expect(Syntax, "}")?;
-  Ok(ps.add_tree("type_instantiate", args, start))
+  Ok(ps.add_construct("type_instantiate", args, start))
 }
 
 fn parse_sizeof(ps : &mut ParseState) -> Result<Expr, Error> {
@@ -537,7 +537,7 @@ fn parse_sizeof(ps : &mut ParseState) -> Result<Expr, Error> {
   ps.expect(Syntax, "(")?;
   let e = parse_type(ps)?;
   ps.expect(Syntax, ")")?;
-  Ok(ps.add_tree("sizeof", vec![e], start))
+  Ok(ps.add_construct("sizeof", vec![e], start))
 }
 
 fn parse_quote(ps : &mut ParseState) -> Result<Expr, Error> {
@@ -545,7 +545,7 @@ fn parse_quote(ps : &mut ParseState) -> Result<Expr, Error> {
   ps.expect(Syntax, "quote")?;
   let e = parse_block(ps)?;
   ps.expect(Syntax, "end")?;
-  Ok(ps.add_tree("quote", vec![e], start))
+  Ok(ps.add_construct("quote", vec![e], start))
 }
 
 fn parse_return(ps : &mut ParseState) -> Result<Expr, Error> {
@@ -555,10 +555,10 @@ fn parse_return(ps : &mut ParseState) -> Result<Expr, Error> {
     let t = ps.peek()?;
     if !EXPRESSION_TERMINATORS.contains(t.symbol.as_ref()) {
       let e = parse_expression(ps)?;
-      return Ok(ps.add_tree("return", vec![e], start));
+      return Ok(ps.add_construct("return", vec![e], start));
     }
   }
-  Ok(ps.add_tree("return", vec![], start))
+  Ok(ps.add_construct("return", vec![], start))
 }
 
 fn parse_syntax(ps : &mut ParseState) -> Result<Expr, Error> {
@@ -605,7 +605,7 @@ fn parse_syntax(ps : &mut ParseState) -> Result<Expr, Error> {
         }
       }
       ps.expect(Syntax, "]")?;
-      Ok(ps.add_tree("literal_array", exprs, start))
+      Ok(ps.add_construct("literal_array", exprs, start))
     }
     "(" => {
       ps.expect(Syntax, "(")?;
@@ -621,7 +621,7 @@ fn parse_syntax(ps : &mut ParseState) -> Result<Expr, Error> {
           Ok(exprs.pop().unwrap())
         }
         else{
-          Ok(ps.add_tree("block", exprs, start))
+          Ok(ps.add_construct("block", exprs, start))
         }
       }
     }
@@ -699,7 +699,7 @@ fn parse_block_exprs(ps : &mut ParseState) -> Result<Vec<Expr>, Error> {
 fn parse_block(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
   let exprs = parse_block_exprs(ps)?;
-  Ok(ps.add_tree("block", exprs, start))
+  Ok(ps.add_construct("block", exprs, start))
 }
 
 pub fn parse(tokens : Vec<Token>, symbols : &StringCache) -> Result<Expr, Error> {

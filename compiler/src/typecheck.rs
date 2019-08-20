@@ -333,7 +333,7 @@ impl <'l> TypeChecker<'l> {
   }
 
   fn add_type_definition(&mut self, expr : &Expr) -> Result<(), Error> {
-    let kind = match expr.symbol_unwrap()? {
+    let kind = match expr.construct_unwrap()? {
       "union" => TypeKind::Union,
       "struct" => TypeKind::Struct,
       _ => panic!(),
@@ -409,10 +409,13 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
     unique_name.clone()
   }
 
-  fn tree_to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
-    let instr = expr.symbol_unwrap()?;
+  fn construct_to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
+    let instr = expr.construct_unwrap()?;
     let children = expr.children.as_slice();
     match (instr, children) {
+      ("break", []) => {
+        return Ok(node(expr, Type::Void, Content::Break));
+      }
       ("call", exprs) => {
         let args =
               exprs[1..].iter().map(|e| self.to_ast(e))
@@ -699,11 +702,12 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
 
   pub fn to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
     match &expr.tag {
+      ExprTag::Construct(_) => {
+        return self.construct_to_ast(expr);
+      }
       ExprTag::Symbol(s) => {
-        // Is this a tree?
-        let children = expr.children.as_slice();
-        if children.len() > 0 {
-          return self.tree_to_ast(expr);
+        if expr.children.as_slice().len() > 0 {
+          return error(expr, "unexpected children");
         }
         // this is just a normal symbol
         let s = self.cached(s.as_str());

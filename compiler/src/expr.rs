@@ -13,6 +13,7 @@ pub type RefStr = Rc<str>;
 #[repr(C, u8)]
 #[derive(Debug)]
 pub enum ExprTag {
+  Construct(SStr),
   Symbol(SStr),
   LiteralString(SStr),
   LiteralFloat(f64),
@@ -31,6 +32,7 @@ impl  Clone for ExprTag {
     }
     use self::ExprTag::*;
     match self {
+      Construct(s) => Construct(clone(*s)),
       Symbol(s) => Symbol(clone(*s)),
       LiteralString(s) => LiteralString(clone(*s)),
       LiteralFloat(f) => LiteralFloat(*f),
@@ -49,6 +51,11 @@ impl ExprTag {
   }
   pub fn symbol(s : String) -> ExprTag {
     let tag = ExprTag::Symbol(SStr::from_str(s.as_str()));
+    std::mem::forget(s);
+    tag
+  }
+  pub fn construct(s : String) -> ExprTag {
+    let tag = ExprTag::Construct(SStr::from_str(s.as_str()));
     std::mem::forget(s);
     tag
   }
@@ -118,12 +125,16 @@ impl <'l> Into<TextLocation> for &'l Expr {
 }
 
 impl Expr {
-  pub fn symbol_unwrap(&self) -> Result<&str, Error> {
-    if let ExprTag::Symbol(s) = &self.tag {
-      Ok(s.as_str())
+  pub fn construct_unwrap(&self) -> Result<&str, Error> {
+    match &self.tag {
+      ExprTag::Construct(s) => Ok(s.as_str()),
+      _ => error(self, format!("expected a construct, found {:?}", self.tag)),
     }
-    else{
-      error(self, format!("expected a symbol, found {:?}", self.tag))
+  }
+  pub fn symbol_unwrap(&self) -> Result<&str, Error> {
+    match &self.tag {
+      ExprTag::Symbol(s) => Ok(s.as_str()),
+      _ => error(self, format!("expected a symbol, found {:?}", self.tag)),
     }
   }
 }
@@ -158,8 +169,8 @@ impl fmt::Display for Expr {
         return Ok(());
       }
       match (&e.tag, e.children.as_slice()) {
-        (ExprTag::Symbol(s), []) => write!(f, "{}", s.as_str()),
-        (ExprTag::Symbol(s), children) => {
+        (ExprTag::Symbol(s), _children) => write!(f, "{}", s.as_str()),
+        (ExprTag::Construct(s), children) => {
           write!(f, "({}", s.as_str())?;
           if s.as_str() == "block" {
             let indent = indent + 2;
