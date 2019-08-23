@@ -299,7 +299,7 @@ impl <'l> TypeChecker<'l> {
   /// Converts expression into type. Logs symbol error if definition references a type that hasn't been defined yet
   /// These symbol errors may be resolved later, when the rest of the module has been checked.
   fn to_type(&mut self, expr : &Expr) -> Result<Type, Error> {
-    let name = expr.symbol_unwrap()?;
+    let name = expr.unwrap_str()?;
     let params = expr.children.as_slice();
     if let Some(t) = Type::from_string(name) {
       if params.len() > 0 {
@@ -333,7 +333,7 @@ impl <'l> TypeChecker<'l> {
   }
 
   fn add_type_definition(&mut self, expr : &Expr) -> Result<(), Error> {
-    let kind = match expr.construct_unwrap()? {
+    let kind = match expr.unwrap_str()? {
       "union" => TypeKind::Union,
       "struct" => TypeKind::Struct,
       _ => panic!(),
@@ -343,7 +343,7 @@ impl <'l> TypeChecker<'l> {
       return error(expr, "malformed type definition");
     }
     let name_expr = &children[0];
-    let name = name_expr.symbol_unwrap()?;
+    let name = name_expr.unwrap_str()?;
     if self.find_type_def(name).is_some() {
       return error(expr, "struct with this name already defined");
     }
@@ -352,7 +352,7 @@ impl <'l> TypeChecker<'l> {
     let mut fields = vec![];
     // TODO: record the field types, and check them!
     for (field_name_expr, type_expr) in field_exprs.iter().tuples() {
-      let field_name = self.cache.get(field_name_expr.symbol_unwrap()?);
+      let field_name = self.cache.get(field_name_expr.unwrap_str()?);
       let type_tag = self.to_type(type_expr)?;
       fields.push((field_name, type_tag));
     }
@@ -409,8 +409,24 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
     unique_name.clone()
   }
 
+  fn coerce_to_type(&mut self, mut node : TypedNode, t : &Type) -> Result<TypedNode, Error> {
+    if &node.type_tag == t {
+      return Ok(node);
+    }
+    match (&node.content, t) {
+      (Content::ArrayLiteral(ns), Type::Ptr(_)) => {
+        if ns.len() == 0 {
+          node.type_tag = t.clone();
+          return Ok(node);
+        }
+      }
+      _ => (),
+    }
+    error(node.loc, format!("expected type {:?}, found {:?}", t, node.type_tag))
+  }
+
   fn construct_to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
-    let instr = expr.construct_unwrap()?;
+    let instr = expr.unwrap_construct()?;
     let children = expr.children.as_slice();
     match (instr, children) {
       ("break", []) => {
@@ -420,7 +436,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         let args =
               exprs[1..].iter().map(|e| self.to_ast(e))
               .collect::<Result<Vec<TypedNode>, Error>>()?;
-        if let Some(function_name) = exprs[0].symbol_unwrap().ok() {
+        if let Some(function_name) = exprs[0].unwrap_str().ok() {
           let op_tag = match_intrinsic(function_name, args.as_slice());
           if let Some(op_tag) = op_tag {
             return Ok(node(expr, op_tag, Content::IntrinsicCall(self.cached(function_name), args)))
@@ -431,6 +447,10 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
           if sig.args.len() != args.len() {
             return error(expr, "incorrect number of arguments passed");
           }
+          let args =
+            args.into_iter().zip(sig.args.iter())
+            .map(|(a, e)| self.coerce_to_type(a, e))
+            .collect::<Result<Vec<TypedNode>, Error>>()?;
           let return_type = sig.return_type.clone();
           let content = Content::FunctionCall(Box::new(function_value), args);
           return Ok(node(expr, return_type, content));
@@ -457,7 +477,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         Ok(node(expr, Type::Bool, Content::IntrinsicCall(self.cached(instr), vec!(a, b))))
       }
       ("let", exprs) => {
-        let name = self.cached(exprs[0].symbol_unwrap()?);
+        let name = self.cached(exprs[0].unwrap_str()?);
         let v = Box::new(self.to_ast(&exprs[1])?);
         // The first scope is used for function arguments. The second
         // is the top level of the function.
@@ -532,7 +552,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         Ok(node(expr, tag, Content::Block(nodes)))
       }
       ("cbind", [name_expr, type_expr]) => {
-        let name = self.cached(name_expr.symbol_unwrap()?);
+        let name = self.cached(name_expr.unwrap_str()?);
         let type_tag = self.t.to_type(type_expr)?;
         let address = self.t.local_symbol_table.get(&name).map(|v| *v);
         if address.is_none() {
@@ -562,13 +582,13 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         Ok(node(expr, Type::Void, Content::CBind(name)))
       }
       ("fun", exprs) => {
-        let name = self.cached(exprs[0].symbol_unwrap()?);
+        let name = self.cached(exprs[0].unwrap_str()?);
         let args_exprs = exprs[1].children.as_slice();
         let function_body = &exprs[2];
         let mut arg_names = vec!();
         let mut arg_types = vec!();
         for (name_expr, type_expr) in args_exprs.iter().tuples() {
-          let name = self.cached(name_expr.symbol_unwrap()?);
+          let name = self.cached(name_expr.unwrap_str()?);
           let type_tag = self.t.to_type(type_expr)?;
           if type_tag == Type::Void {
             return error(expr, "functions args cannot be void");
@@ -596,11 +616,11 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         Ok(node(expr, Type::Void, Content::FunctionDefinition(name)))
       }
       ("union", exprs) => {
-        let name = self.cached(&exprs[0].symbol_unwrap()?);
+        let name = self.cached(&exprs[0].unwrap_str()?);
         Ok(node(expr, Type::Void, Content::TypeDefinition(name)))
       }
       ("struct", exprs) => {
-        let name = self.cached(&exprs[0].symbol_unwrap()?);
+        let name = self.cached(&exprs[0].unwrap_str()?);
         Ok(node(expr, Type::Void, Content::TypeDefinition(name)))
       }
       ("type_instantiate", exprs) => {
@@ -609,7 +629,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         }
         let name_expr = &exprs[0];
         let field_exprs = &exprs[1..];
-        let name = name_expr.symbol_unwrap()?;
+        let name = name_expr.unwrap_str()?;
         let fields =
           field_exprs.iter().tuples().map(|(name, value)| {
             let value = self.to_ast(value)?;
@@ -626,7 +646,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
             }
             let field_iter = fields.iter().zip(def.fields.iter());
             for ((field, value), (expected_name, expected_type)) in field_iter {
-              let name = field.symbol_unwrap()?;
+              let name = field.unwrap_str()?;
               if name != "" && name != expected_name.as_ref() {
                 return error(*field, "incorrect field name");
               }
@@ -642,7 +662,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
               return error(expr, "must instantiate exactly one field");
             }
             let (field, value) = fields.into_iter().nth(0).unwrap();
-            let field_name = self.cached(field.symbol_unwrap()?);
+            let field_name = self.cached(field.unwrap_str()?);
             if def.fields.iter().find(|(n, _)| n == &field_name).is_none() {
               return error(field, "field does not exist in this union");
             }
@@ -653,7 +673,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
       }
       (".", [container_expr, field_expr]) => {
         let container_val = self.to_ast(container_expr)?;
-        let field_name = self.cached(field_expr.symbol_unwrap()?);
+        let field_name = self.cached(field_expr.unwrap_str()?);
         let def = match &container_val.type_tag {
           Type::Def(type_name) => self.t.find_type_def(type_name).unwrap(),
           _ => return error(container_expr, format!("expected struct or union, found {:?}", container_val.type_tag)),
@@ -680,7 +700,8 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
             a.type_tag.clone()
           }
           else {
-            Type::Void
+            // dummy value for an empty array
+            Type::U8
           };
         Ok(node(expr, Type::Ptr(Box::new(t)), Content::ArrayLiteral(elements)))
       }
@@ -780,7 +801,7 @@ fn match_intrinsic(name : &str, args : &[TypedNode]) -> Option<Type> {
 fn find_type_definitions<'e>(expr : &'e Expr, types : &mut Vec<&'e Expr>) {
   let children = expr.children.as_slice();
   if children.len() == 0 { return }
-  if let ExprTag::Symbol(s) = &expr.tag {
+  if let ExprTag::Construct(s) = &expr.tag {
     match s.as_str() {
       "union" => {
         types.push(expr);
@@ -800,6 +821,7 @@ fn find_type_definitions<'e>(expr : &'e Expr, types : &mut Vec<&'e Expr>) {
     find_type_definitions(c, types);
   }
 }
+
 
 pub fn to_typed_module(local_symbol_table : &HashMap<RefStr, usize>, modules : &[&TypedModule], cache : &StringCache, expr : &Expr) -> Result<TypedModule, Error> {
   let mut module = TypedModule::new();

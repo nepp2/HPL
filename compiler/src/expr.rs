@@ -125,14 +125,15 @@ impl <'l> Into<TextLocation> for &'l Expr {
 }
 
 impl Expr {
-  pub fn construct_unwrap(&self) -> Result<&str, Error> {
+  pub fn unwrap_construct(&self) -> Result<&str, Error> {
     match &self.tag {
       ExprTag::Construct(s) => Ok(s.as_str()),
       _ => error(self, format!("expected a construct, found {:?}", self.tag)),
     }
   }
-  pub fn symbol_unwrap(&self) -> Result<&str, Error> {
+  pub fn unwrap_str(&self) -> Result<&str, Error> {
     match &self.tag {
+      ExprTag::Construct(s) => Ok(s.as_str()),
       ExprTag::Symbol(s) => Ok(s.as_str()),
       _ => error(self, format!("expected a symbol, found {:?}", self.tag)),
     }
@@ -149,7 +150,7 @@ impl fmt::Display for Expr {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     fn display_inner(e: &Expr, f: &mut fmt::Formatter<'_>, indent : usize) -> fmt::Result {
       if e.children.len > 0 {
-        let s = e.symbol_unwrap().unwrap();
+        let s = e.unwrap_str().unwrap();
         write!(f, "({}", s)?;
         if s == "block" {
           let indent = indent + 2;
