@@ -89,9 +89,12 @@ pub extern "C" fn load_quote(i : *mut InterpreterInner, s : SStr) -> *mut u8 {
 pub extern "C" fn compile_expr(i : *mut InterpreterInner, expr : *mut u8, modules : &[&CompiledExpression]) -> *mut u8 {
   let i = unsafe { &mut *i };
   let expr = unsafe { &mut *(expr as *mut Expr) };
-  let m = compile_expression(expr, modules, &i.c_symbols, &mut i.context, &i.cache).unwrap();
-  let b = Box::new(m);
-  Box::into_raw(b) as *mut u8
+  // TODO: I can't pass a slice in, because a slice isn't just a pointer. It is a struct with a size field too!
+  println!("", )
+  // let m = compile_expression(expr, modules, &i.c_symbols, &mut i.context, &i.cache).unwrap();
+  // let b = Box::new(m);
+  // Box::into_raw(b) as *mut u8
+  0 as *mut u8
 }
 
 #[no_mangle]
