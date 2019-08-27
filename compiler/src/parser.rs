@@ -471,7 +471,20 @@ fn parse_type_definition(ps : &mut ParseState, kind : &str) -> Result<Expr, Erro
   let start = ps.peek_marker();
   ps.expect(Syntax, kind)?;
   let type_name = parse_simple_symbol(ps)?;
-  let mut args = vec!(type_name);
+  let mut generics = vec!();
+  if ps.accept(Syntax, "(") {
+    loop {
+      if !ps.has_tokens() || ps.peek()?.symbol.as_ref() == ")" {
+        break;
+      }
+      generics.push(parse_simple_symbol(ps)?);
+      if !ps.accept(Syntax, ",") {
+        break;
+      }
+    }
+    ps.expect(Syntax, ")")?;
+  }
+  let mut fields = vec!();
   'outer: loop {
     'inner: loop {
       if !ps.has_tokens() || ps.peek()?.symbol.as_ref() == "end" {
@@ -481,19 +494,22 @@ fn parse_type_definition(ps : &mut ParseState, kind : &str) -> Result<Expr, Erro
         break 'inner;
       }
     }
-    let arg_name = parse_simple_symbol(ps)?;
-    args.push(arg_name);
+    let field_name = parse_simple_symbol(ps)?;
+    fields.push(field_name);
     if ps.accept(Syntax, ":") {
       let type_expr = parse_type(ps)?;
-      args.push(type_expr);
+      fields.push(type_expr);
     }
     else {
       let start = ps.peek_marker();
-      args.push(ps.add_symbol("".into(), start));
+      fields.push(ps.add_symbol("".into(), start));
     }
   }
   ps.expect(Syntax, "end")?;
-  Ok(ps.add_construct(kind, args, start))
+  let fields = ps.add_construct("fields", fields, start);
+  let generics = ps.add_construct("generics", generics, start);
+  let content = vec![type_name, fields, generics];
+  Ok(ps.add_construct(kind, content, start))
 }
 
 fn parse_type_instantiate(ps : &mut ParseState) -> Result<Expr, Error> {

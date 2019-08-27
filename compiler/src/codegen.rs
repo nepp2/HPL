@@ -22,7 +22,7 @@ use inkwell::types::{
   BasicTypeEnum, BasicType, StructType, PointerType, FunctionType, AnyTypeEnum, ArrayType,
   IntType, FloatType };
 use inkwell::values::{
-  BasicValueEnum, BasicValue, FloatValue, IntValue, FunctionValue, PointerValue, GlobalValue };
+  BasicValueEnum, BasicValue, FloatValue, StructValue, IntValue, FunctionValue, PointerValue, GlobalValue };
 use inkwell::{FloatPredicate, IntPredicate};
 use inkwell::targets::TargetData;
 
@@ -322,6 +322,9 @@ impl <'l> Gen<'l> {
         let def = find_type_def(&self.type_info, name).unwrap();
         Some(self.composite_type(def).as_basic_type_enum())
       }
+      Type::Array(t) => {
+        Some(self.bounded_array_type(t).into())
+      }
       Type::Ptr(t) => {
         let bt = self.to_basic_type(t);
         Some(self.pointer_to_type(bt).into())
@@ -329,6 +332,19 @@ impl <'l> Gen<'l> {
     }
   }
 
+  /// Creates an array struct roughly like this:
+  /// 
+  /// struct array(T)
+  ///   ptr : ptr(T)
+  ///   length : u64
+  /// end
+  /// 
+  fn bounded_array_type(&mut self, t : &Type) -> StructType {
+    let bt = self.to_basic_type(t);
+    let t = self.pointer_to_type(bt).into();
+    let i64_type = self.context.i64_type();
+    self.context.struct_type(&[t, i64_type.into()], false)
+  }
 
   fn to_function_type(&mut self, arg_types : &[Type], return_type : &Type) -> FunctionType {
     let arg_types =
@@ -514,6 +530,14 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
     match v {
       BasicValueEnum::FloatValue(f) => Ok(f),
       t => error(n.loc, format!("Expected float, found {:?}", t)),
+    }
+  }
+
+  fn codegen_struct(&mut self, n : &TypedNode) -> Result<StructValue, Error> {
+    let v = self.codegen_value(n)?;
+    match v {
+      BasicValueEnum::StructValue(sv) => Ok(sv),
+      t => error(n.loc, format!("Expected struct, found {:?}", t)),
     }
   }
 
@@ -1004,7 +1028,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         }
       }
       Content::ArrayLiteral(elements) => {
-        if let Type::Ptr(inner_type) = &node.type_tag {
+        if let Type::Array(inner_type) = &node.type_tag {
           let element_type = self.gen.to_basic_type(inner_type).unwrap();
           let length = self.gen.context.i32_type().const_int(elements.len() as u64, false).into();
           let array_ptr = self.builder.build_array_malloc(element_type, length, "array_malloc");
@@ -1014,7 +1038,12 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
             let element_ptr = unsafe { self.builder.build_gep(array_ptr, &[index], "element_ptr") };
             self.builder.build_store(element_ptr, v);
           }
-          reg(array_ptr.into())
+          let array_type = self.gen.bounded_array_type(inner_type);
+          let mut sv = array_type.get_undef();
+          sv = self.builder.build_insert_value(sv, array_ptr, 0, "array_ptr").unwrap().into_struct_value();
+          let length = self.gen.context.i64_type().const_int(elements.len() as u64, false);
+          sv = self.builder.build_insert_value(sv, length, 1, "array_length").unwrap().into_struct_value();
+          reg(sv.into())
         }
         else{
           panic!();
@@ -1022,9 +1051,11 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
       }
       Content::Index(ns) => {
         let (array_node, index_node) = (&ns.0, &ns.1);
-        let array = self.codegen_pointer(array_node)?;
+        // TODO: add bounds checks
+        let array = self.codegen_struct(array_node)?;
         let index = self.codegen_int(index_node)?;
-        let element_ptr = unsafe { self.builder.build_gep(array, &[index], "element_ptr") };
+        let array_ptr = self.builder.build_extract_value(array, 0, "array_pointer").unwrap().into_pointer_value(); // TODO: is this right?
+        let element_ptr = unsafe { self.builder.build_gep(array_ptr, &[index], "element_ptr") };
         pointer(element_ptr)
       }
       Content::Assignment(ns) => {

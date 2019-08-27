@@ -90,7 +90,7 @@ pub extern "C" fn compile_expr(i : *mut InterpreterInner, expr : *mut u8, module
   let i = unsafe { &mut *i };
   let expr = unsafe { &mut *(expr as *mut Expr) };
   // TODO: I can't pass a slice in, because a slice isn't just a pointer. It is a struct with a size field too!
-  println!("", )
+  //println!("", )
   // let m = compile_expression(expr, modules, &i.c_symbols, &mut i.context, &i.cache).unwrap();
   // let b = Box::new(m);
   // Box::into_raw(b) as *mut u8

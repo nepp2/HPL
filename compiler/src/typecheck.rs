@@ -25,6 +25,7 @@ pub enum Type {
   Bool,
   Fun(Rc<FunctionSignature>),
   Def(RefStr),
+  Array(Box<Type>),
   Ptr(Box<Type>),
 }
 
@@ -321,6 +322,10 @@ impl <'l> TypeChecker<'l> {
         let t = self.to_type(t)?;
         Ok(Type::Ptr(Box::new(t)))
       }
+      ("array", [t]) => {
+        let t = self.to_type(t)?;
+        Ok(Type::Array(Box::new(t)))
+      }
       (name, params) => {
         if params.len() > 0 {
           return error(expr, "unexpected type parameters").map_err(|e| e.into());
@@ -345,16 +350,20 @@ impl <'l> TypeChecker<'l> {
     let name_expr = &children[0];
     let name = name_expr.unwrap_str()?;
     if self.find_type_def(name).is_some() {
-      return error(expr, "struct with this name already defined");
+      return error(expr, "type with this name already defined");
     }
     // TODO: check for duplicates?
-    let field_exprs = &children[1..];
+    let field_exprs = children[1].children.as_slice();
     let mut fields = vec![];
-    // TODO: record the field types, and check them!
     for (field_name_expr, type_expr) in field_exprs.iter().tuples() {
       let field_name = self.cache.get(field_name_expr.unwrap_str()?);
       let type_tag = self.to_type(type_expr)?;
       fields.push((field_name, type_tag));
+    }
+    // Generics (TODO: just breaks)
+    let generic_exprs = children[2].children.as_slice();
+    if generic_exprs.len() > 0 {
+      return error(expr, "generic types not supported");
     }
     let name = self.cache.get(name);
     let def = TypeDefinition { name: name.clone(), fields, kind };
@@ -703,12 +712,12 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
             // dummy value for an empty array
             Type::U8
           };
-        Ok(node(expr, Type::Ptr(Box::new(t)), Content::ArrayLiteral(elements)))
+        Ok(node(expr, Type::Array(Box::new(t)), Content::ArrayLiteral(elements)))
       }
       ("index", [array_expr, index_expr]) => {
         let array = self.to_ast(array_expr)?;
         let inner_type = match &array.type_tag {
-          Type::Ptr(t) => *(t).clone(),
+          Type::Array(t) => *(t).clone(),
           _ => return error(array_expr, "expected ptr"),
         };
         let index = self.to_ast(index_expr)?;

@@ -179,6 +179,9 @@ impl InterpreterInner {
       Type::Fun(_) => {
         return error(expr, "can't return a function from a top-level function");
       }
+      Type::Array(_) => {
+        return error(expr, "can't return an array from a top-level function");
+      }
       Type::Ptr(_) => {
         return error(expr, "can't return a pointer from a top-level function");
       }
