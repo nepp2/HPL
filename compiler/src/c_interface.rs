@@ -26,14 +26,30 @@ pub extern fn lex_string(i : *mut InterpreterInner, code : *mut c_char) {
   
 }
 
-/// A sized string that is compatible with the Cauldron's string representation
+/// A sized array that is compatible with the Cauldron's array representation
 #[no_mangle]
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct SStr {
-  pub ptr : *mut u8,
+pub struct SArray<T> {
+  pub ptr : *mut T,
   pub length : u64,
 }
+
+impl <T> SArray<T> {
+  pub fn from_slice(s : &[T]) -> Self {
+    let ptr = s.as_ptr() as *mut T;
+    SArray { ptr, length: s.len() as u64 }
+  }
+
+  pub fn as_slice(&self) -> &[T] {
+    unsafe {
+      std::slice::from_raw_parts(self.ptr, self.length as usize)
+    }
+  }
+}
+
+/// A sized string that is compatible with the Cauldron's string representation
+pub type SStr = SArray<u8>;
 
 impl SStr {
   pub fn from_str(s : &str) -> Self {
