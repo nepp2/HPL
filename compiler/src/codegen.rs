@@ -828,6 +828,10 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
             (Type::F64, "unary_-") => unary_op!(build_float_neg, FloatValue, a, self),
             (Type::I64, "unary_-") => unary_op!(build_int_neg, IntValue, a, self),
             (Type::Bool, "unary_!") => unary_op!(build_not, IntValue, a, self),
+            (Type::Ptr(_), "unary_deref") => {
+              let ptr = self.codegen_pointer(a)?;
+              pointer(ptr)
+            }
             (_, "unary_ref") => self.codegen_address_of_expression(a)?,
             _ => return error(node.loc, "encountered unrecognised intrinsic"),
           }
@@ -1115,16 +1119,6 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
           .ok_or_else(|| error_raw(node.loc, format!("could not find function with name '{}'", name)))?;
         let f = self.get_linked_function_reference(def);
         reg(f.as_global_value().as_pointer_value().into())
-      }
-      Content::Deref(_n) => {
-        /*
-        TODO
-        let ptr =
-          self.codegen_pointer(n)?
-          .ok_or_else(|| error_raw(n.loc, "cannot dereference this construct"))?;
-        reg(self.builder.build_load(ptr, "deref"))
-        */
-        panic!();
       }
       Content::ExplicitReturn(n) => {
         self.codegen_return(n.as_ref().map(|b| b as &TypedNode))?;

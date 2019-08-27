@@ -1,9 +1,4 @@
 
-struct array(T)
-  length : i64
-  contents : T
-end
-
 struct range
   start : i64
   limit : i64

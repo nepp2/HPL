@@ -151,7 +151,6 @@ pub enum Content {
   While(Box<(TypedNode, TypedNode)>),
   ExplicitReturn(Option<Box<TypedNode>>),
   Convert(Box<TypedNode>),
-  Deref(Box<TypedNode>),
   SizeOf(Box<Type>),
   Break,
 }
@@ -718,7 +717,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         let array = self.to_ast(array_expr)?;
         let inner_type = match &array.type_tag {
           Type::Array(t) => *(t).clone(),
-          _ => return error(array_expr, "expected ptr"),
+          _ => return error(array_expr, "expected array"),
         };
         let index = self.to_ast(index_expr)?;
         if index.type_tag != Type::I64 {
@@ -800,6 +799,7 @@ fn match_intrinsic(name : &str, args : &[TypedNode]) -> Option<Type> {
       (Type::F64, "unary_-") => Some(Type::F64),
       (Type::I64, "unary_-") => Some(Type::I64),
       (Type::Bool, "unary_!") => Some(Type::Bool),
+      (Type::Ptr(t), "unary_deref") => Some(*t.clone()),
       (t, "unary_ref") => Some(Type::Ptr(Box::new(t.clone()))),
       _ => None,
     }

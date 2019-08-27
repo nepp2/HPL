@@ -279,7 +279,7 @@ rusty_fork_test! {
         z : f32
       end
       fun main(a : ptr(blah))
-        a[0] = blah { 50 as i32, [40, 50, 60], 5390 as u64, 45640.5 as f32 }
+        deref a = blah { 50 as i32, (0 as u64) as ptr(i64), 5390 as u64, 45640.5 as f32 }
       end
     "#;
     let b : Blah = i.run_with_pointer_return(code, "main").unwrap();
@@ -309,7 +309,7 @@ rusty_fork_test! {
     let mut i = interpreter();
     let code = r#"
       fun main(a : ptr(string))
-        a[0] = "Hello world"
+        deref a = "Hello world"
       end
     "#;
     let s : SStr = i.run_with_pointer_return(code, "main").unwrap();
@@ -341,7 +341,7 @@ rusty_fork_test! {
       fun foo(a : i64, b : i64)
         a + b
       end
-      fun fold(a : ptr(i64), len : i64, v : i64, f : fun(i64, i64) => i64)
+      fun fold(a : array(i64), len : i64, v : i64, f : fun(i64, i64) => i64)
         let i = 0
         while i < len
           v = f(v, a[i])

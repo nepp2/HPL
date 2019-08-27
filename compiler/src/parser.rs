@@ -137,7 +137,7 @@ lazy_static! {
   static ref EXPRESSION_TERMINATORS : HashSet<&'static str> =
     vec!["end", "}", ")", "]", "else", ",", ";"].into_iter().collect();
   static ref PREFIX_OPERATORS : HashSet<&'static str> =
-    vec!["-", "!", "$", "ref"].into_iter().collect();
+    vec!["-", "!", "$", "ref", "deref"].into_iter().collect();
   static ref INFIX_OPERATORS : HashSet<&'static str> =
     vec!["=", ".", "==", "!=", "<=", ">=", "=>", "+=", "-=", "*=", "/=", "||", "&&",
       "<", ">", "+", "-", "*", "/", "%", "|", "&", "^", "as"].into_iter().collect();
@@ -170,6 +170,7 @@ fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
         "as" => 6,
         "!" => 7,
         "ref" => 7,
+        "deref" => 7,
         "(" => 8,
         "[" => 8,
         "." => 9,
