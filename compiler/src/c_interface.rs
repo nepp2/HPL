@@ -16,16 +16,6 @@ use libloading::{Library, Symbol};
 
 use std::{thread, time};
 
-#[no_mangle]
-pub extern fn lex_string(i : *mut InterpreterInner, code : *mut c_char) {
-  let i = unsafe { &mut *i };
-  let code = unsafe { CStr::from_ptr(code) };
-  let _tokens =
-    lexer::lex(code.to_str().unwrap(), &mut i.cache)
-    .map_err(|mut es| es.remove(0)).unwrap();
-  
-}
-
 /// A sized array that is compatible with the Cauldron's array representation
 #[no_mangle]
 #[derive(Copy, Clone)]
@@ -102,15 +92,12 @@ pub extern "C" fn load_quote(i : *mut InterpreterInner, s : SStr) -> *mut u8 {
 }
 
 #[no_mangle]
-pub extern "C" fn compile_expr(i : *mut InterpreterInner, expr : *mut u8, modules : &[&CompiledExpression]) -> *mut u8 {
+pub extern "C" fn compile_expr(i : *mut InterpreterInner, expr : *mut u8, modules : SArray<&CompiledExpression>) -> *mut u8 {
   let i = unsafe { &mut *i };
   let expr = unsafe { &mut *(expr as *mut Expr) };
-  // TODO: I can't pass a slice in, because a slice isn't just a pointer. It is a struct with a size field too!
-  //println!("", )
-  // let m = compile_expression(expr, modules, &i.c_symbols, &mut i.context, &i.cache).unwrap();
-  // let b = Box::new(m);
-  // Box::into_raw(b) as *mut u8
-  0 as *mut u8
+  let m = compile_expression(expr, modules.as_slice(), &i.c_symbols, &mut i.context, &i.cache).unwrap();
+  let b = Box::new(m);
+  Box::into_raw(b) as *mut u8
 }
 
 #[no_mangle]

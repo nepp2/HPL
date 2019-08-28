@@ -5,7 +5,7 @@ let sdl2 = load_quote(compiler, ref "sdl2")
 
 print_expr(sdl2)
 
-# compile_expr(compiler, sdl2, [])
+compile_expr(compiler, sdl2, [])
 
 let sdl_demo = quote
 
