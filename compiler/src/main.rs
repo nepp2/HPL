@@ -9,6 +9,7 @@
 
 pub mod error;
 pub mod lexer;
+pub mod parser2;
 pub mod parser;
 pub mod expr;
 pub mod watcher;
