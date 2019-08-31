@@ -43,9 +43,13 @@ fn load_and_run(path : &str) {
   let mut f = File::open(path).expect("file not found");
   let mut code = String::new();
   f.read_to_string(&mut code).unwrap();
-  let mut i = interpreter();
-  let result = i.run(&code);
-  println!("{}", print_result(result));
+  let c = expr::StringCache::new();
+  let tokens = lexer::lex(&code, &c).unwrap();
+  let r = parser2::parse(tokens, &c);
+  match r {
+    Ok(e) => println!("{}", e),
+    Err(e) => println!("{}", e),
+  }
 }
 
 use libloading as lib;
@@ -75,6 +79,7 @@ fn main(){
     ["watch"] => watcher::watch("code/scratchpad.code"),
     ["repl"] => repl::run_repl(),
     ["run", f] => load_and_run(f),
+    ["parser2", f] => load_and_run(f),
     _ => watcher::watch("code/scratchpad.code"),
   }
 }

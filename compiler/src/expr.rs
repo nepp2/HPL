@@ -152,7 +152,7 @@ impl fmt::Display for Expr {
       if e.children.len > 0 {
         let s = e.unwrap_str().unwrap();
         write!(f, "({}", s)?;
-        if s == "block" {
+        if s == "block" || s == "{" || s == ";" {
           let indent = indent + 2;
           for c in e.children.as_slice() {
             writeln!(f)?;

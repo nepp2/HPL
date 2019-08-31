@@ -1,0 +1,13 @@
+
+let a = 300
+
+# fun blah(a, b, c) {
+#   let val = a + b
+#   if val > c {
+#     val
+#   }
+#   else{
+#     c
+#   }
+# }
+
