@@ -236,7 +236,6 @@ fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
           let paren_start = expr.loc.start;
           ps.expect_type(TokenType::Syntax)?;
           let contents = parse_everything(ps)?;
-          println!("closing paren after {}", expr);
           ps.expect(TokenType::Syntax, close_paren)?;
           expr = ps.add_construct(paren_str, vec![expr, contents], paren_start);
         }
@@ -260,12 +259,13 @@ fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
 }
 
 fn parse_keyword_expression(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
+  let precedence = std::cmp::max(precedence, 1);
   let t = ps.pop_type(Syntax)?;
   let keyword_expr_start = t.loc.start;
   let keyword_str : String = t.symbol.as_ref().into();
   let line = t.loc.start.line;
   let mut exprs = vec![];
-  loop {
+  while ps.has_tokens() {
     let t = ps.peek()?;
     if t.loc.start.line != line {
       break;
