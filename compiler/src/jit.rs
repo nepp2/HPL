@@ -176,17 +176,8 @@ impl InterpreterInner {
         execute::<()>(f, &c.ee);
         Val::Void
       }
-      Type::Fun(_) => {
-        return error(expr, "can't return a function from a top-level function");
-      }
-      Type::Array(_) => {
-        return error(expr, "can't return an array from a top-level function");
-      }
-      Type::Ptr(_) => {
-        return error(expr, "can't return a pointer from a top-level function");
-      }
-      Type::Def(_def) => {
-        return error(expr, "can't return a struct or union from a top-level function");
+      t => {
+        return error(expr, format!("can't return value of type {:?} from a top-level function", t));
       }
     };
     // unsafe { f.delete(); }

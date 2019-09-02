@@ -23,6 +23,7 @@ pub enum Type {
   U16,
   U8,
   Bool,
+  Dynamic,
   Fun(Rc<FunctionSignature>),
   Def(RefStr),
   Array(Box<Type>),
@@ -56,8 +57,9 @@ impl Type {
       "u32" => Some(Type::U32),
       "u16" => Some(Type::U16),
       "u8" => Some(Type::U8),
+      "any" => Some(Type::Dynamic),
       "()" => Some(Type::Void),
-      "" => Some(Type::I64),
+      "" => Some(Type::Dynamic),
       _ => None,
     }
   }
