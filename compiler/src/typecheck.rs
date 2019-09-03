@@ -28,6 +28,7 @@ pub enum Type {
   Def(RefStr),
   Array(Box<Type>),
   Ptr(Box<Type>),
+  Tuple(Vec<Type>),
 }
 
 #[derive(Clone, PartialEq, Debug)]

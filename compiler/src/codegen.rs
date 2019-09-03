@@ -332,6 +332,14 @@ impl <'l> Gen<'l> {
         let bt = self.to_basic_type(t);
         Some(self.pointer_to_type(bt).into())
       }
+      Type::Tuple(ts) => {
+        let types =
+          ts.iter().map(|t| {
+            self.to_basic_type_no_cycle(t).unwrap()
+          })
+          .collect::<Vec<BasicTypeEnum>>();
+        Some(self.context.struct_type(&types, false).into())
+      }
     }
   }
 
