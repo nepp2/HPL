@@ -1,63 +1,13 @@
 
-# print_expr(e)
-
-let sdl2 = load_quote(compiler, ref "sdl2")
-
-print_expr(sdl2)
-
-compile_expr(compiler, sdl2, [])
-
-let sdl_demo = quote
-
-  fun run_sdl_thing()
-
-    sdl_init(SDL_INIT_VIDEO);
-
-    let c = malloc(4 as u32)
-    c[0] = 65 as u8
-    c[1] = 65 as u8
-    c[2] = 65 as u8
-    c[3] = 0 as u8
-
-    let win =
-      sdl_create_window(
-        c,
-        SDL_WINDOWPOS_UNDEFINED,
-        SDL_WINDOWPOS_UNDEFINED,
-        500 as i32,
-        400 as i32,
-        SDL_WINDOW_SHOWN);
-
-    let renderer = sdl_create_renderer(win, -1 as i32, SDL_RENDERER_ACCELERATED as u32)
-
-    let event =
-      [sdl_event{
-        event_type: 0 as u32,
-        timestamp: 0 as u32,
-        content: sdl_event_content{ none: 0 }
-      }]
-    let s = [string {[0 as u8], 1 as u64}]
-
-    while true
-      sdl_poll_event(event)
-      let t = event[0].event_type as i64
-      if t == SDL_QUIT
-        break
-      else if t == SDL_KEYDOWN
-        let c = event[0].content.keyboard.keysym.sym as u8
-        s[0].data[0] = c
-        print(s)
-      end
-
-      sdl_set_draw_color(renderer, 255 as u8, 0 as u8, 0 as u8, 255 as u8)
-      sdl_clear(renderer)
-      sdl_present(renderer)
-
-      thread_sleep(16 as u64)
-    end
-
-  end
-
-  run_sdl_thing()
-
+struct blah
+  i : i64
+  s : string
 end
+
+let b = malloc(sizeof(blah) as u32) as ptr(blah)
+
+let val = blah { 3 , "fuck" }
+deref b = val
+
+# lol my old parser is terrible
+deref b.i

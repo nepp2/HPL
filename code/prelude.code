@@ -25,7 +25,7 @@ cbind thread_sleep : fun(millis : u64)
 
 cbind compiler : ptr(u8)
 
-cbind prelude : ptr(u8)
+# cbind prelude : ptr(u8)
 
 cbind load_quote : fun(compiler : ptr(u8), name : ptr(string)) => ptr(expr)
 

@@ -318,6 +318,9 @@ impl <'l> Gen<'l> {
         let t = self.to_function_type(sig.args.as_slice(), &sig.return_type);
         Some(t.ptr_type(AddressSpace::Generic).into())
       }
+      Type::Dynamic => {
+        panic!()
+      }
       Type::Def(name) => {
         let def = find_type_def(&self.type_info, name).unwrap();
         Some(self.composite_type(def).as_basic_type_enum())
