@@ -1,19 +1,19 @@
 
-struct range
+struct range {
   start : i64
   limit : i64
-end
+}
 
-struct string
+struct string {
   data : ptr(u8)
   length : u64
-end
+}
 
 cbind malloc : fun(size: u32) => ptr(u8)
 
-struct lib_handle
+struct lib_handle {
   handle : u64
-end
+}
 
 cbind load_library : fun(name : ptr(string)) => lib_handle
 
@@ -31,41 +31,41 @@ cbind load_quote : fun(compiler : ptr(u8), name : ptr(string)) => ptr(expr)
 
 cbind compile_expr : fun(compiler : ptr(u8), expr : ptr(expr), modules : ptr(ptr(u8))) => ptr(u8)
 
-fun max(a : i64, b : i64)
-  if a > b then a else b end
-end
+fun max(a : i64, b : i64) {
+  if a > b { a } else { b }
+}
 
-struct text_marker
-  line : u64
-  col : u64
-end
+# struct text_marker {
+#   line : u64
+#   col : u64
+# }
 
-struct text_location
-  from : text_marker
-  to : text_marker
-end
+# struct text_location {
+#   from : text_marker
+#   to : text_marker
+# }
 
-union expr_data
-  s : string
-  f : f64
-  i : i64
-  b : bool
-end
+# union expr_data {
+#   s : string
+#   f : f64
+#   i : i64
+#   b : bool
+# }
 
-struct expr_tag
-  tag : u8
-  data : expr_data
-end
+# struct expr_tag {
+#   tag : u8
+#   data : expr_data
+# }
 
-struct expr_array
-  data : ptr(expr)
-  length : u64
-end
+# struct expr_array {
+#   data : ptr(expr)
+#   length : u64
+# }
 
-struct expr
-  children : expr_array
-  loc : text_location
-  tag : expr_tag
-end
+# struct expr {
+#   children : expr_array
+#   loc : text_location
+#   tag : expr_tag
+# }
 
-cbind print_expr : fun(e : ptr(expr))
+# cbind print_expr : fun(e : ptr(expr))

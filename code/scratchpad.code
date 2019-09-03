@@ -1,21 +1,22 @@
 
-struct blah
+struct blah {
   i : i64
   s : string
-end
-
-struct rc {
-  count : i64
-  the_rest : i64
 }
 
-let b = malloc(sizeof(blah) as u32) as ptr(blah)
 
-let val = blah { 3 , "fuck" }
-deref b = val
+# struct rc {
+#   count : i64
+#   the_rest : i64
+# }
 
-# lol my old parser is terrible
-# it can't handle "(deref b).i" without thinking it's a function call on the previous expression
-# it also doesn't understand that the "." operator below should take precedence over the "deref"
-# also the language should be able to automatically deref pointers, because that's just obvious
-deref b.i
+# let b = malloc(sizeof(blah) as u32) as ptr(blah)
+
+# let val = blah { 3 , "fuck" }
+# deref b = val
+
+# # lol my old parser is terrible
+# # it can't handle "(deref b).i" without thinking it's a function call on the previous expression
+# # it also doesn't understand that the "." operator below should take precedence over the "deref"
+# # also the language should be able to automatically deref pointers, because that's just obvious
+# deref b.i

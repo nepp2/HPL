@@ -15,55 +15,56 @@ struct ParseConfig {
   special_operators : HashSet<RefStr>,
 }
 
+/// Precedence level
+struct PL { infix : &'static [&'static str], prefix : &'static [&'static str] }
+
 fn parse_config() -> ParseConfig {
+  let mut c = ParseConfig {
+    paren_pairs: HashMap::new(),
+    paren_terminators: HashSet::new(),
+    expression_separators: HashMap::new(),
+    prefix_precedence: HashMap::new(),
+    infix_precedence: HashMap::new(),
+    special_operators:
+      vec!["=", ".", "+=", "&&", "||", "$"].into_iter().map(|s| s.into()).collect(),
+  };
   let paren_pairs = vec![
     ("(", ")"),
     ("{", "}"),
     ("[", "]"),
   ];
-  ParseConfig {
-    expression_separators:
-      vec![
-        (";", 1),
-        (",", 2),
-        (":", 3),
-      ].into_iter().map(|(s, p)| (s.into(), p)).collect(),
-    paren_pairs:
-      paren_pairs.iter().cloned().map(|(a, b)| (a.into(), b.into())).collect(),
-    paren_terminators: paren_pairs.iter().cloned().map(|(_, b)| b.into()).collect(),
-    prefix_precedence:
-      vec![
-        ("-", 7),
-        ("!", 10),
-        ("ref", 10),
-        ("deref", 10),
-        ("$", 13),
-      ].into_iter().map(|(s, p)| (s.into(), p)).collect(),
-    infix_precedence:
-      vec![
-        ("=", 4),
-        ("+=", 4),
-        ("&&", 5),
-        ("||", 5),
-        (">", 6),
-        ("<", 6),
-        (">=", 6),
-        ("<=", 6),
-        ("==", 6),
-        ("!=", 6),
-        ("+", 7),
-        ("-", 7),
-        ("*", 8),
-        ("/", 8),
-        ("%", 8),
-        ("as", 9),
-        ("(", 11),
-        ("[", 11),
-        (".", 12),
-      ].into_iter().map(|(s, p)| (s.into(), p)).collect(),
-    special_operators:
-      vec!["=", ".", "+=", "&&", "||", "$"].into_iter().map(|s| s.into()).collect(),
+  let expression_separators = &[";", ",",":" ];
+  let operators : &[PL] = &[
+    PL { infix: &["=", "+="], prefix: &[] },
+    PL { infix: &["else"], prefix: &[] },
+    PL { infix: &["&&", "||"], prefix: &[] },
+    PL { infix: &[">", "<", ">=", "<=", "==", "!="], prefix: &[] },
+    PL { infix: &["+", "-"], prefix: &["-"] },
+    PL { infix: &["*", "/", "%"], prefix: &[] },
+    PL { infix: &["as"], prefix: &[] },
+    PL { infix: &[], prefix: &["!", "ref", "deref",] },
+    PL { infix: &["(", "["], prefix: &[] },
+    PL { infix: &["."], prefix: &[] },
+  ];
+  let mut precedence = 0;
+  for s in expression_separators {
+    precedence += 1;
+    c.expression_separators.insert((*s).into(), precedence);
   }
+  for (a, b) in paren_pairs {
+    c.paren_pairs.insert(a.into(), b.into());
+    c.paren_terminators.insert(b.into());
+  }
+  for level in operators {
+    precedence += 1;
+    for i in level.infix {
+      c.infix_precedence.insert((*i).into(), precedence);
+    }
+    for p in level.prefix {
+      c.prefix_precedence.insert((*p).into(), precedence);
+    }
+  }
+  c
 }
 
 // TODO: this might be better implemented with a ring buffer (or just a backwards vec)
@@ -197,9 +198,9 @@ fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
   let mut expr = parse_prefix(ps, precedence)?;
   while ps.has_tokens() {
     let t = ps.peek()?;
-    println!("expr parsed: {}, precedence: {}, t: {}", expr, precedence, t.symbol);
+    // TODO remove: println!("expr parsed: {}, precedence: {}, t: {}", expr, precedence, t.symbol);
     if ps.config.paren_terminators.contains(&t.symbol) {
-      println!("bumped into a {}", t.symbol);
+      // TODO remove: println!("bumped into a {}", t.symbol);
       break;
     }
     // New lines are imlicitly semi-colons (except after an infix operator)
@@ -228,9 +229,9 @@ fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
         // Parens
         if let Some(close_paren) = ps.config.paren_pairs.get(&t.symbol) {
           let paren_str = match t.symbol.as_ref() {
-            "(" => "#paren",
-            "{" => "#brace",
-            "[" => "#bracket",
+            "(" => "#()",
+            "{" => "#{}",
+            "[" => "#[]",
             _ => panic!(),
           }.to_string();
           let paren_start = expr.loc.start;
@@ -312,15 +313,18 @@ fn parse_infix(ps : &mut ParseState, left_expr : Expr, precedence : i32) -> Resu
 
 fn parse_separator(ps : &mut ParseState, left_expr : Expr, separator : String, precedence : i32) -> Result<Expr, Error> {
   let separator_start = left_expr.loc.start;
+  let is_semicolon = separator.as_str() == ";";
   let mut args = vec!(left_expr);
   while ps.has_tokens() {
     let t = ps.peek()?;
     if ps.config.paren_terminators.contains(&t.symbol) {
       break;
     }
-    let previous_line = args.last().unwrap().loc.end.line;
-    let next_line = t.loc.start.line;
-    let implicit_separator = previous_line != next_line;
+    let implicit_separator = is_semicolon && {
+      let previous_line = args.last().unwrap().loc.end.line;
+      let next_line = t.loc.start.line;
+      previous_line != next_line
+    };
     if !(implicit_separator || ps.accept(Syntax, separator.as_str())) {
       break;
     }

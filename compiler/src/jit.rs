@@ -2,7 +2,7 @@
 use crate::error::{Error, error, error_raw};
 use crate::expr::{StringCache, RefStr, Expr};
 use crate::lexer;
-use crate::parser;
+use crate::parser2;
 use crate::typecheck;
 use crate::typecheck::{
   Type, Val, TypedModule, TOP_LEVEL_FUNCTION_NAME };
@@ -111,7 +111,9 @@ impl InterpreterInner {
     let tokens =
       lexer::lex(code, &self.cache)
       .map_err(|mut es| es.remove(0))?;
-    parser::parse(tokens, &self.cache)
+    let expr = parser2::parse(tokens, &self.cache)?;
+    println!("{}", expr);
+    Ok(expr)
   }
 
   pub fn run(&mut self, code : &str) -> Result<Val, Error> {;
