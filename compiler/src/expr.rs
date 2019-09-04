@@ -33,6 +33,7 @@ impl  Clone for ExprContent {
     use self::ExprContent::*;
     match self {
       Symbol(s) => Symbol(clone(*s)),
+      List(l) => List(l.clone()),
       LiteralString(s) => LiteralString(clone(*s)),
       LiteralFloat(f) => LiteralFloat(*f),
       LiteralInt(i) => LiteralInt(*i),
@@ -76,7 +77,9 @@ impl <T> SArray<T> {
     // TODO: is this dodgy? this will frequently claim that the capacity 
     // is smaller than it really is.
     if self.len > 0 {
-      let v = Vec::from_raw_parts(self.data, self.len as usize, self.len as usize);
+      let v = unsafe {
+        Vec::from_raw_parts(self.data, self.len as usize, self.len as usize)
+      };
       self.data = 0 as *mut T;
       self.len = 0;
       v
@@ -99,9 +102,7 @@ impl <T : fmt::Debug> fmt::Debug for SArray<T> {
 
 impl <T> Drop for SArray<T> {
   fn drop(&mut self) {
-    unsafe {
-      self.empty_into_vec();
-    }
+    self.empty_into_vec();
   }
 }
 
@@ -129,13 +130,13 @@ impl Expr {
   }
 
   pub fn list(&self) -> &[Expr] {
-    match self.content {
+    match &self.content {
       ExprContent::List(list) => list.as_slice(),
       _ => &[]
     }
   }
 
-  pub fn into_vec(self) -> Vec<Expr> {
+  pub fn into_vec(mut self) -> Vec<Expr> {
     match &mut self.content {
       ExprContent::List(list) =>{
         list.empty_into_vec()
