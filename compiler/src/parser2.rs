@@ -26,7 +26,8 @@ fn parse_config() -> ParseConfig {
     prefix_precedence: HashMap::new(),
     infix_precedence: HashMap::new(),
     special_operators:
-      vec!["=", ".", "+=", "&&", "||", "$"].into_iter().map(|s| s.into()).collect(),
+      vec!["=", ".", "+=", "&&", "||", "$", "else"]
+      .into_iter().map(|s| s.into()).collect(),
   };
   let paren_pairs = vec![
     ("(", ")"),

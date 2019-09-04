@@ -35,37 +35,37 @@ fun max(a : i64, b : i64) {
   if a > b { a } else { b }
 }
 
-# struct text_marker {
-#   line : u64
-#   col : u64
-# }
+struct text_marker {
+  line : u64
+  col : u64
+}
 
-# struct text_location {
-#   from : text_marker
-#   to : text_marker
-# }
+struct text_location {
+  from : text_marker
+  to : text_marker
+}
 
-# union expr_data {
-#   s : string
-#   f : f64
-#   i : i64
-#   b : bool
-# }
+union expr_data {
+  s : string
+  f : f64
+  i : i64
+  b : bool
+}
 
-# struct expr_tag {
-#   tag : u8
-#   data : expr_data
-# }
+struct expr_tag {
+  tag : u8
+  data : expr_data
+}
 
-# struct expr_array {
-#   data : ptr(expr)
-#   length : u64
-# }
+struct expr_array {
+  data : ptr(expr)
+  length : u64
+}
 
-# struct expr {
-#   children : expr_array
-#   loc : text_location
-#   tag : expr_tag
-# }
+struct expr {
+  children : expr_array
+  loc : text_location
+  tag : expr_tag
+}
 
-# cbind print_expr : fun(e : ptr(expr))
+cbind print_expr : fun(e : ptr(expr))
