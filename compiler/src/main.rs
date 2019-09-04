@@ -9,7 +9,6 @@
 
 pub mod error;
 pub mod lexer;
-pub mod parser2;
 pub mod parser;
 pub mod expr;
 pub mod watcher;
@@ -48,21 +47,6 @@ fn load_and_run(path : &str) {
   println!("{}", print_result(result));
 }
 
-fn parser2(path : &str) {
-  let path = PathBuf::from(path);
-  let mut f = File::open(path).expect("file not found");
-  let mut code = String::new();
-  f.read_to_string(&mut code).unwrap();
-  let c = expr::StringCache::new();
-  let tokens = lexer::lex(&code, &c).unwrap();
-  let r = parser2::parse(tokens, &c);
-  match r {
-    Ok(e) => println!("{}", e),
-    Err(e) => println!("{}", e),
-  }
-}
-
-
 use libloading as lib;
 use llvm_sys::execution_engine::LLVMExecutionEngineRef;
 use libc::c_char;
@@ -90,7 +74,6 @@ fn main(){
     ["watch"] => watcher::watch("code/scratchpad.code"),
     ["repl"] => repl::run_repl(),
     ["run", f] => load_and_run(f),
-    ["parser2", f] => parser2(f),
     _ => watcher::watch("code/scratchpad.code"),
   }
 }

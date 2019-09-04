@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashSet;
 
-use crate::error::{Error, TextLocation, error };
+use crate::error::{Error, TextLocation, error_raw };
 use crate::c_interface::SStr;
 
 /// An immutable, reference counted string
@@ -12,8 +12,8 @@ pub type RefStr = Rc<str>;
 
 #[repr(C, u8)]
 #[derive(Debug)]
-pub enum ExprTag {
-  Construct(SStr),
+pub enum ExprContent {
+  List(SArray<Expr>),
   Symbol(SStr),
   LiteralString(SStr),
   LiteralFloat(f64),
@@ -22,7 +22,7 @@ pub enum ExprTag {
   LiteralUnit,
 }
 
-impl  Clone for ExprTag {
+impl  Clone for ExprContent {
   fn clone(&self) -> Self {
     fn clone(s : SStr) -> SStr {
       let v : String = s.as_str().into();
@@ -30,9 +30,8 @@ impl  Clone for ExprTag {
       std::mem::forget(v);
       s
     }
-    use self::ExprTag::*;
+    use self::ExprContent::*;
     match self {
-      Construct(s) => Construct(clone(*s)),
       Symbol(s) => Symbol(clone(*s)),
       LiteralString(s) => LiteralString(clone(*s)),
       LiteralFloat(f) => LiteralFloat(*f),
@@ -43,21 +42,20 @@ impl  Clone for ExprTag {
   }
 }
 
-impl ExprTag {
-  pub fn literal_string(s : String) -> ExprTag {
-    let tag = ExprTag::LiteralString(SStr::from_str(s.as_str()));
+impl ExprContent {
+  pub fn literal_string(s : String) -> ExprContent {
+    let content = ExprContent::LiteralString(SStr::from_str(s.as_str()));
     std::mem::forget(s);
-    tag
+    content
   }
-  pub fn symbol(s : String) -> ExprTag {
-    let tag = ExprTag::Symbol(SStr::from_str(s.as_str()));
+  pub fn symbol(s : String) -> ExprContent {
+    let content = ExprContent::Symbol(SStr::from_str(s.as_str()));
     std::mem::forget(s);
-    tag
+    content
   }
-  pub fn construct(s : String) -> ExprTag {
-    let tag = ExprTag::Construct(SStr::from_str(s.as_str()));
-    std::mem::forget(s);
-    tag
+
+  pub fn list(list : Vec<Expr>) -> ExprContent {
+    ExprContent::List(SArray::new(list))
   }
 }
 
@@ -68,10 +66,24 @@ pub struct SArray<T> {
 }
 
 impl <T> SArray<T> {
-  fn new(mut v : Vec<T>) -> SArray<T> {
+  pub fn new(mut v : Vec<T>) -> SArray<T> {
     let a = SArray { len: v.len() as u64, data: v.as_mut_ptr() };
     std::mem::forget(v);
     a
+  }
+
+  pub fn empty_into_vec(&mut self) -> Vec<T> {
+    // TODO: is this dodgy? this will frequently claim that the capacity 
+    // is smaller than it really is.
+    if self.len > 0 {
+      let v = Vec::from_raw_parts(self.data, self.len as usize, self.len as usize);
+      self.data = 0 as *mut T;
+      self.len = 0;
+      v
+    }
+    else {
+      vec![]
+    }
   }
 
   pub fn as_slice(&self) -> &[T] {
@@ -79,11 +91,17 @@ impl <T> SArray<T> {
   }
 }
 
+impl <T : fmt::Debug> fmt::Debug for SArray<T> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "{:?}", self.as_slice())
+  }
+}
+
 impl <T> Drop for SArray<T> {
   fn drop(&mut self) {
     unsafe {
-      Vec::from_raw_parts(self.data, self.len as usize, self.len as usize)
-    };
+      self.empty_into_vec();
+    }
   }
 }
 
@@ -101,14 +119,42 @@ impl <T : Clone> Clone for SArray<T> {
 #[repr(C)]
 #[derive(Clone)]
 pub struct Expr {
-  pub children : SArray<Expr>,
   pub loc : TextLocation,
-  pub tag : ExprTag,
+  pub content : ExprContent,
 }
 
 impl Expr {
-  pub fn new(tag : ExprTag, children : Vec<Expr>, loc : TextLocation) -> Expr {
-    Expr { children: SArray::new(children), loc, tag }
+  pub fn new(content : ExprContent, loc : TextLocation) -> Expr {
+    Expr { loc, content }
+  }
+
+  pub fn list(&self) -> &[Expr] {
+    match self.content {
+      ExprContent::List(list) => list.as_slice(),
+      _ => &[]
+    }
+  }
+
+  pub fn into_vec(self) -> Vec<Expr> {
+    match &mut self.content {
+      ExprContent::List(list) =>{
+        list.empty_into_vec()
+      }
+      _ => vec![],
+    }
+  }
+
+  pub fn try_head(&self) -> Option<&str> {
+    self.list().first().and_then(|e| e.try_symbol())
+  }
+
+  pub fn unwrap_head(&self) -> Result<&str, Error> {
+    self.list().first().and_then(|e| e.try_symbol())
+      .ok_or_else(|| error_raw(self, "expected symbol"))
+  }
+
+  pub fn tail(&self) -> &[Expr] {
+    &self.list()[1..]
   }
 }
 
@@ -125,18 +171,27 @@ impl <'l> Into<TextLocation> for &'l Expr {
 }
 
 impl Expr {
-  pub fn unwrap_construct(&self) -> Result<&str, Error> {
-    match &self.tag {
-      ExprTag::Construct(s) => Ok(s.as_str()),
-      _ => error(self, format!("expected a construct, found {:?}", self.tag)),
+
+  pub fn try_symbol(&self) -> Option<&str> {
+    match &self.content {
+      ExprContent::Symbol(s) => Some(s.as_str()),
+      _ => None,
     }
   }
-  pub fn unwrap_str(&self) -> Result<&str, Error> {
-    match &self.tag {
-      ExprTag::Construct(s) => Ok(s.as_str()),
-      ExprTag::Symbol(s) => Ok(s.as_str()),
-      _ => error(self, format!("expected a symbol, found {:?}", self.tag)),
+
+  pub fn unwrap_symbol(&self) -> Result<&str, Error> {
+    self.try_symbol()
+      .ok_or_else(|| 
+        error_raw(self, format!("expected a symbol, found {:?}", self.content)))
+  }
+
+  pub fn open<'e>(&'e self, s : &str) -> Option<&'e [Expr]> {
+    if let Some(head) = self.try_head() {
+      if s == head {
+        return Some(self.tail());
+      }
     }
+    None
   }
 }
 
@@ -149,52 +204,41 @@ impl fmt::Debug for Expr {
 impl fmt::Display for Expr {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     fn display_inner(e: &Expr, f: &mut fmt::Formatter<'_>, indent : usize) -> fmt::Result {
-      if e.children.len > 0 {
-        let s = e.unwrap_str().unwrap();
-        write!(f, "({}", s)?;
-        if s == "block" || s == "{" || s == ";" {
-          let indent = indent + 2;
-          for c in e.children.as_slice() {
-            writeln!(f)?;
-            write!(f, "{:indent$}", "", indent=indent)?;
-            display_inner(c, f, indent)?;
-          }
-        }
-        else {
-          for c in e.children.as_slice() {
-            write!(f, " ")?;
-            display_inner(c, f, indent)?;
-          }
-        }
-        write!(f, ")")?;
-        return Ok(());
-      }
-      match (&e.tag, e.children.as_slice()) {
-        (ExprTag::Symbol(s), _children) => write!(f, "{}", s.as_str()),
-        (ExprTag::Construct(s), children) => {
-          write!(f, "({}", s.as_str())?;
-          if s.as_str() == "block" {
-            let indent = indent + 2;
-            for c in children {
-              writeln!(f)?;
-              write!(f, "{:indent$}", "", indent=indent)?;
-              display_inner(c, f, indent)?;
+      match &e.content {
+        ExprContent::Symbol(s) => write!(f, "{}", s.as_str()),
+        ExprContent::List(l) => {
+          let l = l.as_slice();
+          if let Some(head) = l.first() {
+            write!(f, "(")?;
+            display_inner(head, f, indent)?;
+            match head.try_symbol() {
+              Some("block") | Some("{") | Some(";") => {
+                let indent = indent + 2;
+                for c in &l[1..] {
+                  writeln!(f)?;
+                  write!(f, "{:indent$}", "", indent=indent)?;
+                  display_inner(c, f, indent)?;
+                }
+              }
+              _ => {
+                for c in &l[1..] {
+                  write!(f, " ")?;
+                  display_inner(c, f, indent)?;
+                }
+              }
             }
+            write!(f, ")")?;
           }
           else {
-            for c in children {
-              write!(f, " ")?;
-              display_inner(c, f, indent)?;
-            }
+            write!(f, "()")?;
           }
-          write!(f, ")")?;
-          Ok(())
+          return Ok(());
         }
-        (ExprTag::LiteralString(s), _) => write!(f, "{}", s.as_str()),
-        (ExprTag::LiteralFloat(v), _) => write!(f, "{}", v),
-        (ExprTag::LiteralInt(v), _) => write!(f, "{}", v),
-        (ExprTag::LiteralBool(v), _) => write!(f, "{}", v),
-        (ExprTag::LiteralUnit, _) => write!(f, "()"),
+        ExprContent::LiteralString(s) => write!(f, "{}", s.as_str()),
+        ExprContent::LiteralFloat(v) => write!(f, "{}", v),
+        ExprContent::LiteralInt(v) => write!(f, "{}", v),
+        ExprContent::LiteralBool(v) => write!(f, "{}", v),
+        ExprContent::LiteralUnit => write!(f, "()"),
       }
     }
     display_inner(&self, f, 0)

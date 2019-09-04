@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::fmt::Write;
 
 use crate::error::{Error, error, error_raw, TextLocation};
-use crate::expr::{StringCache, RefStr, Expr, ExprTag};
+use crate::expr::{StringCache, RefStr, Expr, ExprContent};
 
 use std::collections::HashMap;
 use itertools::Itertools;
@@ -302,8 +302,8 @@ impl <'l> TypeChecker<'l> {
   /// Converts expression into type. Logs symbol error if definition references a type that hasn't been defined yet
   /// These symbol errors may be resolved later, when the rest of the module has been checked.
   fn to_type(&mut self, expr : &Expr) -> Result<Type, Error> {
-    let name = expr.unwrap_str()?;
-    let params = expr.children.as_slice();
+    let name = expr.unwrap_head()?;
+    let params = expr.tail();
     if let Some(t) = Type::from_string(name) {
       if params.len() > 0 {
         return error(expr, "unexpected type parameters").map_err(|e| e.into());
@@ -312,7 +312,7 @@ impl <'l> TypeChecker<'l> {
     }
     if name == "fun" {
       let args =
-        params[0].children.as_slice()
+        params[0].list()
         .iter().tuples()
         .map(|(_, e)| self.to_type(e))
         .collect::<Result<Vec<Type>, Error>>()?;
@@ -340,37 +340,51 @@ impl <'l> TypeChecker<'l> {
   }
 
   fn add_type_definition(&mut self, expr : &Expr) -> Result<(), Error> {
-    let kind = match expr.unwrap_str()? {
+    let kind = match expr.unwrap_head()? {
       "union" => TypeKind::Union,
       "struct" => TypeKind::Struct,
       _ => panic!(),
     };
-    let children = expr.children.as_slice();
+    let children = expr.tail();
     if children.len() < 1 {
       return error(expr, "malformed type definition");
     }
     let name_expr = &children[0];
-    let name = name_expr.unwrap_str()?;
+    let name = name_expr.unwrap_symbol()?;
     if self.find_type_def(name).is_some() {
       return error(expr, "type with this name already defined");
     }
-    // TODO: check for duplicates?
-    let field_exprs = children[1].children.as_slice();
     let mut fields = vec![];
-    for (field_name_expr, type_expr) in field_exprs.iter().tuples() {
-      let field_name = self.cache.get(field_name_expr.unwrap_str()?);
-      let type_tag = self.to_type(type_expr)?;
-      fields.push((field_name, type_tag));
+    let fields_expr = &children[1];
+    if let Some(es) = fields_expr.open(";") {
+      // TODO: check for duplicates?
+      for e in es {
+        fields.push(self.typed_symbol(e)?);
+      }
     }
-    // Generics (TODO: just breaks)
-    let generic_exprs = children[2].children.as_slice();
-    if generic_exprs.len() > 0 {
-      return error(expr, "generic types not supported");
+    else {
+      fields.push(self.typed_symbol(fields_expr)?);
     }
+    // TODO: Generics
     let name = self.cache.get(name);
     let def = TypeDefinition { name: name.clone(), fields, kind };
     self.module.types.insert(name, Rc::new(def));
     Ok(())
+  }
+
+  fn typed_symbol(&mut self, e : &Expr) -> Result<(RefStr, Type), Error> {
+    if let Some([s, t]) = e.open(":") {
+      let name = self.cache.get(s.unwrap_symbol()?);
+      let type_tag = self.to_type(t)?;
+      Ok((name, type_tag))
+    }
+    else if let Ok(s) = e.unwrap_symbol() {
+      let name = self.cache.get(s);
+      Ok((name, Type::Dynamic))
+    }
+    else {
+      error(e, "invalid typed symbol construct")
+    }
   }
 
 }
@@ -437,8 +451,8 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
   }
 
   fn construct_to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
-    let instr = expr.unwrap_construct()?;
-    let children = expr.children.as_slice();
+    let instr = expr.unwrap_head()?;
+    let children = expr.tail();
     match (instr, children) {
       ("break", []) => {
         return Ok(node(expr, Type::Void, Content::Break));
@@ -447,7 +461,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         let args =
               exprs[1..].iter().map(|e| self.to_ast(e))
               .collect::<Result<Vec<TypedNode>, Error>>()?;
-        if let Some(function_name) = exprs[0].unwrap_str().ok() {
+        if let Some(function_name) = exprs[0].unwrap_symbol().ok() {
           let op_tag = match_intrinsic(function_name, args.as_slice());
           if let Some(op_tag) = op_tag {
             return Ok(node(expr, op_tag, Content::IntrinsicCall(self.cached(function_name), args)))
@@ -488,7 +502,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         Ok(node(expr, Type::Bool, Content::IntrinsicCall(self.cached(instr), vec!(a, b))))
       }
       ("let", exprs) => {
-        let name = self.cached(exprs[0].unwrap_str()?);
+        let name = self.cached(exprs[0].unwrap_symbol()?);
         let v = Box::new(self.to_ast(&exprs[1])?);
         // The first scope is used for function arguments. The second
         // is the top level of the function.
@@ -563,7 +577,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         Ok(node(expr, tag, Content::Block(nodes)))
       }
       ("cbind", [name_expr, type_expr]) => {
-        let name = self.cached(name_expr.unwrap_str()?);
+        let name = self.cached(name_expr.unwrap_symbol()?);
         let type_tag = self.t.to_type(type_expr)?;
         let address = self.t.local_symbol_table.get(&name).map(|v| *v);
         if address.is_none() {
@@ -593,13 +607,13 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         Ok(node(expr, Type::Void, Content::CBind(name)))
       }
       ("fun", exprs) => {
-        let name = self.cached(exprs[0].unwrap_str()?);
-        let args_exprs = exprs[1].children.as_slice();
+        let name = self.cached(exprs[0].unwrap_symbol()?);
+        let args_exprs = exprs[1].list();
         let function_body = &exprs[2];
         let mut arg_names = vec!();
         let mut arg_types = vec!();
         for (name_expr, type_expr) in args_exprs.iter().tuples() {
-          let name = self.cached(name_expr.unwrap_str()?);
+          let name = self.cached(name_expr.unwrap_symbol()?);
           let type_tag = self.t.to_type(type_expr)?;
           if type_tag == Type::Void {
             return error(expr, "functions args cannot be void");
@@ -627,11 +641,11 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         Ok(node(expr, Type::Void, Content::FunctionDefinition(name)))
       }
       ("union", exprs) => {
-        let name = self.cached(&exprs[0].unwrap_str()?);
+        let name = self.cached(&exprs[0].unwrap_symbol()?);
         Ok(node(expr, Type::Void, Content::TypeDefinition(name)))
       }
       ("struct", exprs) => {
-        let name = self.cached(&exprs[0].unwrap_str()?);
+        let name = self.cached(&exprs[0].unwrap_symbol()?);
         Ok(node(expr, Type::Void, Content::TypeDefinition(name)))
       }
       ("type_instantiate", exprs) => {
@@ -640,7 +654,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         }
         let name_expr = &exprs[0];
         let field_exprs = &exprs[1..];
-        let name = name_expr.unwrap_str()?;
+        let name = name_expr.unwrap_symbol()?;
         let fields =
           field_exprs.iter().tuples().map(|(name, value)| {
             let value = self.to_ast(value)?;
@@ -657,7 +671,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
             }
             let field_iter = fields.iter().zip(def.fields.iter());
             for ((field, value), (expected_name, expected_type)) in field_iter {
-              let name = field.unwrap_str()?;
+              let name = field.unwrap_symbol()?;
               if name != "" && name != expected_name.as_ref() {
                 return error(*field, "incorrect field name");
               }
@@ -673,7 +687,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
               return error(expr, "must instantiate exactly one field");
             }
             let (field, value) = fields.into_iter().nth(0).unwrap();
-            let field_name = self.cached(field.unwrap_str()?);
+            let field_name = self.cached(field.unwrap_symbol()?);
             if def.fields.iter().find(|(n, _)| n == &field_name).is_none() {
               return error(field, "field does not exist in this union");
             }
@@ -684,7 +698,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
       }
       (".", [container_expr, field_expr]) => {
         let container_val = self.to_ast(container_expr)?;
-        let field_name = self.cached(field_expr.unwrap_str()?);
+        let field_name = self.cached(field_expr.unwrap_symbol()?);
         let def = match &container_val.type_tag {
           Type::Def(type_name) => self.t.find_type_def(type_name).unwrap(),
           _ => return error(container_expr, format!("expected struct or union, found {:?}", container_val.type_tag)),
@@ -733,14 +747,11 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
   }
 
   pub fn to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
-    match &expr.tag {
-      ExprTag::Construct(_) => {
+    match &expr.content {
+      ExprContent::List(_) => {
         return self.construct_to_ast(expr);
       }
-      ExprTag::Symbol(s) => {
-        if expr.children.as_slice().len() > 0 {
-          return error(expr, "unexpected children");
-        }
+      ExprContent::Symbol(s) => {
         // this is just a normal symbol
         let s = self.cached(s.as_str());
         if s.as_ref() == "break" {
@@ -758,24 +769,24 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         }
         error(expr, format!("unknown symbol '{}'", s))
       }
-      ExprTag::LiteralString(s) => {
+      ExprContent::LiteralString(s) => {
         let v = Val::String(s.as_str().to_string());
         let s = self.t.find_type_def("string").unwrap();
         Ok(node(expr, Type::Def(s.name.clone()), Content::Literal(v)))
       }
-      ExprTag::LiteralFloat(f) => {
+      ExprContent::LiteralFloat(f) => {
         let v = Val::F64(*f as f64);
         Ok(node(expr, Type::F64, Content::Literal(v)))
       }
-      ExprTag::LiteralInt(v) => {
+      ExprContent::LiteralInt(v) => {
         let v = Val::I64(*v as i64);
         Ok(node(expr, Type::I64, Content::Literal(v)))
       }
-      ExprTag::LiteralBool(b) => {
+      ExprContent::LiteralBool(b) => {
         let v = Val::Bool(*b);
         Ok(node(expr, Type::Bool, Content::Literal(v)))
       },
-      ExprTag::LiteralUnit => {
+      ExprContent::LiteralUnit => {
         Ok(node(expr, Type::Void, Content::Literal(Val::Void)))
       },
       // _ => error(expr, "unsupported expression"),
@@ -811,10 +822,10 @@ fn match_intrinsic(name : &str, args : &[TypedNode]) -> Option<Type> {
 }
 
 fn find_type_definitions<'e>(expr : &'e Expr, types : &mut Vec<&'e Expr>) {
-  let children = expr.children.as_slice();
+  let children = expr.list();
   if children.len() == 0 { return }
-  if let ExprTag::Construct(s) = &expr.tag {
-    match s.as_str() {
+  if let Some(s) = expr.try_head() {
+    match s {
       "union" => {
         types.push(expr);
         return;

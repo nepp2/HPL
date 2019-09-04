@@ -1,15 +1,79 @@
 use crate::lexer::{Token, TokenType};
-use crate::expr::{StringCache, Expr, ExprTag};
+use crate::expr::{StringCache, Expr, ExprContent, RefStr};
 use crate::error::{Error, ErrorContent, TextLocation, TextMarker, error};
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use std::str::FromStr;
 
 static EXPECTED_TOKEN_ERROR : &str = "Expected token. Found nothing.";
+
+struct ParseConfig {
+  paren_pairs : HashMap<RefStr, RefStr>,
+  paren_terminators : HashSet<RefStr>,
+  expression_separators : HashMap<RefStr, i32>,
+  prefix_precedence : HashMap<RefStr, i32>,
+  infix_precedence : HashMap<RefStr, i32>,
+  special_operators : HashSet<RefStr>,
+}
+
+/// Precedence level
+struct PL { infix : &'static [&'static str], prefix : &'static [&'static str] }
+
+fn parse_config() -> ParseConfig {
+  let mut c = ParseConfig {
+    paren_pairs: HashMap::new(),
+    paren_terminators: HashSet::new(),
+    expression_separators: HashMap::new(),
+    prefix_precedence: HashMap::new(),
+    infix_precedence: HashMap::new(),
+    special_operators:
+      vec!["=", ".", "+=", "&&", "||", "$", "else", ":"]
+      .into_iter().map(|s| s.into()).collect(),
+  };
+  let paren_pairs = vec![
+    ("(", ")"),
+    ("{", "}"),
+    ("[", "]"),
+  ];
+  let expression_separators = &[";", "," ];
+  let operators : &[PL] = &[
+    PL { infix: &["=", "+="], prefix: &[] },
+    PL { infix: &[":"], prefix: &[] },
+    PL { infix: &["else"], prefix: &[] },
+    PL { infix: &["&&", "||"], prefix: &[] },
+    PL { infix: &[">", "<", ">=", "<=", "==", "!="], prefix: &[] },
+    PL { infix: &["+", "-"], prefix: &["-"] },
+    PL { infix: &["*", "/", "%"], prefix: &[] },
+    PL { infix: &["as"], prefix: &[] },
+    PL { infix: &[], prefix: &["!", "ref", "deref",] },
+    PL { infix: &["(", "["], prefix: &[] },
+    PL { infix: &["."], prefix: &[] },
+  ];
+  let mut precedence = 0;
+  for s in expression_separators {
+    precedence += 1;
+    c.expression_separators.insert((*s).into(), precedence);
+  }
+  for (a, b) in paren_pairs {
+    c.paren_pairs.insert(a.into(), b.into());
+    c.paren_terminators.insert(b.into());
+  }
+  for level in operators {
+    precedence += 1;
+    for i in level.infix {
+      c.infix_precedence.insert((*i).into(), precedence);
+    }
+    for p in level.prefix {
+      c.prefix_precedence.insert((*p).into(), precedence);
+    }
+  }
+  c
+}
 
 // TODO: this might be better implemented with a ring buffer (or just a backwards vec)
 struct ParseState<'l> {
   tokens : Vec<Token>,
   pos : usize,
+  config : &'l ParseConfig,
   cache : &'l StringCache,
 }
 
@@ -17,8 +81,8 @@ use TokenType::*;
 
 impl <'l> ParseState<'l> {
 
-  fn new(tokens : Vec<Token>, cache : &StringCache,) -> ParseState {
-    ParseState { tokens, pos: 0, cache }
+  fn new(tokens : Vec<Token>, config : &'l ParseConfig, cache : &'l StringCache) -> ParseState<'l> {
+    ParseState { tokens, pos: 0, config, cache }
   }
 
   fn has_tokens(&self) -> bool {
@@ -48,7 +112,8 @@ impl <'l> ParseState<'l> {
   }
 
   fn loc(&self, start : TextMarker) -> TextLocation {
-    TextLocation::new(start, self.peek_marker())
+    let end = self.tokens[self.pos-1].loc.end;
+    TextLocation::new(start, end)
   }
 
   fn peek_ahead(&self, offset : usize) -> Option<&Token> {
@@ -106,185 +171,165 @@ impl <'l> ParseState<'l> {
     Ok(())
   }
 
-  fn add_expr(&mut self, tag : ExprTag, children : Vec<Expr>, loc : TextLocation) -> Expr {
-    Expr::new(tag, children, loc)
+  fn add_expr(&mut self, content : ExprContent, loc : TextLocation) -> Expr {
+    Expr::new(content, loc)
   }
 
-  fn add_leaf(&mut self, tag : ExprTag, start : TextMarker) -> Expr {
+  fn add_leaf(&mut self, content : ExprContent, start : TextMarker) -> Expr {
     let loc = self.loc(start);
-    self.add_expr(tag, vec!(), loc)
+    self.add_expr(content, loc)
   }
 
-  fn add_construct<T : Into<String>>
-    (&mut self, s : T, children : Vec<Expr>, start : TextMarker) -> Expr
+  fn add_list(&mut self, list : Vec<Expr>, start : TextMarker) -> Expr
   {
     let loc = self.loc(start);
-    let tag = ExprTag::construct(s.into());
-    self.add_expr(tag, children, loc)
+    let content = ExprContent::list(list);
+    self.add_expr(content, loc)
   }
 
-  fn add_symbol(&mut self, s : String, start : TextMarker) -> Expr {
+  fn add_symbol<S : Into<String>>(&mut self, s : S, start : TextMarker) -> Expr {
     let loc = self.loc(start);
-    let tag = ExprTag::symbol(s);
-    self.add_expr(tag, vec!(), loc)
+    let content = ExprContent::symbol(s.into());
+    self.add_expr(content, loc)
   }
 }
 
-// TODO: this might be slow because lazy_static is threadsafe
-lazy_static! {
-  static ref BLOCK_TERMINATORS : HashSet<&'static str> =
-    vec!["end", "}", ")", "]", "else", ","].into_iter().collect();
-  static ref EXPRESSION_TERMINATORS : HashSet<&'static str> =
-    vec!["end", "}", ")", "]", "else", ",", ";"].into_iter().collect();
-  static ref PREFIX_OPERATORS : HashSet<&'static str> =
-    vec!["-", "!", "$", "ref", "deref"].into_iter().collect();
-  static ref INFIX_OPERATORS : HashSet<&'static str> =
-    vec!["=", ".", "==", "!=", "<=", ">=", "=>", "+=", "-=", "*=", "/=", "||", "&&",
-      "<", ">", "+", "-", "*", "/", "%", "|", "&", "^", "as"].into_iter().collect();
-  static ref SPECIAL_OPERATORS : HashSet<&'static str> =
-    vec!["=", ".", "+=", "&&", "||", "$"].into_iter().collect();
-}
-
-fn parse_expression(ps : &mut ParseState) -> Result<Expr, Error> {
-  
-  fn operator_precedence(t : &Token) -> Result<i32, Error> {
-    // TODO: can't distinguish precedence of unary operator from binary operator.
-    // This matters for the '-' operator, for example.
-    let p =
-      match t.symbol.as_ref() {
-        "=" => 1,
-        "+=" => 1,
-        "&&" => 2,
-        "||" => 2,
-        ">" => 3,
-        "<" => 3,
-        ">=" => 3,
-        "<=" => 3,
-        "==" => 3,
-        "!=" => 3,
-        "+" => 4,
-        "-" => 4,
-        "*" => 5,
-        "/" => 5,
-        "%" => 5,
-        "as" => 6,
-        "!" => 7,
-        "ref" => 7,
-        "deref" => 7,
-        "(" => 8,
-        "[" => 8,
-        "." => 9,
-        "$" => 10,
-        _ => return error(t.loc, format!("Unexpected operator '{}'", t.symbol)),
-      };
-    Ok(p)
-  }
-
-  /// This expression parser is vaguely based on some blogs about pratt parsing.
-  fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
-    let mut expr = parse_prefix(ps)?;
-    while ps.has_tokens() {
-      let t = ps.peek()?;
-      if t.token_type == Syntax && EXPRESSION_TERMINATORS.contains(t.symbol.as_ref()) {
+/// This expression parser is vaguely based on some blogs about pratt parsing.
+fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
+  let mut expr = parse_prefix(ps, precedence)?;
+  while ps.has_tokens() {
+    let t = ps.peek()?;
+    // TODO remove: println!("expr parsed: {}, precedence: {}, t: {}", expr, precedence, t.symbol);
+    if ps.config.paren_terminators.contains(&t.symbol) {
+      // TODO remove: println!("bumped into a {}", t.symbol);
+      break;
+    }
+    // New lines are imlicitly semi-colons (except after an infix operator)
+    else if expr.loc.end.line != t.loc.start.line {
+      let next_precedence = *ps.config.expression_separators.get(";").unwrap();
+      if next_precedence > precedence {
+        expr = parse_separator(ps, expr, ";".into(), next_precedence)?;
+      }
+      else {
         break;
       }
-      else if t.token_type == Syntax && (t.symbol.as_ref() == "(" || t.symbol.as_ref() == "[") {
-        let next_precedence = operator_precedence(t)?;
-        if next_precedence > precedence {
-          if t.symbol.as_ref() == "(" {
-            expr = parse_function_call(ps, expr)?;
-          }
-          else {
-            expr = parse_index_expression(ps, expr)?;
-          };
-        }
-        else {
-          break;
-        }
+    }
+    // Separators
+    else if let Some(next_precedence) = ps.config.expression_separators.get(&t.symbol) {
+      if *next_precedence > precedence {
+        let separator = t.symbol.as_ref().into();
+        expr = parse_separator(ps, expr, separator, *next_precedence)?;
       }
-      else if t.token_type == Syntax && INFIX_OPERATORS.contains(t.symbol.as_ref()) {
-        let next_precedence = operator_precedence(t)?;
-        if next_precedence > precedence {
-          expr = parse_infix(ps, expr, next_precedence)?;
+      else {
+        break;
+      }
+    }
+    // Infix operators
+    else if let Some(next_precedence) = ps.config.infix_precedence.get(&t.symbol) {
+      if *next_precedence > precedence {
+        // Parens
+        if let Some(close_paren) = ps.config.paren_pairs.get(&t.symbol) {
+          let paren_start = expr.loc.start;
+          let call = ps.add_symbol("#call", paren_start);
+          let contents = parse_expression_term(ps, precedence)?;
+          expr = ps.add_list(vec![call, expr, contents], paren_start);
         }
+        // Normal infix
         else {
-          break;
+          expr = parse_infix(ps, expr, *next_precedence)?;
         }
       }
       else {
-        // Just break, with confidence that the expression is complete. This is a bit crazy, because
-        // it would allow a sequence of statements to be placed on the same line without separators.
-        break; // TODO: Consider making this throw errors instead
+        break;
       }
     }
-    Ok(expr)
-  }
-
-  fn parse_index_expression(ps : &mut ParseState, indexee_expr : Expr) -> Result<Expr, Error> {
-    let start = indexee_expr.loc.start;
-    ps.expect(Syntax, "[")?;
-    let indexing_expr = parse_expression(ps)?;
-    ps.expect(Syntax, "]")?;
-    let args = vec!(indexee_expr, indexing_expr);
-    Ok(ps.add_construct("index", args, start))
-  }
-
-  fn parse_function_call(ps : &mut ParseState, function_expr : Expr) -> Result<Expr, Error> {
-    let start = function_expr.loc.start;
-    ps.expect(Syntax, "(")?;
-    let mut exprs = vec!(function_expr);
-    if !ps.accept(Syntax, ")") {
-      loop {
-        exprs.push(parse_expression(ps)?);
-        if !ps.accept(Syntax, ",") {
-          break;
-        }
+    else {
+      if precedence == 0 {
+        //return error(t.loc, format!("unexpected token {}, {}", t.symbol, expr));
       }
-      ps.expect(Syntax, ")")?;
+      break;
     }
-    Ok(ps.add_construct("call", exprs, start))
   }
+  Ok(expr)
+}
 
-  fn parse_prefix(ps : &mut ParseState) -> Result<Expr, Error> {
-    let start = ps.peek_marker();
+fn parse_keyword_expression(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
+  let precedence = std::cmp::max(precedence, 1);
+  let t = ps.pop_type(Syntax)?;
+  let keyword_expr_start = t.loc.start;
+  let keyword = parse_simple_symbol(ps)?;
+  let line = t.loc.start.line;
+  let mut exprs = vec![keyword];
+  while ps.has_tokens() {
     let t = ps.peek()?;
-    // if the next token is a prefix operator
-    if t.token_type == Syntax && PREFIX_OPERATORS.contains(t.symbol.as_ref()) {
-      let op_string = format!("unary_{}", t.symbol.as_ref());
-      ps.expect_type(Syntax)?;
-      let operator = ps.add_symbol(op_string, start);
-      let expr = parse_expression_term(ps)?;
-      let args = vec![operator, expr];
-      Ok(ps.add_construct("call", args, start))
+    if t.loc.start.line != line {
+      break;
     }
-    // else assume it's an expression term
-    else {
-      parse_expression_term(ps)
-    }
+    exprs.push(pratt_parse(ps, precedence)?)
   }
+  Ok(ps.add_list(exprs, keyword_expr_start))
+}
 
-  fn parse_infix(ps : &mut ParseState, left_expr : Expr, precedence : i32) -> Result<Expr, Error> {
-    let infix_start = left_expr.loc.start;
-    let operator_start = ps.peek_marker();
-    let operator_str : String = ps.pop_type(Syntax)?.symbol.as_ref().into();
-    if operator_str.as_str() == "as" {
-      let right_expr = parse_type(ps)?;
-      let args = vec!(left_expr, right_expr);
-      Ok(ps.add_construct("as", args, infix_start))
-    }
-    else if SPECIAL_OPERATORS.contains(operator_str.as_str()) {
-      let right_expr = pratt_parse(ps, precedence)?;
-      let args = vec!(left_expr, right_expr);
-      Ok(ps.add_construct(operator_str, args, infix_start))
-    }
-    else {
-      let operator = ps.add_symbol(operator_str, operator_start);
-      let right_expr = pratt_parse(ps, precedence)?;
-      let args = vec!(operator, left_expr, right_expr);
-      Ok(ps.add_construct("call", args, infix_start))
-    }
+fn parse_prefix(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
+  let start = ps.peek_marker();
+  let t = ps.peek()?;
+  // if the next token is a prefix operator
+  if let Some(new_precedence) = ps.config.prefix_precedence.get(t.symbol.as_ref()) {
+    let call = ps.add_symbol("#call", start);
+    let op_string = format!("unary_{}", t.symbol.as_ref());
+    ps.expect_type(Syntax)?;
+    let operator = ps.add_symbol(op_string, start);
+    let expr = pratt_parse(ps, *new_precedence)?;
+    Ok(ps.add_list(vec![call, operator, expr], start))
   }
+  // else assume it's an expression term
+  else {
+    parse_expression_term(ps, precedence)
+  }
+}
 
+fn parse_infix(ps : &mut ParseState, left_expr : Expr, precedence : i32) -> Result<Expr, Error> {
+  let infix_start = left_expr.loc.start;
+  let operator_str = ps.peek()?.symbol.as_ref();
+  let operator = parse_simple_symbol(ps)?;
+  if ps.config.special_operators.contains(operator_str) {
+    let right_expr = pratt_parse(ps, precedence)?;
+    let args = vec!(operator, left_expr, right_expr);
+    Ok(ps.add_list(args, infix_start))
+  }
+  else {
+    let right_expr = pratt_parse(ps, precedence)?;
+    let call = ps.add_symbol("#call", infix_start);
+    let args = vec!(call, operator, left_expr, right_expr);
+    Ok(ps.add_list(args, infix_start))
+  }
+}
+
+fn parse_separator(ps : &mut ParseState, left_expr : Expr, separator : String, precedence : i32) -> Result<Expr, Error> {
+  let separator_start = left_expr.loc.start;
+  let is_semicolon = separator.as_str() == ";";
+  let separator_expr = ps.add_symbol(separator, ps.peek_marker());
+  let mut args = vec!(separator_expr, left_expr);
+  while ps.has_tokens() {
+    let t = ps.peek()?;
+    if ps.config.paren_terminators.contains(&t.symbol) {
+      break;
+    }
+    let implicit_separator = is_semicolon && {
+      let previous_line = args.last().unwrap().loc.end.line;
+      let next_line = t.loc.start.line;
+      previous_line != next_line
+    };
+    if !(implicit_separator || ps.accept(Syntax, separator.as_str())) {
+      break;
+    }
+    args.push(pratt_parse(ps, precedence)?);
+  }
+  Ok(ps.add_list(args, separator_start))
+}
+
+
+fn parse_everything(ps : &mut ParseState) -> Result<Expr, Error> {
   pratt_parse(ps, 0)
 }
 
@@ -301,7 +346,7 @@ fn parse_literal<T : FromStr>(ps : &mut ParseState) -> Result<T, Error> {
 
 fn parse_simple_string(ps : &mut ParseState, t : TokenType) -> Result<Expr, Error> {
   let start = ps.peek_marker();
-  let s = ps.pop_type(t)?.symbol.as_ref().into();
+  let s = ps.pop_type(t)?.symbol.as_ref();
   Ok(ps.add_symbol(s, start))
 }
 
@@ -310,418 +355,65 @@ fn parse_simple_symbol(ps : &mut ParseState) -> Result<Expr, Error> {
   parse_simple_string(ps, Symbol)
 }
 
-fn parse_type(ps : &mut ParseState) -> Result<Expr, Error> {
-  let start = ps.peek_marker();
-  if ps.accept(TokenType::Syntax, "fun") {
-    let mut arguments = vec!();
-    let args_start = ps.peek_marker();
-    ps.expect(Syntax, "(")?;
-    loop {
-      if ps.peek()?.symbol.as_ref() == ")" {
-        break;
-      }
-      if ps.peek_ahead(1).filter(|p| p.symbol.as_ref() == ":").is_some() {
-        arguments.push(parse_simple_symbol(ps)?);
-        ps.expect(Syntax, ":")?;
-      }
-      else {
+fn parse_expression_term(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
+  let t = ps.peek()?;
+  match t.token_type {
+    Symbol => parse_simple_symbol(ps),
+    Syntax => {
+      // Parens
+      if let Some(close_paren) = ps.config.paren_pairs.get(&t.symbol) {
         let start = ps.peek_marker();
-        arguments.push(ps.add_symbol("".into(), start));        
-      }
-      arguments.push(parse_type(ps)?);
-      if !ps.accept(Syntax, ",") {
-        break;
-      }
-    }
-    ps.expect(Syntax, ")")?;
-    let args_expr = ps.add_construct("args", arguments, args_start);
-    let return_type = if ps.accept(Syntax, "=>") {
-      parse_type(ps)?
-    }
-    else {
-      ps.add_construct("()", vec!(), start)
-    };
-    let fun_type_expr = ps.add_construct("fun", vec![args_expr, return_type], start);
-    Ok(fun_type_expr)
-  }
-  else {
-    let type_name : String = ps.pop_type(Symbol)?.symbol.as_ref().into();
-    let mut params = vec!();
-    if ps.accept(Syntax, "(") {
-      loop {
-        if ps.peek()?.token_type != Symbol {
-          break;
-        }
-        params.push(parse_type(ps)?);
-        if !ps.accept(Syntax, ",") {
-          break;
-        }
-      }
-      ps.expect(Syntax, ")")?;
-    }
-    let type_expr = ps.add_construct(type_name, params, start);
-    Ok(type_expr)
-  }
-}
-
-fn parse_function(ps : &mut ParseState, keyword : &str) -> Result<Expr, Error> {
-  let start = ps.peek_marker();
-  ps.expect(Syntax, keyword)?;
-  let fun_name = parse_simple_symbol(ps)?;
-  let mut arguments = vec!();
-  let args_start = ps.peek_marker();
-  ps.expect(Syntax, "(")?;
-  loop {
-    if ps.peek()?.token_type != Symbol {
-      break;
-    }
-    arguments.push(parse_simple_symbol(ps)?);
-    if ps.accept(Syntax, ":") {
-      arguments.push(parse_type(ps)?);
-    }
-    else {
-      let start = ps.peek_marker();
-      arguments.push(ps.add_symbol("".into(), start));
-    }
-    if !ps.accept(Syntax, ",") {
-      break;
-    }
-  }
-  ps.expect(Syntax, ")")?;
-  let args_expr = ps.add_construct("args", arguments, args_start);
-  let function_block = parse_block(ps)?;
-  ps.expect(Syntax, "end")?;
-  let fun_expr = ps.add_construct("fun", vec![fun_name, args_expr, function_block], start);
-  Ok(fun_expr)
-}
-
-fn parse_fun(ps : &mut ParseState) -> Result<Expr, Error> {
-  parse_function(ps, "fun")
-}
-
-fn parse_cbind(ps : &mut ParseState) -> Result<Expr, Error> {
-  let start = ps.peek_marker();
-  ps.expect(Syntax, "cbind")?;
-  let name = parse_simple_symbol(ps)?;
-  ps.expect(Syntax, ":")?;
-  let type_expr = parse_type(ps)?;
-  let cbind_expr = ps.add_construct("cbind", vec![name, type_expr], start);
-  Ok(cbind_expr)
-}
-
-fn parse_macro(ps : &mut ParseState) -> Result<Expr, Error> {
-  parse_function(ps, "macro")
-}
-
-fn parse_let(ps : &mut ParseState) -> Result<Expr, Error> {
-  let start = ps.peek_marker();
-  ps.expect(Syntax, "let")?;
-  let var_name = parse_simple_symbol(ps)?;
-  ps.expect(Syntax, "=")?;
-  let initialiser = parse_expression(ps)?;
-  Ok(ps.add_construct("let", vec!(var_name, initialiser), start))
-}
-
-fn parse_if(ps : &mut ParseState) -> Result<Expr, Error> {
-  let start = ps.peek_marker();
-  ps.expect(Syntax, "if")?;
-  let conditional = parse_expression(ps)?;
-  ps.accept(Syntax, "then");
-  let then_block = parse_block(ps)?;
-  let mut args = vec!(conditional, then_block);
-  if ps.accept(Syntax, "else") {
-    if ps.peek()?.symbol.as_ref() == "if" {
-      let else_if = parse_if(ps)?;
-      args.push(else_if);
-    }
-    else {
-      let else_block = parse_block(ps)?;
-      ps.expect(Syntax, "end")?;
-      args.push(else_block);
-    }
-  }
-  else {
-    ps.expect(Syntax, "end")?;
-  }
-  Ok(ps.add_construct("if", args, start))
-}
-
-fn parse_while(ps : &mut ParseState) -> Result<Expr, Error> {
-  let start = ps.peek_marker();
-  ps.expect(Syntax, "while")?;
-  let conditional = parse_expression(ps)?;
-  let loop_block = parse_block(ps)?;
-  ps.expect(Syntax, "end")?;
-  let args = vec!(conditional, loop_block);
-  Ok(ps.add_construct("while", args, start))
-}
-
-fn parse_for(ps : &mut ParseState) -> Result<Expr, Error> {
-  let start = ps.peek_marker();
-  ps.expect(Syntax, "for")?;
-  let loop_var = parse_simple_symbol(ps)?;
-  ps.expect(Syntax, "in")?;
-  let iterator = parse_expression(ps)?;
-  let loop_block = parse_block(ps)?;
-  ps.expect(Syntax, "end")?;
-  let args = vec!(loop_var, iterator, loop_block);
-  Ok(ps.add_construct("for", args, start))
-}
-
-fn parse_type_definition(ps : &mut ParseState, kind : &str) -> Result<Expr, Error> {
-  let start = ps.peek_marker();
-  ps.expect(Syntax, kind)?;
-  let type_name = parse_simple_symbol(ps)?;
-  let mut generics = vec!();
-  if ps.accept(Syntax, "(") {
-    loop {
-      if !ps.has_tokens() || ps.peek()?.symbol.as_ref() == ")" {
-        break;
-      }
-      generics.push(parse_simple_symbol(ps)?);
-      if !ps.accept(Syntax, ",") {
-        break;
-      }
-    }
-    ps.expect(Syntax, ")")?;
-  }
-  let mut fields = vec!();
-  'outer: loop {
-    'inner: loop {
-      if !ps.has_tokens() || ps.peek()?.symbol.as_ref() == "end" {
-        break 'outer;
-      }
-      if !ps.accept(Syntax, ",") {
-        break 'inner;
-      }
-    }
-    let field_name = parse_simple_symbol(ps)?;
-    fields.push(field_name);
-    if ps.accept(Syntax, ":") {
-      let type_expr = parse_type(ps)?;
-      fields.push(type_expr);
-    }
-    else {
-      let start = ps.peek_marker();
-      fields.push(ps.add_symbol("".into(), start));
-    }
-  }
-  ps.expect(Syntax, "end")?;
-  let fields = ps.add_construct("fields", fields, start);
-  let generics = ps.add_construct("generics", generics, start);
-  let content = vec![type_name, fields, generics];
-  Ok(ps.add_construct(kind, content, start))
-}
-
-fn parse_type_instantiate(ps : &mut ParseState) -> Result<Expr, Error> {
-  let start = ps.peek_marker();
-  let type_name = parse_simple_symbol(ps)?;
-  ps.expect(Syntax, "{")?;
-  let mut args = vec!(type_name);
-  'outer: loop {
-    'inner: loop {
-      if !ps.has_tokens() || ps.peek()?.symbol.as_ref() == "}" {
-        break 'outer;
-      }
-      if ps.peek()?.symbol.as_ref() == "," {
-        ps.skip();
-      }
-      else {
-        break 'inner;
-      }
-    }
-    let named =
-      ps.peek_ahead(0).map_or(false, |t| t.token_type == Symbol)
-      && ps.peek_ahead(1).map_or(false, |t| t.symbol.as_ref() == ":");
-    if named {
-      args.push(parse_simple_symbol(ps)?);
-      ps.expect(Syntax, ":")?;
-      args.push(parse_expression(ps)?);
-    }
-    else {
-      let start = ps.peek_marker();
-      args.push(ps.add_symbol("".into(), start));
-      args.push(parse_expression(ps)?);
-    }
-  }
-  ps.expect(Syntax, "}")?;
-  Ok(ps.add_construct("type_instantiate", args, start))
-}
-
-fn parse_sizeof(ps : &mut ParseState) -> Result<Expr, Error> {
-  let start = ps.peek_marker();
-  ps.expect(Syntax, "sizeof")?;
-  ps.expect(Syntax, "(")?;
-  let e = parse_type(ps)?;
-  ps.expect(Syntax, ")")?;
-  Ok(ps.add_construct("sizeof", vec![e], start))
-}
-
-fn parse_quote(ps : &mut ParseState) -> Result<Expr, Error> {
-  let start = ps.peek_marker();
-  ps.expect(Syntax, "quote")?;
-  let e = parse_block(ps)?;
-  ps.expect(Syntax, "end")?;
-  Ok(ps.add_construct("quote", vec![e], start))
-}
-
-fn parse_return(ps : &mut ParseState) -> Result<Expr, Error> {
-  let start = ps.peek_marker();
-  ps.expect(Syntax, "return")?;
-  if ps.has_tokens() {
-    let t = ps.peek()?;
-    if !EXPRESSION_TERMINATORS.contains(t.symbol.as_ref()) {
-      let e = parse_expression(ps)?;
-      return Ok(ps.add_construct("return", vec![e], start));
-    }
-  }
-  Ok(ps.add_construct("return", vec![], start))
-}
-
-fn parse_syntax(ps : &mut ParseState) -> Result<Expr, Error> {
-  let start = ps.peek_marker();
-  match ps.peek()?.symbol.as_ref() {
-    "sizeof" => parse_sizeof(ps),
-    "quote" => parse_quote(ps),
-    "let" => parse_let(ps),
-    "fun" => parse_fun(ps),
-    "cbind" => parse_cbind(ps),
-    "macro" => parse_macro(ps),
-    "if" => parse_if(ps),
-    "for" => parse_for(ps),
-    "break" => {
-      Ok(parse_simple_string(ps, Syntax)?)
-    }
-    "return" => parse_return(ps),
-    "while" => parse_while(ps),
-    "struct" => parse_type_definition(ps, "struct"),
-    "union" => parse_type_definition(ps, "union"),
-    "true" => {
-      let start = ps.peek_marker();
-      ps.expect(Syntax, "true")?;
-      Ok(ps.add_leaf(ExprTag::LiteralBool(true), start))
-    }
-    "false" => {
-      let start = ps.peek_marker();
-      ps.expect(Syntax, "false")?;
-      Ok(ps.add_leaf(ExprTag::LiteralBool(false), start))
-    }
-    "[" => {
-      ps.expect(Syntax, "[")?;
-      let mut exprs = vec!();
-      loop {
-        if ps.peek()?.symbol.as_ref() == "]" {
-          break;
-        }
-        exprs.push(parse_expression(ps)?);
-        if ps.peek()?.symbol.as_ref() == "," {
-          ps.skip()
+        let label = format!("#{}{}", t.symbol, close_paren);
+        ps.expect_type(TokenType::Syntax)?;
+        let label = ps.add_symbol(label, start);
+        if ps.accept(TokenType::Syntax, close_paren) {
+          Ok(ps.add_list(vec![label], start))
         }
         else {
-          break;
+          let e = parse_everything(ps)?;
+          ps.expect(TokenType::Syntax, close_paren)?;
+          match &mut e.content {
+            ExprContent::List(list) => {
+              let mut args = vec![label];
+              let mut v = list.empty_into_vec();
+              args.append(&mut v);
+              Ok(ps.add_list(args, start))
+            }
+            _ => {
+              Ok(ps.add_list(vec![label, e], start))
+            }
+          }
         }
-      }
-      ps.expect(Syntax, "]")?;
-      Ok(ps.add_construct("literal_array", exprs, start))
-    }
-    "(" => {
-      ps.expect(Syntax, "(")?;
-      if ps.accept(Syntax, ")") {
-        // "()" denotes the unit value
-        let u = ExprTag::LiteralUnit;
-        Ok(ps.add_leaf(u, start))
       }
       else {
-        let mut exprs = parse_block_exprs(ps)?;
-        ps.expect(Syntax, ")")?;
-        if exprs.len() == 1 {
-          Ok(exprs.pop().unwrap())
-        }
-        else{
-          Ok(ps.add_construct("block", exprs, start))
-        }
+        parse_keyword_expression(ps, precedence)
       }
     }
-    "do" => {
-      ps.expect(Syntax, "do")?;
-      let block = parse_block(ps)?;
-      ps.expect(Syntax, "end")?;
-      Ok(block)
-    }
-    _ => error(ps.peek()?.loc, format!("Unexpected syntax '{}'", ps.peek()?.symbol)),
-  }
-}
-
-fn parse_symbol_term(ps : &mut ParseState) -> Result<Expr, Error> {
-  let is_struct =
-    ps.peek_ahead(1).map_or(false, |t| t.symbol.as_ref() == "{");
-  if is_struct {
-    parse_type_instantiate(ps)
-  }
-  else{
-    // else assume it's just a symbol reference
-    parse_simple_symbol(ps)
-  }
-}
-
-fn parse_expression_term(ps : &mut ParseState) -> Result<Expr, Error> {
-  match ps.peek()?.token_type {
-    Symbol => parse_symbol_term(ps),
-    Syntax => parse_syntax(ps),
     StringLiteral => {
       let start = ps.peek_marker();
       let s = {
         let t = ps.pop_type(StringLiteral)?;
-        ExprTag::literal_string(t.symbol.as_ref().into())
+        ExprContent::literal_string(t.symbol.as_ref().into())
       };
       Ok(ps.add_leaf(s, start))
     }
     FloatLiteral => {
       let start = ps.peek_marker();
-      let f = ExprTag::LiteralFloat(parse_literal(ps)?);
+      let f = ExprContent::LiteralFloat(parse_literal(ps)?);
       Ok(ps.add_leaf(f, start))
     }
     IntLiteral => {
       let start = ps.peek_marker();
-      let i = ExprTag::LiteralInt(parse_literal(ps)?);
+      let i = ExprContent::LiteralInt(parse_literal(ps)?);
       Ok(ps.add_leaf(i, start))
     }
   }
 }
 
-fn parse_block_exprs(ps : &mut ParseState) -> Result<Vec<Expr>, Error> {
-  let mut exprs = vec!();
-  'outer: loop {
-    'inner: loop {
-      if !ps.has_tokens() || BLOCK_TERMINATORS.contains(ps.peek()?.symbol.as_ref()) {
-        break 'outer;
-      }
-      if ps.peek()?.symbol.as_ref() == ";" {
-        ps.skip();
-      }
-      else {
-        break 'inner;
-      }
-    }
-    exprs.push(parse_expression(ps)?);
-  }
-  if exprs.len() == 0 {
-    // There must be at least one expression in a block
-    let start = ps.peek_marker();
-    exprs.push(ps.add_leaf(ExprTag::LiteralUnit, start));
-  }
-  Ok(exprs)
-}
-
-fn parse_block(ps : &mut ParseState) -> Result<Expr, Error> {
-  let start = ps.peek_marker();
-  let exprs = parse_block_exprs(ps)?;
-  Ok(ps.add_construct("block", exprs, start))
-}
-
 pub fn parse(tokens : Vec<Token>, symbols : &StringCache) -> Result<Expr, Error> {
-  let mut ps = ParseState::new(tokens, symbols);
-  let e = parse_block(&mut ps)?;
+  let config = parse_config();
+  let mut ps = ParseState::new(tokens, &config, symbols);
+  let e = parse_everything(&mut ps)?;
   if ps.has_tokens() {
     let t = ps.peek()?;
     return error(t.loc, format!("Unexpected token '{}' of type '{:?}'", t.symbol, t.token_type));
@@ -736,8 +428,9 @@ pub enum ReplParseResult {
 
 pub fn repl_parse(tokens : Vec<Token>, symbols : &mut StringCache) -> Result<ReplParseResult, Error> {
   use ReplParseResult::*;
-  let mut ps = ParseState::new(tokens, symbols);
-  match parse_block(&mut ps) {
+  let config = parse_config();
+  let mut ps = ParseState::new(tokens, &config, symbols);
+  match parse_everything(&mut ps) {
     Ok(e) => {
       return Ok(Complete(e));
     }

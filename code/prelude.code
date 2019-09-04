@@ -15,6 +15,12 @@ struct lib_handle {
   handle : u64
 }
 
+butt(3, 4, 5)
+
+toob(4)
+
+# shannon()
+
 cbind load_library : fun(name : ptr(string)) => lib_handle
 
 cbind load_symbol : fun(handle : lib_handle, name : ptr(string)) => ptr(u8)
@@ -33,6 +39,10 @@ cbind compile_expr : fun(compiler : ptr(u8), expr : ptr(expr), modules : ptr(ptr
 
 fun max(a : i64, b : i64) {
   if a > b { a } else { b }
+}
+
+struct foo {
+  f
 }
 
 struct text_marker {
