@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::fmt::Write;
 
 use crate::error::{Error, error, error_raw, TextLocation};
-use crate::expr::{StringCache, RefStr, Expr, ExprContent};
+use crate::expr::{StringCache, RefStr, Expr, ExprContent, match_symbol};
 
 use std::collections::HashMap;
 use itertools::Itertools;
@@ -355,15 +355,17 @@ impl <'l> TypeChecker<'l> {
       return error(expr, "type with this name already defined");
     }
     let mut fields = vec![];
-    let fields_expr = &children[1];
-    if let Some(es) = fields_expr.open(";") {
+    let field_exprs =
+      match_symbol(children[1].list(), "#{}")
+      .ok_or_else(|| error_raw(expr, "expected fields"))?;
+    if let Some(es) = match_symbol(field_exprs, ";") {
       // TODO: check for duplicates?
       for e in es {
         fields.push(self.typed_symbol(e)?);
       }
     }
-    else {
-      fields.push(self.typed_symbol(fields_expr)?);
+    else if let [f] = field_exprs {
+      fields.push(self.typed_symbol(f)?);
     }
     // TODO: Generics
     let name = self.cache.get(name);
@@ -373,7 +375,7 @@ impl <'l> TypeChecker<'l> {
   }
 
   fn typed_symbol(&mut self, e : &Expr) -> Result<(RefStr, Type), Error> {
-    if let Some([s, t]) = e.open(":") {
+    if let Some([s, t]) = match_symbol(e.list(), ":") {
       let name = self.cache.get(s.unwrap_symbol()?);
       let type_tag = self.to_type(t)?;
       Ok((name, type_tag))
@@ -576,35 +578,40 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         let tag = nodes.last().map(|n| n.type_tag.clone()).unwrap_or(Type::Void);
         Ok(node(expr, tag, Content::Block(nodes)))
       }
-      ("cbind", [name_expr, type_expr]) => {
-        let name = self.cached(name_expr.unwrap_symbol()?);
-        let type_tag = self.t.to_type(type_expr)?;
-        let address = self.t.local_symbol_table.get(&name).map(|v| *v);
-        if address.is_none() {
-          // TODO: check the signature of the function too
-          println!("Warning: C binding '{}' not linked. LLVM linker may link it instead.", name);
-          // return error(expr, "tried to bind non-existing C function")
-        }
-        // TODO: Why is it necessary to treat function pointers specially? If I treat
-        // them as globals the tests stop passing, but I'm not sure why.
-        if let Type::Fun(sig) = &type_tag {
-          let args =
-            sig.args.iter().enumerate().
-            map(|(i, _)| ((i + 65) as u8 as char).to_string().into())
-            .collect();
-          let def = FunctionDefinition {
-            name: name.clone(),
-            args,
-            signature: sig.clone(),
-            implementation: FunctionImplementation::CFunction(address),
-          };
-          self.t.add_function(name.clone(), def);
+      ("cbind", [e]) => {
+        if let Some([name_expr, type_expr]) = match_symbol(e.list(), ":") {
+          let name = self.cached(name_expr.unwrap_symbol()?);
+          let type_tag = self.t.to_type(type_expr)?;
+          let address = self.t.local_symbol_table.get(&name).map(|v| *v);
+          if address.is_none() {
+            // TODO: check the signature of the function too
+            println!("Warning: C binding '{}' not linked. LLVM linker may link it instead.", name);
+            // return error(expr, "tried to bind non-existing C function")
+          }
+          // TODO: Why is it necessary to treat function pointers specially? If I treat
+          // them as globals the tests stop passing, but I'm not sure why.
+          if let Type::Fun(sig) = &type_tag {
+            let args =
+              sig.args.iter().enumerate().
+              map(|(i, _)| ((i + 65) as u8 as char).to_string().into())
+              .collect();
+            let def = FunctionDefinition {
+              name: name.clone(),
+              args,
+              signature: sig.clone(),
+              implementation: FunctionImplementation::CFunction(address),
+            };
+            self.t.add_function(name.clone(), def);
+          }
+          else {
+            let def = GlobalDefinition { name: name.clone(), type_tag, c_address: address };
+            self.t.add_global(name.clone(), def);
+          }
+          Ok(node(expr, Type::Void, Content::CBind(name)))
         }
         else {
-          let def = GlobalDefinition { name: name.clone(), type_tag, c_address: address };
-          self.t.add_global(name.clone(), def);
+          error(e, "expected type binding")
         }
-        Ok(node(expr, Type::Void, Content::CBind(name)))
       }
       ("fun", exprs) => {
         let name = self.cached(exprs[0].unwrap_symbol()?);

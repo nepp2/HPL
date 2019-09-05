@@ -157,21 +157,6 @@ impl Expr {
   pub fn tail(&self) -> &[Expr] {
     &self.list()[1..]
   }
-}
-
-impl Drop for Expr {
-  fn drop(&mut self) {
-    // TODO: strings should be cleared somehow. this leaks memory badly.
-  }
-}
-
-impl <'l> Into<TextLocation> for &'l Expr {
-  fn into(self) -> TextLocation {
-    self.loc
-  }
-}
-
-impl Expr {
 
   pub fn try_symbol(&self) -> Option<&str> {
     match &self.content {
@@ -185,14 +170,26 @@ impl Expr {
       .ok_or_else(|| 
         error_raw(self, format!("expected a symbol, found {:?}", self.content)))
   }
+}
 
-  pub fn open<'e>(&'e self, s : &str) -> Option<&'e [Expr]> {
-    if let Some(head) = self.try_head() {
-      if s == head {
-        return Some(self.tail());
-      }
+pub fn match_symbol<'e>(es : &'e [Expr], s : &str) -> Option<&'e [Expr]> {
+  if let Some(head) = es.first().and_then(|e| e.try_symbol()) {
+    if s == head {
+      return Some(&es[1..]);
     }
-    None
+  }
+  None
+}
+
+impl Drop for Expr {
+  fn drop(&mut self) {
+    // TODO: strings should be cleared somehow. this leaks memory badly.
+  }
+}
+
+impl <'l> Into<TextLocation> for &'l Expr {
+  fn into(self) -> TextLocation {
+    self.loc
   }
 }
 
