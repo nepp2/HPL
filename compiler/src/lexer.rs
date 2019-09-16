@@ -1,14 +1,6 @@
 
-use std::collections::HashSet;
 use crate::expr::{StringCache, RefStr};
 use crate::error::{Error, TextLocation, TextMarker, error_raw};
-
-lazy_static! {
-  static ref KEYWORDS : HashSet<&'static str> =
-    vec!["fun", "cbind", "if", "else", "type", "while", "struct", "for",
-    "break", "return", "let", "true", "false", "quote", "then", "as",
-    "import", "in", "end", "do", "macro", "sizeof", "union", "ref", "deref"].into_iter().collect();
-}
 
 const SYNTAX : &'static [&'static str] =
   &["==", "!=", "<=", ">=", "=>", "+=", "-=", "*=", "/=", "||",
@@ -17,7 +9,7 @@ const SYNTAX : &'static [&'static str] =
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum TokenType {
-  Symbol, Syntax, FloatLiteral, IntLiteral, StringLiteral
+  Symbol, FloatLiteral, IntLiteral, StringLiteral
 }
 
 #[derive(Clone)]
@@ -185,17 +177,12 @@ impl <'l> CStream<'l> {
     }
   }
 
-  fn lex_symbol_or_keyword(&mut self) -> bool {
+  fn lex_symbol(&mut self) -> bool {
     if self.is_symbol_start_char() {
       let start_loc = self.loc;
       self.append_char();
       self.append_char_while (&CStream::is_symbol_middle_char);
-      if KEYWORDS.contains(self.current_token.as_str()) {
-        self.complete_token(start_loc, TokenType::Syntax);
-      }
-      else {
-        self.complete_token(start_loc, TokenType::Symbol);
-      }
+      self.complete_token(start_loc, TokenType::Symbol);
       true
     }
     else { false }
@@ -237,11 +224,11 @@ impl <'l> CStream<'l> {
     return false;
   }
 
-  fn lex_string(&mut self, s : &str, token_type : TokenType) -> bool {
+  fn lex_string(&mut self, s : &str) -> bool {
     let start_loc = self.loc;
     if self.skip_string(s) {
       self.current_token.push_str(s);
-      self.complete_token(start_loc, token_type);
+      self.complete_token(start_loc, TokenType::Symbol);
       return true;
     }
     return false;
@@ -255,15 +242,15 @@ impl <'l> CStream<'l> {
 
   fn lex_comment(&mut self) -> bool {
     // TODO: this doesn't handle newlines properly, so the error locations will be wrong
-    if self.peek_string("#=") {
+    if self.peek_string("/*") {
       self.skip_char();
       self.skip_char();
-      self.skip_char_while(&|cs : &CStream| { !cs.peek_string("=#") });
+      self.skip_char_while(&|cs : &CStream| { !cs.peek_string("*/") });
       self.skip_char();
       self.skip_char();
       return true;
     }
-    else if self.peek() == '#' {
+    else if self.peek_string("//") {
       self.skip_char_while(&|cs : &CStream| {
         let c = cs.peek();
         c != '\n'
@@ -274,8 +261,9 @@ impl <'l> CStream<'l> {
   }
 
   fn lex_syntax(&mut self) -> bool {
+    // TODO: this is slow
     for s in SYNTAX {
-      if self.lex_string(s, TokenType::Syntax) {
+      if self.lex_string(s) {
         return true;
       }
     }
@@ -326,7 +314,7 @@ pub fn lex(code : &str, symbols : &StringCache) -> Result<Vec<Token>, Vec<Error>
     while cs.has_chars() {
       if cs.handle_newline() {}
       else if cs.skip_space() {}
-      else if cs.lex_symbol_or_keyword() {}
+      else if cs.lex_symbol() {}
       else if cs.lex_string_literal()? {}
       else if cs.lex_number()? {}
       else if cs.lex_comment() {}

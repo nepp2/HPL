@@ -17,9 +17,13 @@ struct lib_handle {
 
 butt(3, 4, 5)
 
+break
+
+a[45]
+
 toob(4)
 
-# shannon()
+// shannon()
 
 cbind load_library : fun(name : ptr(string)) => lib_handle
 
@@ -31,7 +35,7 @@ cbind thread_sleep : fun(millis : u64)
 
 cbind compiler : ptr(u8)
 
-# cbind prelude : ptr(u8)
+// cbind prelude : ptr(u8)
 
 cbind load_quote : fun(compiler : ptr(u8), name : ptr(string)) => ptr(expr)
 

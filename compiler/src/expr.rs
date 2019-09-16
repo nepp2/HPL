@@ -150,12 +150,19 @@ impl Expr {
   }
 
   pub fn unwrap_head(&self) -> Result<&str, Error> {
-    self.list().first().and_then(|e| e.try_symbol())
-      .ok_or_else(|| error_raw(self, "expected symbol"))
+    self.try_symbol().or_else(|| {
+      self.list().first().and_then(|e| e.try_symbol())
+    })
+    .ok_or_else(|| error_raw(self, "expected symbol"))
   }
 
   pub fn tail(&self) -> &[Expr] {
-    &self.list()[1..]
+    if self.try_symbol().is_some() {
+      &[]
+    }
+    else {
+      &self.list()[1..]
+    }
   }
 
   pub fn try_symbol(&self) -> Option<&str> {

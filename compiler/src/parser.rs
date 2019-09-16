@@ -13,6 +13,7 @@ struct ParseConfig {
   prefix_precedence : HashMap<RefStr, i32>,
   infix_precedence : HashMap<RefStr, i32>,
   special_operators : HashSet<RefStr>,
+  syntax : HashSet<RefStr>,
 }
 
 /// Precedence level
@@ -28,17 +29,19 @@ fn parse_config() -> ParseConfig {
     special_operators:
       vec!["=", ".", "+=", "&&", "||", "$", "else", ":"]
       .into_iter().map(|s| s.into()).collect(),
+    syntax: HashSet::new(),
   };
   let paren_pairs = vec![
     ("(", ")"),
-    ("{", "}"),
+    ("{", "}"), // TODO: opening braces are ignored after a newline (following an if-statement, for example)
     ("[", "]"),
   ];
   let expression_separators = &[";", "," ];
   let operators : &[PL] = &[
     PL { infix: &["=", "+="], prefix: &[] },
+    PL { infix: &["then", "else"], prefix: &["if", "while", "for", "struct", "union", "cbind", "fun"] },
+    PL { infix: &["{"], prefix: &[] },
     PL { infix: &[":"], prefix: &[] },
-    PL { infix: &["else"], prefix: &[] },
     PL { infix: &["&&", "||"], prefix: &[] },
     PL { infix: &[">", "<", ">=", "<=", "==", "!="], prefix: &[] },
     PL { infix: &["+", "-"], prefix: &["-"] },
@@ -46,7 +49,7 @@ fn parse_config() -> ParseConfig {
     PL { infix: &["as"], prefix: &[] },
     PL { infix: &[], prefix: &["!", "ref", "deref",] },
     PL { infix: &["(", "["], prefix: &[] },
-    PL { infix: &["."], prefix: &[] },
+    PL { infix: &[".", "=>"], prefix: &[] },
   ];
   let mut precedence = 0;
   for s in expression_separators {
@@ -66,6 +69,13 @@ fn parse_config() -> ParseConfig {
       c.prefix_precedence.insert((*p).into(), precedence);
     }
   }
+  c.syntax.extend(
+    c.paren_pairs.keys()
+    .chain(c.paren_pairs.values())
+    .chain(c.expression_separators.keys())
+    .chain(c.infix_precedence.keys())
+    .chain(c.prefix_precedence.keys())
+    .cloned());
   c
 }
 
@@ -135,11 +145,10 @@ impl <'l> ParseState<'l> {
     self.pos += 1;
   }
 
-  fn accept(&mut self, token_type : TokenType, string : &str) -> bool {
+  fn accept(&mut self, string : &str) -> bool {
     let accept = {
       if let Ok(t) = self.peek() {
-        t.symbol.as_ref() == string &&
-        t.token_type == token_type
+        t.symbol.as_ref() == string
       }
       else { false }
     };
@@ -147,13 +156,10 @@ impl <'l> ParseState<'l> {
     accept
   }
 
-  fn expect(&mut self, token_type : TokenType, string : &str) -> Result<(), Error> {
+  fn expect(&mut self, string : &str) -> Result<(), Error> {
     let t = self.peek()?;
     if t.symbol.as_ref() != string {
       return error(t.loc, format!("Expected token '{}', found token '{}'", string, t.symbol));
-    }
-    if t.token_type != token_type {
-      return error(t.loc, format!("Expected token type '{:?}', found token type '{:?}'", token_type, t.token_type));
     }
     self.skip();
     Ok(())
@@ -228,11 +234,16 @@ fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
     else if let Some(next_precedence) = ps.config.infix_precedence.get(&t.symbol) {
       if *next_precedence > precedence {
         // Parens
-        if let Some(_close_paren) = ps.config.paren_pairs.get(&t.symbol) {
+        if let Some(close_paren) = ps.config.paren_pairs.get(&t.symbol) {
           let paren_start = expr.loc.start;
-          let call = ps.add_symbol("#call", paren_start);
-          let contents = parse_expression_term(ps, precedence)?;
-          expr = ps.add_list(vec![call, expr, contents], paren_start);
+          let mut list = vec![];
+          if t.symbol.as_ref() != "{" {
+            let operator = format!("#{}{}", t.symbol, close_paren);
+            list.push(ps.add_symbol(operator, paren_start));
+          }
+          list.push(expr);
+          list.push(parse_expression_term(ps, precedence)?);
+          expr = ps.add_list(list, paren_start);
         }
         // Normal infix
         else {
@@ -254,19 +265,22 @@ fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
 }
 
 fn parse_keyword_expression(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
-  let precedence = std::cmp::max(precedence, 1);
-  let keyword = parse_simple_string(ps, Syntax)?;
-  let keyword_expr_start = keyword.loc.start;
-  let line = keyword.loc.start.line;
-  let mut exprs = vec![keyword];
-  while ps.has_tokens() {
-    let t = ps.peek()?;
-    if t.loc.start.line != line {
-      break;
-    }
-    exprs.push(pratt_parse(ps, precedence)?)
-  }
-  Ok(ps.add_list(exprs, keyword_expr_start))
+  let t = ps.peek()?;
+  error(t.loc, format!("encountered unexpected syntax '{}'", t.symbol))
+  // TODO: wtf is this hack? fix it
+  // let precedence = std::cmp::max(precedence, 1);
+  // let keyword = parse_simple_string(ps, Syntax)?;
+  // let keyword_expr_start = keyword.loc.start;
+  // let line = keyword.loc.start.line;
+  // let mut exprs = vec![keyword];
+  // while ps.has_tokens() {
+  //   let t = ps.peek()?;
+  //   if t.loc.start.line != line {
+  //     break;
+  //   }
+  //   exprs.push(pratt_parse(ps, precedence)?)
+  // }
+  // Ok(ps.add_list(exprs, keyword_expr_start))
 }
 
 fn parse_prefix(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
@@ -274,12 +288,11 @@ fn parse_prefix(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
   let t = ps.peek()?;
   // if the next token is a prefix operator
   if let Some(new_precedence) = ps.config.prefix_precedence.get(t.symbol.as_ref()) {
-    let op_string = format!("unary_{}", t.symbol.as_ref());
-    ps.expect_type(Syntax)?;
+    let op_string = t.symbol.as_ref().to_string();
+    ps.expect_type(Symbol)?;
     let operator = ps.add_symbol(op_string, start);
     let expr = pratt_parse(ps, *new_precedence)?;
-    let call = ps.add_symbol("#call", start);
-    Ok(ps.add_list(vec![call, operator, expr], start))
+    Ok(ps.add_list(vec![operator, expr], start))
   }
   // else assume it's an expression term
   else {
@@ -291,16 +304,15 @@ fn parse_infix(ps : &mut ParseState, left_expr : Expr, precedence : i32) -> Resu
   let infix_start = left_expr.loc.start;
   let operator_str = ps.peek()?.symbol.as_ref();
   if ps.config.special_operators.contains(operator_str) {
-    let operator = parse_simple_string(ps, Syntax)?;
+    let operator = parse_simple_string(ps)?;
     let right_expr = pratt_parse(ps, precedence)?;
     let args = vec!(operator, left_expr, right_expr);
     Ok(ps.add_list(args, infix_start))
   }
   else {
-    let operator = parse_simple_string(ps, Syntax)?;
+    let operator = parse_simple_string(ps)?;
     let right_expr = pratt_parse(ps, precedence)?;
-    let call = ps.add_symbol("#call", infix_start);
-    let args = vec!(call, operator, left_expr, right_expr);
+    let args = vec!(operator, left_expr, right_expr);
     Ok(ps.add_list(args, infix_start))
   }
 }
@@ -320,7 +332,7 @@ fn parse_separator(ps : &mut ParseState, left_expr : Expr, separator : String, p
       let next_line = t.loc.start.line;
       previous_line != next_line
     };
-    if !(implicit_separator || ps.accept(Syntax, separator.as_str())) {
+    if !(implicit_separator || ps.accept(separator.as_str())) {
       break;
     }
     args.push(pratt_parse(ps, precedence)?);
@@ -344,49 +356,36 @@ fn parse_literal<T : FromStr>(ps : &mut ParseState) -> Result<T, Error> {
   }
 }
 
-fn parse_simple_string(ps : &mut ParseState, t : TokenType) -> Result<Expr, Error> {
+fn parse_simple_string(ps : &mut ParseState) -> Result<Expr, Error> {
   let start = ps.peek_marker();
-  let s : String = ps.pop_type(t)?.symbol.as_ref().into();
+  let s : String = ps.pop_type(Symbol)?.symbol.as_ref().into();
   Ok(ps.add_symbol(s, start))
-}
-
-fn parse_simple_symbol(ps : &mut ParseState) -> Result<Expr, Error> {
-  // TODO: Parse the '$' interpolation operator for quotes
-  parse_simple_string(ps, Symbol)
 }
 
 fn parse_expression_term(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
   let t = ps.peek()?;
   match t.token_type {
-    Symbol => parse_simple_symbol(ps),
-    Syntax => {
-      // Parens
-      if let Some(close_paren) = ps.config.paren_pairs.get(&t.symbol) {
-        let start = ps.peek_marker();
-        let label = format!("#{}{}", t.symbol, close_paren);
-        ps.expect_type(TokenType::Syntax)?;
-        let label = ps.add_symbol(label, start);
-        if ps.accept(TokenType::Syntax, close_paren) {
-          Ok(ps.add_list(vec![label], start))
+    Symbol => {
+      if ps.config.syntax.contains(&t.symbol) {
+        // Parens
+        if let Some(close_paren) = ps.config.paren_pairs.get(&t.symbol) {
+          let start = ps.peek_marker();
+          ps.expect_type(Symbol)?;
+          if ps.accept(close_paren) {
+            Ok(ps.add_list(vec![], start))
+          }
+          else {
+            let e = parse_everything(ps)?;
+            ps.expect(close_paren)?;
+            Ok(e)
+          }
         }
         else {
-          let mut e = parse_everything(ps)?;
-          ps.expect(TokenType::Syntax, close_paren)?;
-          match &mut e.content {
-            ExprContent::List(list) => {
-              let mut args = vec![label];
-              let mut v = list.empty_into_vec();
-              args.append(&mut v);
-              Ok(ps.add_list(args, start))
-            }
-            _ => {
-              Ok(ps.add_list(vec![label, e], start))
-            }
-          }
+          parse_keyword_expression(ps, precedence)
         }
       }
       else {
-        parse_keyword_expression(ps, precedence)
+        parse_simple_string(ps)
       }
     }
     StringLiteral => {

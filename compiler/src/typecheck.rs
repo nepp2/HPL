@@ -355,9 +355,8 @@ impl <'l> TypeChecker<'l> {
       return error(expr, "type with this name already defined");
     }
     let mut fields = vec![];
-    let field_exprs =
-      match_symbol(children[1].list(), "#{}")
-      .ok_or_else(|| error_raw(expr, "expected fields"))?;
+    println!("STRUCT NAME: {}", name);
+    let field_exprs = children[1].list();
     if let Some(es) = match_symbol(field_exprs, ";") {
       // TODO: check for duplicates?
       for e in es {
@@ -366,6 +365,9 @@ impl <'l> TypeChecker<'l> {
     }
     else if let [f] = field_exprs {
       fields.push(self.typed_symbol(f)?);
+    }
+    else {
+      return error(expr, "expected fields");
     }
     // TODO: Generics
     let name = self.cache.get(name);
