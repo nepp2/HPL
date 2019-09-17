@@ -345,18 +345,15 @@ impl <'l> TypeChecker<'l> {
       "struct" => TypeKind::Struct,
       _ => panic!(),
     };
-    let children = expr.tail();
-    if children.len() < 1 {
-      return error(expr, "malformed type definition");
-    }
-    let name_expr = &children[0];
+    let def = expr.tail()[0].list();
+    let name_expr = &def[0];
     let name = name_expr.unwrap_symbol()?;
     if self.find_type_def(name).is_some() {
       return error(expr, "type with this name already defined");
     }
     let mut fields = vec![];
     println!("STRUCT NAME: {}", name);
-    let field_exprs = children[1].list();
+    let field_exprs = def[1].list();
     if let Some(es) = match_symbol(field_exprs, ";") {
       // TODO: check for duplicates?
       for e in es {
