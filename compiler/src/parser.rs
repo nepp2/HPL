@@ -42,14 +42,14 @@ fn parse_config() -> ParseConfig {
     PL { infix: &["then", "else"], prefix: &["if", "while", "for", "struct", "union", "cbind", "fun"] },
     PL { infix: &["{"], prefix: &[] },
     PL { infix: &[":"], prefix: &[] },
+    PL { infix: &["as"], prefix: &[] },
     PL { infix: &["&&", "||"], prefix: &[] },
     PL { infix: &[">", "<", ">=", "<=", "==", "!="], prefix: &[] },
     PL { infix: &["+", "-"], prefix: &["-"] },
     PL { infix: &["*", "/", "%"], prefix: &[] },
-    PL { infix: &["as"], prefix: &[] },
-    PL { infix: &[], prefix: &["!", "ref", "deref",] },
+    PL { infix: &["=>"], prefix: &["!", "ref", "deref",] },
     PL { infix: &["(", "["], prefix: &[] },
-    PL { infix: &[".", "=>"], prefix: &[] },
+    PL { infix: &["."], prefix: &[] },
   ];
   let mut precedence = 0;
   for s in expression_separators {

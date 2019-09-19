@@ -303,74 +303,76 @@ impl <'l> TypeChecker<'l> {
   /// These symbol errors may be resolved later, when the rest of the module has been checked.
   fn to_type(&mut self, expr : &Expr) -> Result<Type, Error> {
     let name = expr.unwrap_head()?;
-    let params = expr.tail();
+    let tail = expr.tail();
     if let Some(t) = Type::from_string(name) {
-      if params.len() > 0 {
+      if tail.len() > 0 {
         return error(expr, "unexpected type parameters").map_err(|e| e.into());
       }
       return Ok(t);
     }
     if name == "fun" {
+      let (args, return_type) = match match_symbol(tail, "=>") {
+        Some([args, return_type]) => (args, Some(return_type)),
+        Some([args]) => (args, None),
+        _ => return error(expr, "invalid function type signature"),
+      };
       let args =
-        params[0].list()
-        .iter().tuples()
+        args.list().iter().tuples()
         .map(|(_, e)| self.to_type(e))
         .collect::<Result<Vec<Type>, Error>>()?;
-      let return_type = self.to_type(&params[1])?;
+      let return_type = 
+        if let Some(t) = return_type { self.to_type(t)? }
+        else { Type::Void };
       return Ok(Type::Fun(Rc::new(FunctionSignature{ args, return_type})));
     }
-    match (name, params) {
-      ("ptr", [t]) => {
+    if name == "#()" {
+      if let Some([t]) = match_symbol(tail, "ptr") {
         let t = self.to_type(t)?;
-        Ok(Type::Ptr(Box::new(t)))
+        return Ok(Type::Ptr(Box::new(t)));
       }
-      ("array", [t]) => {
+      if let Some([t]) = match_symbol(tail, "array") {
         let t = self.to_type(t)?;
-        Ok(Type::Array(Box::new(t)))
-      }
-      (name, params) => {
-        if params.len() > 0 {
-          return error(expr, "unexpected type parameters").map_err(|e| e.into());
-        }
-        let name = self.cache.get(name);
-        self.type_definition_references.push(SymbolReference{ symbol_name: name.clone(), reference_location: expr.loc });
-        return Ok(Type::Def(name));
+        return Ok(Type::Array(Box::new(t)));
       }
     }
+    if tail.len() > 0 {
+      return error(expr, "unexpected type parameters");
+    }
+    let name = self.cache.get(name);
+    self.type_definition_references.push(SymbolReference{ symbol_name: name.clone(), reference_location: expr.loc });
+    Ok(Type::Def(name))
   }
 
   fn add_type_definition(&mut self, expr : &Expr) -> Result<(), Error> {
-    let kind = match expr.unwrap_head()? {
-      "union" => TypeKind::Union,
-      "struct" => TypeKind::Struct,
-      _ => panic!(),
-    };
-    let def = expr.tail()[0].list();
-    let name_expr = &def[0];
-    let name = name_expr.unwrap_symbol()?;
-    if self.find_type_def(name).is_some() {
-      return error(expr, "type with this name already defined");
-    }
-    let mut fields = vec![];
-    println!("STRUCT NAME: {}", name);
-    let field_exprs = def[1].list();
-    if let Some(es) = match_symbol(field_exprs, ";") {
-      // TODO: check for duplicates?
-      for e in es {
-        fields.push(self.typed_symbol(e)?);
+    if let [kind_expr, def_expr] = expr.list() {
+      let kind = match kind_expr.unwrap_symbol()? {
+        "union" => TypeKind::Union,
+        "struct" => TypeKind::Struct,
+        _ => panic!(),
+      };
+      if let [name_expr, fields_expr] = def_expr.list() {
+        let name = name_expr.unwrap_symbol()?;
+        if self.find_type_def(name).is_some() {
+          return error(expr, "type with this name already defined");
+        }
+        let mut fields = vec![];
+        if let Some(fs) = match_symbol(fields_expr.list(), ";") {
+          // TODO: check for duplicates?
+          for f in fs {
+            fields.push(self.typed_symbol(f)?);
+          }
+        }
+        else {
+          fields.push(self.typed_symbol(fields_expr)?);
+        }
+        // TODO: Generics
+        let name = self.cache.get(name);
+        let def = TypeDefinition { name: name.clone(), fields, kind };
+        self.module.types.insert(name, Rc::new(def));
+        return Ok(());
       }
     }
-    else if let [f] = field_exprs {
-      fields.push(self.typed_symbol(f)?);
-    }
-    else {
-      return error(expr, "expected fields");
-    }
-    // TODO: Generics
-    let name = self.cache.get(name);
-    let def = TypeDefinition { name: name.clone(), fields, kind };
-    self.module.types.insert(name, Rc::new(def));
-    Ok(())
+    error(expr, "invalid type definition")
   }
 
   fn typed_symbol(&mut self, e : &Expr) -> Result<(RefStr, Type), Error> {
@@ -570,7 +572,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
           Ok(node(expr, Type::Void, Content::IfThen(Box::new((condition, then_branch)))))
         }
       }
-      ("block", exprs) => {
+      (";", exprs) => {
         self.scope_map.push(HashMap::new());
         let nodes = exprs.iter().map(|e| self.to_ast(e)).collect::<Result<Vec<TypedNode>, Error>>()?;
         self.scope_map.pop();
@@ -646,12 +648,12 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         self.t.add_function(name.clone(), def);
         Ok(node(expr, Type::Void, Content::FunctionDefinition(name)))
       }
-      ("union", exprs) => {
-        let name = self.cached(&exprs[0].unwrap_symbol()?);
+      ("union", [def_expr]) => {
+        let name = self.cached(def_expr.unwrap_head()?);
         Ok(node(expr, Type::Void, Content::TypeDefinition(name)))
       }
-      ("struct", exprs) => {
-        let name = self.cached(&exprs[0].unwrap_symbol()?);
+      ("struct", [def_expr]) => {
+        let name = self.cached(def_expr.unwrap_head()?);
         Ok(node(expr, Type::Void, Content::TypeDefinition(name)))
       }
       ("type_instantiate", exprs) => {
@@ -748,7 +750,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         }
         Ok(node(expr, inner_type, Content::Index(Box::new((array, index)))))
       }
-      _ => return error(expr, "unsupported expression"),
+      _ => return error(expr, format!("unsupported expression: {}", expr)),
     }
   }
 
@@ -860,10 +862,14 @@ pub fn to_typed_module(local_symbol_table : &HashMap<RefStr, usize>, modules : &
   let mut types = vec!();
   find_type_definitions(expr, &mut types);
 
+  println!("Type definitions found!");
+
   // Process the types
   for e in types {
     type_checker.add_type_definition(e)?;
   }
+
+  println!("Processed the types!");
 
   // Process the rest of the module (adds functions and globals)
   let mut function_checker =

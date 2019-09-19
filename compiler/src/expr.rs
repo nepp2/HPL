@@ -177,6 +177,35 @@ impl Expr {
       .ok_or_else(|| 
         error_raw(self, format!("expected a symbol, found {:?}", self.content)))
   }
+
+  pub fn sequence_iter(&self, s : &str) -> impl Iterator<Item=&Expr> {
+    let es = self.list();
+    if let Some(head) = es.first().and_then(|e| e.try_symbol()) {
+      if s == head {
+        return IterVariant::A(es[1..].iter().cloned());
+      }
+    }
+    return IterVariant::B(std::iter::once(self))
+  }
+}
+
+enum IterVariant<'e, A, B>
+  where A : Iterator<Item=&'e Expr>,
+    B : Iterator<Item=&'e Expr>
+{
+  A(A),
+  B(B),
+}
+
+impl <'e, A, B> Iterator for IterVariant<'e, A, B> {
+  type Item = &'e Expr;
+
+  fn next(&'e mut self) -> Option<&'e Expr> {
+    match self {
+      IterVariant::A(i) => i.next(),
+      IterVariant::B(i) => i.next(),
+    }
+  }
 }
 
 pub fn match_symbol<'e>(es : &'e [Expr], s : &str) -> Option<&'e [Expr]> {
