@@ -311,19 +311,25 @@ impl <'l> TypeChecker<'l> {
       return Ok(t);
     }
     if name == "fun" {
-      let (args, return_type) = match match_symbol(tail, "=>") {
-        Some([args, return_type]) => (args, Some(return_type)),
-        Some([args]) => (args, None),
-        _ => return error(expr, "invalid function type signature"),
-      };
-      let args =
-        args.list().iter().tuples()
-        .map(|(_, e)| self.to_type(e))
-        .collect::<Result<Vec<Type>, Error>>()?;
-      let return_type = 
-        if let Some(t) = return_type { self.to_type(t)? }
-        else { Type::Void };
-      return Ok(Type::Fun(Rc::new(FunctionSignature{ args, return_type})));
+      if let [e] = tail {
+        let (args, return_type) = match match_symbol(e.list(), "=>") {
+          Some([args, return_type]) => (args, Some(return_type)),
+          None => (e, None),
+          _ => return error(expr, "invalid function type signature"),
+        };
+        let args =
+          args.sequence_iter(",")
+          .map(|e| {
+            let (_, t) = self.typed_symbol(e)?;
+            Ok(t)
+          })
+          .collect::<Result<Vec<Type>, Error>>()?;
+        let return_type = 
+          if let Some(t) = return_type { self.to_type(t)? }
+          else { Type::Void };
+        return Ok(Type::Fun(Rc::new(FunctionSignature{ args, return_type})));
+      }
+      return error(expr, "invalid function type signature");
     }
     if name == "#()" {
       if let Some([t]) = match_symbol(tail, "ptr") {
@@ -355,15 +361,10 @@ impl <'l> TypeChecker<'l> {
         if self.find_type_def(name).is_some() {
           return error(expr, "type with this name already defined");
         }
+        // TODO: check for duplicates?
         let mut fields = vec![];
-        if let Some(fs) = match_symbol(fields_expr.list(), ";") {
-          // TODO: check for duplicates?
-          for f in fs {
-            fields.push(self.typed_symbol(f)?);
-          }
-        }
-        else {
-          fields.push(self.typed_symbol(fields_expr)?);
+        for f in fields_expr.sequence_iter(";") {
+          fields.push(self.typed_symbol(f)?);
         }
         // TODO: Generics
         let name = self.cache.get(name);
@@ -460,7 +461,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
       ("break", []) => {
         return Ok(node(expr, Type::Void, Content::Break));
       }
-      ("call", exprs) => {
+      ("#()", exprs) => {
         let args =
               exprs[1..].iter().map(|e| self.to_ast(e))
               .collect::<Result<Vec<TypedNode>, Error>>()?;

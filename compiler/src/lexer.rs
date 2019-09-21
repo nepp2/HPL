@@ -115,7 +115,9 @@ impl <'l> CStream<'l> {
     c >= '0' && c <= '9'
   }
 
-  fn iter_char_while(&mut self, condition : &Fn(&CStream<'l>) -> bool, operation : &mut FnMut(&mut CStream<'l>)) {
+  fn iter_char_while<C, O>(&mut self, condition : C, mut operation : O)
+    where C : Fn(&CStream<'l>) -> bool, O : FnMut(&mut CStream<'l>)
+  {
     while self.loc.pos < self.chars.len() {
       if condition(self) {
         operation(self);
@@ -126,7 +128,9 @@ impl <'l> CStream<'l> {
     }
   }
 
-  fn skip_char_while (&mut self, condition : &Fn(&CStream<'l>) -> bool) {
+  fn skip_char_while<C>(&mut self, condition : C)
+    where C : Fn(&CStream<'l>) -> bool
+  {
     self.iter_char_while(condition, &mut CStream::skip_char);
   }
 
@@ -136,7 +140,9 @@ impl <'l> CStream<'l> {
     self.skip_char();
   }
 
-  fn append_char_while(&mut self, condition : &Fn(&CStream<'l>) -> bool) {
+  fn append_char_while<C>(&mut self, condition : C)
+    where C : Fn(&CStream<'l>) -> bool
+  {
     self.iter_char_while(condition, &mut |cs : &mut CStream| { cs.append_char() });
   }
 

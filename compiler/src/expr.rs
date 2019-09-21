@@ -3,6 +3,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::iter::Iterator;
 
 use crate::error::{Error, TextLocation, error_raw };
 use crate::c_interface::SStr;
@@ -178,14 +179,20 @@ impl Expr {
         error_raw(self, format!("expected a symbol, found {:?}", self.content)))
   }
 
-  pub fn sequence_iter(&self, s : &str) -> impl Iterator<Item=&Expr> {
+  /// TODO: better documentation
+  /// Iterator over either just this expression, or the expressions masked behind
+  /// the seperator symbol provided, if it is found.
+  /// e.g.
+  ///   * (";" 1 2) yields [1, 2]
+  ///   * 1 yields [1]
+  pub fn sequence_iter<'e>(&'e self, separator : &str) -> impl Iterator<Item=&'e Expr> {
     let es = self.list();
     if let Some(head) = es.first().and_then(|e| e.try_symbol()) {
-      if s == head {
-        return IterVariant::A(es[1..].iter().cloned());
+      if separator == head {
+        return IterVariant::A(es[1..].iter())
       }
     }
-    return IterVariant::B(std::iter::once(self))
+    IterVariant::B(std::iter::once(self))
   }
 }
 
@@ -197,10 +204,13 @@ enum IterVariant<'e, A, B>
   B(B),
 }
 
-impl <'e, A, B> Iterator for IterVariant<'e, A, B> {
+impl <'e, A, B> Iterator for IterVariant<'e, A, B>
+  where A : Iterator<Item=&'e Expr>,
+    B : Iterator<Item=&'e Expr>
+{
   type Item = &'e Expr;
 
-  fn next(&'e mut self) -> Option<&'e Expr> {
+  fn next(&mut self) -> Option<&'e Expr> {
     match self {
       IterVariant::A(i) => i.next(),
       IterVariant::B(i) => i.next(),
