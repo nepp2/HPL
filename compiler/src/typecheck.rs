@@ -467,12 +467,6 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         let args =
           args.sequence_iter(",").map(|e| self.to_ast(e))
           .collect::<Result<Vec<TypedNode>, Error>>()?;
-        if let Some(function_name) = function_expr.unwrap_symbol().ok() {
-          let op_tag = match_intrinsic(function_name, args.as_slice());
-          if let Some(op_tag) = op_tag {
-            return Ok(node(expr, op_tag, Content::IntrinsicCall(self.cached(function_name), args)))
-          }
-        }
         let function_value = self.to_ast(function_expr)?;
         if let Type::Fun(sig) = &function_value.type_tag {
           if sig.args.len() != args.len() {
@@ -555,24 +549,28 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         let body = self.to_ast(body_node)?;
         Ok(node(expr, Type::Void, Content::While(Box::new((condition, body)))))
       }
-      ("if", exprs) => {
-        if exprs.len() > 3 {
-          return error(expr, "malformed if expression");
-        }
-        let condition = self.to_ast(&exprs[0])?;
-        condition.assert_type(Type::Bool)?;
-        let then_branch = self.to_ast(&exprs[1])?;
-        if exprs.len() == 3 {
-          let else_branch = self.to_ast(&exprs[2])?;
-          if then_branch.type_tag != else_branch.type_tag {
-            return error(expr, "if/else branch type mismatch");
+      ("if", [e]) => {
+        if let Some([cond, body]) = e.list() {
+          let condition = self.to_ast(cond)?;
+          condition.assert_type(Type::Bool)?;
+          if let Some([then_expr, else_expr]) = body.match_symbol("else") {
+            let then_branch = self.to_ast(then_expr)?;
+            let else_branch = self.to_ast(else_expr)?;
+            if then_branch.type_tag != else_branch.type_tag {
+              return error(expr, "if/else branch type mismatch");
+            }
+            let t = then_branch.type_tag.clone();
+            let c = Content::IfThenElse(Box::new((condition, then_branch, else_branch)));
+            Ok(node(expr, t, c))
           }
-          let t = then_branch.type_tag.clone();
-          let c = Content::IfThenElse(Box::new((condition, then_branch, else_branch)));
-          Ok(node(expr, t, c))
+          else {
+            let then_branch = self.to_ast(body)?;
+            let c = Content::IfThen(Box::new((condition, then_branch)));
+            Ok(node(expr, Type::Void, c))
+          }
         }
         else {
-          Ok(node(expr, Type::Void, Content::IfThen(Box::new((condition, then_branch)))))
+          error(expr, "malformed if expression")
         }
       }
       (";", exprs) => {
@@ -755,7 +753,18 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         }
         Ok(node(expr, inner_type, Content::Index(Box::new((array, index)))))
       }
-      _ => return error(expr, format!("unsupported expression: {}", expr)),
+      (operator, args) => {
+        let args =
+          args.iter().map(|e| self.to_ast(e))
+          .collect::<Result<Vec<TypedNode>, Error>>()?;
+        let op_tag = match_intrinsic(operator, args.as_slice());
+        if let Some(op_tag) = op_tag {
+          Ok(node(expr, op_tag, Content::IntrinsicCall(self.cached(operator), args)))
+        }
+        else {
+          error(expr, format!("unsupported expression: {}", expr))
+        }
+      }
     }
   }
 
@@ -823,11 +832,11 @@ fn match_intrinsic(name : &str, args : &[TypedNode]) -> Option<Type> {
       _ => None
     }
     [a] => match (&a.type_tag, name) {
-      (Type::F64, "unary_-") => Some(Type::F64),
-      (Type::I64, "unary_-") => Some(Type::I64),
-      (Type::Bool, "unary_!") => Some(Type::Bool),
-      (Type::Ptr(t), "unary_deref") => Some(*t.clone()),
-      (t, "unary_ref") => Some(Type::Ptr(Box::new(t.clone()))),
+      (Type::F64, "-") => Some(Type::F64),
+      (Type::I64, "-") => Some(Type::I64),
+      (Type::Bool, "!") => Some(Type::Bool),
+      (Type::Ptr(t), "deref") => Some(*t.clone()),
+      (t, "ref") => Some(Type::Ptr(Box::new(t.clone()))),
       _ => None,
     }
     _ => None,

@@ -836,14 +836,14 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         }
         else if let [a] = args.as_slice() {
           match (&a.type_tag, name.as_ref()) {
-            (Type::F64, "unary_-") => unary_op!(build_float_neg, FloatValue, a, self),
-            (Type::I64, "unary_-") => unary_op!(build_int_neg, IntValue, a, self),
-            (Type::Bool, "unary_!") => unary_op!(build_not, IntValue, a, self),
-            (Type::Ptr(_), "unary_deref") => {
+            (Type::F64, "-") => unary_op!(build_float_neg, FloatValue, a, self),
+            (Type::I64, "-") => unary_op!(build_int_neg, IntValue, a, self),
+            (Type::Bool, "!") => unary_op!(build_not, IntValue, a, self),
+            (Type::Ptr(_), "deref") => {
               let ptr = self.codegen_pointer(a)?;
               pointer(ptr)
             }
-            (_, "unary_ref") => self.codegen_address_of_expression(a)?,
+            (_, "ref") => self.codegen_address_of_expression(a)?,
             _ => return error(node.loc, "encountered unrecognised intrinsic"),
           }
         }
