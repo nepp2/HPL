@@ -12,6 +12,7 @@ struct ParseConfig {
   expression_separators : HashMap<RefStr, i32>,
   prefix_precedence : HashMap<RefStr, i32>,
   infix_precedence : HashMap<RefStr, i32>,
+  invisible_operators : HashSet<RefStr>,
   syntax : HashSet<RefStr>,
 }
 
@@ -25,6 +26,9 @@ fn parse_config() -> ParseConfig {
     expression_separators: HashMap::new(),
     prefix_precedence: HashMap::new(),
     infix_precedence: HashMap::new(),
+    invisible_operators:
+      ["{", "then"]
+      .iter().map(|&s| s.into()).collect(),
     syntax: HashSet::new(),
   };
   let paren_pairs = vec![
@@ -33,11 +37,14 @@ fn parse_config() -> ParseConfig {
     ("[", "]"),
   ];
   let expression_separators = &[";", "," ];
+
+  ADMIT DEFEAT
+
   let operators : &[PL] = &[
     PL { infix: &["=", "+="], prefix: &[] },
     PL { infix: &[], prefix: &["if", "while", "for", "struct", "union", "cbind", "fun"] },
-    PL { infix: &["#application", "{"], prefix: &[] },
-    PL { infix: &["then", "else"], prefix: &[] },
+    PL { infix: &["#application", "{", "then"], prefix: &[] },
+    PL { infix: &["else"], prefix: &[] },
     PL { infix: &[":"], prefix: &[] },
     PL { infix: &["as"], prefix: &[] },
     PL { infix: &["&&", "||"], prefix: &[] },
@@ -234,7 +241,7 @@ fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
         if let Some(close_paren) = ps.config.paren_pairs.get(&t.symbol) {
           let paren_start = expr.loc.start;
           let mut list = vec![];
-          if t.symbol.as_ref() != "{" {
+          if !ps.config.invisible_operators.contains(&t.symbol) {
             let operator = format!("#{}{}", t.symbol, close_paren);
             list.push(ps.add_symbol(operator, paren_start));
           }
@@ -252,6 +259,7 @@ fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
       }
     }
     else {
+      // TODO: REMOVE?
       // let &next_precedence = ps.config.infix_precedence.get("#application").unwrap();
       // if next_precedence > precedence {
       //   expr = parse_application(ps, expr, next_precedence)?;
@@ -302,10 +310,16 @@ fn parse_application(ps : &mut ParseState, left_expr : Expr, precedence : i32) -
 
 fn parse_infix(ps : &mut ParseState, left_expr : Expr, precedence : i32) -> Result<Expr, Error> {
   let infix_start = left_expr.loc.start;
+  let mut list = vec![];
+  let t = ps.peek()?;
+  let invisible = ps.config.invisible_operators.contains(&t.symbol);
   let operator = parse_simple_string(ps)?;
-  let right_expr = pratt_parse(ps, precedence)?;
-  let args = vec!(operator, left_expr, right_expr);
-  Ok(ps.add_list(args, infix_start))
+  if !invisible {
+    list.push(operator);
+  }
+  list.push(left_expr);
+  list.push(pratt_parse(ps, precedence)?);
+  Ok(ps.add_list(list, infix_start))
 }
 
 fn parse_separator(ps : &mut ParseState, left_expr : Expr, separator : String, precedence : i32) -> Result<Expr, Error> {
@@ -376,7 +390,20 @@ fn parse_expression_term(ps : &mut ParseState) -> Result<Expr, Error> {
         }
       }
       else {
-        parse_simple_string(ps)
+        let bool_val = match t.symbol.as_ref() {
+          "true" => Some(true),
+          "false" => Some(false),
+          _ => None,
+        };
+        if let Some(b) = bool_val {
+          let start = ps.peek_marker();
+          ps.pop_type(TokenType::Symbol);
+          let b = ExprContent::LiteralBool(b);
+          Ok(ps.add_leaf(b, start))
+        }
+        else {
+          parse_simple_string(ps)
+        }
       }
     }
     StringLiteral => {

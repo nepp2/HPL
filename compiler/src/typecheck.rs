@@ -875,16 +875,10 @@ pub fn to_typed_module(local_symbol_table : &HashMap<RefStr, usize>, modules : &
   
   let mut types = vec!();
   find_type_definitions(expr, &mut types);
-
-  println!("Type definitions found!");
-
   // Process the types
   for e in types {
     type_checker.add_type_definition(e)?;
   }
-
-  println!("Processed the types!");
-
   // Process the rest of the module (adds functions and globals)
   let mut function_checker =
     FunctionChecker::new(&mut type_checker, true, HashMap::new());

@@ -4,7 +4,6 @@ struct blah {
   s : string
 }
 
-
 // struct rc {
 //   count : i64
 //   the_rest : i64
