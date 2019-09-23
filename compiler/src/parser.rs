@@ -39,8 +39,9 @@ fn parse_config() -> ParseConfig {
   let expression_separators = &[";", "," ];
   let operators : &[PL] = &[
     PL { infix: &["=", "+="], prefix: &[] },
-    PL { infix: &["then", "else"], prefix: &["if", "while", "for", "struct", "union", "cbind", "fun"] },
+    PL { infix: &[], prefix: &["if", "while", "for", "struct", "union", "cbind", "fun"] },
     PL { infix: &["{"], prefix: &[] },
+    PL { infix: &["then", "else"], prefix: &[] },
     PL { infix: &[":"], prefix: &[] },
     PL { infix: &["as"], prefix: &[] },
     PL { infix: &["&&", "||"], prefix: &[] },

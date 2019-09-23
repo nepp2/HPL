@@ -130,10 +130,10 @@ impl Expr {
     Expr { loc, content }
   }
 
-  pub fn list(&self) -> &[Expr] {
+  pub fn list(&self) -> Option<&[Expr]> {
     match &self.content {
-      ExprContent::List(list) => list.as_slice(),
-      _ => &[]
+      ExprContent::List(list) => Some(list.as_slice()),
+      _ => None
     }
   }
 
@@ -147,12 +147,12 @@ impl Expr {
   }
 
   pub fn try_head(&self) -> Option<&str> {
-    self.list().first().and_then(|e| e.try_symbol())
+    self.list()?.first()?.try_symbol()
   }
 
   pub fn unwrap_head(&self) -> Result<&str, Error> {
     self.try_symbol().or_else(|| {
-      self.list().first().and_then(|e| e.try_symbol())
+      self.list()?.first()?.try_symbol()
     })
     .ok_or_else(|| error_raw(self, "expected symbol"))
   }
@@ -162,7 +162,7 @@ impl Expr {
       &[]
     }
     else {
-      &self.list()[1..]
+      &self.list().unwrap()[1..]
     }
   }
 
@@ -186,13 +186,26 @@ impl Expr {
   ///   * (";" 1 2) yields [1, 2]
   ///   * 1 yields [1]
   pub fn sequence_iter<'e>(&'e self, separator : &str) -> impl Iterator<Item=&'e Expr> {
-    let es = self.list();
-    if let Some(head) = es.first().and_then(|e| e.try_symbol()) {
-      if separator == head {
-        return IterVariant::A(es[1..].iter())
-      }
+    if self.try_head() == Some(separator) {
+      return IterVariant::A(self.tail().iter())
     }
     IterVariant::B(std::iter::once(self))
+  }
+
+  // TODO REMOVE
+  // pub fn match_symbol<'e>(es : &'e [Expr], s : &str) -> Option<&'e [Expr]> {
+  //   if let Some(head) = es.first().and_then(|e| e.try_symbol()) {
+  //     if s == head {
+  //       return Some(&es[1..]);
+  //     }
+  //   }
+  //   None
+  // }
+  pub fn match_symbol<'e>(&'e self, s : &str) -> Option<&'e [Expr]> {
+    if self.try_head() == Some(s) {
+      return Some(self.tail());
+    }
+    None
   }
 }
 
@@ -216,15 +229,6 @@ impl <'e, A, B> Iterator for IterVariant<'e, A, B>
       IterVariant::B(i) => i.next(),
     }
   }
-}
-
-pub fn match_symbol<'e>(es : &'e [Expr], s : &str) -> Option<&'e [Expr]> {
-  if let Some(head) = es.first().and_then(|e| e.try_symbol()) {
-    if s == head {
-      return Some(&es[1..]);
-    }
-  }
-  None
 }
 
 impl Drop for Expr {

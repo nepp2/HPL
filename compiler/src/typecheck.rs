@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::fmt::Write;
 
 use crate::error::{Error, error, error_raw, TextLocation};
-use crate::expr::{StringCache, RefStr, Expr, ExprContent, match_symbol};
+use crate::expr::{StringCache, RefStr, Expr, ExprContent};
 
 use std::collections::HashMap;
 use itertools::Itertools;
@@ -312,7 +312,7 @@ impl <'l> TypeChecker<'l> {
     }
     if name == "fun" {
       if let [e] = tail {
-        let (args, return_type) = match match_symbol(e.list(), "=>") {
+        let (args, return_type) = match e.match_symbol("=>") {
           Some([args, return_type]) => (args, Some(return_type)),
           None => (e, None),
           _ => return error(expr, "invalid function type signature"),
@@ -332,13 +332,15 @@ impl <'l> TypeChecker<'l> {
       return error(expr, "invalid function type signature");
     }
     if name == "#()" {
-      if let Some([t]) = match_symbol(tail, "ptr") {
-        let t = self.to_type(t)?;
-        return Ok(Type::Ptr(Box::new(t)));
-      }
-      if let Some([t]) = match_symbol(tail, "array") {
-        let t = self.to_type(t)?;
-        return Ok(Type::Array(Box::new(t)));
+      if let [type_label, arg] = tail {
+        if type_label.try_symbol() == Some("ptr") {
+          let t = self.to_type(arg)?;
+          return Ok(Type::Ptr(Box::new(t)));
+        }
+        if type_label.try_symbol() == Some("array") {
+          let t = self.to_type(arg)?;
+          return Ok(Type::Array(Box::new(t)));
+        }
       }
     }
     if tail.len() > 0 {
@@ -350,13 +352,13 @@ impl <'l> TypeChecker<'l> {
   }
 
   fn add_type_definition(&mut self, expr : &Expr) -> Result<(), Error> {
-    if let [kind_expr, def_expr] = expr.list() {
+    if let Some([kind_expr, def_expr]) = expr.list() {
       let kind = match kind_expr.unwrap_symbol()? {
         "union" => TypeKind::Union,
         "struct" => TypeKind::Struct,
         _ => panic!(),
       };
-      if let [name_expr, fields_expr] = def_expr.list() {
+      if let Some([name_expr, fields_expr]) = def_expr.list() {
         let name = name_expr.unwrap_symbol()?;
         if self.find_type_def(name).is_some() {
           return error(expr, "type with this name already defined");
@@ -377,7 +379,7 @@ impl <'l> TypeChecker<'l> {
   }
 
   fn typed_symbol(&mut self, e : &Expr) -> Result<(RefStr, Type), Error> {
-    if let Some([s, t]) = match_symbol(e.list(), ":") {
+    if let Some([s, t]) = e.match_symbol(":") {
       let name = self.cache.get(s.unwrap_symbol()?);
       let type_tag = self.to_type(t)?;
       Ok((name, type_tag))
@@ -461,17 +463,17 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
       ("break", []) => {
         return Ok(node(expr, Type::Void, Content::Break));
       }
-      ("#()", exprs) => {
+      ("#()", [function_expr, args]) => {
         let args =
-              exprs[1..].iter().map(|e| self.to_ast(e))
-              .collect::<Result<Vec<TypedNode>, Error>>()?;
-        if let Some(function_name) = exprs[0].unwrap_symbol().ok() {
+          args.sequence_iter(",").map(|e| self.to_ast(e))
+          .collect::<Result<Vec<TypedNode>, Error>>()?;
+        if let Some(function_name) = function_expr.unwrap_symbol().ok() {
           let op_tag = match_intrinsic(function_name, args.as_slice());
           if let Some(op_tag) = op_tag {
             return Ok(node(expr, op_tag, Content::IntrinsicCall(self.cached(function_name), args)))
           }
         }
-        let function_value = self.to_ast(&exprs[0])?;
+        let function_value = self.to_ast(function_expr)?;
         if let Type::Fun(sig) = &function_value.type_tag {
           if sig.args.len() != args.len() {
             return error(expr, "incorrect number of arguments passed");
@@ -484,7 +486,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
           let content = Content::FunctionCall(Box::new(function_value), args);
           return Ok(node(expr, return_type, content));
         }
-        error(&exprs[0], "value is not a function")
+        error(function_expr, "value is not a function")
       }
       ("sizeof", [t]) => {
         let type_tag = self.t.to_type(t)?;
@@ -581,7 +583,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         Ok(node(expr, tag, Content::Block(nodes)))
       }
       ("cbind", [e]) => {
-        if let Some([name_expr, type_expr]) = match_symbol(e.list(), ":") {
+        if let Some([name_expr, type_expr]) = e.match_symbol(":") {
           let name = self.cached(name_expr.unwrap_symbol()?);
           let type_tag = self.t.to_type(type_expr)?;
           let address = self.t.local_symbol_table.get(&name).map(|v| *v);
@@ -615,39 +617,41 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
           error(e, "expected type binding")
         }
       }
-      ("fun", exprs) => {
-        let name = self.cached(exprs[0].unwrap_symbol()?);
-        let args_exprs = exprs[1].list();
-        let function_body = &exprs[2];
-        let mut arg_names = vec!();
-        let mut arg_types = vec!();
-        for (name_expr, type_expr) in args_exprs.iter().tuples() {
-          let name = self.cached(name_expr.unwrap_symbol()?);
-          let type_tag = self.t.to_type(type_expr)?;
-          if type_tag == Type::Void {
-            return error(expr, "functions args cannot be void");
+      ("fun", [e]) => {
+        if let Some([sig, function_body]) = e.list() {
+          if let Some([name, args]) = sig.match_symbol("#()") {
+            let name = self.cached(name.unwrap_symbol()?);
+            let mut arg_names = vec!();
+            let mut arg_types = vec!();
+            for arg in args.sequence_iter(",") {
+              let (name, type_tag) = self.t.typed_symbol(arg)?;
+              if type_tag == Type::Void {
+                return error(expr, "functions args cannot be void");
+              }
+              arg_names.push(name);
+              arg_types.push(type_tag);
+            }
+            let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
+            let mut function_checker = FunctionChecker::new(self.t, false, args);
+            let body = function_checker.to_ast(function_body)?;
+            if self.t.find_function(name.as_ref()).is_some() {
+              return error(expr, "function with that name already defined");
+            }
+            let signature = Rc::new(FunctionSignature {
+              return_type: body.type_tag.clone(),
+              args: arg_types,
+            });
+            let def = FunctionDefinition {
+              name: name.clone(),
+              args: arg_names,
+              signature,
+              implementation: FunctionImplementation::Normal(body),
+            };
+            self.t.add_function(name.clone(), def);
+            return Ok(node(expr, Type::Void, Content::FunctionDefinition(name)))
           }
-          arg_names.push(name);
-          arg_types.push(type_tag);
         }
-        let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
-        let mut function_checker = FunctionChecker::new(self.t, false, args);
-        let body = function_checker.to_ast(function_body)?;
-        if self.t.find_function(name.as_ref()).is_some() {
-          return error(expr, "function with that name already defined");
-        }
-        let signature = Rc::new(FunctionSignature {
-          return_type: body.type_tag.clone(),
-          args: arg_types,
-        });
-        let def = FunctionDefinition {
-          name: name.clone(),
-          args: arg_names,
-          signature,
-          implementation: FunctionImplementation::Normal(body),
-        };
-        self.t.add_function(name.clone(), def);
-        Ok(node(expr, Type::Void, Content::FunctionDefinition(name)))
+        error(expr, format!("invalid function definition {}", e))
       }
       ("union", [def_expr]) => {
         let name = self.cached(def_expr.unwrap_head()?);
@@ -831,8 +835,6 @@ fn match_intrinsic(name : &str, args : &[TypedNode]) -> Option<Type> {
 }
 
 fn find_type_definitions<'e>(expr : &'e Expr, types : &mut Vec<&'e Expr>) {
-  let children = expr.list();
-  if children.len() == 0 { return }
   if let Some(s) = expr.try_head() {
     match s {
       "union" => {
@@ -849,8 +851,10 @@ fn find_type_definitions<'e>(expr : &'e Expr, types : &mut Vec<&'e Expr>) {
       _ => (),
     }
   }
-  for c in children {
-    find_type_definitions(c, types);
+  if let Some(children) = expr.list() {
+    for c in children {
+      find_type_definitions(c, types);
+    }
   }
 }
 

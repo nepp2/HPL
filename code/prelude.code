@@ -15,16 +15,6 @@ struct lib_handle {
   handle : u64
 }
 
-butt(3, 4, 5)
-
-break
-
-a[45]
-
-toob(4)
-
-// shannon()
-
 cbind load_library : fun(name : ptr(string)) => lib_handle
 
 cbind load_symbol : fun(handle : lib_handle, name : ptr(string)) => ptr(u8)
