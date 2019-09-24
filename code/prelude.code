@@ -42,6 +42,8 @@ fun max(a : i64, b : i64) {
   if a > b { a } else { b }
 }
 
+struct empty {}
+
 struct foo {
   f
 }

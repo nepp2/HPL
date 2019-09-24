@@ -33,18 +33,13 @@ fn parse_config() -> ParseConfig {
   };
   let paren_pairs = vec![
     ("(", ")"),
-    ("{", "}"), // TODO: opening braces are ignored after a newline (following an if-statement, for example)
+    ("{", "}"),
     ("[", "]"),
   ];
   let expression_separators = &[";", "," ];
-
-  ADMIT DEFEAT
-
   let operators : &[PL] = &[
+    PL { infix: &[], prefix: &["#keyword"] },
     PL { infix: &["=", "+="], prefix: &[] },
-    PL { infix: &[], prefix: &["if", "while", "for", "struct", "union", "cbind", "fun"] },
-    PL { infix: &["#application", "{", "then"], prefix: &[] },
-    PL { infix: &["else"], prefix: &[] },
     PL { infix: &[":"], prefix: &[] },
     PL { infix: &["as"], prefix: &[] },
     PL { infix: &["&&", "||"], prefix: &[] },
@@ -190,10 +185,10 @@ impl <'l> ParseState<'l> {
     self.add_expr(content, loc)
   }
 
-  fn add_list(&mut self, list : Vec<Expr>, start : TextMarker) -> Expr
+  fn add_list(&mut self, list : Vec<Expr>, list_type : char, start : TextMarker) -> Expr
   {
     let loc = self.loc(start);
-    let content = ExprContent::list(list);
+    let content = ExprContent::list(list, list_type);
     self.add_expr(content, loc)
   }
 
@@ -247,7 +242,7 @@ fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
           }
           list.push(expr);
           list.push(pratt_parse(ps, next_precedence)?);
-          expr = ps.add_list(list, paren_start);
+          expr = ps.add_list(list, '(', paren_start);
         }
         // Normal infix
         else {
@@ -259,26 +254,10 @@ fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
       }
     }
     else {
-      // TODO: REMOVE?
-      // let &next_precedence = ps.config.infix_precedence.get("#application").unwrap();
-      // if next_precedence > precedence {
-      //   expr = parse_application(ps, expr, next_precedence)?;
-      // }
-      // else {
-      //   break;
-      // }
       break;
-      // if precedence == 0 {
-      //   return error(t.loc, format!("unexpected token {}, {}", t.symbol, expr));
-      // }
     }
   }
   Ok(expr)
-}
-
-fn parse_keyword_expression(ps : &mut ParseState) -> Result<Expr, Error> {
-  let t = ps.peek()?;
-  error(t.loc, format!("encountered unexpected syntax '{}'", t.symbol))
 }
 
 fn parse_prefix(ps : &mut ParseState) -> Result<Expr, Error> {
@@ -290,23 +269,13 @@ fn parse_prefix(ps : &mut ParseState) -> Result<Expr, Error> {
     ps.expect_type(Symbol)?;
     let operator = ps.add_symbol(op_string, start);
     let expr = pratt_parse(ps, *new_precedence)?;
-    Ok(ps.add_list(vec![operator, expr], start))
+    Ok(ps.add_list(vec![operator, expr], '(', start))
   }
   // else assume it's an expression term
   else {
     parse_expression_term(ps)
   }
 }
-
-/// Two adjacent expressions are joined together in an application pair
-/// (e.g. a function reference and the tuple containing its arguments)
-fn parse_application(ps : &mut ParseState, left_expr : Expr, precedence : i32) -> Result<Expr, Error> {
-  let infix_start = left_expr.loc.start;
-  let right_expr = pratt_parse(ps, precedence)?;
-  let args = vec!(left_expr, right_expr);
-  Ok(ps.add_list(args, infix_start))
-}
-
 
 fn parse_infix(ps : &mut ParseState, left_expr : Expr, precedence : i32) -> Result<Expr, Error> {
   let infix_start = left_expr.loc.start;
@@ -319,10 +288,10 @@ fn parse_infix(ps : &mut ParseState, left_expr : Expr, precedence : i32) -> Resu
   }
   list.push(left_expr);
   list.push(pratt_parse(ps, precedence)?);
-  Ok(ps.add_list(list, infix_start))
+  Ok(ps.add_list(list, '(', infix_start))
 }
 
-fn parse_separator(ps : &mut ParseState, left_expr : Expr, separator : String, precedence : i32) -> Result<Expr, Error> {
+fn parse_separator(ps : &mut ParseState, left_expr : Expr, list_type : char, separator : String, precedence : i32) -> Result<Expr, Error> {
   let separator_start = left_expr.loc.start;
   let is_semicolon = separator.as_str() == ";";
   let separator_expr = ps.add_symbol(separator.as_str(), ps.peek_marker());
@@ -342,7 +311,7 @@ fn parse_separator(ps : &mut ParseState, left_expr : Expr, separator : String, p
     }
     args.push(pratt_parse(ps, precedence)?);
   }
-  Ok(ps.add_list(args, separator_start))
+  Ok(ps.add_list(args, list_type, separator_start))
 }
 
 
@@ -367,14 +336,89 @@ fn parse_simple_string(ps : &mut ParseState) -> Result<Expr, Error> {
   Ok(ps.add_symbol(s, start))
 }
 
+fn try_parse_keyword_term(ps : &mut ParseState) -> Result<Option<Expr>, Error> {
+  let t = ps.peek()?;
+  let &kp = ps.config.prefix_precedence.get("#keyword").unwrap();
+  let start = ps.peek_marker();
+  let exprs = match t.symbol.as_ref() {
+    "if" => {
+      let if_e = parse_simple_string(ps)?;
+      let cond = pratt_parse(ps, kp)?;
+      ps.accept("then");
+      let then_e = pratt_parse(ps, kp)?;
+      if ps.accept("else") {
+        let else_e = pratt_parse(ps, kp)?;
+        vec![if_e, cond, then_e, else_e]
+      }
+      else {
+        vec![if_e, cond, then_e]
+      }
+    }
+    "while" => {
+      let while_e = parse_simple_string(ps)?;
+      let cond = pratt_parse(ps, kp)?;
+      let body = pratt_parse(ps, kp)?;
+      vec![while_e, cond, body]
+    }
+    "for" => {
+      let for_e = parse_simple_string(ps)?;
+      let cond = pratt_parse(ps, kp)?;
+      let body = pratt_parse(ps, kp)?;
+      vec![for_e, cond, body]
+    }
+    "struct" => {
+      let struct_e = parse_simple_string(ps)?;
+      let name = parse_simple_string(ps)?;
+      let fields = pratt_parse(ps, kp)?;
+      vec![struct_e, name, fields]
+    }
+    "union" => {
+      let union_e = parse_simple_string(ps)?;
+      let name = parse_simple_string(ps)?;
+      let fields = pratt_parse(ps, kp)?;
+      vec![union_e, name, fields]
+    }
+    "cbind" => {
+      let cbind = parse_simple_string(ps)?;
+      let typed_symbol = pratt_parse(ps, kp)?;
+      vec![cbind, typed_symbol]
+    }
+    "fun" => {
+      let fun = parse_simple_string(ps)?;
+      if ps.peek()?.symbol.as_ref() == "(" {
+        // Type definition
+        let type_e = pratt_parse(ps, kp)?;
+        vec![fun, type_e]
+      }
+      else {
+        // Function definition
+        let name = parse_simple_string(ps)?;
+        let args = pratt_parse(ps, kp)?;
+        let body = pratt_parse(ps, kp)?;
+        vec![fun, name, args, body]
+      }
+    }
+    "let" => {
+      let let_e = parse_simple_string(ps)?;
+      let definition = pratt_parse(ps, kp)?;
+      vec![let_e, definition]
+    }
+    _ => return Ok(None),
+  };
+  Ok(Some(ps.add_list(exprs, start)))
+}
+
 fn parse_expression_term(ps : &mut ParseState) -> Result<Expr, Error> {
   let t = ps.peek()?;
-  match t.token_type {
+  match ps.peek()?.token_type {
     Symbol => {
       if ps.config.syntax.contains(&t.symbol) {
         // Parens
         if let Some(close_paren) = ps.config.paren_pairs.get(&t.symbol) {
           let start = ps.peek_marker();
+          if ps.accept("[") {
+            
+          }
           ps.expect_type(Symbol)?;
           if ps.accept(close_paren) {
             Ok(ps.add_list(vec![], start))
@@ -397,9 +441,12 @@ fn parse_expression_term(ps : &mut ParseState) -> Result<Expr, Error> {
         };
         if let Some(b) = bool_val {
           let start = ps.peek_marker();
-          ps.pop_type(TokenType::Symbol);
+          ps.pop_type(TokenType::Symbol)?;
           let b = ExprContent::LiteralBool(b);
           Ok(ps.add_leaf(b, start))
+        }
+        else if let Some(e) = try_parse_keyword_term(ps)? {
+          Ok(e)
         }
         else {
           parse_simple_string(ps)

@@ -352,28 +352,26 @@ impl <'l> TypeChecker<'l> {
   }
 
   fn add_type_definition(&mut self, expr : &Expr) -> Result<(), Error> {
-    if let Some([kind_expr, def_expr]) = expr.list() {
+    if let Some([kind_expr, name_expr, fields_expr]) = expr.list() {
       let kind = match kind_expr.unwrap_symbol()? {
         "union" => TypeKind::Union,
         "struct" => TypeKind::Struct,
         _ => panic!(),
       };
-      if let Some([name_expr, fields_expr]) = def_expr.list() {
-        let name = name_expr.unwrap_symbol()?;
-        if self.find_type_def(name).is_some() {
-          return error(expr, "type with this name already defined");
-        }
-        // TODO: check for duplicates?
-        let mut fields = vec![];
-        for f in fields_expr.sequence_iter(";") {
-          fields.push(self.typed_symbol(f)?);
-        }
-        // TODO: Generics
-        let name = self.cache.get(name);
-        let def = TypeDefinition { name: name.clone(), fields, kind };
-        self.module.types.insert(name, Rc::new(def));
-        return Ok(());
+      let name = name_expr.unwrap_symbol()?;
+      if self.find_type_def(name).is_some() {
+        return error(expr, "type with this name already defined");
       }
+      // TODO: check for duplicates?
+      let mut fields = vec![];
+      for f in fields_expr.sequence_iter(";") {
+        fields.push(self.typed_symbol(f)?);
+      }
+      // TODO: Generics
+      let name = self.cache.get(name);
+      let def = TypeDefinition { name: name.clone(), fields, kind };
+      self.module.types.insert(name, Rc::new(def));
+      return Ok(());
     }
     error(expr, "invalid type definition")
   }
@@ -502,23 +500,28 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         Ok(node(expr, Type::Bool, Content::IntrinsicCall(self.cached(instr), vec!(a, b))))
       }
       ("let", exprs) => {
-        let name = self.cached(exprs[0].unwrap_symbol()?);
-        let v = Box::new(self.to_ast(&exprs[1])?);
-        // The first scope is used for function arguments. The second
-        // is the top level of the function.
-        let c = if self.is_top_level && self.scope_map.len() == 2 {
-          // global variable
-          let def = GlobalDefinition { name: name.clone(), type_tag: v.type_tag.clone(), c_address: None };
-          self.t.add_global(name.clone(), def);
-          Content::VariableInitialise(name, v, VarScope::Global)
+        if let [assignment] = exprs {
+          if let Some([name, value]) = assignment.match_symbol("=") {
+            let name = self.cached(name.unwrap_symbol()?);
+            let v = Box::new(self.to_ast(value)?);
+            // The first scope is used for function arguments. The second
+            // is the top level of the function.
+            let c = if self.is_top_level && self.scope_map.len() == 2 {
+              // global variable
+              let def = GlobalDefinition { name: name.clone(), type_tag: v.type_tag.clone(), c_address: None };
+              self.t.add_global(name.clone(), def);
+              Content::VariableInitialise(name, v, VarScope::Global)
+            }
+            else {
+              // local variable
+              let scoped_name = self.create_scoped_variable_name(name);
+              self.variables.insert(scoped_name.clone(), v.type_tag.clone());
+              Content::VariableInitialise(scoped_name, v, VarScope::Local)
+            };
+            return Ok(node(expr, Type::Void, c));
+          }
         }
-        else {
-          // local variable
-          let scoped_name = self.create_scoped_variable_name(name);
-          self.variables.insert(scoped_name.clone(), v.type_tag.clone());
-          Content::VariableInitialise(scoped_name, v, VarScope::Local)
-        };
-        Ok(node(expr, Type::Void, c))
+        error(expr, "invalid let expression")
       }
       // TODO this is a very stupid approach
       ("quote", [e]) => {
@@ -549,28 +552,28 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         let body = self.to_ast(body_node)?;
         Ok(node(expr, Type::Void, Content::While(Box::new((condition, body)))))
       }
-      ("if", [e]) => {
-        if let Some([cond, body]) = e.list() {
-          let condition = self.to_ast(cond)?;
-          condition.assert_type(Type::Bool)?;
-          if let Some([then_expr, else_expr]) = body.match_symbol("else") {
-            let then_branch = self.to_ast(then_expr)?;
-            let else_branch = self.to_ast(else_expr)?;
-            if then_branch.type_tag != else_branch.type_tag {
-              return error(expr, "if/else branch type mismatch");
-            }
-            let t = then_branch.type_tag.clone();
-            let c = Content::IfThenElse(Box::new((condition, then_branch, else_branch)));
-            Ok(node(expr, t, c))
+      ("if", es) => {
+        let (cond, then_expr, else_expr) = match es {
+          [cond, then_expr] => (cond, then_expr, None),
+          [cond, then_expr, else_expr] => (cond, then_expr, Some(else_expr)),
+          _ => return error(expr, "malformed if expression"),
+        };
+        let condition = self.to_ast(cond)?;
+        condition.assert_type(Type::Bool)?;
+        if let Some(else_expr) = else_expr {
+          let then_branch = self.to_ast(then_expr)?;
+          let else_branch = self.to_ast(else_expr)?;
+          if then_branch.type_tag != else_branch.type_tag {
+            return error(expr, "if/else branch type mismatch");
           }
-          else {
-            let then_branch = self.to_ast(body)?;
-            let c = Content::IfThen(Box::new((condition, then_branch)));
-            Ok(node(expr, Type::Void, c))
-          }
+          let t = then_branch.type_tag.clone();
+          let c = Content::IfThenElse(Box::new((condition, then_branch, else_branch)));
+          Ok(node(expr, t, c))
         }
         else {
-          error(expr, "malformed if expression")
+          let then_branch = self.to_ast(then_expr)?;
+          let c = Content::IfThen(Box::new((condition, then_branch)));
+          Ok(node(expr, Type::Void, c))
         }
       }
       (";", exprs) => {
@@ -615,48 +618,47 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
           error(e, "expected type binding")
         }
       }
-      ("fun", [e]) => {
-        if let Some([sig, function_body]) = e.list() {
-          if let Some([name, args]) = sig.match_symbol("#()") {
-            let name = self.cached(name.unwrap_symbol()?);
-            let mut arg_names = vec!();
-            let mut arg_types = vec!();
-            for arg in args.sequence_iter(",") {
-              let (name, type_tag) = self.t.typed_symbol(arg)?;
-              if type_tag == Type::Void {
-                return error(expr, "functions args cannot be void");
-              }
-              arg_names.push(name);
-              arg_types.push(type_tag);
+      ("fun", es) => {
+        if let [name, sig, function_body] = es {
+          let name = self.cached(name.unwrap_symbol()?);
+          let mut arg_names = vec!();
+          let mut arg_types = vec!();
+          // TODO: sig might contain a "=>" return type operator
+          for arg in sig.sequence_iter(",") {
+            let (name, type_tag) = self.t.typed_symbol(arg)?;
+            if type_tag == Type::Void {
+              return error(expr, "functions args cannot be void");
             }
-            let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
-            let mut function_checker = FunctionChecker::new(self.t, false, args);
-            let body = function_checker.to_ast(function_body)?;
-            if self.t.find_function(name.as_ref()).is_some() {
-              return error(expr, "function with that name already defined");
-            }
-            let signature = Rc::new(FunctionSignature {
-              return_type: body.type_tag.clone(),
-              args: arg_types,
-            });
-            let def = FunctionDefinition {
-              name: name.clone(),
-              args: arg_names,
-              signature,
-              implementation: FunctionImplementation::Normal(body),
-            };
-            self.t.add_function(name.clone(), def);
-            return Ok(node(expr, Type::Void, Content::FunctionDefinition(name)))
+            arg_names.push(name);
+            arg_types.push(type_tag);
           }
+          let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
+          let mut function_checker = FunctionChecker::new(self.t, false, args);
+          let body = function_checker.to_ast(function_body)?;
+          if self.t.find_function(name.as_ref()).is_some() {
+            return error(expr, "function with that name already defined");
+          }
+          let signature = Rc::new(FunctionSignature {
+            return_type: body.type_tag.clone(),
+            args: arg_types,
+          });
+          let def = FunctionDefinition {
+            name: name.clone(),
+            args: arg_names,
+            signature,
+            implementation: FunctionImplementation::Normal(body),
+          };
+          self.t.add_function(name.clone(), def);
+          return Ok(node(expr, Type::Void, Content::FunctionDefinition(name)))
         }
-        error(expr, format!("invalid function definition {}", e))
+        error(expr, format!("invalid function definition {}", expr))
       }
-      ("union", [def_expr]) => {
-        let name = self.cached(def_expr.unwrap_head()?);
+      ("union", [name, _]) => {
+        let name = self.cached(name.unwrap_symbol()?);
         Ok(node(expr, Type::Void, Content::TypeDefinition(name)))
       }
-      ("struct", [def_expr]) => {
-        let name = self.cached(def_expr.unwrap_head()?);
+      ("struct", [name, _]) => {
+        let name = self.cached(name.unwrap_symbol()?);
         Ok(node(expr, Type::Void, Content::TypeDefinition(name)))
       }
       ("type_instantiate", exprs) => {
