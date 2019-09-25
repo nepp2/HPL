@@ -12,8 +12,6 @@ struct ParseConfig {
   expression_separators : HashMap<RefStr, i32>,
   prefix_precedence : HashMap<RefStr, i32>,
   infix_precedence : HashMap<RefStr, i32>,
-  invisible_operators : HashSet<RefStr>,
-  syntax : HashSet<RefStr>,
 }
 
 /// Precedence level
@@ -26,10 +24,6 @@ fn parse_config() -> ParseConfig {
     expression_separators: HashMap::new(),
     prefix_precedence: HashMap::new(),
     infix_precedence: HashMap::new(),
-    invisible_operators:
-      ["{", "then"]
-      .iter().map(|&s| s.into()).collect(),
-    syntax: HashSet::new(),
   };
   let paren_pairs = vec![
     ("(", ")"),
@@ -68,13 +62,6 @@ fn parse_config() -> ParseConfig {
       c.prefix_precedence.insert((*p).into(), precedence);
     }
   }
-  c.syntax.extend(
-    c.paren_pairs.keys()
-    .chain(c.paren_pairs.values())
-    .chain(c.expression_separators.keys())
-    .chain(c.infix_precedence.keys())
-    .chain(c.prefix_precedence.keys())
-    .cloned());
   c
 }
 
@@ -185,10 +172,10 @@ impl <'l> ParseState<'l> {
     self.add_expr(content, loc)
   }
 
-  fn add_list(&mut self, list : Vec<Expr>, list_type : char, start : TextMarker) -> Expr
+  fn add_list(&mut self, list : Vec<Expr>, start : TextMarker) -> Expr
   {
     let loc = self.loc(start);
-    let content = ExprContent::list(list, list_type);
+    let content = ExprContent::list(list);
     self.add_expr(content, loc)
   }
 
@@ -236,13 +223,11 @@ fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
         if let Some(close_paren) = ps.config.paren_pairs.get(&t.symbol) {
           let paren_start = expr.loc.start;
           let mut list = vec![];
-          if !ps.config.invisible_operators.contains(&t.symbol) {
-            let operator = format!("#{}{}", t.symbol, close_paren);
-            list.push(ps.add_symbol(operator, paren_start));
-          }
+          let operator = format!("#{}{}", t.symbol, close_paren);
+          list.push(ps.add_symbol(operator, paren_start));
           list.push(expr);
           list.push(pratt_parse(ps, next_precedence)?);
-          expr = ps.add_list(list, '(', paren_start);
+          expr = ps.add_list(list, paren_start);
         }
         // Normal infix
         else {
@@ -269,7 +254,7 @@ fn parse_prefix(ps : &mut ParseState) -> Result<Expr, Error> {
     ps.expect_type(Symbol)?;
     let operator = ps.add_symbol(op_string, start);
     let expr = pratt_parse(ps, *new_precedence)?;
-    Ok(ps.add_list(vec![operator, expr], '(', start))
+    Ok(ps.add_list(vec![operator, expr], start))
   }
   // else assume it's an expression term
   else {
@@ -280,22 +265,31 @@ fn parse_prefix(ps : &mut ParseState) -> Result<Expr, Error> {
 fn parse_infix(ps : &mut ParseState, left_expr : Expr, precedence : i32) -> Result<Expr, Error> {
   let infix_start = left_expr.loc.start;
   let mut list = vec![];
-  let t = ps.peek()?;
-  let invisible = ps.config.invisible_operators.contains(&t.symbol);
   let operator = parse_simple_string(ps)?;
-  if !invisible {
-    list.push(operator);
-  }
+  list.push(operator);
   list.push(left_expr);
   list.push(pratt_parse(ps, precedence)?);
-  Ok(ps.add_list(list, '(', infix_start))
+  Ok(ps.add_list(list, infix_start))
 }
 
-fn parse_separator(ps : &mut ParseState, left_expr : Expr, list_type : char, separator : String, precedence : i32) -> Result<Expr, Error> {
+fn parse_list(ps : &mut ParseState, container : &str) -> Result<Expr, Error> {
+  let mut e = parse_everything(ps)?;
+  if e.list().is_some() {
+    if let Some(head) = e.try_head() {
+      if ps.config.expression_separators.contains_key(head) {
+        match container {
+          "(" => more defeat // I CAN'T EASILY TWEAK LIST CONTENTS BECAUSE IT'S A CUSTOM TYPE ;_;
+        }
+      }
+    }
+  }
+  panic!()
+}
+
+fn parse_separator(ps : &mut ParseState, left_expr : Expr, separator : String, precedence : i32) -> Result<Expr, Error> {
   let separator_start = left_expr.loc.start;
   let is_semicolon = separator.as_str() == ";";
-  let separator_expr = ps.add_symbol(separator.as_str(), ps.peek_marker());
-  let mut args = vec!(separator_expr, left_expr);
+  let mut args = vec!(left_expr);
   while ps.has_tokens() {
     let t = ps.peek()?;
     if ps.config.paren_terminators.contains(&t.symbol) {
@@ -311,7 +305,7 @@ fn parse_separator(ps : &mut ParseState, left_expr : Expr, list_type : char, sep
     }
     args.push(pratt_parse(ps, precedence)?);
   }
-  Ok(ps.add_list(args, list_type, separator_start))
+  Ok(ps.add_list(args, separator_start))
 }
 
 
@@ -412,28 +406,22 @@ fn parse_expression_term(ps : &mut ParseState) -> Result<Expr, Error> {
   let t = ps.peek()?;
   match ps.peek()?.token_type {
     Symbol => {
-      if ps.config.syntax.contains(&t.symbol) {
+      if let Some(close_paren) = ps.config.paren_pairs.get(&t.symbol) {
         // Parens
-        if let Some(close_paren) = ps.config.paren_pairs.get(&t.symbol) {
-          let start = ps.peek_marker();
-          if ps.accept("[") {
-            
-          }
-          ps.expect_type(Symbol)?;
-          if ps.accept(close_paren) {
-            Ok(ps.add_list(vec![], start))
-          }
-          else {
-            let e = parse_everything(ps)?;
-            ps.expect(close_paren)?;
-            Ok(e)
-          }
+        let start = ps.peek_marker();
+        let paren_type = t.symbol.clone();
+        ps.expect_type(Symbol)?;
+        if ps.accept(close_paren) {
+          Ok(ps.add_list(vec![], start))
         }
         else {
-          parse_keyword_expression(ps)
+          let e = parse_list(ps, paren_type.as_ref())?;
+          ps.expect(close_paren)?;
+          Ok(e)
         }
       }
       else {
+        // bools
         let bool_val = match t.symbol.as_ref() {
           "true" => Some(true),
           "false" => Some(false),
@@ -445,6 +433,7 @@ fn parse_expression_term(ps : &mut ParseState) -> Result<Expr, Error> {
           let b = ExprContent::LiteralBool(b);
           Ok(ps.add_leaf(b, start))
         }
+          // keyword terms (if, while, etc)
         else if let Some(e) = try_parse_keyword_term(ps)? {
           Ok(e)
         }

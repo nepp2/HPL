@@ -14,7 +14,7 @@ pub type RefStr = Rc<str>;
 #[repr(C, u8)]
 #[derive(Debug)]
 pub enum ExprContent {
-  List(SArray<Expr>, char),
+  List(SArray<Expr>),
   Symbol(SStr),
   LiteralString(SStr),
   LiteralFloat(f64),
@@ -34,7 +34,7 @@ impl  Clone for ExprContent {
     use self::ExprContent::*;
     match self {
       Symbol(s) => Symbol(clone(*s)),
-      List(l, c) => List(l.clone(), *c),
+      List(l) => List(l.clone()),
       LiteralString(s) => LiteralString(clone(*s)),
       LiteralFloat(f) => LiteralFloat(*f),
       LiteralInt(i) => LiteralInt(*i),
@@ -56,8 +56,8 @@ impl ExprContent {
     content
   }
 
-  pub fn list(list : Vec<Expr>, c : char) -> ExprContent {
-    ExprContent::List(SArray::new(list), c)
+  pub fn list(list : Vec<Expr>) -> ExprContent {
+    ExprContent::List(SArray::new(list))
   }
 }
 
@@ -132,14 +132,14 @@ impl Expr {
 
   pub fn list(&self) -> Option<&[Expr]> {
     match &self.content {
-      ExprContent::List(list, _) => Some(list.as_slice()),
+      ExprContent::List(list) => Some(list.as_slice()),
       _ => None
     }
   }
 
   pub fn into_vec(mut self) -> Vec<Expr> {
     match &mut self.content {
-      ExprContent::List(list, _) =>{
+      ExprContent::List(list) =>{
         list.empty_into_vec()
       }
       _ => vec![],
@@ -254,15 +254,10 @@ impl fmt::Display for Expr {
     fn display_inner(e: &Expr, f: &mut fmt::Formatter<'_>, indent : usize) -> fmt::Result {
       match &e.content {
         ExprContent::Symbol(s) => write!(f, "{}", s.as_str()),
-        ExprContent::List(l, c) => {
+        ExprContent::List(l) => {
           let l = l.as_slice();
-          let end_c = match c {
-            '{' => '}',
-            '[' => ']',
-            _ => ')',
-          };
           if let Some(head) = l.first() {
-            write!(f, "{}", c)?;
+            write!(f, "(")?;
             display_inner(head, f, indent)?;
             match head.try_symbol() {
               Some("block") | Some("{") | Some(";") => {
@@ -280,10 +275,10 @@ impl fmt::Display for Expr {
                 }
               }
             }
-            write!(f, "{}", end_c)?;
+            write!(f, ")")?;
           }
           else {
-            write!(f, "{}{}", c, end_c)?;
+            write!(f, "()")?;
           }
           return Ok(());
         }
