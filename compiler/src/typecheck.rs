@@ -317,17 +317,19 @@ impl <'l> TypeChecker<'l> {
           None => (e, None),
           _ => return error(expr, "invalid function type signature"),
         };
-        let args =
-          args.sequence_iter(",")
-          .map(|e| {
-            let (_, t) = self.typed_symbol(e)?;
-            Ok(t)
-          })
-          .collect::<Result<Vec<Type>, Error>>()?;
-        let return_type = 
-          if let Some(t) = return_type { self.to_type(t)? }
-          else { Type::Void };
-        return Ok(Type::Fun(Rc::new(FunctionSignature{ args, return_type})));
+        if let Some(args) = args.list() {
+          let args =
+            args.iter()
+            .map(|e| {
+              let (_, t) = self.typed_symbol(e)?;
+              Ok(t)
+            })
+            .collect::<Result<Vec<Type>, Error>>()?;
+          let return_type = 
+            if let Some(t) = return_type { self.to_type(t)? }
+            else { Type::Void };
+          return Ok(Type::Fun(Rc::new(FunctionSignature{ args, return_type})));
+        }
       }
       return error(expr, "invalid function type signature");
     }
@@ -364,14 +366,16 @@ impl <'l> TypeChecker<'l> {
       }
       // TODO: check for duplicates?
       let mut fields = vec![];
-      for f in fields_expr.sequence_iter(";") {
-        fields.push(self.typed_symbol(f)?);
+      if let Some(field_list) = fields_expr.list() {
+        for f in field_list {
+          fields.push(self.typed_symbol(f)?);
+        }
+        // TODO: Generics
+        let name = self.cache.get(name);
+        let def = TypeDefinition { name: name.clone(), fields, kind };
+        self.module.types.insert(name, Rc::new(def));
+        return Ok(());
       }
-      // TODO: Generics
-      let name = self.cache.get(name);
-      let def = TypeDefinition { name: name.clone(), fields, kind };
-      self.module.types.insert(name, Rc::new(def));
-      return Ok(());
     }
     error(expr, "invalid type definition")
   }
@@ -454,7 +458,54 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
     error(node.loc, format!("expected type {:?}, found {:?}", t, node.type_tag))
   }
 
-  fn construct_to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
+  fn otherwise(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
+    let list = expr.list().unwrap();
+    if list.len() == 0 {
+
+    }
+
+    let args =
+      args.iter().map(|e| self.to_ast(e))
+      .collect::<Result<Vec<TypedNode>, Error>>()?;
+    let op_tag = match_intrinsic(operator, args.as_slice());
+    if let Some(op_tag) = op_tag {
+      Ok(node(expr, op_tag, Content::IntrinsicCall(self.cached(operator), args)))
+    }
+    else {
+      error(expr, format!("unsupported expression: {}", expr))
+    }
+
+    if let Some(args) = args.list() {
+      let args =
+        args.iter().map(|e| self.to_ast(e))
+        .collect::<Result<Vec<TypedNode>, Error>>()?;
+      let function_value = self.to_ast(function_expr)?;
+      if let Type::Fun(sig) = &function_value.type_tag {
+        if sig.args.len() != args.len() {
+          return error(expr, "incorrect number of arguments passed");
+        }
+        let args =
+          args.into_iter().zip(sig.args.iter())
+          .map(|(a, e)| self.coerce_to_type(a, e))
+          .collect::<Result<Vec<TypedNode>, Error>>()?;
+        let return_type = sig.return_type.clone();
+        let content = Content::FunctionCall(Box::new(function_value), args);
+        return Ok(node(expr, return_type, content));
+      }
+    }
+    error(function_expr, "value is not a function")
+  }
+
+  fn brace_list_to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
+
+  }
+
+  fn bracket_list_to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
+
+  }
+
+  fn normal_list_to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
+    
     let instr = expr.unwrap_head()?;
     let children = expr.tail();
     match (instr, children) {
@@ -462,21 +513,23 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         return Ok(node(expr, Type::Void, Content::Break));
       }
       ("#()", [function_expr, args]) => {
-        let args =
-          args.sequence_iter(",").map(|e| self.to_ast(e))
-          .collect::<Result<Vec<TypedNode>, Error>>()?;
-        let function_value = self.to_ast(function_expr)?;
-        if let Type::Fun(sig) = &function_value.type_tag {
-          if sig.args.len() != args.len() {
-            return error(expr, "incorrect number of arguments passed");
-          }
+        if let Some(args) = args.list() {
           let args =
-            args.into_iter().zip(sig.args.iter())
-            .map(|(a, e)| self.coerce_to_type(a, e))
+            args.iter().map(|e| self.to_ast(e))
             .collect::<Result<Vec<TypedNode>, Error>>()?;
-          let return_type = sig.return_type.clone();
-          let content = Content::FunctionCall(Box::new(function_value), args);
-          return Ok(node(expr, return_type, content));
+          let function_value = self.to_ast(function_expr)?;
+          if let Type::Fun(sig) = &function_value.type_tag {
+            if sig.args.len() != args.len() {
+              return error(expr, "incorrect number of arguments passed");
+            }
+            let args =
+              args.into_iter().zip(sig.args.iter())
+              .map(|(a, e)| self.coerce_to_type(a, e))
+              .collect::<Result<Vec<TypedNode>, Error>>()?;
+            let return_type = sig.return_type.clone();
+            let content = Content::FunctionCall(Box::new(function_value), args);
+            return Ok(node(expr, return_type, content));
+          }
         }
         error(function_expr, "value is not a function")
       }
@@ -624,32 +677,34 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
           let mut arg_names = vec!();
           let mut arg_types = vec!();
           // TODO: sig might contain a "=>" return type operator
-          for arg in sig.sequence_iter(",") {
-            let (name, type_tag) = self.t.typed_symbol(arg)?;
-            if type_tag == Type::Void {
-              return error(expr, "functions args cannot be void");
+          if let Some(args) = sig.list() {
+            for arg in args {
+              let (name, type_tag) = self.t.typed_symbol(arg)?;
+              if type_tag == Type::Void {
+                return error(expr, "functions args cannot be void");
+              }
+              arg_names.push(name);
+              arg_types.push(type_tag);
             }
-            arg_names.push(name);
-            arg_types.push(type_tag);
+            let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
+            let mut function_checker = FunctionChecker::new(self.t, false, args);
+            let body = function_checker.to_ast(function_body)?;
+            if self.t.find_function(name.as_ref()).is_some() {
+              return error(expr, "function with that name already defined");
+            }
+            let signature = Rc::new(FunctionSignature {
+              return_type: body.type_tag.clone(),
+              args: arg_types,
+            });
+            let def = FunctionDefinition {
+              name: name.clone(),
+              args: arg_names,
+              signature,
+              implementation: FunctionImplementation::Normal(body),
+            };
+            self.t.add_function(name.clone(), def);
+            return Ok(node(expr, Type::Void, Content::FunctionDefinition(name)))
           }
-          let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
-          let mut function_checker = FunctionChecker::new(self.t, false, args);
-          let body = function_checker.to_ast(function_body)?;
-          if self.t.find_function(name.as_ref()).is_some() {
-            return error(expr, "function with that name already defined");
-          }
-          let signature = Rc::new(FunctionSignature {
-            return_type: body.type_tag.clone(),
-            args: arg_types,
-          });
-          let def = FunctionDefinition {
-            name: name.clone(),
-            args: arg_names,
-            signature,
-            implementation: FunctionImplementation::Normal(body),
-          };
-          self.t.add_function(name.clone(), def);
-          return Ok(node(expr, Type::Void, Content::FunctionDefinition(name)))
         }
         error(expr, format!("invalid function definition {}", expr))
       }
@@ -755,25 +810,16 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         }
         Ok(node(expr, inner_type, Content::Index(Box::new((array, index)))))
       }
-      (operator, args) => {
-        let args =
-          args.iter().map(|e| self.to_ast(e))
-          .collect::<Result<Vec<TypedNode>, Error>>()?;
-        let op_tag = match_intrinsic(operator, args.as_slice());
-        if let Some(op_tag) = op_tag {
-          Ok(node(expr, op_tag, Content::IntrinsicCall(self.cached(operator), args)))
-        }
-        else {
-          error(expr, format!("unsupported expression: {}", expr))
-        }
+      (_, _) => {
+        self.function_call(expr)
       }
     }
   }
 
   pub fn to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
     match &expr.content {
-      ExprContent::List(_) => {
-        return self.construct_to_ast(expr);
+      ExprContent::List(_, _) => {
+        return self.list_to_ast(expr);
       }
       ExprContent::Symbol(s) => {
         // this is just a normal symbol

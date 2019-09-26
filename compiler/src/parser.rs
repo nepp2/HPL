@@ -1,5 +1,5 @@
 use crate::lexer::{Token, TokenType};
-use crate::expr::{StringCache, Expr, ExprContent, RefStr};
+use crate::expr::{StringCache, Expr, ExprContent, RefStr, ListType};
 use crate::error::{Error, ErrorContent, TextLocation, TextMarker, error};
 use std::collections::{HashSet, HashMap};
 use std::str::FromStr;
@@ -172,10 +172,10 @@ impl <'l> ParseState<'l> {
     self.add_expr(content, loc)
   }
 
-  fn add_list(&mut self, list : Vec<Expr>, start : TextMarker) -> Expr
+  fn add_list(&mut self, list : Vec<Expr>, list_type : ListType, start : TextMarker) -> Expr
   {
     let loc = self.loc(start);
-    let content = ExprContent::list(list);
+    let content = ExprContent::list(list, list_type);
     self.add_expr(content, loc)
   }
 
@@ -220,14 +220,12 @@ fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
     else if let Some(&next_precedence) = ps.config.infix_precedence.get(&t.symbol) {
       if next_precedence > precedence {
         // Parens
-        if let Some(close_paren) = ps.config.paren_pairs.get(&t.symbol) {
+        if ps.config.paren_pairs.contains_key(&t.symbol) {
           let paren_start = expr.loc.start;
           let mut list = vec![];
-          let operator = format!("#{}{}", t.symbol, close_paren);
-          list.push(ps.add_symbol(operator, paren_start));
           list.push(expr);
           list.push(pratt_parse(ps, next_precedence)?);
-          expr = ps.add_list(list, paren_start);
+          expr = ps.add_list(list, ListType::Normal, paren_start);
         }
         // Normal infix
         else {
@@ -254,7 +252,7 @@ fn parse_prefix(ps : &mut ParseState) -> Result<Expr, Error> {
     ps.expect_type(Symbol)?;
     let operator = ps.add_symbol(op_string, start);
     let expr = pratt_parse(ps, *new_precedence)?;
-    Ok(ps.add_list(vec![operator, expr], start))
+    Ok(ps.add_list(vec![operator, expr], ListType::Normal, start))
   }
   // else assume it's an expression term
   else {
@@ -269,21 +267,19 @@ fn parse_infix(ps : &mut ParseState, left_expr : Expr, precedence : i32) -> Resu
   list.push(operator);
   list.push(left_expr);
   list.push(pratt_parse(ps, precedence)?);
-  Ok(ps.add_list(list, infix_start))
+  Ok(ps.add_list(list, ListType::Normal, infix_start))
 }
 
-fn parse_list(ps : &mut ParseState, container : &str) -> Result<Expr, Error> {
+fn parse_list(ps : &mut ParseState, list_type : ListType) -> Result<Expr, Error> {
+  let start = ps.peek_marker();
   let mut e = parse_everything(ps)?;
-  if e.list().is_some() {
-    if let Some(head) = e.try_head() {
-      if ps.config.expression_separators.contains_key(head) {
-        match container {
-          "(" => more defeat // I CAN'T EASILY TWEAK LIST CONTENTS BECAUSE IT'S A CUSTOM TYPE ;_;
-        }
-      }
+  if let ExprContent::List(_, inner_list_type) = &mut e.content {
+    if *inner_list_type == ListType::Uncontained {
+      *inner_list_type = list_type;
+      return Ok(e);
     }
   }
-  panic!()
+  Ok(ps.add_list(vec![e], list_type, start))
 }
 
 fn parse_separator(ps : &mut ParseState, left_expr : Expr, separator : String, precedence : i32) -> Result<Expr, Error> {
@@ -305,7 +301,7 @@ fn parse_separator(ps : &mut ParseState, left_expr : Expr, separator : String, p
     }
     args.push(pratt_parse(ps, precedence)?);
   }
-  Ok(ps.add_list(args, separator_start))
+  Ok(ps.add_list(args, ListType::Uncontained, separator_start))
 }
 
 
@@ -399,7 +395,13 @@ fn try_parse_keyword_term(ps : &mut ParseState) -> Result<Option<Expr>, Error> {
     }
     _ => return Ok(None),
   };
-  Ok(Some(ps.add_list(exprs, start)))
+  Ok(Some(ps.add_list(exprs, ListType::Normal, start)))
+}
+
+fn str_to_list_type(s : &str) -> ListType {
+  match s {
+    "(" => ListType::Normal, "[" => ListType::Bracket, "{" => ListType::Brace, _ => panic!(),
+  }
 }
 
 fn parse_expression_term(ps : &mut ParseState) -> Result<Expr, Error> {
@@ -409,13 +411,13 @@ fn parse_expression_term(ps : &mut ParseState) -> Result<Expr, Error> {
       if let Some(close_paren) = ps.config.paren_pairs.get(&t.symbol) {
         // Parens
         let start = ps.peek_marker();
-        let paren_type = t.symbol.clone();
+        let list_type = str_to_list_type(t.symbol.as_ref());
         ps.expect_type(Symbol)?;
         if ps.accept(close_paren) {
-          Ok(ps.add_list(vec![], start))
+          Ok(ps.add_list(vec![], ListType::Normal, start))
         }
         else {
-          let e = parse_list(ps, paren_type.as_ref())?;
+          let e = parse_list(ps, list_type)?;
           ps.expect(close_paren)?;
           Ok(e)
         }
@@ -466,7 +468,7 @@ fn parse_expression_term(ps : &mut ParseState) -> Result<Expr, Error> {
 pub fn parse(tokens : Vec<Token>, symbols : &StringCache) -> Result<Expr, Error> {
   let config = parse_config();
   let mut ps = ParseState::new(tokens, &config, symbols);
-  let e = parse_everything(&mut ps)?;
+  let e = parse_list(&mut ps, ListType::Brace)?;
   if ps.has_tokens() {
     let t = ps.peek()?;
     return error(t.loc, format!("Unexpected token '{}' of type '{:?}'", t.symbol, t.token_type));
@@ -483,7 +485,7 @@ pub fn repl_parse(tokens : Vec<Token>, symbols : &mut StringCache) -> Result<Rep
   use ReplParseResult::*;
   let config = parse_config();
   let mut ps = ParseState::new(tokens, &config, symbols);
-  match parse_everything(&mut ps) {
+  match parse_list(&mut ps, ListType::Brace) {
     Ok(e) => {
       return Ok(Complete(e));
     }

@@ -3,7 +3,6 @@ use std::fmt;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::iter::Iterator;
 
 use crate::error::{Error, TextLocation, error_raw };
 use crate::c_interface::SStr;
@@ -11,10 +10,16 @@ use crate::c_interface::SStr;
 /// An immutable, reference counted string
 pub type RefStr = Rc<str>;
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ListType {
+  Normal = 0, Brace = 1, Bracket = 2, Uncontained = 3
+}
+
 #[repr(C, u8)]
 #[derive(Debug)]
 pub enum ExprContent {
-  List(SArray<Expr>),
+  List(SArray<Expr>, ListType),
   Symbol(SStr),
   LiteralString(SStr),
   LiteralFloat(f64),
@@ -34,7 +39,7 @@ impl  Clone for ExprContent {
     use self::ExprContent::*;
     match self {
       Symbol(s) => Symbol(clone(*s)),
-      List(l) => List(l.clone()),
+      List(l, pt) => List(l.clone(), *pt),
       LiteralString(s) => LiteralString(clone(*s)),
       LiteralFloat(f) => LiteralFloat(*f),
       LiteralInt(i) => LiteralInt(*i),
@@ -56,8 +61,8 @@ impl ExprContent {
     content
   }
 
-  pub fn list(list : Vec<Expr>) -> ExprContent {
-    ExprContent::List(SArray::new(list))
+  pub fn list(list : Vec<Expr>, list_type : ListType) -> ExprContent {
+    ExprContent::List(SArray::new(list), list_type)
   }
 }
 
@@ -132,14 +137,14 @@ impl Expr {
 
   pub fn list(&self) -> Option<&[Expr]> {
     match &self.content {
-      ExprContent::List(list) => Some(list.as_slice()),
+      ExprContent::List(list, _) => Some(list.as_slice()),
       _ => None
     }
   }
 
   pub fn into_vec(mut self) -> Vec<Expr> {
     match &mut self.content {
-      ExprContent::List(list) =>{
+      ExprContent::List(list, _) =>{
         list.empty_into_vec()
       }
       _ => vec![],
@@ -179,55 +184,11 @@ impl Expr {
         error_raw(self, format!("expected a symbol, found {:?}", self.content)))
   }
 
-  /// TODO: better documentation
-  /// Iterator over either just this expression, or the expressions masked behind
-  /// the seperator symbol provided, if it is found.
-  /// e.g.
-  ///   * (";" 1 2) yields [1, 2]
-  ///   * 1 yields [1]
-  pub fn sequence_iter<'e>(&'e self, separator : &str) -> impl Iterator<Item=&'e Expr> {
-    if self.try_head() == Some(separator) {
-      return IterVariant::A(self.tail().iter())
-    }
-    IterVariant::B(std::iter::once(self))
-  }
-
-  // TODO REMOVE
-  // pub fn match_symbol<'e>(es : &'e [Expr], s : &str) -> Option<&'e [Expr]> {
-  //   if let Some(head) = es.first().and_then(|e| e.try_symbol()) {
-  //     if s == head {
-  //       return Some(&es[1..]);
-  //     }
-  //   }
-  //   None
-  // }
   pub fn match_symbol<'e>(&'e self, s : &str) -> Option<&'e [Expr]> {
     if self.try_head() == Some(s) {
       return Some(self.tail());
     }
     None
-  }
-}
-
-enum IterVariant<'e, A, B>
-  where A : Iterator<Item=&'e Expr>,
-    B : Iterator<Item=&'e Expr>
-{
-  A(A),
-  B(B),
-}
-
-impl <'e, A, B> Iterator for IterVariant<'e, A, B>
-  where A : Iterator<Item=&'e Expr>,
-    B : Iterator<Item=&'e Expr>
-{
-  type Item = &'e Expr;
-
-  fn next(&mut self) -> Option<&'e Expr> {
-    match self {
-      IterVariant::A(i) => i.next(),
-      IterVariant::B(i) => i.next(),
-    }
   }
 }
 
@@ -254,32 +215,30 @@ impl fmt::Display for Expr {
     fn display_inner(e: &Expr, f: &mut fmt::Formatter<'_>, indent : usize) -> fmt::Result {
       match &e.content {
         ExprContent::Symbol(s) => write!(f, "{}", s.as_str()),
-        ExprContent::List(l) => {
+        ExprContent::List(l, list_type) => {
           let l = l.as_slice();
-          if let Some(head) = l.first() {
-            write!(f, "(")?;
-            display_inner(head, f, indent)?;
-            match head.try_symbol() {
-              Some("block") | Some("{") | Some(";") => {
-                let indent = indent + 2;
-                for c in &l[1..] {
-                  writeln!(f)?;
-                  write!(f, "{:indent$}", "", indent=indent)?;
-                  display_inner(c, f, indent)?;
-                }
-              }
-              _ => {
-                for c in &l[1..] {
-                  write!(f, " ")?;
-                  display_inner(c, f, indent)?;
-                }
-              }
+          let (start_paren, end_paren) = match list_type {
+            ListType::Normal | ListType::Uncontained => ("(", ")"),
+            ListType::Brace => ("{", "}"),
+            ListType::Bracket => ("[", "]"),
+          };
+          write!(f, "{}", start_paren)?;
+          if *list_type == ListType::Brace {
+            let indent = indent + 2;
+            for c in l {
+              writeln!(f)?;
+              write!(f, "{:indent$}", "", indent=indent)?;
+              display_inner(c, f, indent)?;
             }
-            write!(f, ")")?;
           }
-          else {
-            write!(f, "()")?;
+          else if l.len() > 0 {
+            display_inner(&l[0], f, indent)?;
+            for c in &l[1..] {
+              write!(f, " ")?;
+              display_inner(c, f, indent)?;
+            }
           }
+          write!(f, "{}", end_paren)?;
           return Ok(());
         }
         ExprContent::LiteralString(s) => write!(f, "{}", s.as_str()),
