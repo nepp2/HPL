@@ -1,5 +1,5 @@
 use crate::lexer::{Token, TokenType};
-use crate::expr::{StringCache, Expr, ExprContent, RefStr, ListType};
+use crate::expr::{StringCache, Expr, ExprContent, RefStr};
 use crate::error::{Error, ErrorContent, TextLocation, TextMarker, error};
 use std::collections::{HashSet, HashMap};
 use std::str::FromStr;

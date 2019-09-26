@@ -4,22 +4,16 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashSet;
 
-use crate::error::{Error, TextLocation, error_raw };
+use crate::error::{Error, TextLocation, error };
 use crate::c_interface::SStr;
 
 /// An immutable, reference counted string
 pub type RefStr = Rc<str>;
 
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ListType {
-  Normal = 0, Brace = 1, Bracket = 2, Uncontained = 3
-}
-
 #[repr(C, u8)]
 #[derive(Debug)]
 pub enum ExprContent {
-  List(SArray<Expr>, ListType),
+  List(SStr, SArray<Expr>),
   Symbol(SStr),
   LiteralString(SStr),
   LiteralFloat(f64),
@@ -28,7 +22,7 @@ pub enum ExprContent {
   LiteralUnit,
 }
 
-impl  Clone for ExprContent {
+impl Clone for ExprContent {
   fn clone(&self) -> Self {
     fn clone(s : SStr) -> SStr {
       let v : String = s.as_str().into();
@@ -38,8 +32,8 @@ impl  Clone for ExprContent {
     }
     use self::ExprContent::*;
     match self {
+      List(s, children) => List(clone(*s), children.clone()),
       Symbol(s) => Symbol(clone(*s)),
-      List(l, pt) => List(l.clone(), *pt),
       LiteralString(s) => LiteralString(clone(*s)),
       LiteralFloat(f) => LiteralFloat(*f),
       LiteralInt(i) => LiteralInt(*i),
@@ -60,9 +54,10 @@ impl ExprContent {
     std::mem::forget(s);
     content
   }
-
-  pub fn list(list : Vec<Expr>, list_type : ListType) -> ExprContent {
-    ExprContent::List(SArray::new(list), list_type)
+  pub fn list(s : String, children : Vec<Expr>) -> ExprContent {
+    let content = ExprContent::List(SStr::from_str(s.as_str()), SArray::new(children));
+    std::mem::forget(s);
+    content
   }
 }
 
@@ -73,26 +68,10 @@ pub struct SArray<T> {
 }
 
 impl <T> SArray<T> {
-  pub fn new(mut v : Vec<T>) -> SArray<T> {
+  fn new(mut v : Vec<T>) -> SArray<T> {
     let a = SArray { len: v.len() as u64, data: v.as_mut_ptr() };
     std::mem::forget(v);
     a
-  }
-
-  pub fn empty_into_vec(&mut self) -> Vec<T> {
-    // TODO: is this dodgy? this will frequently claim that the capacity 
-    // is smaller than it really is.
-    if self.len > 0 {
-      let v = unsafe {
-        Vec::from_raw_parts(self.data, self.len as usize, self.len as usize)
-      };
-      self.data = 0 as *mut T;
-      self.len = 0;
-      v
-    }
-    else {
-      vec![]
-    }
   }
 
   pub fn as_slice(&self) -> &[T] {
@@ -108,7 +87,9 @@ impl <T : fmt::Debug> fmt::Debug for SArray<T> {
 
 impl <T> Drop for SArray<T> {
   fn drop(&mut self) {
-    self.empty_into_vec();
+    unsafe {
+      Vec::from_raw_parts(self.data, self.len as usize, self.len as usize)
+    };
   }
 }
 
@@ -134,62 +115,6 @@ impl Expr {
   pub fn new(content : ExprContent, loc : TextLocation) -> Expr {
     Expr { loc, content }
   }
-
-  pub fn list(&self) -> Option<&[Expr]> {
-    match &self.content {
-      ExprContent::List(list, _) => Some(list.as_slice()),
-      _ => None
-    }
-  }
-
-  pub fn into_vec(mut self) -> Vec<Expr> {
-    match &mut self.content {
-      ExprContent::List(list, _) =>{
-        list.empty_into_vec()
-      }
-      _ => vec![],
-    }
-  }
-
-  pub fn try_head(&self) -> Option<&str> {
-    self.list()?.first()?.try_symbol()
-  }
-
-  pub fn unwrap_head(&self) -> Result<&str, Error> {
-    self.try_symbol().or_else(|| {
-      self.list()?.first()?.try_symbol()
-    })
-    .ok_or_else(|| error_raw(self, "expected symbol"))
-  }
-
-  pub fn tail(&self) -> &[Expr] {
-    if self.try_symbol().is_some() {
-      &[]
-    }
-    else {
-      &self.list().unwrap()[1..]
-    }
-  }
-
-  pub fn try_symbol(&self) -> Option<&str> {
-    match &self.content {
-      ExprContent::Symbol(s) => Some(s.as_str()),
-      _ => None,
-    }
-  }
-
-  pub fn unwrap_symbol(&self) -> Result<&str, Error> {
-    self.try_symbol()
-      .ok_or_else(|| 
-        error_raw(self, format!("expected a symbol, found {:?}", self.content)))
-  }
-
-  pub fn match_symbol<'e>(&'e self, s : &str) -> Option<&'e [Expr]> {
-    if self.try_head() == Some(s) {
-      return Some(self.tail());
-    }
-    None
-  }
 }
 
 impl Drop for Expr {
@@ -204,6 +129,29 @@ impl <'l> Into<TextLocation> for &'l Expr {
   }
 }
 
+impl Expr {
+  pub fn unwrap_construct(&self) -> Result<(&str, &[Expr]), Error> {
+    match &self.content {
+      ExprContent::List(s, children) => Ok((s.as_str(), children.as_slice())),
+      _ => error(self, format!("expected a construct, found {:?}", self.content)),
+    }
+  }
+  pub fn unwrap_str(&self) -> Result<&str, Error> {
+    match &self.content {
+      ExprContent::List(s, _) => Ok(s.as_str()),
+      ExprContent::Symbol(s) => Ok(s.as_str()),
+      _ => error(self, format!("expected a symbol, found {:?}", self.content)),
+    }
+  }
+
+  pub fn children(&self) -> Option<&[Expr]> {
+    match &self.content {
+      ExprContent::List(_, c) => Some(c.as_slice()),
+      _ => None,
+    }
+  }
+}
+
 impl fmt::Debug for Expr {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     write!(f, "{}", self)
@@ -213,33 +161,47 @@ impl fmt::Debug for Expr {
 impl fmt::Display for Expr {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     fn display_inner(e: &Expr, f: &mut fmt::Formatter<'_>, indent : usize) -> fmt::Result {
+      if let Some(children) = e.children() {
+        let s = e.unwrap_str().unwrap();
+        write!(f, "({}", s)?;
+        if s == "block" || s == "{" || s == ";" {
+          let indent = indent + 2;
+          for c in children {
+            writeln!(f)?;
+            write!(f, "{:indent$}", "", indent=indent)?;
+            display_inner(c, f, indent)?;
+          }
+        }
+        else {
+          for c in children {
+            write!(f, " ")?;
+            display_inner(c, f, indent)?;
+          }
+        }
+        write!(f, ")")?;
+        return Ok(());
+      }
       match &e.content {
         ExprContent::Symbol(s) => write!(f, "{}", s.as_str()),
-        ExprContent::List(l, list_type) => {
-          let l = l.as_slice();
-          let (start_paren, end_paren) = match list_type {
-            ListType::Normal | ListType::Uncontained => ("(", ")"),
-            ListType::Brace => ("{", "}"),
-            ListType::Bracket => ("[", "]"),
-          };
-          write!(f, "{}", start_paren)?;
-          if *list_type == ListType::Brace {
+        ExprContent::List(s, children) => {
+          let children = children.as_slice();
+          write!(f, "({}", s.as_str())?;
+          if s.as_str() == "block" {
             let indent = indent + 2;
-            for c in l {
+            for c in children {
               writeln!(f)?;
               write!(f, "{:indent$}", "", indent=indent)?;
               display_inner(c, f, indent)?;
             }
           }
-          else if l.len() > 0 {
-            display_inner(&l[0], f, indent)?;
-            for c in &l[1..] {
+          else {
+            for c in children {
               write!(f, " ")?;
               display_inner(c, f, indent)?;
             }
           }
-          write!(f, "{}", end_paren)?;
-          return Ok(());
+          write!(f, ")")?;
+          Ok(())
         }
         ExprContent::LiteralString(s) => write!(f, "{}", s.as_str()),
         ExprContent::LiteralFloat(v) => write!(f, "{}", v),
