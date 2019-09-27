@@ -305,16 +305,15 @@ impl <'l> TypeChecker<'l> {
     let name = expr.unwrap_str()?;
     let params = expr.children();
     if let Some(t) = Type::from_string(name) {
-      if params.is_some() {
+      if params.len() > 0 {
         return error(expr, "unexpected type parameters");
       }
       return Ok(t);
     }
     if name == "fun" {
-      if let Some([args, return_type]) = params {
+      if let [args, return_type] = params {
         let args =
-          args.children().unwrap_or(&[])
-          .iter().tuples()
+          args.children().iter().tuples()
           .map(|(_, e)| self.to_type(e))
           .collect::<Result<Vec<Type>, Error>>()?;
         let return_type = self.to_type(return_type)?;
@@ -323,16 +322,16 @@ impl <'l> TypeChecker<'l> {
       return error(expr, "invalid function type construct");
     }
     match (name, params) {
-      ("ptr", Some([t])) => {
+      ("ptr", [t]) => {
         let t = self.to_type(t)?;
         Ok(Type::Ptr(Box::new(t)))
       }
-      ("array", Some([t])) => {
+      ("array", [t]) => {
         let t = self.to_type(t)?;
         Ok(Type::Array(Box::new(t)))
       }
       (name, params) => {
-        if params.is_some() {
+        if params.len() > 0 {
           return error(expr, "unexpected type parameters");
         }
         let name = self.cache.get(name);
@@ -358,7 +357,7 @@ impl <'l> TypeChecker<'l> {
       return error(expr, "type with this name already defined");
     }
     // TODO: check for duplicates?
-    let field_exprs = children[1].children.as_slice();
+    let field_exprs = children[1].children();
     let mut fields = vec![];
     for (field_name_expr, type_expr) in field_exprs.iter().tuples() {
       let field_name = self.cache.get(field_name_expr.unwrap_str()?);
@@ -366,7 +365,7 @@ impl <'l> TypeChecker<'l> {
       fields.push((field_name, type_tag));
     }
     // Generics (TODO: just breaks)
-    let generic_exprs = children[2].children.as_slice();
+    let generic_exprs = children[2].children();
     if generic_exprs.len() > 0 {
       return error(expr, "generic types not supported");
     }
@@ -597,7 +596,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
       ("fun", exprs) => {
         if let [name, args_exprs, function_body] = exprs {
           let name = self.cached(name.unwrap_str()?);
-          let args_exprs = args_exprs.children().unwrap();
+          let args_exprs = args_exprs.children();
           let mut arg_names = vec!();
           let mut arg_types = vec!();
           for (name_expr, type_expr) in args_exprs.iter().tuples() {
@@ -700,7 +699,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         let c = Content::FieldAccess(Box::new((container_val, field_name)));
         Ok(node(expr, field_type, c))
       }
-      ("literal_array", exprs) => {
+      ("array", exprs) => {
         let mut elements = vec!();
         for e in exprs {
           elements.push(self.to_ast(e)?);
@@ -737,14 +736,11 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
   }
 
   pub fn to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
-    match &expr.tag {
-      ExprTag::Construct(_) => {
+    match &expr.content {
+      ExprContent::List(_, _) => {
         return self.construct_to_ast(expr);
       }
-      ExprTag::Symbol(s) => {
-        if expr.children.as_slice().len() > 0 {
-          return error(expr, "unexpected children");
-        }
+      ExprContent::Symbol(s) => {
         // this is just a normal symbol
         let s = self.cached(s.as_str());
         if s.as_ref() == "break" {
@@ -762,24 +758,24 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         }
         error(expr, format!("unknown symbol '{}'", s))
       }
-      ExprTag::LiteralString(s) => {
+      ExprContent::LiteralString(s) => {
         let v = Val::String(s.as_str().to_string());
         let s = self.t.find_type_def("string").unwrap();
         Ok(node(expr, Type::Def(s.name.clone()), Content::Literal(v)))
       }
-      ExprTag::LiteralFloat(f) => {
+      ExprContent::LiteralFloat(f) => {
         let v = Val::F64(*f as f64);
         Ok(node(expr, Type::F64, Content::Literal(v)))
       }
-      ExprTag::LiteralInt(v) => {
+      ExprContent::LiteralInt(v) => {
         let v = Val::I64(*v as i64);
         Ok(node(expr, Type::I64, Content::Literal(v)))
       }
-      ExprTag::LiteralBool(b) => {
+      ExprContent::LiteralBool(b) => {
         let v = Val::Bool(*b);
         Ok(node(expr, Type::Bool, Content::Literal(v)))
       },
-      ExprTag::LiteralUnit => {
+      ExprContent::LiteralUnit => {
         Ok(node(expr, Type::Void, Content::Literal(Val::Void)))
       },
       // _ => error(expr, "unsupported expression"),
@@ -815,9 +811,9 @@ fn match_intrinsic(name : &str, args : &[TypedNode]) -> Option<Type> {
 }
 
 fn find_type_definitions<'e>(expr : &'e Expr, types : &mut Vec<&'e Expr>) {
-  let children = expr.children.as_slice();
+  let children = expr.children();
   if children.len() == 0 { return }
-  if let ExprTag::Construct(s) = &expr.tag {
+  if let ExprContent::List(s, _) = &expr.content {
     match s.as_str() {
       "union" => {
         types.push(expr);

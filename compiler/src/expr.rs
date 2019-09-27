@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashSet;
 
-use crate::error::{Error, TextLocation, error };
+use crate::error::{Error, TextLocation, error, error_raw };
 use crate::c_interface::SStr;
 
 /// An immutable, reference counted string
@@ -130,12 +130,18 @@ impl <'l> Into<TextLocation> for &'l Expr {
 }
 
 impl Expr {
-  pub fn unwrap_construct(&self) -> Result<(&str, &[Expr]), Error> {
+  pub fn try_construct(&self) -> Option<(&str, &[Expr])> {
     match &self.content {
-      ExprContent::List(s, children) => Ok((s.as_str(), children.as_slice())),
-      _ => error(self, format!("expected a construct, found {:?}", self.content)),
+      ExprContent::List(s, children) => Some((s.as_str(), children.as_slice())),
+      _ => None,
     }
   }
+
+  pub fn unwrap_construct(&self) -> Result<(&str, &[Expr]), Error> {
+    self.try_construct().ok_or_else(||
+      error_raw(self, format!("expected a construct, found {:?}", self.content)))
+  }
+
   pub fn unwrap_str(&self) -> Result<&str, Error> {
     match &self.content {
       ExprContent::List(s, _) => Ok(s.as_str()),
@@ -144,10 +150,10 @@ impl Expr {
     }
   }
 
-  pub fn children(&self) -> Option<&[Expr]> {
+  pub fn children(&self) -> &[Expr] {
     match &self.content {
-      ExprContent::List(_, c) => Some(c.as_slice()),
-      _ => None,
+      ExprContent::List(_, c) => c.as_slice(),
+      _ => &[],
     }
   }
 }
@@ -161,7 +167,8 @@ impl fmt::Debug for Expr {
 impl fmt::Display for Expr {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     fn display_inner(e: &Expr, f: &mut fmt::Formatter<'_>, indent : usize) -> fmt::Result {
-      if let Some(children) = e.children() {
+      let children = e.children();
+      if children.len() > 0 {
         let s = e.unwrap_str().unwrap();
         write!(f, "({}", s)?;
         if s == "block" || s == "{" || s == ";" {
