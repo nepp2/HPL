@@ -15,12 +15,7 @@ struct lib_handle {
   handle : u64
 }
 
-if true {
-  3
-}
-else {
-  4
-}
+[1, 2, 3, 4, 5]
 
 cbind load_library : fun(name : ptr(string)) => lib_handle
 

@@ -224,15 +224,18 @@ fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
     else if let Some(&next_precedence) = ps.config.infix_precedence.get(&t.symbol) {
       if next_precedence > precedence {
         // Parens
-        if ps.config.paren_pairs.contains_key(&t.symbol) {
-          let paren_start = expr.loc.start;
+        if let Some(end_paren) = ps.config.paren_pairs.get(&t.symbol) {
+          let (start_paren, end_paren) = (t.symbol.clone(), end_paren.clone());
+          let start = expr.loc.start;
           let operation = match t.symbol.as_ref() {
             "(" => "call",
             "[" => "index",
             _ => return error(t.loc, "unexpected syntax"),
           };
-          let list = vec![expr, pratt_parse(ps, next_precedence)?];
-          expr = ps.add_list(operation, list, paren_start);
+          ps.expect(&start_paren)?;
+          let args = parse_list(ps, vec![], ",", ",".into())?;
+          ps.expect(&end_paren)?;
+          expr = ps.add_list(operation, vec![expr, args], start);
         }
         // Normal infix
         else {
@@ -391,8 +394,16 @@ fn try_parse_keyword_term(ps : &mut ParseState) -> Result<Option<Expr>, Error> {
       ps.pop_type(TokenType::Symbol)?;
       if ps.peek()?.symbol.as_ref() == "(" {
         // Type definition
-        let type_e = pratt_parse(ps, kp)?;
-        ps.add_list("fun", vec![type_e], start)
+        ps.expect("(")?;
+        let args = parse_list(ps, vec![], ",", "args".into())?;
+        ps.expect(")")?;
+        if ps.accept("=>") {
+          let return_type = pratt_parse(ps, kp)?;
+          ps.add_list("fun", vec![args, return_type], start)
+        }
+        else {
+          ps.add_list("fun", vec![args], start)
+        }
       }
       else {
         // Function definition

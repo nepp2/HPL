@@ -142,11 +142,16 @@ impl Expr {
       error_raw(self, format!("expected a construct, found {:?}", self.content)))
   }
 
-  pub fn unwrap_symbol(&self) -> Result<&str, Error> {
+  pub fn try_symbol(&self) -> Option<&str> {
     match &self.content {
-      ExprContent::Symbol(s) => Ok(s.as_str()),
-      _ => error(self, format!("expected a symbol, found {:?}", self.content)),
+      ExprContent::Symbol(s) => Some(s.as_str()),
+      _ => None,
     }
+  }
+
+  pub fn unwrap_symbol(&self) -> Result<&str, Error> {
+    self.try_symbol().ok_or_else(||
+      error_raw(self, format!("expected a symbol, found {:?}", self.content)))
   }
 
   pub fn children(&self) -> &[Expr] {
