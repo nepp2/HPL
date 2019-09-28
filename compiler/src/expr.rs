@@ -142,9 +142,8 @@ impl Expr {
       error_raw(self, format!("expected a construct, found {:?}", self.content)))
   }
 
-  pub fn unwrap_str(&self) -> Result<&str, Error> {
+  pub fn unwrap_symbol(&self) -> Result<&str, Error> {
     match &self.content {
-      ExprContent::List(s, _) => Ok(s.as_str()),
       ExprContent::Symbol(s) => Ok(s.as_str()),
       _ => error(self, format!("expected a symbol, found {:?}", self.content)),
     }
@@ -167,9 +166,7 @@ impl fmt::Debug for Expr {
 impl fmt::Display for Expr {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     fn display_inner(e: &Expr, f: &mut fmt::Formatter<'_>, indent : usize) -> fmt::Result {
-      let children = e.children();
-      if children.len() > 0 {
-        let s = e.unwrap_str().unwrap();
+      if let Some((s, children)) = e.try_construct() {
         write!(f, "({}", s)?;
         if s == "block" || s == "{" || s == ";" {
           let indent = indent + 2;
