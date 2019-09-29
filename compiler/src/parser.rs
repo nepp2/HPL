@@ -392,26 +392,25 @@ fn try_parse_keyword_term(ps : &mut ParseState) -> Result<Option<Expr>, Error> {
     }
     "fun" => {
       ps.pop_type(TokenType::Symbol)?;
-      if ps.peek()?.symbol.as_ref() == "(" {
-        // Type definition
-        ps.expect("(")?;
-        let args = parse_list(ps, vec![], ",", "args".into())?;
-        ps.expect(")")?;
-        if ps.accept("=>") {
-          let return_type = pratt_parse(ps, kp)?;
-          ps.add_list("fun", vec![args, return_type], start)
-        }
-        else {
-          ps.add_list("fun", vec![args], start)
-        }
+      let mut es = vec![];
+      let is_full_definition = ps.peek()?.symbol.as_ref() != "(";
+      if is_full_definition {
+        // Parse name
+        es.push(parse_simple_string(ps)?);
       }
-      else {
-        // Function definition
-        let name = parse_simple_string(ps)?;
-        let args = pratt_parse(ps, kp)?;
-        let body = parse_block_in_braces(ps)?;
-        ps.add_list("fun", vec![name, args, body], start)
+      // arguments
+      ps.expect("(")?;
+      es.push(parse_list(ps, vec![], ",", "args".into())?);
+      ps.expect(")")?;
+      // return type
+      if ps.accept("=>") {
+        es.push(pratt_parse(ps, kp)?);
       }
+      if is_full_definition {
+        // body
+        es.push(parse_block_in_braces(ps)?);
+      }
+      ps.add_list("fun", es, start)
     }
     "let" => {
       ps.pop_type(TokenType::Symbol)?;

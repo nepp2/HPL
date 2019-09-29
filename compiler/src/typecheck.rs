@@ -283,13 +283,20 @@ impl <'l> TypeChecker<'l> {
       return Ok(Type::Def(name));
     }
     match expr.try_construct() {
-      Some(("fun", [sig])) => {
-        let args =
-          args.children().iter().tuples()
-          .map(|(_, e)| self.to_type(e))
-          .collect::<Result<Vec<Type>, Error>>()?;
-        let return_type = self.to_type(return_type)?;
-        return Ok(Type::Fun(Rc::new(FunctionSignature{ args, return_type})));
+      Some(("fun", es)) => {
+        if let Some(args) = es.get(0) {
+          let args =
+            args.children().iter()
+            .map(|e| Ok(self.typed_symbol(e)?.1)) // TODO: this is wrong
+            .collect::<Result<Vec<Type>, Error>>()?;
+          let return_type = if let Some(t) = es.get(1) {
+            self.to_type(t)?
+          }
+          else {
+            Type::Void
+          };
+          return Ok(Type::Fun(Rc::new(FunctionSignature{ args, return_type})));
+        }
       }
       Some(("call", [name, args])) => {
         match (name.unwrap_symbol()?, args.children()) {
@@ -577,9 +584,8 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
           let args_exprs = args_exprs.children();
           let mut arg_names = vec!();
           let mut arg_types = vec!();
-          for (name_expr, type_expr) in args_exprs.iter().tuples() {
-            let name = self.cached(name_expr.unwrap_symbol()?);
-            let type_tag = self.t.to_type(type_expr)?;
+          for arg in args_exprs.iter() {
+            let (name, type_tag) = self.t.typed_symbol(arg)?;
             if type_tag == Type::Void {
               return error(expr, "functions args cannot be void");
             }
