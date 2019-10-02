@@ -470,24 +470,27 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         let b = self.to_ast(b)?;
         Ok(node(expr, Type::Bool, Content::IntrinsicCall(self.cached(instr), vec!(a, b))))
       }
-      ("let", exprs) => {
-        let name = self.cached(exprs[0].unwrap_symbol()?);
-        let v = Box::new(self.to_ast(&exprs[1])?);
-        // The first scope is used for function arguments. The second
-        // is the top level of the function.
-        let c = if self.is_top_level && self.scope_map.len() == 2 {
-          // global variable
-          let def = GlobalDefinition { name: name.clone(), type_tag: v.type_tag.clone(), c_address: None };
-          self.t.add_global(name.clone(), def);
-          Content::VariableInitialise(name, v, VarScope::Global)
+      ("let", [e]) => {
+        if let Some(("=", [name_expr, value_expr])) = e.try_construct() {
+          let name = self.cached(name_expr.unwrap_symbol()?);
+          let v = Box::new(self.to_ast(value_expr)?);
+          // The first scope is used for function arguments. The second
+          // is the top level of the function.
+          let c = if self.is_top_level && self.scope_map.len() == 2 {
+            // global variable
+            let def = GlobalDefinition { name: name.clone(), type_tag: v.type_tag.clone(), c_address: None };
+            self.t.add_global(name.clone(), def);
+            Content::VariableInitialise(name, v, VarScope::Global)
+          }
+          else {
+            // local variable
+            let scoped_name = self.create_scoped_variable_name(name);
+            self.variables.insert(scoped_name.clone(), v.type_tag.clone());
+            Content::VariableInitialise(scoped_name, v, VarScope::Local)
+          };
+          return Ok(node(expr, Type::Void, c));
         }
-        else {
-          // local variable
-          let scoped_name = self.create_scoped_variable_name(name);
-          self.variables.insert(scoped_name.clone(), v.type_tag.clone());
-          Content::VariableInitialise(scoped_name, v, VarScope::Local)
-        };
-        Ok(node(expr, Type::Void, c))
+        error(expr, "malformed let expression")
       }
       // TODO this is a very stupid approach
       ("quote", [e]) => {
@@ -611,7 +614,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
           self.t.add_function(name.clone(), def);
           return Ok(node(expr, Type::Void, Content::FunctionDefinition(name)))
         }
-        error(expr, "invalid function definition construct")
+        error(expr, "malformed function definition")
       }
       ("union", exprs) => {
         let name = self.cached(&exprs[0].unwrap_symbol()?);
@@ -709,13 +712,18 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
           Type::Array(t) => *(t).clone(),
           _ => return error(array_expr, "expected array"),
         };
-        let index = self.to_ast(index_expr)?;
-        if index.type_tag != Type::I64 {
-          return error(array_expr, "expected integer");
+        if let Some((",", [index_expr])) = index_expr.try_construct() {
+          let index = self.to_ast(index_expr)?;
+          if index.type_tag != Type::I64 {
+            return error(array_expr, "expected integer");
+          }
+          return Ok(node(expr, inner_type, Content::Index(Box::new((array, index)))));
         }
-        Ok(node(expr, inner_type, Content::Index(Box::new((array, index)))))
+        error(expr, "malformed array index expression")
       }
-      (construct, _) => return error(expr, format!("invalid {} expression", construct)),
+      (construct, _) => {
+        error(expr, format!("invalid '{}' expression", construct))
+      }
     }
   }
 
@@ -783,11 +791,11 @@ fn match_intrinsic(name : &str, args : &[TypedNode]) -> Option<Type> {
       _ => None
     }
     [a] => match (&a.type_tag, name) {
-      (Type::F64, "unary_-") => Some(Type::F64),
-      (Type::I64, "unary_-") => Some(Type::I64),
-      (Type::Bool, "unary_!") => Some(Type::Bool),
-      (Type::Ptr(t), "unary_deref") => Some(*t.clone()),
-      (t, "unary_ref") => Some(Type::Ptr(Box::new(t.clone()))),
+      (Type::F64, "-") => Some(Type::F64),
+      (Type::I64, "-") => Some(Type::I64),
+      (Type::Bool, "!") => Some(Type::Bool),
+      (Type::Ptr(t), "deref") => Some(*t.clone()),
+      (t, "ref") => Some(Type::Ptr(Box::new(t.clone()))),
       _ => None,
     }
     _ => None,

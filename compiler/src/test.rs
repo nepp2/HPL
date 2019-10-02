@@ -58,9 +58,9 @@ rusty_fork_test! {
       ("5 >= 5", Val::Bool(true)),
       ("5 == 5", Val::Bool(true)),
       ("-(4 - 5)", Val::I64(1)),
-      ("4 + (let a = 5; let b = 4; a)", Val::I64(9)),
-      ("if true then 3 else 4 end", Val::I64(3)),
-      ("if false then 3 else 4 end", Val::I64(4)),
+      ("4 + {let a = 5; let b = 4; a}", Val::I64(9)),
+      ("if true then 3 else 4", Val::I64(3)),
+      ("if false then 3 else 4", Val::I64(4)),
       ("let a = 5; a", Val::I64(5)),
     ];
     for (code, expected_result) in cases {
@@ -108,12 +108,13 @@ rusty_fork_test! {
   fn test_scope(){
     let code = "
       let a = 4
-      let b = if true
+      let b = if true {
         let a = 5
         a
-      else
+      }
+      else {
         10
-      end
+      }
       a + b
     ";
     assert_result(code, Val::I64(9));
@@ -127,10 +128,10 @@ rusty_fork_test! {
       a
     ";
     let b = "
-      struct point
+      struct point {
         x : i64
         y : i64
-      end
+      }
       let a = point{x: 5, y: 50}
       a.x = a.x + 10
       a.y = 500
@@ -143,13 +144,13 @@ rusty_fork_test! {
   #[test]
   fn test_struct() {
     let code = "
-      struct point
+      struct point {
         x : i64
         y : i64
-      end
-      fun foo(a : point, b : point)
+      }
+      fun foo(a : point, b : point) {
         point{x: a.x + b.x, y: a.y + b.y}
-      end
+      }
       let a = point{x: 10, y: 1}
       let b = point{2, 20}
       let c = foo(a, b)
@@ -161,13 +162,13 @@ rusty_fork_test! {
   #[test]
   fn test_struct_in_register() {
     let code = "
-      struct point
+      struct point {
         x : i64
         y : i64
-      end
-      fun foo(a : point, b : point)
+      }
+      fun foo(a : point, b : point) {
         point{x: a.x + b.x, y: a.y + b.y}
-      end
+      }
       let a = point{x: 10, y: 1}
       let b = point{2, 20}
       foo(a, b).y
@@ -178,14 +179,14 @@ rusty_fork_test! {
   #[test]
   fn test_union() {
     let code = "
-      struct bar
+      struct bar {
         a : i32
         b : i32
-      end
-      union foo
+      }
+      union foo {
         u : u64
         i : bar
-      end
+      }
       let v = foo{u : 16 as u64}
       v.i = bar{ ((v.u as i64) + 16) as i32, 0 as i32 }
       v.u
@@ -196,12 +197,12 @@ rusty_fork_test! {
   #[test]
   fn test_return(){
     let code = "
-      fun foo(v : bool)
-        if v
+      fun foo(v : bool) {
+        if v {
           return 10
-        end
+        }
         20
-      end
+      }
       foo(true) + foo(false)
     ";
     assert_result(code, Val::I64(30));
@@ -211,20 +212,20 @@ rusty_fork_test! {
   fn test_while() {
     let a = "
       let x = 10
-      while true
+      while true {
         x = x - 1
-        if x <= 5
+        if x <= 5 {
           break
-        end
-      end
+        }
+      }
       x
     ";
     assert_result(a, Val::I64(5));
     let b = "
       let x = 1
-      while x < 10
+      while x < 10 {
         x = x + 6
-      end
+      }
       x
     ";
     assert_result(b, Val::I64(13));
@@ -243,9 +244,9 @@ rusty_fork_test! {
   fn test_jit_module_function_linking() {
     let mut i = interpreter();
     let a = "
-      fun foobar()
+      fun foobar() {
         843
-      end";
+      }";
     let b = "foobar()";
     assert_result_with_interpreter(&mut i, a, Val::Void);
     assert_result_with_interpreter(&mut i, b, Val::I64(843));
@@ -272,15 +273,15 @@ rusty_fork_test! {
       z : f32,
     }
     let code = r#"
-      struct blah
+      struct blah {
         x : i32
         p : ptr(i64)
         y : u64
         z : f32
-      end
-      fun main(a : ptr(blah))
+      }
+      fun main(a : ptr(blah)) {
         deref a = blah { 50 as i32, (0 as u64) as ptr(i64), 5390 as u64, 45640.5 as f32 }
-      end
+      }
     "#;
     let b : Blah = i.run_with_pointer_return(code, "main").unwrap();
     assert_eq!(b.x, 50);
@@ -308,9 +309,9 @@ rusty_fork_test! {
   fn test_string() {
     let mut i = interpreter();
     let code = r#"
-      fun main(a : ptr(string))
+      fun main(a : ptr(string)) {
         deref a = "Hello world"
-      end
+      }
     "#;
     let s : SStr = i.run_with_pointer_return(code, "main").unwrap();
     let expected = "Hello world";
@@ -338,17 +339,17 @@ rusty_fork_test! {
   #[test]
   fn test_first_class_function() {
     let code = "
-      fun foo(a : i64, b : i64)
+      fun foo(a : i64, b : i64) {
         a + b
-      end
-      fun fold(a : array(i64), len : i64, v : i64, f : fun(i64, i64) => i64)
+      }
+      fun fold(a : array(i64), len : i64, v : i64, f : fun(i64, i64) => i64) {
         let i = 0
-        while i < len
+        while i < len {
           v = f(v, a[i])
           i = i + 1
-        end
+        }
         v
-      end
+      }
       let a = [1, 2, 3, 4]
       fold(a, 4, 0, foo)
     ";
@@ -372,9 +373,9 @@ rusty_fork_test! {
   #[test]
   fn test_nonexistent_types(){
     let code = "
-      struct foo
+      struct foo {
         data : sijfsiofssdfio
-      end
+      }
       10
     ";
     assert_error(code, "sijfsiofssdfio");
@@ -383,10 +384,10 @@ rusty_fork_test! {
   #[test]
   fn test_cyclic_structs(){
     let code = "
-      struct tree
+      struct tree {
         data : string
         children : ptr(tree)
-      end
+      }
       5
     ";
     assert_result(code, Val::I64(5));

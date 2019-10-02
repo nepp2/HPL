@@ -12,6 +12,7 @@ struct ParseConfig {
   expression_separators : HashMap<RefStr, i32>,
   prefix_precedence : HashMap<RefStr, i32>,
   infix_precedence : HashMap<RefStr, i32>,
+  special_operators : HashSet<RefStr>,
 }
 
 /// Precedence level
@@ -24,6 +25,9 @@ fn parse_config() -> ParseConfig {
     expression_separators: HashMap::new(),
     prefix_precedence: HashMap::new(),
     infix_precedence: HashMap::new(),
+    special_operators: 
+      ["=", ".", "||", "&&", "as", ":"]
+      .iter().map(|&s| s.into()).collect(),
   };
   let paren_pairs = vec![
     ("(", ")"),
@@ -258,10 +262,18 @@ fn parse_prefix(ps : &mut ParseState) -> Result<Expr, Error> {
   let t = ps.peek()?;
   // if the next token is a prefix operator
   if let Some(new_precedence) = ps.config.prefix_precedence.get(t.symbol.as_ref()) {
-    let op_string = t.symbol.as_ref().to_string();
-    ps.expect_type(Symbol)?;
-    let expr = pratt_parse(ps, *new_precedence)?;
-    Ok(ps.add_list(op_string, vec![expr], start))
+    let t = ps.peek()?;
+    if ps.config.special_operators.contains(&t.symbol) {
+      let operator = t.symbol.as_ref().to_string();
+      ps.expect_type(TokenType::Symbol)?;
+      let expr = pratt_parse(ps, *new_precedence)?;
+      Ok(ps.add_list(operator, vec![expr], start))
+    }
+    else {
+      let operator = parse_simple_string(ps)?;
+      let expr = pratt_parse(ps, *new_precedence)?;
+      Ok(ps.add_list("call", vec![operator, expr], start))
+    }
   }
   // else assume it's an expression term
   else {
@@ -272,10 +284,17 @@ fn parse_prefix(ps : &mut ParseState) -> Result<Expr, Error> {
 fn parse_infix(ps : &mut ParseState, left_expr : Expr, precedence : i32) -> Result<Expr, Error> {
   let infix_start = left_expr.loc.start;
   let t = ps.peek()?;
-  let op_string = t.symbol.as_ref().to_string();
-  ps.expect_type(Symbol)?;
-  let list = vec![left_expr, pratt_parse(ps, precedence)?];
-  Ok(ps.add_list(op_string, list, infix_start))
+  if ps.config.special_operators.contains(&t.symbol) {
+    let operator = t.symbol.as_ref().to_string();
+    ps.expect_type(TokenType::Symbol)?;
+    let list = vec![left_expr, pratt_parse(ps, precedence)?];
+    Ok(ps.add_list(operator, list, infix_start))
+  }
+  else {
+    let operator = parse_simple_string(ps)?;
+    let list = vec![operator, left_expr, pratt_parse(ps, precedence)?];
+    Ok(ps.add_list("call", list, infix_start))
+  }
 }
 
 fn parse_list(ps : &mut ParseState, mut list : Vec<Expr>, separator : &str, tag : String) -> Result<Expr, Error> {
