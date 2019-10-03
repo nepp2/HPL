@@ -132,7 +132,7 @@ rusty_fork_test! {
         x : i64
         y : i64
       }
-      let a = point{x: 5, y: 50}
+      let a = point.new(x: 5, y: 50)
       a.x = a.x + 10
       a.y = 500
       a.x + a.y
@@ -149,10 +149,10 @@ rusty_fork_test! {
         y : i64
       }
       fun foo(a : point, b : point) {
-        point{x: a.x + b.x, y: a.y + b.y}
+        point.new(x: a.x + b.x, y: a.y + b.y)
       }
-      let a = point{x: 10, y: 1}
-      let b = point{2, 20}
+      let a = point.new(x: 10, y: 1)
+      let b = point.new(2, 20)
       let c = foo(a, b)
       c.y
     ";
@@ -167,10 +167,10 @@ rusty_fork_test! {
         y : i64
       }
       fun foo(a : point, b : point) {
-        point{x: a.x + b.x, y: a.y + b.y}
+        point.new(x: a.x + b.x, y: a.y + b.y)
       }
-      let a = point{x: 10, y: 1}
-      let b = point{2, 20}
+      let a = point.new(x: 10, y: 1)
+      let b = point.new(2, 20)
       foo(a, b).y
     ";
     assert_result(code, Val::I64(21));
@@ -187,8 +187,8 @@ rusty_fork_test! {
         u : u64
         i : bar
       }
-      let v = foo{u : 16 as u64}
-      v.i = bar{ ((v.u as i64) + 16) as i32, 0 as i32 }
+      let v = foo.new(u : 16 as u64)
+      v.i = bar.new(((v.u as i64) + 16) as i32, 0 as i32)
       v.u
     ";
     assert_result(code, Val::U64(32));
@@ -280,7 +280,7 @@ rusty_fork_test! {
         z : f32
       }
       fun main(a : ptr(blah)) {
-        deref a = blah { 50 as i32, (0 as u64) as ptr(i64), 5390 as u64, 45640.5 as f32 }
+        deref a = blah.new(50 as i32, (0 as u64) as ptr(i64), 5390 as u64, 45640.5 as f32)
       }
     "#;
     let b : Blah = i.run_with_pointer_return(code, "main").unwrap();

@@ -112,7 +112,6 @@ impl InterpreterInner {
       lexer::lex(code, &self.cache)
       .map_err(|mut es| es.remove(0))?;
     let expr = parser::parse(tokens, &self.cache)?;
-    println!("{}", expr);
     Ok(expr)
   }
 
@@ -161,6 +160,7 @@ impl InterpreterInner {
   }
 
   pub fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
+    println!("{}", expr);
     let c = self.compile_expression(expr)?;
     let f = TOP_LEVEL_FUNCTION_NAME;
     let def = c.typed_module.functions.get(TOP_LEVEL_FUNCTION_NAME).unwrap();

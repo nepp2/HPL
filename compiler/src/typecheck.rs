@@ -298,13 +298,13 @@ impl <'l> TypeChecker<'l> {
           return Ok(Type::Fun(Rc::new(FunctionSignature{ args, return_type})));
         }
       }
-      Some(("call", [name, args])) => {
-        match (name.unwrap_symbol()?, args.children()) {
-          ("ptr", [t]) => {
+      Some(("call", [name, t])) => {
+        match name.unwrap_symbol()? {
+          "ptr" => {
             let t = self.to_type(t)?;
             return Ok(Type::Ptr(Box::new(t)))
           }
-          ("array", [t]) => {
+          "array" => {
             let t = self.to_type(t)?;
             return Ok(Type::Array(Box::new(t)))
           }
@@ -420,6 +420,64 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
     error(node.loc, format!("expected type {:?}, found {:?}", t, node.type_tag))
   }
 
+  fn to_type_literal(&mut self, expr : &Expr, exprs : &[Expr]) -> Result<TypedNode, Error> {
+    if exprs.len() < 1 {
+      return error(expr, format!("malformed type instantiation"));
+    }
+    let name_expr = &exprs[0];
+    let field_exprs = &exprs[1..];
+    let name = name_expr.unwrap_symbol()?;
+    let fields =
+      field_exprs.iter().map(|e| {
+        if let Some((":", [name, value])) = e.try_construct() {
+          Ok((Some(name), self.to_ast(value)?))
+        }
+        else {
+          Ok((None, self.to_ast(e)?))
+        }
+      })
+      .collect::<Result<Vec<(Option<&Expr>, TypedNode)>, Error>>()?;
+    let def =
+      self.t.find_type_def(name)
+      .ok_or_else(|| error_raw(name_expr, "no type with this name exists"))?;
+    match &def.kind {
+      TypeKind::Struct => {
+        if fields.len() != def.fields.len() {
+          return error(expr, "wrong number of fields");
+        }
+        let field_iter = fields.iter().zip(def.fields.iter());
+        for ((field, value), (expected_name, expected_type)) in field_iter {
+          if let Some(field) = field {
+            if field.unwrap_symbol()? != expected_name.as_ref() {
+              return error(*field, "incorrect field name");
+            }
+          }
+          if &value.type_tag != expected_type {
+            return error(value.loc, format!("type mismatch. expected {:?}, found {:?}", expected_type, value.type_tag));
+          }
+        }
+        let c = Content::StructInstantiate(self.cached(name), fields.into_iter().map(|v| v.1).collect());
+        Ok(node(expr, Type::Def(def.name.clone()), c))
+      }
+      TypeKind::Union => {
+        if fields.len() != 1 {
+          return error(expr, "must instantiate exactly one field");
+        }
+        let (field, value) = fields.into_iter().nth(0).unwrap();
+        if field.is_none() {
+          return error(expr, "the union field to initialise must be specified");
+        }
+        let field = field.unwrap();
+        let field_name = self.cached(field.unwrap_symbol()?);
+        if def.fields.iter().find(|(n, _)| n == &field_name).is_none() {
+          return error(field, "field does not exist in this union");
+        }
+        let c = Content::UnionInstantiate(self.cached(name), Box::new((field_name, value)));
+        Ok(node(expr, Type::Def(def.name.clone()), c))
+      }
+    }
+  }
+
   fn construct_to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
     let (instr, children) = expr.unwrap_construct()?;
     match (instr, children) {
@@ -427,16 +485,20 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         return Ok(node(expr, Type::Void, Content::Break));
       }
       ("call", exprs) => {
+        let function_expr = &exprs[0];
+        if let Some("new") = function_expr.try_symbol() {
+          return self.to_type_literal(expr, &exprs[1..]);
+        }
         let args =
-              exprs[1..].iter().map(|e| self.to_ast(e))
-              .collect::<Result<Vec<TypedNode>, Error>>()?;
-        if let Some(function_name) = exprs[0].unwrap_symbol().ok() {
+          exprs[1..].iter().map(|e| self.to_ast(e))
+          .collect::<Result<Vec<TypedNode>, Error>>()?;
+        if let Some(function_name) = function_expr.try_symbol() {
           let op_tag = match_intrinsic(function_name, args.as_slice());
           if let Some(op_tag) = op_tag {
             return Ok(node(expr, op_tag, Content::IntrinsicCall(self.cached(function_name), args)))
           }
         }
-        let function_value = self.to_ast(&exprs[0])?;
+        let function_value = self.to_ast(function_expr)?;
         if let Type::Fun(sig) = &function_value.type_tag {
           if sig.args.len() != args.len() {
             return error(expr, "incorrect number of arguments passed");
@@ -624,54 +686,6 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         let name = self.cached(&exprs[0].unwrap_symbol()?);
         Ok(node(expr, Type::Void, Content::TypeDefinition(name)))
       }
-      ("type_instantiate", exprs) => {
-        if exprs.len() < 1 || exprs.len() % 2 == 0 {
-          return error(expr, format!("malformed type instantiation"));
-        }
-        let name_expr = &exprs[0];
-        let field_exprs = &exprs[1..];
-        let name = name_expr.unwrap_symbol()?;
-        let fields =
-          field_exprs.iter().tuples().map(|(name, value)| {
-            let value = self.to_ast(value)?;
-            Ok((name, value))
-          })
-          .collect::<Result<Vec<(&Expr, TypedNode)>, Error>>()?;
-        let def =
-          self.t.find_type_def(name)
-          .ok_or_else(|| error_raw(name_expr, "no type with this name exists"))?;
-        match &def.kind {
-          TypeKind::Struct => {
-            if fields.len() != def.fields.len() {
-              return error(expr, "wrong number of fields");
-            }
-            let field_iter = fields.iter().zip(def.fields.iter());
-            for ((field, value), (expected_name, expected_type)) in field_iter {
-              let name = field.unwrap_symbol()?;
-              if name != "" && name != expected_name.as_ref() {
-                return error(*field, "incorrect field name");
-              }
-              if &value.type_tag != expected_type {
-                return error(value.loc, format!("type mismatch. expected {:?}, found {:?}", expected_type, value.type_tag));
-              }
-            }
-            let c = Content::StructInstantiate(self.cached(name), fields.into_iter().map(|v| v.1).collect());
-            Ok(node(expr, Type::Def(def.name.clone()), c))
-          }
-          TypeKind::Union => {
-            if fields.len() != 1 {
-              return error(expr, "must instantiate exactly one field");
-            }
-            let (field, value) = fields.into_iter().nth(0).unwrap();
-            let field_name = self.cached(field.unwrap_symbol()?);
-            if def.fields.iter().find(|(n, _)| n == &field_name).is_none() {
-              return error(field, "field does not exist in this union");
-            }
-            let c = Content::UnionInstantiate(self.cached(name), Box::new((field_name, value)));
-            Ok(node(expr, Type::Def(def.name.clone()), c))
-          }
-        }
-      }
       (".", [container_expr, field_expr]) => {
         let container_val = self.to_ast(container_expr)?;
         let field_name = self.cached(field_expr.unwrap_symbol()?);
@@ -706,13 +720,14 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
           };
         Ok(node(expr, Type::Array(Box::new(t)), Content::ArrayLiteral(elements)))
       }
-      ("index", [array_expr, index_expr]) => {
-        let array = self.to_ast(array_expr)?;
-        let inner_type = match &array.type_tag {
-          Type::Array(t) => *(t).clone(),
-          _ => return error(array_expr, "expected array"),
-        };
-        if let Some((",", [index_expr])) = index_expr.try_construct() {
+      ("index", exprs) => {
+        let array_expr = &exprs[0];
+        if let [index_expr] = &exprs[1..] {
+          let array = self.to_ast(array_expr)?;
+          let inner_type = match &array.type_tag {
+            Type::Array(t) => *(t).clone(),
+            _ => return error(array_expr, "expected array"),
+          };
           let index = self.to_ast(index_expr)?;
           if index.type_tag != Type::I64 {
             return error(array_expr, "expected integer");

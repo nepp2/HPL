@@ -7,6 +7,7 @@ use std::str::FromStr;
 static EXPECTED_TOKEN_ERROR : &str = "Expected token. Found nothing.";
 
 struct ParseConfig {
+  next_precedence : i32,
   paren_pairs : HashMap<RefStr, RefStr>,
   paren_terminators : HashSet<RefStr>,
   expression_separators : HashMap<RefStr, i32>,
@@ -15,57 +16,72 @@ struct ParseConfig {
   special_operators : HashSet<RefStr>,
 }
 
+impl ParseConfig {
+  fn new(special_operators : &[&str], paren_pairs : &[(&str, &str)]) -> Self {
+    let mut c = ParseConfig {
+      next_precedence: 1,
+      paren_pairs: HashMap::new(),
+      paren_terminators: HashSet::new(),
+      expression_separators: HashMap::new(),
+      prefix_precedence: HashMap::new(),
+      infix_precedence: HashMap::new(),
+      special_operators: special_operators.iter().map(|&s| s.into()).collect(),
+    };
+    for &(a, b) in paren_pairs {
+      c.paren_pairs.insert(a.into(), b.into());
+      c.paren_terminators.insert(b.into());
+    }
+    c
+  }
+
+  fn separator(&mut self, sep : &str) {
+    self.expression_separators.insert(sep.into(), self.next_precedence);
+    self.next_precedence += 1;
+  }
+
+  fn infix_prefix(&mut self, infix : &[&str], prefix : &[&str]) {
+    for &op in infix {
+      self.infix_precedence.insert(op.into(), self.next_precedence);
+    }
+    for &op in prefix {
+      self.prefix_precedence.insert(op.into(), self.next_precedence);
+    }
+    self.next_precedence += 1;
+  }
+
+  fn infix(&mut self, ops : &[&str]) {
+    self.infix_prefix(ops, &[]);
+  }
+
+  fn prefix(&mut self, ops : &[&str]) {
+    self.infix_prefix(&[], ops);
+  }
+}
+
 /// Precedence level
 struct PL { infix : &'static [&'static str], prefix : &'static [&'static str] }
 
 fn parse_config() -> ParseConfig {
-  let mut c = ParseConfig {
-    paren_pairs: HashMap::new(),
-    paren_terminators: HashSet::new(),
-    expression_separators: HashMap::new(),
-    prefix_precedence: HashMap::new(),
-    infix_precedence: HashMap::new(),
-    special_operators: 
-      ["=", ".", "||", "&&", "as", ":"]
-      .iter().map(|&s| s.into()).collect(),
-  };
-  let paren_pairs = vec![
+  let special_operators = &["=", ".", "||", "&&", "as", ":"];
+  let paren_pairs = &[
     ("(", ")"),
     ("{", "}"),
     ("[", "]"),
   ];
-  let expression_separators = &[";", "," ];
-  let operators : &[PL] = &[
-    PL { infix: &[], prefix: &["#keyword"] },
-    PL { infix: &["=", "+="], prefix: &[] },
-    PL { infix: &[":"], prefix: &[] },
-    PL { infix: &["as"], prefix: &[] },
-    PL { infix: &["&&", "||"], prefix: &[] },
-    PL { infix: &[">", "<", ">=", "<=", "==", "!="], prefix: &[] },
-    PL { infix: &["+", "-"], prefix: &["-"] },
-    PL { infix: &["*", "/", "%"], prefix: &[] },
-    PL { infix: &["=>"], prefix: &["!", "ref", "deref",] },
-    PL { infix: &["(", "["], prefix: &[] },
-    PL { infix: &["."], prefix: &[] },
-  ];
-  let mut precedence = 0;
-  for s in expression_separators {
-    precedence += 1;
-    c.expression_separators.insert((*s).into(), precedence);
-  }
-  for (a, b) in paren_pairs {
-    c.paren_pairs.insert(a.into(), b.into());
-    c.paren_terminators.insert(b.into());
-  }
-  for level in operators {
-    precedence += 1;
-    for i in level.infix {
-      c.infix_precedence.insert((*i).into(), precedence);
-    }
-    for p in level.prefix {
-      c.prefix_precedence.insert((*p).into(), precedence);
-    }
-  }
+  let mut c = ParseConfig::new(special_operators, paren_pairs);
+  c.separator(";");
+  c.separator(",");
+  c.prefix(&["#keyword"]);
+  c.infix(&["=", "+="]);
+  c.infix(&[":"]);
+  c.infix(&["as"]);
+  c.infix(&["&&", "||"]);
+  c.infix(&[">", "<", ">=", "<=", "==", "!="]);
+  c.infix_prefix(&["+", "-"], &["-"]);
+  c.infix(&["*", "/", "%"]);
+  c.infix_prefix(&["=>"], &["!", "ref", "deref",]);
+  c.infix(&["(", "["]);
+  c.infix(&["."]);
   c
 }
 
@@ -216,9 +232,9 @@ fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
         let separator = t.symbol.clone();
         ps.pop_type(TokenType::Symbol)?;
         let tag = match separator.as_ref() {
-          ";" => "block".into(), "," => "tuple".into(), _ => panic!(),
+          ";" => "block", "," => "tuple", _ => panic!(),
         };
-        expr = parse_list(ps, vec![expr], separator.as_ref(), tag)?;
+        expr = parse_list(ps, vec![expr], separator.as_ref(), tag.into())?;
       }
       else {
         break;
@@ -228,18 +244,8 @@ fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
     else if let Some(&next_precedence) = ps.config.infix_precedence.get(&t.symbol) {
       if next_precedence > precedence {
         // Parens
-        if let Some(end_paren) = ps.config.paren_pairs.get(&t.symbol) {
-          let (start_paren, end_paren) = (t.symbol.clone(), end_paren.clone());
-          let start = expr.loc.start;
-          let operation = match t.symbol.as_ref() {
-            "(" => "call",
-            "[" => "index",
-            _ => return error(t.loc, "unexpected syntax"),
-          };
-          ps.expect(&start_paren)?;
-          let args = parse_list(ps, vec![], ",", ",".into())?;
-          ps.expect(&end_paren)?;
-          expr = ps.add_list(operation, vec![expr, args], start);
+        if ps.config.paren_pairs.contains_key(&t.symbol) {
+          expr = parse_paren_infix(ps, expr, None)?;
         }
         // Normal infix
         else {
@@ -255,6 +261,26 @@ fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
     }
   }
   Ok(expr)
+}
+
+fn parse_paren_infix(ps : &mut ParseState, left_expr : Expr, first_arg : Option<Expr>) -> Result<Expr, Error> {
+  let start = left_expr.loc.start;
+  let t = ps.peek()?;
+  let start_paren = t.symbol.clone();
+  let end_paren = ps.config.paren_pairs.get(&start_paren).unwrap().clone();
+  let operation = match start_paren.as_ref() {
+    "(" => "call",
+    "[" => "index",
+    _ => return error(t.loc, "unexpected syntax"),
+  };
+  ps.expect(&start_paren)?;
+  let mut list = vec![left_expr];
+  if let Some(first_arg) = first_arg {
+    list.push(first_arg);
+  }
+  parse_into_list(ps, &mut list, ",")?;
+  ps.expect(&end_paren)?;
+  Ok(ps.add_list(operation, list, start))
 }
 
 fn parse_prefix(ps : &mut ParseState) -> Result<Expr, Error> {
@@ -284,7 +310,18 @@ fn parse_prefix(ps : &mut ParseState) -> Result<Expr, Error> {
 fn parse_infix(ps : &mut ParseState, left_expr : Expr, precedence : i32) -> Result<Expr, Error> {
   let infix_start = left_expr.loc.start;
   let t = ps.peek()?;
-  if ps.config.special_operators.contains(&t.symbol) {
+  if t.symbol.as_ref() == "." {
+    // special handling for method call syntax
+    ps.expect_type(TokenType::Symbol)?;
+    let right_expr = pratt_parse(ps, precedence)?;
+    if ps.has_tokens() && ps.peek()?.symbol.as_ref() == "(" {
+      parse_paren_infix(ps, right_expr, Some(left_expr))
+    }
+    else {
+      Ok(ps.add_list(".", vec![left_expr, right_expr], infix_start))
+    }
+  }
+  else if ps.config.special_operators.contains(&t.symbol) {
     let operator = t.symbol.as_ref().to_string();
     ps.expect_type(TokenType::Symbol)?;
     let list = vec![left_expr, pratt_parse(ps, precedence)?];
@@ -297,9 +334,8 @@ fn parse_infix(ps : &mut ParseState, left_expr : Expr, precedence : i32) -> Resu
   }
 }
 
-fn parse_list(ps : &mut ParseState, mut list : Vec<Expr>, separator : &str, tag : String) -> Result<Expr, Error> {
+fn parse_into_list(ps : &mut ParseState, list : &mut Vec<Expr>, separator : &str) -> Result<(), Error> {
   let &precedence = ps.config.expression_separators.get(separator).unwrap();
-  let separator_start = list.first().map(|e| e.loc.start).unwrap_or_else(|| ps.peek_marker());
   let is_semicolon = separator == ";";
   while ps.has_tokens() {
     let t = ps.peek()?;
@@ -320,14 +356,22 @@ fn parse_list(ps : &mut ParseState, mut list : Vec<Expr>, separator : &str, tag 
       break;
     }
   }
-  Ok(ps.add_list(tag, list, separator_start))
+  Ok(())
+}
+
+fn parse_list(ps : &mut ParseState, mut list : Vec<Expr>, separator : &str, tag : String) -> Result<Expr, Error> {
+  let start = list.first().map(|e| e.loc.start).unwrap_or_else(|| ps.peek_marker());
+  parse_into_list(ps, &mut list, separator)?;
+  Ok(ps.add_list(tag, list, start))
 }
 
 fn parse_block_in_braces(ps : &mut ParseState) -> Result<Expr, Error> {
+  let start = ps.peek_marker();
   ps.expect("{")?;
-  let block = parse_list(ps, vec![], ";", "block".into())?;
+  let mut list = vec![];
+  parse_into_list(ps, &mut list, ";")?;
   ps.expect("}")?;
-  Ok(block)
+  Ok(ps.add_list("block", list, start))
 }
 
 fn parse_new_scope(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
