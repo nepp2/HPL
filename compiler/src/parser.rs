@@ -444,6 +444,11 @@ fn try_parse_keyword_term(ps : &mut ParseState) -> Result<Option<Expr>, Error> {
       let body = parse_block_in_braces(ps)?;
       ps.add_list("for", vec![cond, body], start)
     }
+    "quote" => {
+      ps.pop_type(TokenType::Symbol)?;
+      let quote = parse_block_in_braces(ps)?;
+      ps.add_list("quote", vec![quote], start)
+    }
     "struct" => {
       ps.pop_type(TokenType::Symbol)?;
       let name = parse_simple_string(ps)?;

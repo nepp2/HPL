@@ -209,6 +209,16 @@ rusty_fork_test! {
   }
 
   #[test]
+  fn test_quote(){
+    let code = "
+      let q = quote {
+        1 + 1
+      }
+    ";
+    assert_result(code, Val::Void);
+  }
+
+  #[test]
   fn test_while() {
     let a = "
       let x = 10
