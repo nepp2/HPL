@@ -287,7 +287,10 @@ impl <'l> TypeChecker<'l> {
         if let Some(args) = es.get(0) {
           let args =
             args.children().iter()
-            .map(|e| Ok(self.typed_symbol(e)?.1)) // TODO: this is wrong
+            .map(|e| {
+              let e = if let Some((":", [_name, tag])) = e.try_construct() {tag} else {e};
+              self.to_type(e)
+            })
             .collect::<Result<Vec<Type>, Error>>()?;
           let return_type = if let Some(t) = es.get(1) {
             self.to_type(t)?
@@ -763,6 +766,8 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         if let Some(def) = self.t.find_function(&s) {
           return Ok(node(expr, Type::Fun(def.signature.clone()), Content::FunctionReference(s)));
         }
+        let i = self.t.modules.iter().flat_map(|m| m.globals.keys()).cloned().collect::<Vec<_>>();
+        println!("{:?}", i);
         error(expr, format!("unknown symbol '{}'", s))
       }
       ExprContent::LiteralString(s) => {

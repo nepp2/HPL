@@ -109,9 +109,12 @@ impl <'l> ParseState<'l> {
     if self.has_tokens() {
       Ok(&self.tokens[self.pos])
     }
-    else {
+    else if self.pos > 0 {
       let m = self.tokens[self.pos-1].loc.end;
       error(TextLocation::new(m, m), EXPECTED_TOKEN_ERROR)
+    }
+    else {
+      error(TextLocation::zero(), EXPECTED_TOKEN_ERROR)
     }
   }
 
@@ -128,8 +131,13 @@ impl <'l> ParseState<'l> {
   }
 
   fn loc(&self, start : TextMarker) -> TextLocation {
-    let end = self.tokens[self.pos-1].loc.end;
-    TextLocation::new(start, end)
+    if self.pos > 0 {
+      let end = self.tokens[self.pos-1].loc.end;
+      TextLocation::new(start, end)
+    }
+    else {
+      TextLocation::zero()
+    }
   }
 
   fn peek_ahead(&self, offset : usize) -> Option<&Token> {
@@ -480,6 +488,18 @@ fn try_parse_keyword_term(ps : &mut ParseState) -> Result<Option<Expr>, Error> {
       let definition = pratt_parse(ps, kp)?;
       ps.add_list("let", vec![definition], start)
     }
+    "return" => {
+      let start = ps.peek_marker();
+      ps.expect("return")?;
+      let mut list = vec![];
+      if ps.has_tokens() {
+        let t = ps.peek()?.symbol.as_ref();
+        if !ps.config.paren_terminators.contains(t) || !ps.config.expression_separators.contains_key(t) {
+          list.push(pratt_parse(ps, kp)?);
+        }
+      }
+      ps.add_list("return", list, start)
+    }
     _ => return Ok(None),
   };
   Ok(Some(expr))
@@ -491,6 +511,7 @@ fn parse_expression_term(ps : &mut ParseState) -> Result<Expr, Error> {
     Symbol => {
       if let Some(close_paren) = ps.config.paren_pairs.get(&t.symbol) {
         // Parens
+        let start = ps.peek_marker();
         let paren : String = t.symbol.as_ref().into();
         ps.expect_type(Symbol)?;
         match paren.as_str() {
@@ -499,11 +520,22 @@ fn parse_expression_term(ps : &mut ParseState) -> Result<Expr, Error> {
             ps.expect(close_paren)?;
             Ok(e)
           }
-          _ => {
-            let e = parse_everything(ps)?;
+          "{" => {
+            let e = parse_list(ps, vec![], ";", "block".into())?;
             ps.expect(close_paren)?;
             Ok(e)
           }
+          "(" => {
+            if ps.accept(close_paren) {
+              Ok(ps.add_leaf(ExprContent::LiteralUnit, start))
+            }
+            else {
+              let e = parse_everything(ps)?;
+              ps.expect(close_paren)?;
+              Ok(e)
+            }
+          }
+          _ => panic!(),
         }
       }
       else {
@@ -549,10 +581,14 @@ fn parse_expression_term(ps : &mut ParseState) -> Result<Expr, Error> {
   }
 }
 
+fn parse_top_level(ps : &mut ParseState) -> Result<Expr, Error> {
+  parse_list(ps, vec![], ";", "block".into())
+}
+
 pub fn parse(tokens : Vec<Token>, symbols : &StringCache) -> Result<Expr, Error> {
   let config = parse_config();
   let mut ps = ParseState::new(tokens, &config, symbols);
-  let e = parse_everything(&mut ps)?;
+  let e = parse_top_level(&mut ps)?;
   if ps.has_tokens() {
     let t = ps.peek()?;
     return error(t.loc, format!("Unexpected token '{}' of type '{:?}'", t.symbol, t.token_type));
@@ -569,7 +605,7 @@ pub fn repl_parse(tokens : Vec<Token>, symbols : &mut StringCache) -> Result<Rep
   use ReplParseResult::*;
   let config = parse_config();
   let mut ps = ParseState::new(tokens, &config, symbols);
-  match parse_everything(&mut ps) {
+  match parse_top_level(&mut ps) {
     Ok(e) => {
       return Ok(Complete(e));
     }
