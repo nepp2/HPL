@@ -489,8 +489,15 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
       }
       ("call", exprs) => {
         let function_expr = &exprs[0];
-        if let Some("new") = function_expr.try_symbol() {
-          return self.to_type_literal(expr, &exprs[1..]);
+        match function_expr.try_symbol() {
+          Some("new") => return self.to_type_literal(expr, &exprs[1..]),
+          Some("sizeof") => {
+            if exprs.len() == 2 {
+              let type_tag = self.t.to_type(&exprs[1])?;
+              return Ok(node(expr, Type::U64, Content::SizeOf(Box::new(type_tag))));
+            }
+          }
+          _ => (),
         }
         let args =
           exprs[1..].iter().map(|e| self.to_ast(e))
@@ -515,10 +522,6 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
           return Ok(node(expr, return_type, content));
         }
         error(&exprs[0], "value is not a function")
-      }
-      ("sizeof", [t]) => {
-        let type_tag = self.t.to_type(t)?;
-        return Ok(node(expr, Type::U64, Content::SizeOf(Box::new(type_tag))));
       }
       ("as", [a, b]) => {
         let a = self.to_ast(a)?;
