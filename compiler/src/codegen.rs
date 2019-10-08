@@ -119,7 +119,7 @@ fn find_type_def<'l>(type_info : &'l [&'l TypedModule], name : &str) -> Option<&
   type_info.iter().flat_map(|i| i.types.get(name)).nth(0)
 }
 
-fn find_function_def<'l>(type_info : &'l [&'l TypedModule], name : &str) -> Option<&'l Rc<FunctionDefinition>> {
+fn find_function_def<'l>(type_info : &'l [&'l TypedModule], name : &str, args : &[Type]) -> Option<&'l Rc<FunctionDefinition>> {
   type_info.iter().flat_map(|i| i.functions.get(name)).nth(0)
 }
 
@@ -244,13 +244,15 @@ impl <'l> Gen<'l> {
 
     // generate the prototypes first (so the functions find each other)
     let mut functions_to_codegen = vec!();
-    for (name, def) in module.functions.iter() {
-      match &def.implementation {
-        FunctionImplementation::Normal(body) => {
-          let p = self.codegen_prototype(name, &body.type_tag, def.args.as_slice(), def.signature.args.as_slice());
-          functions_to_codegen.push((p, def, body));
+    for (name, defs) in module.functions.iter() {
+      for def in defs.values() {
+        match &def.implementation {
+          FunctionImplementation::Normal(body) => {
+            let p = self.codegen_prototype(name, &body.type_tag, def.args.as_slice(), def.signature.args.as_slice());
+            functions_to_codegen.push((p, def, body));
+          }
+          _ => (),
         }
-        _ => (),
       }
     }
 

@@ -163,7 +163,7 @@ impl InterpreterInner {
     println!("{}", expr);
     let c = self.compile_expression(expr)?;
     let f = TOP_LEVEL_FUNCTION_NAME;
-    let def = c.typed_module.functions.get(TOP_LEVEL_FUNCTION_NAME).unwrap();
+    let def = c.typed_module.functions.get(TOP_LEVEL_FUNCTION_NAME).unwrap().values().next().unwrap();
     let result = match &def.signature.return_type {
       Type::Bool => Val::Bool(execute::<bool>(f, &c.ee)),
       Type::F64 => Val::F64(execute::<f64>(f, &c.ee)),

@@ -6,12 +6,15 @@ use crate::error::{Error, error, error_raw, TextLocation};
 use crate::expr::{StringCache, RefStr, Expr, ExprContent};
 
 use std::collections::HashMap;
+
+use std::hash::Hash;
+
 use itertools::Itertools;
 
 use im_rc::HashMap as ImMap;
 
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub enum Type {
   Void,
   F64,
@@ -113,7 +116,7 @@ pub struct FunctionDefinition {
   pub implementation : FunctionImplementation,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct FunctionSignature {
   pub return_type : Type,
   pub args : Vec<Type>,
@@ -190,10 +193,30 @@ pub struct GlobalDefinition {
   pub c_address : Option<usize>,
 }
 
+#[derive(PartialEq, Eq, Hash)]
+pub struct FunctionIdentity {
+  name : RefStr,
+  args : Vec<Type>,
+}
+
+type FunctionKey = Rc<FunctionIdentity>;
+
+// TODO: REMOVE
+// pub struct CachedHash<T : std::hash::Hash> {
+//   hash : u64,
+//   t : T,
+// }
+
+// impl <T : std::hash::Hash> CachedHash<T> {
+//   pub fn new(t : T) -> Self {
+//     t.hash(state: &mut H)
+//   }
+// }
+
 #[derive(Clone)]
 pub struct TypedModule {
   pub types : ImMap<RefStr, Rc<TypeDefinition>>,
-  pub functions : ImMap<RefStr, Rc<FunctionDefinition>>,
+  pub functions : ImMap<RefStr, ImMap<Vec<Type>, Rc<FunctionDefinition>>>,
   pub globals : ImMap<RefStr, Rc<GlobalDefinition>>,
 }
 
@@ -247,16 +270,32 @@ impl <'l> TypeChecker<'l> {
     }
   }
 
+  fn iter_modules(&self) -> impl Iterator<Item=&TypedModule> {
+    std::iter::once(self.module as &TypedModule).chain(self.modules.iter().cloned())
+  }
+
+  fn find_in_modules<RV>(&'l self, find : impl Fn(&'l TypedModule) -> Option<RV>) -> Option<RV> {
+    if let Some(v) = find(&self.module) { return Some(v); }
+    for m in self.modules {
+      if let Some(v) = find(m) { return Some(v); }
+    }
+    None
+  }
+
   fn find_f<T>(&self, name : &str, f : fn(&TypedModule) -> &ImMap<RefStr, T>) -> Option<&T> {
-    f(self.module).get(name).or_else(|| self.modules.iter().flat_map(|m| f(m).get(name)).nth(0))
+    self.iter_modules().flat_map(|m| f(m).get(name)).nth(0)
   }
 
   fn find_global(&self, name : &str) -> Option<&Rc<GlobalDefinition>> {
     self.find_f(name, |m| &m.globals)
   }
 
-  fn find_function(&self, name : &str) -> Option<&Rc<FunctionDefinition>> {
-    self.find_f(name, |m| &m.functions)
+  fn find_function(&self, name : &str, args : &[Type]) -> Option<&Rc<FunctionDefinition>> {
+    self.iter_modules().flat_map(|m| m.functions.get(name).and_then(|fs| fs.get(args))).next()
+  }
+
+  fn find_functions<'f>(&'f self, name : &'f str) -> impl Iterator<Item=&'f Rc<FunctionDefinition>> {
+    self.iter_modules().flat_map(|m| m.functions.get(name)).flat_map(|fs| fs.values())
   }
 
   fn find_type_def(&self, name : &str) -> Option<&Rc<TypeDefinition>> {
@@ -268,7 +307,10 @@ impl <'l> TypeChecker<'l> {
   }
 
   fn add_function(&mut self, name : RefStr, def : FunctionDefinition) {
-    self.module.functions.insert(name, Rc::new(def));
+    let map = self.module.functions.entry(name).or_insert(ImMap::new());
+    // TODO: cache these argument vectors somewhere?
+    let args = def.signature.args.clone();
+    map.insert(args, Rc::new(def));
   }
 
   /// Converts expression into type. Logs symbol error if definition references a type that hasn't been defined yet
@@ -666,7 +708,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
           let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
           let mut function_checker = FunctionChecker::new(self.t, false, args);
           let body = function_checker.to_ast(function_body)?;
-          if self.t.find_function(name.as_ref()).is_some() {
+          if self.t.find_function(&name, arg_types.as_slice()).is_some() {
             return error(expr, "function with that name already defined");
           }
           let signature = Rc::new(FunctionSignature {
@@ -766,7 +808,11 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         if let Some(t) = var_type {
           return Ok(node(expr, t.clone(), Content::VariableReference(name)));
         }
-        if let Some(def) = self.t.find_function(&s) {
+        let function_iter = self.t.find_functions(&s);
+        if let Some(def) = function_iter.next() {
+          if function_iter.next().is_some() {
+            return error(expr, "can't disambiguate multiple functions with the same name");
+          }
           return Ok(node(expr, Type::Fun(def.signature.clone()), Content::FunctionReference(s)));
         }
         let i = self.t.modules.iter().flat_map(|m| m.globals.keys()).cloned().collect::<Vec<_>>();
@@ -890,6 +936,6 @@ pub fn to_typed_module(local_symbol_table : &HashMap<RefStr, usize>, modules : &
     signature,
     implementation: FunctionImplementation::Normal(body),
   };
-  module.functions.insert(name.clone(), Rc::new(def));
+  type_checker.add_function(name, def);
   Ok(module)
 }
