@@ -116,15 +116,15 @@ struct LoopLabels {
 }
 
 fn find_type_def<'l>(type_info : &'l [&'l TypedModule], name : &str) -> Option<&'l Rc<TypeDefinition>> {
-  type_info.iter().flat_map(|i| i.types.get(name)).nth(0)
+  type_info.iter().flat_map(|i| i.types.get(name)).next()
 }
 
 fn find_function_def<'l>(type_info : &'l [&'l TypedModule], name : &str, args : &[Type]) -> Option<&'l Rc<FunctionDefinition>> {
-  type_info.iter().flat_map(|i| i.functions.get(name)).nth(0)
+  type_info.iter().flat_map(|i| i.functions.get(name)).flat_map(|fs| fs.get(args)).next()
 }
 
 fn find_global_def<'l>(type_info : &'l [&'l TypedModule], name : &str) -> Option<&'l Rc<GlobalDefinition>> {
-  type_info.iter().flat_map(|i| i.globals.get(name)).nth(0)
+  type_info.iter().flat_map(|i| i.globals.get(name)).next()
 }
 
 fn const_null(t : BasicTypeEnum) -> BasicValueEnum {
@@ -1127,8 +1127,9 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         }
       }
       Content::FunctionReference(name) => {
+        let args = match &node.type_tag { Type::Fun(sig) => sig.args.as_slice(), _ => panic!("function reference invalid type") };
         let def =
-          find_function_def(&self.gen.type_info, name)
+          find_function_def(&self.gen.type_info, name, args)
           .ok_or_else(|| error_raw(node.loc, format!("could not find function with name '{}'", name)))?;
         let f = self.get_linked_function_reference(def);
         reg(f.as_global_value().as_pointer_value().into())
@@ -1178,7 +1179,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
   fn codegen_return(&mut self, value_node : Option<&TypedNode>) -> Result<(), Error> {
     if let Some(value_node) = value_node {
       let v = self.codegen_expression_to_register(value_node)?;
-      self.builder.build_return(v.as_ref().map(|v| v as &BasicValue));
+      self.builder.build_return(v.as_ref().map(|v| v as &dyn BasicValue));
     }
     else {
       self.builder.build_return(None);

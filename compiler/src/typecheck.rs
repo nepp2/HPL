@@ -295,7 +295,7 @@ impl <'l> TypeChecker<'l> {
   }
 
   fn find_functions<'f>(&'f self, name : &'f str) -> impl Iterator<Item=&'f Rc<FunctionDefinition>> {
-    self.iter_modules().flat_map(|m| m.functions.get(name)).flat_map(|fs| fs.values())
+    self.iter_modules().flat_map(move |m| m.functions.get(name)).flat_map(|fs| fs.values())
   }
 
   fn find_type_def(&self, name : &str) -> Option<&Rc<TypeDefinition>> {
@@ -449,21 +449,25 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
     unique_name.clone()
   }
 
-  fn coerce_to_type(&mut self, mut node : TypedNode, t : &Type) -> Result<TypedNode, Error> {
-    if &node.type_tag == t {
-      return Ok(node);
-    }
-    match (&node.content, t) {
-      (Content::ArrayLiteral(ns), Type::Ptr(_)) => {
-        if ns.len() == 0 {
-          node.type_tag = t.clone();
-          return Ok(node);
-        }
-      }
-      _ => (),
-    }
-    error(node.loc, format!("expected type {:?}, found {:?}", t, node.type_tag))
-  }
+  // TODO: this coerces empty arrays into whatever type they're supposed to have.
+  // It's probably broken though, because it's using the pointer type instead of the array type.Clone
+  // No idea. Decide what to do with it!
+  //
+  // fn coerce_to_type(&mut self, mut node : TypedNode, t : &Type) -> Result<TypedNode, Error> {
+  //   if &node.type_tag == t {
+  //     return Ok(node);
+  //   }
+  //   match (&node.content, t) {
+  //     (Content::ArrayLiteral(ns), Type::Ptr(_)) => {
+  //       if ns.len() == 0 {
+  //         node.type_tag = t.clone();
+  //         return Ok(node);
+  //       }
+  //     }
+  //     _ => (),
+  //   }
+  //   error(node.loc, format!("expected type {:?}, found {:?}", t, node.type_tag))
+  // }
 
   fn to_type_literal(&mut self, expr : &Expr, exprs : &[Expr]) -> Result<TypedNode, Error> {
     if exprs.len() < 1 {
@@ -549,21 +553,26 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
           if let Some(op_tag) = op_tag {
             return Ok(node(expr, op_tag, Content::IntrinsicCall(self.cached(function_name), args)))
           }
+          for def in self.t.find_functions(function_name) {
+            let i = args.iter().map(|n| &n.type_tag);
+            if def.signature.args.iter().eq(i) {
+              let fr_content = Content::FunctionReference(self.cached(function_name));
+              let fr = node(function_expr, Type::Fun(def.signature.clone()), fr_content);
+              let content = Content::FunctionCall(Box::new(fr), args);
+              return Ok(node(expr, def.signature.return_type.clone(), content))
+            }
+          }
         }
         let function_value = self.to_ast(function_expr)?;
         if let Type::Fun(sig) = &function_value.type_tag {
           if sig.args.len() != args.len() {
             return error(expr, "incorrect number of arguments passed");
           }
-          let args =
-            args.into_iter().zip(sig.args.iter())
-            .map(|(a, e)| self.coerce_to_type(a, e))
-            .collect::<Result<Vec<TypedNode>, Error>>()?;
           let return_type = sig.return_type.clone();
           let content = Content::FunctionCall(Box::new(function_value), args);
           return Ok(node(expr, return_type, content));
         }
-        error(&exprs[0], "value is not a function")
+        error(&exprs[0], "no function match this name and parameters")
       }
       ("as", [a, b]) => {
         let a = self.to_ast(a)?;
@@ -808,12 +817,12 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         if let Some(t) = var_type {
           return Ok(node(expr, t.clone(), Content::VariableReference(name)));
         }
-        let function_iter = self.t.find_functions(&s);
+        let mut function_iter = self.t.find_functions(&s);
         if let Some(def) = function_iter.next() {
           if function_iter.next().is_some() {
             return error(expr, "can't disambiguate multiple functions with the same name");
           }
-          return Ok(node(expr, Type::Fun(def.signature.clone()), Content::FunctionReference(s)));
+          return Ok(node(expr, Type::Fun(def.signature.clone()), Content::FunctionReference(s.clone())));
         }
         let i = self.t.modules.iter().flat_map(|m| m.globals.keys()).cloned().collect::<Vec<_>>();
         println!("{:?}", i);
@@ -923,7 +932,7 @@ pub fn to_typed_module(local_symbol_table : &HashMap<RefStr, usize>, modules : &
   }
 
   let name = cache.get(TOP_LEVEL_FUNCTION_NAME);
-  if module.functions.contains_key(name.as_ref()) {
+  if type_checker.module.functions.contains_key(name.as_ref()) {
     return error(expr, "function with that name already defined");
   }
   let signature = Rc::new(FunctionSignature {
