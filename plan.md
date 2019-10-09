@@ -1,18 +1,24 @@
 
 # Plan
 
-* Fix the cycle problem crudely
-* Make very small metaprogramming example
-* Consider how to port tetris
+## Problems
+* Need to be able to define, for example, a `Drop` function for lots of different types.
+  * Introduced function overloading based arg types
+* I introduced overloading, but the code generation makes stupid assumptions about the names of functions. This means that they will clash for overloaded functions.
+  * This can just be fixed by introducing UIDs or something.
+  * Gotta be careful to find all the places that make dumb assumptions about the name.
+* How do I implement dynamic types with function overloading?
+  * With overloading this becomes multimethods, which sound complex to implement.
+  * If I swap to methods it's more plausible
+    * Every dynamic type just carries a pointer to a function table containing all of its methods, alongside its field table
 
 ## Roadmap
 
-* Solve the cyclic reference issue
-* Enable basic metaprogramming
+* Port tetris demo
 * Support RC pointers for safe memory/resource deallocation
 * Consider supporting dynamic types
-* Consider hindley-milner style inference
 * Support the Windows ABI properly (instead of hacking around it)
+* Enable basic metaprogramming
 
 ## Other
 

@@ -22,4 +22,6 @@ let b = malloc(sizeof(blah) as u32) as ptr(blah)
 let val = blah.new(3 , "fuck")
 deref b = val
 
+drop(val)
+
 (deref b).i
