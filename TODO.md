@@ -26,9 +26,3 @@ Support binding C functions properly
 Support loading modules properly (like they are DLLs?)
 
 Support metaprogramming?
-
-### TODO
-
-* Finish fixing the overloading support. Seems like a nice thing to have.
-  * Linking is a problem. I have to link functions between modules. I have to link global variables between modules. I have to link external C functions. There are slightly different mechanisms for each. The only thing I really need to change for function overloading is the way that functions are linked between modules, and perhaps also within modules.
-  * When a function name is referenced, in code, I can say exactly which function it is and which module it's from. This can happen in the type checker. So there shouldn't really be a complex problem when linking stuff.
