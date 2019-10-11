@@ -7,10 +7,13 @@
 * I introduced overloading, but the code generation makes stupid assumptions about the names of functions. This means that they will clash for overloaded functions.
   * This can just be fixed by introducing UIDs or something.
   * Gotta be careful to find all the places that make dumb assumptions about the name.
+
 * How do I implement dynamic types with function overloading?
   * With overloading this becomes multimethods, which sound complex to implement.
   * If I swap to methods it's more plausible
     * Every dynamic type just carries a pointer to a function table containing all of its methods, alongside its field table
+  * Dynamic types are NOT URGENT
+
 
 ## Roadmap
 

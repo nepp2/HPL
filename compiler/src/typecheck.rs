@@ -3,13 +3,11 @@ use std::rc::Rc;
 use std::fmt::Write;
 
 use crate::error::{Error, error, error_raw, TextLocation};
-use crate::expr::{StringCache, RefStr, Expr, ExprContent};
+use crate::expr::{StringCache, RefStr, Expr, ExprContent, UIDGenerator};
 
 use std::collections::HashMap;
 
 use std::hash::Hash;
-
-use itertools::Itertools;
 
 use im_rc::HashMap as ImMap;
 
@@ -110,10 +108,22 @@ pub enum FunctionImplementation {
 
 #[derive(Debug)]
 pub struct FunctionDefinition {
-  pub name : RefStr,
+  pub module_id : u64,
+  pub name_in_code : RefStr,
+  pub name_for_codegen : RefStr,
   pub args : Vec<RefStr>,
   pub signature : Rc<FunctionSignature>,
   pub implementation : FunctionImplementation,
+}
+
+impl FunctionDefinition {
+  fn function_reference(&self) -> FunctionReference {
+    FunctionReference {
+      name_in_code: self.name_in_code.clone(),
+      name_for_codegen: self.name_for_codegen.clone(),
+      module_id: self.module_id,
+    }
+  }
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -133,6 +143,14 @@ pub static TOP_LEVEL_FUNCTION_NAME : &'static str = "top_level";
 #[derive(Debug, Clone, Copy)]
 pub enum VarScope { Local, Global }
 
+/// Identifies a specific function from a specific module with a specific argument list
+#[derive(Debug)]
+pub struct FunctionReference {
+  pub name_in_code : RefStr,
+  pub name_for_codegen : RefStr,
+  pub module_id : u64,
+}
+
 #[derive(Debug)]
 pub enum Content {
   Literal(Val),
@@ -143,7 +161,7 @@ pub enum Content {
   IfThenElse(Box<(TypedNode, TypedNode, TypedNode)>),
   Block(Vec<TypedNode>),
   Quote(Box<Expr>),
-  FunctionReference(RefStr),
+  FunctionReference(FunctionReference),
   FunctionDefinition(RefStr),
   CBind(RefStr),
   TypeDefinition(RefStr),
@@ -215,14 +233,15 @@ type FunctionKey = Rc<FunctionIdentity>;
 
 #[derive(Clone)]
 pub struct TypedModule {
+  pub id : u64,
   pub types : ImMap<RefStr, Rc<TypeDefinition>>,
-  pub functions : ImMap<RefStr, ImMap<Vec<Type>, Rc<FunctionDefinition>>>,
+  pub functions : Vec<Rc<FunctionDefinition>>,
   pub globals : ImMap<RefStr, Rc<GlobalDefinition>>,
 }
 
 impl TypedModule {
-  pub fn new() -> TypedModule {
-    TypedModule{ types: ImMap::new(), functions: ImMap::new(), globals: ImMap::new() }
+  pub fn new(id : u64) -> TypedModule {
+    TypedModule{ id, types: ImMap::new(), functions: vec![], globals: ImMap::new() }
   }
 }
 
@@ -232,6 +251,7 @@ struct SymbolReference {
 }
 
 pub struct TypeChecker<'l> {
+  uid_generator : &'l mut UIDGenerator,
   module : &'l mut TypedModule,
   modules : &'l [&'l TypedModule],
   local_symbol_table : &'l HashMap<RefStr, usize>,
@@ -255,6 +275,7 @@ pub struct FunctionChecker<'l, 'lt> {
 impl <'l> TypeChecker<'l> {
 
   pub fn new(
+    uid_generator : &'l mut UIDGenerator,
     module : &'l mut TypedModule,
     modules : &'l [&'l TypedModule],
     local_symbol_table : &'l HashMap<RefStr, usize>,
@@ -262,6 +283,7 @@ impl <'l> TypeChecker<'l> {
       -> TypeChecker<'l>
   {
     TypeChecker {
+      uid_generator,
       module,
       modules,
       local_symbol_table,
@@ -291,11 +313,15 @@ impl <'l> TypeChecker<'l> {
   }
 
   fn find_function(&self, name : &str, args : &[Type]) -> Option<&Rc<FunctionDefinition>> {
-    self.iter_modules().flat_map(|m| m.functions.get(name).and_then(|fs| fs.get(args))).next()
+    self.iter_modules().flat_map(|m|
+      m.functions.iter().find(|def|
+        def.name_in_code.as_ref() == name &&
+        def.signature.args.as_slice() == args))
+    .next()
   }
 
   fn find_functions<'f>(&'f self, name : &'f str) -> impl Iterator<Item=&'f Rc<FunctionDefinition>> {
-    self.iter_modules().flat_map(move |m| m.functions.get(name)).flat_map(|fs| fs.values())
+    self.iter_modules().flat_map(move |m| m.functions.iter().filter(move |def| def.name_in_code.as_ref() == name))
   }
 
   fn find_type_def(&self, name : &str) -> Option<&Rc<TypeDefinition>> {
@@ -306,11 +332,8 @@ impl <'l> TypeChecker<'l> {
     self.module.globals.insert(name, Rc::new(def));
   }
 
-  fn add_function(&mut self, name : RefStr, def : FunctionDefinition) {
-    let map = self.module.functions.entry(name).or_insert(ImMap::new());
-    // TODO: cache these argument vectors somewhere?
-    let args = def.signature.args.clone();
-    map.insert(args, Rc::new(def));
+  fn add_function(&mut self, def : FunctionDefinition) {
+    self.module.functions.push(Rc::new(def));
   }
 
   /// Converts expression into type. Logs symbol error if definition references a type that hasn't been defined yet
@@ -556,7 +579,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
           for def in self.t.find_functions(function_name) {
             let i = args.iter().map(|n| &n.type_tag);
             if def.signature.args.iter().eq(i) {
-              let fr_content = Content::FunctionReference(self.cached(function_name));
+              let fr_content = Content::FunctionReference(def.function_reference());
               let fr = node(function_expr, Type::Fun(def.signature.clone()), fr_content);
               let content = Content::FunctionCall(Box::new(fr), args);
               return Ok(node(expr, def.signature.return_type.clone(), content))
@@ -685,12 +708,14 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
               map(|(i, _)| ((i + 65) as u8 as char).to_string().into())
               .collect();
             let def = FunctionDefinition {
-              name: name.clone(),
+              name_in_code: name.clone(),
+              name_for_codegen: name.clone(),
               args,
               signature: sig.clone(),
               implementation: FunctionImplementation::CFunction(address),
+              module_id: self.t.module.id,
             };
-            self.t.add_function(name.clone(), def);
+            self.t.add_function(def);
           }
           else {
             let def = GlobalDefinition { name: name.clone(), type_tag, c_address: address };
@@ -725,12 +750,14 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
             args: arg_types,
           });
           let def = FunctionDefinition {
-            name: name.clone(),
+            name_in_code: name.clone(),
+            name_for_codegen: format!("{}.{}", name, self.t.uid_generator.next()).into(),
             args: arg_names,
             signature,
             implementation: FunctionImplementation::Normal(body),
+            module_id: self.t.module.id,
           };
-          self.t.add_function(name.clone(), def);
+          self.t.add_function(def);
           return Ok(node(expr, Type::Void, Content::FunctionDefinition(name)))
         }
         error(expr, "malformed function definition")
@@ -822,7 +849,8 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
           if function_iter.next().is_some() {
             return error(expr, "can't disambiguate multiple functions with the same name");
           }
-          return Ok(node(expr, Type::Fun(def.signature.clone()), Content::FunctionReference(s.clone())));
+          let c = Content::FunctionReference(def.function_reference());
+          return Ok(node(expr, Type::Fun(def.signature.clone()), c));
         }
         let i = self.t.modules.iter().flat_map(|m| m.globals.keys()).cloned().collect::<Vec<_>>();
         println!("{:?}", i);
@@ -905,10 +933,10 @@ fn find_type_definitions<'e>(expr : &'e Expr, types : &mut Vec<&'e Expr>) {
 }
 
 
-pub fn to_typed_module(local_symbol_table : &HashMap<RefStr, usize>, modules : &[&TypedModule], cache : &StringCache, expr : &Expr) -> Result<TypedModule, Error> {
-  let mut module = TypedModule::new();
+pub fn to_typed_module(uid_generator : &mut UIDGenerator, local_symbol_table : &HashMap<RefStr, usize>, modules : &[&TypedModule], cache : &StringCache, expr : &Expr) -> Result<TypedModule, Error> {
+  let mut module = TypedModule::new(uid_generator.next());
   let mut type_checker =
-    TypeChecker::new(&mut module, modules, local_symbol_table, cache);
+    TypeChecker::new(uid_generator, &mut module, modules, local_symbol_table, cache);
   
   let mut types = vec!();
   find_type_definitions(expr, &mut types);
@@ -932,19 +960,21 @@ pub fn to_typed_module(local_symbol_table : &HashMap<RefStr, usize>, modules : &
   }
 
   let name = cache.get(TOP_LEVEL_FUNCTION_NAME);
-  if type_checker.module.functions.contains_key(name.as_ref()) {
-    return error(expr, "function with that name already defined");
+  if type_checker.module.functions.iter().find(|def| def.name_in_code == name).is_some() {
+    return error(expr, "top level function already defined!");
   }
   let signature = Rc::new(FunctionSignature {
     return_type: body.type_tag.clone(),
     args: vec!(),
   });
   let def = FunctionDefinition {
-    name: name.clone(),
+    name_in_code: name.clone(),
+    name_for_codegen: name,
     args: vec!(),
     signature,
     implementation: FunctionImplementation::Normal(body),
+    module_id: type_checker.module.id,
   };
-  type_checker.add_function(name, def);
+  type_checker.add_function(def);
   Ok(module)
 }

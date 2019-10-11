@@ -347,6 +347,23 @@ rusty_fork_test! {
   }
 
   #[test]
+  fn test_overloading() {
+    let code = "
+      struct foo {}
+      struct bar {}
+
+      fun dooby(f : foo) { 10 }
+      fun dooby(b : bar) { -20 }
+
+      let f = foo.new()
+      let b = bar.new()
+
+      dooby(f) - dooby(b)
+    ";
+    assert_result(code, Val::I64(30));
+  }
+
+  #[test]
   fn test_first_class_function() {
     let code = "
       fun foo(a : i64, b : i64) {

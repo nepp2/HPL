@@ -10,6 +10,22 @@ use crate::c_interface::SStr;
 /// An immutable, reference counted string
 pub type RefStr = Rc<str>;
 
+pub struct UIDGenerator {
+  gen : u64,
+}
+
+impl UIDGenerator {
+  pub fn new() -> Self {
+    UIDGenerator { gen : 0 }
+  }
+
+  pub fn next(&mut self) -> u64 {
+    let uid = self.gen;
+    self.gen += 1;
+    uid
+  }
+}
+
 #[repr(C, u8)]
 #[derive(Debug)]
 pub enum ExprContent {

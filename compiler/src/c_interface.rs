@@ -1,6 +1,6 @@
 // external C interface for the compiler (so that the language can use it)
 
-use crate::jit::{InterpreterInner, compile_expression, CompiledExpression};
+use crate::jit::{InterpreterInner, compile_module};
 use crate::lexer;
 use crate::expr::{RefStr, Expr};
 
@@ -91,14 +91,15 @@ pub extern "C" fn load_quote(i : *mut InterpreterInner, s : SStr) -> *mut u8 {
   Box::into_raw(expr) as *mut u8
 }
 
-#[no_mangle]
-pub extern "C" fn compile_expr(i : *mut InterpreterInner, expr : *mut u8, modules : SArray<&CompiledExpression>) -> *mut u8 {
-  let i = unsafe { &mut *i };
-  let expr = unsafe { &mut *(expr as *mut Expr) };
-  let m = compile_expression(expr, modules.as_slice(), &i.c_symbols, &mut i.context, &i.cache).unwrap();
-  let b = Box::new(m);
-  Box::into_raw(b) as *mut u8
-}
+// TODO: FIX THIS
+// #[no_mangle]
+// pub extern "C" fn compile_expr(i : *mut InterpreterInner, expr : *mut u8, modules : SArray<&CompiledModule>) -> *mut u8 {
+//   let i = unsafe { &mut *i };
+//   let expr = unsafe { &mut *(expr as *mut Expr) };
+//   let m = compile_module(expr, modules.as_slice(), &i.c_symbols, &mut i.context, &i.cache).unwrap();
+//   let b = Box::new(m);
+//   Box::into_raw(b) as *mut u8
+// }
 
 #[no_mangle]
 pub extern "C" fn print(s : SStr) {
@@ -194,7 +195,7 @@ impl CSymbols {
     sym.insert("test_add".into(), (test_add as *const()) as usize);
     sym.insert("thread_sleep".into(), (thread_sleep as *const()) as usize);
     sym.insert("load_quote".into(),  (load_quote as *const()) as usize);
-    sym.insert("compile_expr".into(),  (compile_expr as *const()) as usize);
+    // TODO FIX THIS: sym.insert("compile_expr".into(),  (compile_expr as *const()) as usize);
     sym.insert("test_global".into(), (&TEST_GLOBAL as *const i64) as usize);
 
     // This is a bit confusing. When we link to a global we do it by passing a
