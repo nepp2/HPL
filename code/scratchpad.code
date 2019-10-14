@@ -1,25 +1,50 @@
 
+let blah = declare_struct("blah", [(i  i64), s : string])
+
+declare_union("blah", '[(i : i64, s : string)])
+
+
+
 struct blah {
   i : i64
   s : string
 }
 
-struct rc {
+struct rc(T) {
+  data : ptr(rc(T))
+}
+
+struct rc_container(T) {
   count : i64
-  the_rest : i64
+  the_rest : T
+}
+
+fun rc(data : expr) {
+  'struct rc {
+    count : i64
+    data : !data
+  }
+}
+
+fun print(s : string) {
+  print(ref s)
 }
 
 fun drop(b : blah) {
-  print(ref "printing blah")
+  print("printing blah")
 }
 
 fun drop(rc : rc) {
-  print(ref "printing rc")
+  print("printing rc")
 }
 
-let b = malloc(sizeof(blah) as u32) as ptr(blah)
+fun whatever() {
+  let b = malloc(sizeof(blah) as u32) as ptr(blah)
 
-let val = blah.new(3 , "fuck")
-deref b = val
+  let val = blah.new(3 , "fuck")
+  deref b = val
 
-(deref b).i
+  (deref b).i
+}
+
+

@@ -5,7 +5,7 @@ use crate::error::{Error, TextLocation, TextMarker, error_raw};
 const SYNTAX : &'static [&'static str] =
   &["==", "!=", "<=", ">=", "=>", "+=", "-=", "*=", "/=", "||",
     "&&", "{", "}", "(", ")", "[", "]", "<", ">", ";", ":", ",",
-    ".", "=", "+", "-", "*", "/", "%", "?", "|", "&", "^", "!", "$"];
+    ".", "=", "+", "-", "*", "/", "%", "?", "|", "&", "^", "!", "$", "'"];
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum TokenType {

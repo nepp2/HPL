@@ -585,8 +585,12 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         }
         let function_value = self.to_ast(function_expr)?;
         if let Type::Fun(sig) = &function_value.type_tag {
+          let i = args.iter().map(|n| &n.type_tag);
           if sig.args.len() != args.len() {
             return error(expr, "incorrect number of arguments passed");
+          }
+          if !sig.args.iter().eq(i) {
+            return error(expr, "incorrect argument types");
           }
           let return_type = sig.return_type.clone();
           let content = Content::FunctionCall(Box::new(function_value), args);
