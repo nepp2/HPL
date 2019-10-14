@@ -9,9 +9,6 @@ use std::collections::HashMap;
 
 use std::hash::Hash;
 
-use im_rc::HashMap as ImMap;
-
-
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub enum Type {
   Void,
@@ -234,14 +231,14 @@ type FunctionKey = Rc<FunctionIdentity>;
 #[derive(Clone)]
 pub struct TypedModule {
   pub id : u64,
-  pub types : ImMap<RefStr, Rc<TypeDefinition>>,
+  pub types : HashMap<RefStr, Rc<TypeDefinition>>,
   pub functions : Vec<Rc<FunctionDefinition>>,
-  pub globals : ImMap<RefStr, Rc<GlobalDefinition>>,
+  pub globals : HashMap<RefStr, Rc<GlobalDefinition>>,
 }
 
 impl TypedModule {
   pub fn new(id : u64) -> TypedModule {
-    TypedModule{ id, types: ImMap::new(), functions: vec![], globals: ImMap::new() }
+    TypedModule{ id, types: HashMap::new(), functions: vec![], globals: HashMap::new() }
   }
 }
 
@@ -304,7 +301,7 @@ impl <'l> TypeChecker<'l> {
     None
   }
 
-  fn find_f<T>(&self, name : &str, f : fn(&TypedModule) -> &ImMap<RefStr, T>) -> Option<&T> {
+  fn find_f<T>(&self, name : &str, f : fn(&TypedModule) -> &HashMap<RefStr, T>) -> Option<&T> {
     self.iter_modules().flat_map(|m| f(m).get(name)).nth(0)
   }
 

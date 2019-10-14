@@ -1,6 +1,21 @@
 
 # Language design
 
+Plan:
+
+ * Implement a special-case RC type
+ * 
+
+Reference counted pointers:
+
+ * Implement the rc type
+   * Does it require generic structs, or should it just be built-in?
+   * Even with generic structs, how do I handle automatic dereferencing with dot syntax?
+     * Just overload a magic dereference function?
+     * But then how do you access the actual fields?
+   * How should array be structured?
+     * Array(T) { length: u64, Ptr(T) }
+
 ## V1
 
 Statically typed language. Dynamic types not really needed.
@@ -23,6 +38,6 @@ Do I need to support generics/templates out of the box?
 
 Support binding C functions properly
 
-Support loading modules properly (like they are DLLs?)
+Support loading modules somehow (like they are DLLs?)
 
 Support metaprogramming?
