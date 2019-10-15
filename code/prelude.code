@@ -21,6 +21,11 @@ cbind load_symbol : fun(handle : lib_handle, name : ptr(string)) => ptr(u8)
 
 cbind print : fun(s : ptr(string))
 
+// overload as workaround for ABI issue
+fun print(s : string) {
+  print(ref s)
+}
+
 cbind thread_sleep : fun(millis : u64)
 
 cbind compiler : ptr(u8)

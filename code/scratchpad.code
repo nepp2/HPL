@@ -1,50 +1,72 @@
 
-let blah = declare_struct("blah", [(i  i64), s : string])
+// --------------------------
+// APPROACH ONE - REPL
+// --------------------------
 
-declare_union("blah", '[(i : i64, s : string)])
+// Issue 1: Recursion won't work unless the function's module can find the rc variable in the outer declaration
 
+// Issue 2: I need to use the declare functions inside other functions to do metaprogramming, but for the purpose
+// of static compilation they can't be visible. In Terra this works because terra functions have different rules
+// to lua functions. My whole idea is that you don't have two separate languages, just different libraries available.
+// So how do you indicate which libraries are available?
+//  - Really difference is between static and runtime code
+//  - I think in general it's safe for static code to call runtime code
+//  - The opposite is not safe
+//  - Static values must never be stored in a runtime global
 
+let string = declare_struct("string", [('length, u64), ('data, ptr(u8))])
 
-struct blah {
-  i : i64
-  s : string
+let f = declare_function("f", [('foo, i64), ('bar, i64)], '(foo * bar))
+
+let array = declare_function("array", [('t, Type)], '{
+  declare_struct("array", [('length, u64), ('data, ptr(t))])
+})
+
+// --------------------------
+// APPROACH TWO - The static keyword
+// --------------------------
+
+// A static block is evaluated and linked immediately, so that values can inform types
+
+static array(t : expr) {
+
 }
 
-struct rc(T) {
-  data : ptr(rc(T))
-}
+// --------------------------
+// APPROACH THREE - Julia/Lisp style macros
+// --------------------------
 
-struct rc_container(T) {
-  count : i64
-  the_rest : T
-}
+// Issue 1: It's not clear whether to return some kind of reference to the type,
+// or whether the type should just become globally available with some unique name
 
-fun rc(data : expr) {
-  'struct rc {
-    count : i64
-    data : !data
+// Issue 2: Really we don't want the type to be declared separately like a C# delegate.
+// We want to just reference it inline and have the compiler work it out.
+
+macro array(t) {
+  'struct array {
+    length : u64
+    data : ptr(\t)
   }
 }
 
-fun print(s : string) {
-  print(ref s)
+let string_array = array!(string)
+
+// --------------------------
+// APPROACH THREE - Nodes
+// --------------------------
+
+node rc(t : type) {
+  struct rc_inner {
+    count : i64
+    the_rest : \T
+  }
+
+  struct rc {
+    data : ptr(rc_inner)
+  }
+
+  rc
 }
 
-fun drop(b : blah) {
-  print("printing blah")
-}
-
-fun drop(rc : rc) {
-  print("printing rc")
-}
-
-fun whatever() {
-  let b = malloc(sizeof(blah) as u32) as ptr(blah)
-
-  let val = blah.new(3 , "fuck")
-  deref b = val
-
-  (deref b).i
-}
 
 

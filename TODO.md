@@ -1,101 +1,76 @@
 
-# Language design
+# THOUGHTS
 
-## Plan
+In general I prefer a value-based approach, because it seems like a cleaner way to make use
+of the heap and the full power of the language.
 
-Implement a special-case RC type?
+The issue with a value-based approach is that it requires some kind of REPL functionality. This
+is because the workflow for a normal language is that you parse the whole file, then
+typecheck it, then code-generate it, then evaluate it. Since the values only arrive at the end,
+a value returned from line 1 cannot affect the typecheck or code generation phases of line 2.
 
-Or the yak-shaving plan:
- * Implement basic primitives for powerful metaprogramming system
- * Use this to implement something like generic types/functions
- * Use these to implement RC and Drop
- * Modify compiler to look for and call drop when possible
+The simplest default is to evaluate each expression in the top level block as if entered into a
+REPL. In theory most of these expressions can be discarded once the block is evaluated. We only
+need to keep the function definitions and any proper globals.
 
-## Issues
+A slight optimisation on this is to group together lines that don't affect each other. So a
+chain of function/struct definitions can all be code-generated together, which will also allow
+circular references to be resolved.
 
-### Make top-level like a REPL
+When the top-level has been evaluated, the important modules can be merged and the rest can be
+discarded. This is pretty stupid and expensive, but oh well. One day it can use a real interpreter
+I guess.
 
- * The top-level function is no longer a single initialisation function.
- * Instead, each semi-colon separated expression is executed one at a time, as if entered into a REPL.
- * These expressions may interact with the environment in a number of ways
-   * Introduce a new type
-   * Introduce a new function
-   * Introduce a temporary global (let)
-   * Introduce a permanent global (global)
- * How should "let" be handled?
-   * Heap allocation to be freed afterwards?
- * How can the memory footprint be compressed afterwards?
-   * Maybe the function modules can be merged
-   * Can all of the ir modules be dropped?
- 
- Is this behaviour incompatible with AoT compilation? Can it be considered a build script? Do any part of these REPL scripts actually need to run on the client?
+# Values
 
- Clearly functions that modify modules and generate code _can't_ run on the client. The idea was that this would all be done at compile-time. For that to work there does need to be some kind of clean separation of values. A module _must_ be able to initialise itself from scratch. So which of the features above breaks that?
+So with a value-based approach, how do I represent types and functions? How do I link them?
 
- I think the key idea is that there are modules used to build a module, and there are totally different modules that it depends on at runtime. How do I separate these things?
+In Terra, a function (for example) is a special object in Lua. It is likely just an an id.
+It can be inspected, but it can also be called (via the dynamism of lua). When it is referenced
+from a Terra function it is transformed into a simple function pointer and linked.
 
- Proposal: a module is a script that returns a module object. I can call methods on a module object, but I can't call any functions on it. It can only be code-generated and handed as input to another module.
+```rust
 
-### Alternative to REPL
+  // `type` is represented as a u64, and can be declared as a struct in the prelude
+  let foo : type = i64
 
-Support an eval keyword, which immediately compiles and links any code given to it as an internal module, as if it had been passed in by someone else. It can see all the other input modules.
+  // This adds a function to the module and code-generates it
+  declare_function('example, [(a, i64), (b, foo)], '{ a + b })
+
+  // This line cannot be type-checked and compiled until the previous line has fully executed
+  let e = example(4, 5)
+
+  // this is syntactic sugar for `declare_function`
+  fun example(a : i64, b : foo) { a + b }
+
+  // This adds a struct to the module
+  declare_struct('array, [(length, i64), (data, ptr(u8))])
+  
+  // this is syntactic sugar for `declare_struct`
+  struct array {
+    length : i64
+    data : ptr(u8)
+  }
 
 ```
-    eval {
-        fun array(t : expr) {
-            'struct array {
-                length : u64
-                data : ptr(\t)
-            }
-        }
-    }
-```
 
-### Macros
+Question: how do functions handle recursion? What about mutual recursion?
 
- * How should they work?
- * How do basic lisp macros work?
- * Is it basically a template language?
- * Can I avoid any special syntactic forms?
- * The problem with macros is that they make execution incremental within modules, which currently isn't supported.
+# Types
 
-### Generic types
+All types are values. They are stored as (module, id) combos, and can be looked up in a central directory.
 
- * Should they be built into the language?
- * Should they be built using a macro system?
+# Functions
 
-### Reference counted pointers
+There are two different understandings of first-class functions. A function object in the terra sense is
+something that can be inspected, linked, called, etc. In the classic sense, a first-class-function is just
+a function pointer or a closure.
 
- * Implement the rc type
-   * Does it require generic structs, or should it just be built-in?
-   * Even with generic structs, how do I handle automatic dereferencing with dot syntax?
-     * Just overload a magic dereference function?
-     * But then how do you access the actual fields?
-   * How should array be structured?
-     * Array(T) { length: u64, Ptr(T) }
+One way to unify them is to store the function pointer in the function object, and have the compiler 
+look for an overload function called something like "invoke". This would return a function pointer of
+the appropriate type, which could then be called.
 
-# Vague V1 plan
+# Generics
 
-Statically typed language. Dynamic types not really needed.
+???
 
-Safe most of the time. Support unsafe junk too.
-
-Reference-counted pointers. How do I implement them?
- * Default synax (e.g. `[1, 2, 3]`) allocates a dynamically-sized, reference-counted array.
-
-How do I implement `drop` functions for reference-counted pointers? (and other resources)
- * Function overloading would work
-
-Do I need function overloading?
- * This would make implementing `drop` functions much neater
- * Overloading means that the ABI is going to be ugly. But who cares about ABI? I'm not trying to replace C.
-
-Do I need to support generics/templates out of the box?
- * The pointer and array types are built in. Reference-counted pointers aren't, so that's maybe a problem.
- * Seems like probably not, for V1.
-
-Support binding C functions properly
-
-Support loading modules somehow (like they are DLLs?)
-
-Support metaprogramming?

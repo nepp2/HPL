@@ -1,27 +1,51 @@
 
 # Plan
 
-## Problems
-* Need to be able to define, for example, a `Drop` function for lots of different types.
-  * Introduced function overloading based arg types
-* I introduced overloading, but the code generation makes stupid assumptions about the names of functions. This means that they will clash for overloaded functions.
-  * This can just be fixed by introducing UIDs or something.
-  * Gotta be careful to find all the places that make dumb assumptions about the name.
+## Reference-counted pointers
 
-* How do I implement dynamic types with function overloading?
-  * With overloading this becomes multimethods, which sound complex to implement.
-  * If I swap to methods it's more plausible
-    * Every dynamic type just carries a pointer to a function table containing all of its methods, alongside its field table
-  * Dynamic types are NOT URGENT
+Implement a special-case RC type?
 
+Or the yak-shaving plan:
+ * Implement basic primitives for powerful metaprogramming system
+ * Use this to implement something like generic types/functions
+ * Use these to implement RC and Drop(RC)
+ * Modify compiler to look for and call drop when possible
 
 ## Roadmap
 
-* Port tetris demo
 * Support RC pointers for safe memory/resource deallocation
+* Port tetris demo
 * Consider supporting dynamic types
 * Support the Windows ABI properly (instead of hacking around it)
 * Enable basic metaprogramming
+
+
+## Vague V1 plan
+
+Statically typed language. Dynamic types not really needed.
+
+Safe most of the time. Support unsafe junk too.
+
+Reference-counted pointers. How do I implement them?
+ * Default synax (e.g. `[1, 2, 3]`) allocates a dynamically-sized, reference-counted array.
+
+How do I implement `drop` functions for reference-counted pointers? (and other resources)
+ * Function overloading would work
+
+Do I need function overloading?
+ * This would make implementing `drop` functions much neater
+ * Overloading means that the ABI is going to be ugly. But who cares about ABI? I'm not trying to replace C.
+
+Do I need to support generics/templates out of the box?
+ * The pointer and array types are built in. Reference-counted pointers aren't, so that's maybe a problem.
+ * Seems like probably not, for V1.
+
+Support binding C functions properly
+
+Support loading modules somehow (like they are DLLs?)
+
+Support metaprogramming?
+
 
 ## Other
 
