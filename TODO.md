@@ -1,5 +1,5 @@
 
-# THOUGHTS
+# THOUGHTS - 15/10/2019
 
 In general I prefer a value-based approach, because it seems like a cleaner way to make use
 of the heap and the full power of the language.
@@ -35,7 +35,7 @@ from a Terra function it is transformed into a simple function pointer and linke
   let foo : type = i64
 
   // This adds a function to the module and code-generates it
-  declare_function('example, [(a, i64), (b, foo)], '{ a + b })
+  declare_function(#example, [(a, i64), (b, foo)], #{ a + b })
 
   // This line cannot be type-checked and compiled until the previous line has fully executed
   let e = example(4, 5)
@@ -44,7 +44,7 @@ from a Terra function it is transformed into a simple function pointer and linke
   fun example(a : i64, b : foo) { a + b }
 
   // This adds a struct to the module
-  declare_struct('array, [(length, i64), (data, ptr(u8))])
+  declare_struct(#array, [(length, i64), (data, ptr(u8))])
   
   // this is syntactic sugar for `declare_struct`
   struct array {
@@ -74,3 +74,97 @@ the appropriate type, which could then be called.
 
 ???
 
+# THOUGHTS - 16/10/2019
+
+I'm considering whether the REPL model is really a good idea. If the language behaves differently in
+different places, is it even powerful enough to build the kind of module system I'm talking about?
+It can maybe be done at the top level, but then I can't abstract over any of it? Can I make similar
+functionality work in functions somehow?
+
+If the system requires fresh type information and code-generation between each line, the answer is no.
+Isn't it? Unsure, but code-generation seems like the problem that won't be easily avoided.
+
+## Types as values option
+
+```rust
+
+  let mb = module_builder()
+
+  declare_global(#v, i64, '3)
+
+  declare_function(mb, #example, [(a, i64), (b, foo)], #{ a + b })
+
+  declare_struct(#array, [(length, i64), (data, ptr(u8))])
+
+  let b = mb.build()
+
+  // not sure how to then use this
+
+```
+
+## With the current semantics (types aren't values, modules are compiled as a unit)
+
+```rust
+
+  // Brings new module into scope
+  module {
+    global v = 3
+
+    fun example(a : i64, b : foo) {
+      a + b
+    }
+
+    struct array {
+      length : i64
+      data : ptr(u8)
+    }
+  }
+
+  module {
+    example(v, 4)
+  }
+
+  // This is equivalent to the module block above
+  create_module( #(example(v, 4)) )
+
+  // the modules are all deallocated at the end of the scope
+
+```
+
+This seems very promising. But there are some questions to be answered:
+
+  1. How would you use this to handle generic types like RC?
+  2. How do I pass values into the modules?
+  3. How do I specify which other modules they can see?
+
+```rust
+
+  fun rc(t : expr) {
+    create_module(#{
+      struct rc_inner {
+        count : i64
+        the_rest : \t
+      }
+
+      struct rc {
+        data : ptr(rc_inner)
+      }
+
+      rc
+    })
+  }
+
+  module rc(t : type) {
+    struct rc_inner {
+      count : i64
+      the_rest : #t
+    }
+
+    struct rc {
+      data : ptr(rc_inner)
+    }
+
+    rc
+  }
+
+```
