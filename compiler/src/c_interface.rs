@@ -16,6 +16,14 @@ use libloading::{Library, Symbol};
 
 use std::{thread, time};
 
+/// A handle to a module
+#[no_mangle]
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct SModuleHandle {
+  pub id : u64,
+}
+
 /// A sized array that is compatible with the Cauldron's array representation
 #[no_mangle]
 #[derive(Copy, Clone)]
@@ -91,15 +99,24 @@ pub extern "C" fn load_quote(i : *mut InterpreterInner, s : SStr) -> *mut u8 {
   Box::into_raw(expr) as *mut u8
 }
 
-// TODO: FIX THIS
-// #[no_mangle]
-// pub extern "C" fn compile_expr(i : *mut InterpreterInner, expr : *mut u8, modules : SArray<&CompiledModule>) -> *mut u8 {
-//   let i = unsafe { &mut *i };
-//   let expr = unsafe { &mut *(expr as *mut Expr) };
-//   let m = compile_module(expr, modules.as_slice(), &i.c_symbols, &mut i.context, &i.cache).unwrap();
-//   let b = Box::new(m);
-//   Box::into_raw(b) as *mut u8
-// }
+#[no_mangle]
+pub extern "C" fn build_module(i : *mut InterpreterInner, e : &Expr) -> SModuleHandle {
+  let i = unsafe { &mut *i };
+  let cm = i.compile_module(e).expect("failed to build the module");
+  SModuleHandle { id: cm.info.id }
+}
+
+#[no_mangle]
+pub extern "C" fn get_function(
+  i : *mut InterpreterInner, h : SModuleHandle, name : SStr)
+    -> *mut u8
+{
+  let i = unsafe { &mut *i };
+  let address =
+    i.get_function_address(h.id, name.as_str())
+    .expect("no matching function found");
+  address as *mut u8
+}
 
 #[no_mangle]
 pub extern "C" fn print(s : SStr) {
@@ -195,7 +212,8 @@ impl CSymbols {
     sym.insert("test_add".into(), (test_add as *const()) as usize);
     sym.insert("thread_sleep".into(), (thread_sleep as *const()) as usize);
     sym.insert("load_quote".into(),  (load_quote as *const()) as usize);
-    // TODO FIX THIS: sym.insert("compile_expr".into(),  (compile_expr as *const()) as usize);
+    sym.insert("build_module".into(),  (build_module as *const()) as usize);
+    sym.insert("get_function".into(),  (get_function as *const()) as usize);
     sym.insert("test_global".into(), (&TEST_GLOBAL as *const i64) as usize);
 
     // This is a bit confusing. When we link to a global we do it by passing a

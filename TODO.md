@@ -1,33 +1,21 @@
 
 # THOUGHTS - 15/10/2019
 
-In general I prefer a value-based approach, because it seems like a cleaner way to make use
-of the heap and the full power of the language.
+In general I prefer a value-based approach, because it seems like a cleaner way to make use of the heap and the full power of the language.
 
-The issue with a value-based approach is that it requires some kind of REPL functionality. This
-is because the workflow for a normal language is that you parse the whole file, then
-typecheck it, then code-generate it, then evaluate it. Since the values only arrive at the end,
-a value returned from line 1 cannot affect the typecheck or code generation phases of line 2.
+The issue with a value-based approach is that it requires some kind of REPL functionality. This is because the workflow for a normal language is that you parse the whole file, then typecheck it, then code-generate it, then evaluate it. Since the values only arrive at the end, a value returned from line 1 cannot affect the typecheck or code generation phases of line 2.
 
-The simplest default is to evaluate each expression in the top level block as if entered into a
-REPL. In theory most of these expressions can be discarded once the block is evaluated. We only
-need to keep the function definitions and any proper globals.
+The simplest default is to evaluate each expression in the top level block as if entered into a REPL. In theory most of these expressions can be discarded once the block is evaluated. We only need to keep the function definitions and any proper globals.
 
-A slight optimisation on this is to group together lines that don't affect each other. So a
-chain of function/struct definitions can all be code-generated together, which will also allow
-circular references to be resolved.
+A slight optimisation on this is to group together lines that don't affect each other. So a chain of function/struct definitions can all be code-generated together, which will also allow circular references to be resolved.
 
-When the top-level has been evaluated, the important modules can be merged and the rest can be
-discarded. This is pretty stupid and expensive, but oh well. One day it can use a real interpreter
-I guess.
+When the top-level has been evaluated, the important modules can be merged and the rest can be discarded. This is pretty stupid and expensive, but oh well. One day it can use a real interpreter I guess.
 
 # Values
 
 So with a value-based approach, how do I represent types and functions? How do I link them?
 
-In Terra, a function (for example) is a special object in Lua. It is likely just an an id.
-It can be inspected, but it can also be called (via the dynamism of lua). When it is referenced
-from a Terra function it is transformed into a simple function pointer and linked.
+In Terra, a function (for example) is a special object in Lua. It is likely just an an id. It can be inspected, but it can also be called (via the dynamism of lua). When it is referenced from a Terra function it is transformed into a simple function pointer and linked.
 
 ```rust
 
@@ -62,13 +50,9 @@ All types are values. They are stored as (module, id) combos, and can be looked 
 
 # Functions
 
-There are two different understandings of first-class functions. A function object in the terra sense is
-something that can be inspected, linked, called, etc. In the classic sense, a first-class-function is just
-a function pointer or a closure.
+There are two different understandings of first-class functions. A function object in the terra sense is something that can be inspected, linked, called, etc. In the classic sense, a first-class-function is just a function pointer or a closure.
 
-One way to unify them is to store the function pointer in the function object, and have the compiler 
-look for an overload function called something like "invoke". This would return a function pointer of
-the appropriate type, which could then be called.
+One way to unify them is to store the function pointer in the function object, and have the compiler look for an overload function called something like "invoke". This would return a function pointer of the appropriate type, which could then be called.
 
 # Generics
 
@@ -76,13 +60,10 @@ the appropriate type, which could then be called.
 
 # THOUGHTS - 16/10/2019
 
-I'm considering whether the REPL model is really a good idea. If the language behaves differently in
-different places, is it even powerful enough to build the kind of module system I'm talking about?
-It can maybe be done at the top level, but then I can't abstract over any of it? Can I make similar
+I'm considering whether the REPL model is really a good idea. If the language behaves differently in different places, is it even powerful enough to build the kind of module system I'm talking about? It can maybe be done at the top level, but then I can't abstract over any of it? Can I make similar
 functionality work in functions somehow?
 
-If the system requires fresh type information and code-generation between each line, the answer is no.
-Isn't it? Unsure, but code-generation seems like the problem that won't be easily avoided.
+If the system requires fresh type information and code-generation between each line, the answer is no. Isn't it? Unsure, but code-generation seems like the problem that won't be easily avoided.
 
 ## Types as values option
 
@@ -168,3 +149,15 @@ This seems very promising. But there are some questions to be answered:
   }
 
 ```
+
+## A New Problem
+
+The "create_module" function doesn't work so well because it can't return type information.
+
+A special language construct could return type information, but then it wouldn't be able to use runtime values to influence the code generation of the new module. This is because you wouldn't know what type the new module will return until actually running the code, after typechecking had already happened.
+
+Instead it could just do a checked cast to a particular return type (or something equivalent). Functions could potentially be accessed as though from a DLL. But that wouldn't work if they used types internal to the module.
+
+
+
+

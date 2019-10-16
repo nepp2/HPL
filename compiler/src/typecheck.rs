@@ -1,6 +1,8 @@
 
 use std::rc::Rc;
 use std::fmt::Write;
+use std::fmt;
+use itertools::Itertools;
 
 use crate::error::{Error, error, error_raw, TextLocation};
 use crate::expr::{StringCache, RefStr, Expr, ExprContent, UIDGenerator};
@@ -27,6 +29,20 @@ pub enum Type {
   Array(Box<Type>),
   Ptr(Box<Type>),
   Tuple(Vec<Type>),
+}
+
+impl fmt::Display for Type {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Type::Fun(sig) =>
+        write!(f, "fun({}) => {}", sig.args.iter().join(", "), sig.return_type),
+      Type::Def(s) => write!(f, "{}", s),
+      Type::Array(t) => write!(f, "array({})", t),
+      Type::Ptr(t) => write!(f, "ptr({})", t),
+      Type::Tuple(ts) => write!(f, "({})", ts.iter().join(", ")),
+      t => write!(f, "{:?}", t),
+    }
+  }
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -445,13 +461,13 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
     self.t.cache.get(s)
   }
 
-  fn get_scoped_variable_name(&self, name : &RefStr) -> RefStr {
+  fn get_scoped_variable_name(&self, name : &str) -> RefStr {
     for m in self.scope_map.iter().rev() {
       if let Some(n) = m.get(name) {
         return n.clone();
       }
     }
-    return name.clone();
+    return self.cached(name);
   }
 
   fn create_scoped_variable_name(&mut self, name : RefStr) -> RefStr {
@@ -568,22 +584,35 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         let args =
           exprs[1..].iter().map(|e| self.to_ast(e))
           .collect::<Result<Vec<TypedNode>, Error>>()?;
-        if let Some(function_name) = function_expr.try_symbol() {
+        // Slight confusing control flow. This block returns a function pointer value, but only
+        // if it fails to return early (which it will do if it finds either a matching intrinsic
+        // or a matching function overload). It's structured this way to give better error messages.
+        let function_value = if let Some(function_name) = function_expr.try_symbol() {
           let op_tag = match_intrinsic(function_name, args.as_slice());
           if let Some(op_tag) = op_tag {
             return Ok(node(expr, op_tag, Content::IntrinsicCall(self.cached(function_name), args)))
           }
-          for def in self.t.find_functions(function_name) {
-            let i = args.iter().map(|n| &n.type_tag);
-            if def.signature.args.iter().eq(i) {
-              let fr_content = Content::FunctionReference(def.function_reference());
-              let fr = node(function_expr, Type::Fun(def.signature.clone()), fr_content);
-              let content = Content::FunctionCall(Box::new(fr), args);
-              return Ok(node(expr, def.signature.return_type.clone(), content))
+          if let Some(var) = self.variable_to_ast(function_expr, function_name) {
+            var
+          }
+          else {
+            for def in self.t.find_functions(function_name) {
+              let i = args.iter().map(|n| &n.type_tag);
+              if def.signature.args.iter().eq(i) {
+                let fr_content = Content::FunctionReference(def.function_reference());
+                let fr = node(function_expr, Type::Fun(def.signature.clone()), fr_content);
+                let content = Content::FunctionCall(Box::new(fr), args);
+                return Ok(node(expr, def.signature.return_type.clone(), content))
+              }
             }
+            let types : Vec<String> = args.iter().map(|n| format!("{}", n.type_tag)).collect();
+            let s = format!("no function {}({}) found", function_name, types.iter().join(", "));
+            return error(expr, s);
           }
         }
-        let function_value = self.to_ast(function_expr)?;
+        else {
+          self.to_ast(function_expr)?
+        };
         if let Type::Fun(sig) = &function_value.type_tag {
           let i = args.iter().map(|n| &n.type_tag);
           if sig.args.len() != args.len() {
@@ -636,8 +665,9 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         error(expr, "malformed let expression")
       }
       // TODO this is a very stupid approach
-      ("quote", [e]) => {
-        Ok(node(expr, Type::Ptr(Box::new(Type::U8)), Content::Quote(Box::new(e.clone()))))
+      ("#", [e]) => {
+        let def = self.t.find_type_def("expr").unwrap();
+        Ok(node(expr, Type::Ptr(Box::new(Type::Def(def.name.clone()))), Content::Quote(Box::new(e.clone()))))
       }
       ("=", [assign_expr, value_expr]) => {
         let a = self.to_ast(assign_expr)?;
@@ -827,6 +857,17 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
     }
   }
 
+  pub fn variable_to_ast(&mut self, expr : &Expr, s : &str) -> Option<TypedNode> {
+    let name = self.get_scoped_variable_name(s);
+    let var_type =
+      self.variables.get(name.as_ref())
+      .or_else(|| self.t.find_global(name.as_ref()).map(|def| &def.type_tag));
+    if let Some(t) = var_type {
+      return Some(node(expr, t.clone(), Content::VariableReference(name)));
+    }
+    None
+  }
+
   pub fn to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
     match &expr.content {
       ExprContent::List(_, _) => {
@@ -838,12 +879,8 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         if s.as_ref() == "break" {
           return Ok(node(expr, Type::Void, Content::Break));
         }
-        let name = self.get_scoped_variable_name(&s);
-        let var_type =
-          self.variables.get(name.as_ref())
-          .or_else(|| self.t.find_global(name.as_ref()).map(|def| &def.type_tag));
-        if let Some(t) = var_type {
-          return Ok(node(expr, t.clone(), Content::VariableReference(name)));
+        if let Some(variable) = self.variable_to_ast(expr, &s) {
+          return Ok(variable)
         }
         let mut function_iter = self.t.find_functions(&s);
         if let Some(def) = function_iter.next() {
@@ -853,8 +890,6 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
           let c = Content::FunctionReference(def.function_reference());
           return Ok(node(expr, Type::Fun(def.signature.clone()), c));
         }
-        let i = self.t.modules.iter().flat_map(|m| m.globals.keys()).cloned().collect::<Vec<_>>();
-        println!("{:?}", i);
         error(expr, format!("unknown symbol '{}'", s))
       }
       ExprContent::LiteralString(s) => {
@@ -922,7 +957,7 @@ fn find_type_definitions<'e>(expr : &'e Expr, types : &mut Vec<&'e Expr>) {
         types.push(expr);
         return;
       }
-      "quote" => {
+      "#" => {
         return
       }
       _ => (),

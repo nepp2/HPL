@@ -161,7 +161,7 @@ enum ShortCircuitOp { And, Or }
 pub struct CompiledModule {
   pub ee : ExecutionEngine,
   pub llvm_module : Module,
-  pub module_info : TypedModule,
+  pub info : TypedModule,
 }
 
 /// Code generates a module
@@ -203,13 +203,13 @@ impl <'l> CompileInfo<'l> {
 
   fn find_type_def(&self, name : &str) -> Option<&'l Rc<TypeDefinition>> {
     self.type_info.types.get(name).or_else(||
-      self.external_modules.iter().flat_map(|i| i.module_info.types.get(name)).next())
+      self.external_modules.iter().flat_map(|i| i.info.types.get(name)).next())
   }
 
   fn find_external_function_def(&self, function_ref : &FunctionReference) -> Option<(&'l CompiledModule, &'l Rc<FunctionDefinition>)> {
-    self.external_modules.iter().find(|m| m.module_info.id == function_ref.module_id)
+    self.external_modules.iter().find(|m| m.info.id == function_ref.module_id)
       .and_then(|m|
-        m.module_info.functions.iter().find(|def|
+        m.info.functions.iter().find(|def|
           def.name_in_code == function_ref.name_in_code &&
           def.name_for_codegen == function_ref.name_for_codegen)
         .map(|def| (m, def))
@@ -218,7 +218,7 @@ impl <'l> CompileInfo<'l> {
 
   fn find_external_global_def(&self, name : &str) -> Option<(&'l CompiledModule, &'l Rc<GlobalDefinition>)> {
     self.external_modules.iter().flat_map(|m|
-      m.module_info.globals.get(name)
+      m.info.globals.get(name)
       .map(|g| (m, g))
     ).next()
   }
@@ -998,7 +998,9 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
       Content::Quote(e) => {
         let v = Box::into_raw(e.clone()) as u64;
         let v = self.gen.context.i64_type().const_int(v, false);
-        let t = self.gen.context.i8_type().ptr_type(AddressSpace::Generic);
+        let def = self.gen.info.find_type_def("expr").unwrap();
+        let bt = self.gen.composite_type(def).into();
+        let t = self.gen.pointer_to_type(Some(bt));
         reg(self.builder.build_int_to_ptr(v, t, "quote_expr").into())
       }
       Content::CBind(_def) => {

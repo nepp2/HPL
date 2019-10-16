@@ -118,6 +118,24 @@ impl InterpreterInner {
     Ok(self.modules.last().unwrap())
   }
 
+  pub fn get_function_address(&self, module_id : u64, name : &str) -> Option<u64> {
+    // TODO: panics if there is more than one overload, because no argument types
+    // are provided to narrow the search, and it would be very unsafe to return
+    // the wrong one.
+    self.modules.iter().find(|cm| cm.info.id == module_id)
+    .and_then(|cm| {
+      let mut i = cm.info.functions.iter()
+        .filter(|def| def.name_in_code.as_ref() == name);
+      let address =
+        i.next().and_then(|def|
+          unsafe { cm.ee.get_function_address(&def.name_for_codegen) });
+      if i.next().is_some() {
+        panic!("two matching overloads for '{}' in get_function_address", name)
+      }
+      address
+    })
+  }
+
   pub fn run_unwrapped<T>(&mut self, code : &str) -> Result<T, Error> {
     let expr = self.parse_string(code)?;
     let c = self.compile_module(&expr)?;
@@ -142,7 +160,7 @@ impl InterpreterInner {
     let expr = self.parse_string(code)?;
     let c = self.compile_module(&expr)?;
     let function_name =
-      c.module_info.functions.iter()
+      c.info.functions.iter()
       .find(|def| def.name_in_code.as_ref() == function_name)
       .unwrap().name_for_codegen.as_ref();
     let v = unsafe {
@@ -157,7 +175,7 @@ impl InterpreterInner {
   pub fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
     let c = self.compile_module(expr)?;
     let f = TOP_LEVEL_FUNCTION_NAME;
-    let def = c.module_info.functions.iter().find(|def| def.name_in_code.as_ref() == TOP_LEVEL_FUNCTION_NAME).unwrap();
+    let def = c.info.functions.iter().find(|def| def.name_in_code.as_ref() == TOP_LEVEL_FUNCTION_NAME).unwrap();
     let result = match &def.signature.return_type {
       Type::Bool => Val::Bool(execute::<bool>(f, &c.ee)),
       Type::F64 => Val::F64(execute::<f64>(f, &c.ee)),
@@ -187,9 +205,9 @@ pub fn compile_module(uid_generator : &mut UIDGenerator, expr : &Expr, external_
   // TODO: provide an option for this?
   // println!("{}", expr);
 
-  let modules : Vec<_> = external_modules.iter().map(|c| &c.module_info).collect();
+  let modules : Vec<_> = external_modules.iter().map(|c| &c.info).collect();
 
-  let module_info = typecheck::to_typed_module(uid_generator, &c_symbols.local_symbol_table, modules.as_slice(), cache, expr)?;
+  let info = typecheck::to_typed_module(uid_generator, &c_symbols.local_symbol_table, modules.as_slice(), cache, expr)?;
 
   let module_name = format!("module_{}", modules.len());
   let mut llvm_module = context.create_module(&module_name);
@@ -217,8 +235,8 @@ pub fn compile_module(uid_generator : &mut UIDGenerator, expr : &Expr, external_
   {
     let jit = Gen::new(
         context, &mut llvm_module, &mut ee.get_target_data(),
-        external_modules, &module_info, &mut globals_to_link, &mut functions_to_link, &pm);
-    jit.codegen_module(&module_info)?
+        external_modules, &info, &mut globals_to_link, &mut functions_to_link, &pm);
+    jit.codegen_module(&info)?
   };
 
   // TODO: provide an option for this?
@@ -239,5 +257,5 @@ pub fn compile_module(uid_generator : &mut UIDGenerator, expr : &Expr, external_
   // TODO: is this needed?
   ee.run_static_constructors();
 
-  Ok(CompiledModule { ee, llvm_module, module_info })
+  Ok(CompiledModule { ee, llvm_module, info })
 }

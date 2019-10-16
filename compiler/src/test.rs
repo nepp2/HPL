@@ -1,7 +1,7 @@
 
 use crate::error::{Error, ErrorContent};
 use crate::jit::{Interpreter, interpreter};
-use crate::typecheck::Val;
+use crate::typecheck::{Val, TOP_LEVEL_FUNCTION_NAME};
 use crate::c_interface::SStr;
 
 fn result_string(r : Result<Val, Error>) -> String {
@@ -211,11 +211,20 @@ rusty_fork_test! {
   #[test]
   fn test_quote(){
     let code = "
-      let q = quote {
-        1 + 1
-      }
+      let q = #(1 + 1)
     ";
     assert_result(code, Val::Void);
+  }
+
+  #[test]
+  fn test_build_module(){
+    let code = format!(r#"
+      let q = #(1 + 1)
+      let m = build_module(q)
+      let f = m.get_function("{}") as fun() => i64
+      f()
+    "#, TOP_LEVEL_FUNCTION_NAME);
+    assert_result(code.as_str(), Val::I64(2));
   }
 
   #[test]

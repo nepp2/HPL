@@ -62,7 +62,7 @@ impl ParseConfig {
 struct PL { infix : &'static [&'static str], prefix : &'static [&'static str] }
 
 fn parse_config() -> ParseConfig {
-  let special_operators = &["=", ".", "||", "&&", "as", ":", "'"];
+  let special_operators = &["=", ".", "||", "&&", "as", ":", "#"];
   let paren_pairs = &[
     ("(", ")"),
     ("{", "}"),
@@ -80,7 +80,7 @@ fn parse_config() -> ParseConfig {
   c.infix_prefix(&["+", "-"], &["-"]);
   c.infix(&["*", "/", "%"]);
   c.infix_prefix(&["=>"], &["!", "ref", "deref",]);
-  c.prefix(&["'"]);
+  c.prefix(&["#"]);
   c.infix(&["(", "["]);
   c.infix(&["."]);
   c
@@ -444,11 +444,6 @@ fn try_parse_keyword_term(ps : &mut ParseState) -> Result<Option<Expr>, Error> {
       let cond = pratt_parse(ps, kp)?;
       let body = parse_block_in_braces(ps)?;
       ps.add_list("for", vec![cond, body], start)
-    }
-    "quote" => {
-      ps.pop_type(TokenType::Symbol)?;
-      let quote = parse_block_in_braces(ps)?;
-      ps.add_list("quote", vec![quote], start)
     }
     "struct" => {
       ps.pop_type(TokenType::Symbol)?;

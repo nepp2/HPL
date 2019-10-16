@@ -34,8 +34,6 @@ cbind compiler : ptr(u8)
 
 cbind load_quote : fun(compiler : ptr(u8), name : ptr(string)) => ptr(expr)
 
-cbind compile_expr : fun(compiler : ptr(u8), expr : ptr(expr), modules : ptr(ptr(u8))) => ptr(u8)
-
 fun max(a : i64, b : i64) {
   if a > b { a } else { b }
 }
@@ -73,4 +71,22 @@ struct expr {
   tag : expr_tag
 }
 
+struct module_handle {
+  id : u64
+}
+
 cbind print_expr : fun(e : ptr(expr))
+
+cbind build_module : fun(compiler : ptr(u8), expr : ptr(expr)) => module_handle
+
+fun build_module(expr : ptr(expr)) {
+  build_module(compiler, expr)
+}
+
+cbind get_function :
+  fun(compiler : ptr(u8), module : module_handle, name : ptr(string))
+  => ptr(u8)
+
+fun get_function(module : module_handle, name : string) {
+  get_function(compiler, module, ref name)
+}
