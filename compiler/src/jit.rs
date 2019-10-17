@@ -1,6 +1,6 @@
 
 use crate::error::{Error, error, error_raw};
-use crate::expr::{StringCache, RefStr, Expr, UIDGenerator};
+use crate::expr::{StringCache, Expr, UIDGenerator};
 use crate::lexer;
 use crate::parser;
 use crate::typecheck;
@@ -8,12 +8,11 @@ use crate::typecheck::{ Type, Val, TOP_LEVEL_FUNCTION_NAME };
 use crate::codegen::{Gen, CompiledModule};
 use crate::c_interface::CSymbols;
 
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 
 use inkwell::context::{Context};
-use inkwell::module::{Module, Linkage};
+// use inkwell::module::{Module, Linkage};
 use inkwell::passes::PassManager;
 use inkwell::values::{FunctionValue, GlobalValue};
 use inkwell::OptimizationLevel;
@@ -112,12 +111,6 @@ impl InterpreterInner {
     self.run_expression(&expr)
   }
 
-  pub fn compile_module(&mut self, expr : &Expr) -> Result<&CompiledModule, Error> {
-    let ce = compile_module(&mut self.uid_generator, expr, self.modules.as_slice(), &self.c_symbols, &mut self.context, &self.cache)?;
-    self.modules.push(ce);
-    Ok(self.modules.last().unwrap())
-  }
-
   pub fn get_function_address(&self, module_id : u64, name : &str) -> Option<u64> {
     // TODO: panics if there is more than one overload, because no argument types
     // are provided to narrow the search, and it would be very unsafe to return
@@ -136,13 +129,6 @@ impl InterpreterInner {
     })
   }
 
-  pub fn run_unwrapped<T>(&mut self, code : &str) -> Result<T, Error> {
-    let expr = self.parse_string(code)?;
-    let c = self.compile_module(&expr)?;
-    let v : T = execute(TOP_LEVEL_FUNCTION_NAME, &c.ee);
-    Ok(v)
-  }
-
   // Calls a function that accepts an OUT pointer as an argument, in C style.
   pub fn run_with_pointer_return<A>(
     &mut self, code : &str, function_name: &str)
@@ -158,7 +144,7 @@ impl InterpreterInner {
       -> Result<T, Error>
   {
     let expr = self.parse_string(code)?;
-    let c = self.compile_module(&expr)?;
+    let c = self.build_module(&expr)?;
     let function_name =
       c.info.functions.iter()
       .find(|def| def.name_in_code.as_ref() == function_name)
@@ -172,11 +158,15 @@ impl InterpreterInner {
     Ok(v)
   }
 
-  pub fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
-    let c = self.compile_module(expr)?;
+  fn compile_and_initialise_module(&mut self, expr : &Expr) -> Result<(Val, &CompiledModule), Error> {
+    let c = {
+      let cm = compile_module(&mut self.uid_generator, expr, self.modules.as_slice(), &self.c_symbols, &mut self.context, &self.cache)?;
+      self.modules.push(cm);
+      self.modules.last().unwrap()
+    };
     let f = TOP_LEVEL_FUNCTION_NAME;
     let def = c.info.functions.iter().find(|def| def.name_in_code.as_ref() == TOP_LEVEL_FUNCTION_NAME).unwrap();
-    let result = match &def.signature.return_type {
+    let value = match &def.signature.return_type {
       Type::Bool => Val::Bool(execute::<bool>(f, &c.ee)),
       Type::F64 => Val::F64(execute::<f64>(f, &c.ee)),
       Type::F32 => Val::F32(execute::<f32>(f, &c.ee)),
@@ -197,7 +187,19 @@ impl InterpreterInner {
     // unsafe { f.delete(); }
     // TODO: ee.remove_module(&i.module).unwrap();
     //self.modules.push((module, ee));
-    Ok(result)
+    Ok((value, c))
+  }
+
+  /// Load expression as a module and return the value of its top-level function
+  pub fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
+    let (v, _) = self.compile_and_initialise_module(expr)?;
+    Ok(v)
+  }
+
+  /// Compile and initialise a new module
+  pub fn build_module(&mut self, expr : &Expr) -> Result<&CompiledModule, Error> {
+    let (_, c) = self.compile_and_initialise_module(expr)?;
+    Ok(c)
   }
 }
 

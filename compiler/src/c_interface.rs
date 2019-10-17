@@ -1,6 +1,6 @@
 // external C interface for the compiler (so that the language can use it)
 
-use crate::jit::{InterpreterInner, compile_module};
+use crate::jit::{InterpreterInner};
 use crate::lexer;
 use crate::expr::{RefStr, Expr};
 
@@ -102,7 +102,7 @@ pub extern "C" fn load_quote(i : *mut InterpreterInner, s : SStr) -> *mut u8 {
 #[no_mangle]
 pub extern "C" fn build_module(i : *mut InterpreterInner, e : &Expr) -> SModuleHandle {
   let i = unsafe { &mut *i };
-  let cm = i.compile_module(e).expect("failed to build the module");
+  let cm = i.build_module(e).expect("failed to build the module");
   SModuleHandle { id: cm.info.id }
 }
 
