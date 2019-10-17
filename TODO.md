@@ -158,6 +158,36 @@ A special language construct could return type information, but then it wouldn't
 
 Instead it could just do a checked cast to a particular return type (or something equivalent). Functions could potentially be accessed as though from a DLL. But that wouldn't work if they used types internal to the module.
 
+# THOUGHTS - 17/10/2019
 
+I never really solved the "create_module" function issue. Instead I just decided that, for now, the host module can unsafely retrieve function pointers from module handlers. Then it just casts them to whatever type it expects them to be and tries to call it. A better long term solution probably involves a way of asserting the return type that is
+dynamically checked. I suppose it could return a dynamic type which undergoes a checked cast to the expected type,
+if those two things are supported at some point.
 
+## Quote templating
+
+I'm adding a `$` operator intended to facilitate the creation of quotes.
+
+I need a `symbol` function too. Then the `$` operator can always expect expressions.
+
+  ```rust
+    let a = #5
+    let b = #10
+    
+    let e = #($a + $b)
+
+    // `e` should now contain the expression #(5 + 10)
+  ```
+
+So how does this work? Every time the code runs it has to build a new expression. So I need functions for doing this. The easiest way is just to clone the existing expressions recursively, until I hit a `$`. At this point I have to somehow substitute in the correct value, corresponding to an expression which should already have been evaluated.
+
+  ```rust
+    let a = #5
+    let b = #10
+    
+    // This is what could be generated
+    let e = {
+      clone_expr(#($a + $b), [a, b])
+    }
+  ```
 

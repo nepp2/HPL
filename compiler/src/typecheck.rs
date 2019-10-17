@@ -505,6 +505,15 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
   //   error(node.loc, format!("expected type {:?}, found {:?}", t, node.type_tag))
   // }
 
+  fn quote_to_ast(&self, e : &Expr) {
+    // 
+    // #(1 + $a)
+    // 
+    // { let #1 = a; #(1 + $a) }
+    // 
+    //     
+  }
+
   fn to_type_literal(&mut self, expr : &Expr, exprs : &[Expr]) -> Result<TypedNode, Error> {
     if exprs.len() < 1 {
       return error(expr, format!("malformed type instantiation"));
