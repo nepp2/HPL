@@ -119,8 +119,17 @@ pub extern "C" fn get_function(
 }
 
 #[no_mangle]
-pub extern "C" fn print(s : SStr) {
-  println!("{}", s.as_str());
+pub extern "C" fn print_string(s : SStr) {
+  print!("{}", s.as_str());
+}
+
+pub extern "C" fn print_type<T : std::fmt::Display>(t : T) {
+  print!("{}", t);
+}
+
+#[no_mangle]
+pub extern "C" fn print_expr(e : &Expr) {
+  println!("{}", e);
 }
 
 /// defined for the test suite only
@@ -182,11 +191,6 @@ pub extern "C" fn load_symbol(lib_handle : usize, symbol_name : SStr) -> usize {
   }
 }
 
-#[no_mangle]
-pub extern "C" fn print_expr(e : &Expr) {
-  println!("{}", e);
-}
-
 pub struct CSymbols {
   pub local_symbol_table : HashMap<RefStr, usize>,
   pub shared_libraries : HashMap<usize, (RefStr, Library)>,
@@ -207,8 +211,14 @@ impl CSymbols {
     sym.insert("load_library".into(), (load_library_c as *const()) as usize);
     sym.insert("load_symbol".into(), (load_symbol as *const()) as usize);
     sym.insert("malloc".into(), (malloc as *const()) as usize);
-    sym.insert("print".into(), (print as *const()) as usize);
+
+    sym.insert("print_string".into(), (print_string as *const()) as usize);
     sym.insert("print_expr".into(), (print_expr as *const()) as usize);
+    sym.insert("print_i64".into(), (print_type::<i64> as *const()) as usize);
+    sym.insert("print_u64".into(), (print_type::<u64> as *const()) as usize);
+    sym.insert("print_f64".into(), (print_type::<f64> as *const()) as usize);
+    sym.insert("print_bool".into(), (print_type::<bool> as *const()) as usize);
+
     sym.insert("test_add".into(), (test_add as *const()) as usize);
     sym.insert("thread_sleep".into(), (thread_sleep as *const()) as usize);
     sym.insert("load_quote".into(),  (load_quote as *const()) as usize);

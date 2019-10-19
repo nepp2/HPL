@@ -19,12 +19,20 @@ cbind load_library : fun(name : ptr(string)) => lib_handle
 
 cbind load_symbol : fun(handle : lib_handle, name : ptr(string)) => ptr(u8)
 
-cbind print : fun(s : ptr(string))
+cbind print_string : fun(s : ptr(string)) // ptr due to ABI issue
+cbind print_expr : fun(e : ptr(expr))
+cbind print_i64 : fun(v : i64)
+cbind print_u64 : fun(v : u64)
+cbind print_f64 : fun(v : f64)
+cbind print_bool : fun(v : bool)
 
-// overload as workaround for ABI issue
-fun print(s : string) {
-  print(ref s)
-}
+fun print(s : string) { print_string(ref s) }
+fun print(v : i64) { print_i64(v) }
+fun print(v : u64) { print_u64(v) }
+fun print(v : f64) { print_f64(v) }
+fun print(v : bool) { print_bool(v) }
+fun print(e : ptr(expr)) { print_expr(e) }
+fun println() { print("\n") }
 
 cbind thread_sleep : fun(millis : u64)
 
@@ -49,13 +57,28 @@ struct text_location {
 }
 
 union expr_data {
-  s : string
-  f : f64
-  i : i64
-  b : bool
+  list : expr_list
+  symbol : string
+  literal_string : string
+  literal_float : f64
+  literal_int : i64
+  literal_bool : bool
 }
 
-struct expr_tag {
+union expr_list {
+  s : string
+  array : expr_array
+}
+
+let list_tag = 0
+let symbol_tag = 1
+let literal_string_tag = 2
+let literal_float_tag = 3
+let literal_int_tag = 4
+let literal_bool_tag = 5
+let literal_unit_tag = 6
+
+struct expr_content {
   tag : u8
   data : expr_data
 }
@@ -66,16 +89,13 @@ struct expr_array {
 }
 
 struct expr {
-  children : expr_array
   loc : text_location
-  tag : expr_tag
+  content : expr_content
 }
 
 struct module_handle {
   id : u64
 }
-
-cbind print_expr : fun(e : ptr(expr))
 
 cbind build_module : fun(compiler : ptr(u8), expr : ptr(expr)) => module_handle
 
