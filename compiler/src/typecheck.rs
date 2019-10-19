@@ -505,13 +505,19 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
   //   error(node.loc, format!("expected type {:?}, found {:?}", t, node.type_tag))
   // }
 
-  fn quote_to_ast(&self, e : &Expr) {
-    // 
-    // #(1 + $a)
-    // 
-    // { let #1 = a; #(1 + $a) }
-    // 
-    //     
+  fn compile_template_arguments(&mut self, e : &Expr, args : &mut Vec<TypedNode>) -> Result<(), Error> {
+    match e.try_construct() {
+      Some(("$", [e])) => {
+        args.push(self.to_ast(e)?);
+      }
+      Some((_, es)) => {
+        for e in es {
+          self.compile_template_arguments(e, args)?;
+        }
+      }
+      _ => (),
+    }
+    Ok(())
   }
 
   fn to_type_literal(&mut self, expr : &Expr, exprs : &[Expr]) -> Result<TypedNode, Error> {
@@ -673,10 +679,34 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         }
         error(expr, "malformed let expression")
       }
-      // TODO this is a very stupid approach
       ("#", [e]) => {
-        let def = self.t.find_type_def("expr").unwrap();
-        Ok(node(expr, Type::Ptr(Box::new(Type::Def(def.name.clone()))), Content::Quote(Box::new(e.clone()))))
+        let mut template_args = vec![];
+        self.compile_template_arguments(e, &mut template_args)?;
+        let expr_def = self.t.find_type_def("expr").unwrap();
+        let expr_type = Type::Ptr(Box::new(Type::Def(expr_def.name.clone())));
+        let main_quote = node(expr, expr_type.clone(), Content::Quote(Box::new(e.clone())));
+        if template_args.len() > 0 {
+          for t in template_args.iter() {
+            if t.type_tag != expr_type {
+              return error(expr, "template args must be expressions");
+            }
+          }
+          let overload_signature = &[expr_type.clone(), Type::Array(Box::new(expr_type.clone()))];
+          let template_quote_def =
+            self.t.find_function("template_quote", overload_signature).unwrap();
+          let t = Type::Fun(template_quote_def.signature.clone());
+          let c = Content::FunctionReference(template_quote_def.function_reference());
+          let template_function = node(expr, t, c);
+          let template_args = Content::ArrayLiteral(template_args);
+          let array_type = Type::Array(Box::new(expr_type.clone()));
+          let array_literal = node(expr, array_type, template_args);
+          let function_args = vec![main_quote, array_literal];
+          let function_call = Content::FunctionCall(Box::new(template_function), function_args);
+          Ok(node(expr, expr_type, function_call))
+        }
+        else {
+          Ok(main_quote)
+        }
       }
       ("=", [assign_expr, value_expr]) => {
         let a = self.to_ast(assign_expr)?;

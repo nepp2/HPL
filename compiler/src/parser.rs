@@ -62,7 +62,7 @@ impl ParseConfig {
 struct PL { infix : &'static [&'static str], prefix : &'static [&'static str] }
 
 fn parse_config() -> ParseConfig {
-  let special_operators = &["=", ".", "||", "&&", "as", ":", "#"];
+  let special_operators = &["=", ".", "||", "&&", "as", ":", "#", "$"];
   let paren_pairs = &[
     ("(", ")"),
     ("{", "}"),

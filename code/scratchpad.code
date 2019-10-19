@@ -1,9 +1,13 @@
 
 
-let e = #a
+let e = #($a + $b)
 
-print((deref e).content.tag as u64)
-println()
+let args = [#5, #10]
+
+e = template_quote(e, args)
+
+// print((deref e).content.tag as u64)
+// println()
 
 print(e)
 

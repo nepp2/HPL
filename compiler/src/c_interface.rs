@@ -2,7 +2,7 @@
 
 use crate::jit::{InterpreterInner};
 use crate::lexer;
-use crate::expr::{RefStr, Expr};
+use crate::expr::{RefStr, Expr, ExprContent};
 
 use std::fs::File;
 use std::io::Read;
@@ -119,6 +119,34 @@ pub extern "C" fn get_function(
 }
 
 #[no_mangle]
+pub extern "C" fn template_quote(e : &Expr, args : SArray<&Expr>) -> Box<Expr> {
+  fn template(e : &Expr, args : &[&Expr], next_arg : &mut usize) -> Expr {
+    if let Some((name, es)) = e.try_construct() {
+      match name {
+        "$" => {
+          let new_e = args[*next_arg].clone();
+          *next_arg += 1;
+          new_e
+        }
+        _ => {
+          let mut children = vec![];
+          for expr in es {
+            children.push(template(expr, args, next_arg));
+          }
+          let loc = e.loc;
+          let content = ExprContent::list(name.into(), children);
+          Expr { loc, content }
+        }
+      }
+    }
+    else {
+      e.clone()
+    }
+  }
+  Box::new(template(e, args.as_slice(), &mut 0))
+}
+
+#[no_mangle]
 pub extern "C" fn print_string(s : SStr) {
   print!("{}", s.as_str());
 }
@@ -219,6 +247,7 @@ impl CSymbols {
     sym.insert("print_f64".into(), (print_type::<f64> as *const()) as usize);
     sym.insert("print_bool".into(), (print_type::<bool> as *const()) as usize);
 
+    sym.insert("template_quote".into(),  (template_quote as *const()) as usize);
     sym.insert("test_add".into(), (test_add as *const()) as usize);
     sym.insert("thread_sleep".into(), (thread_sleep as *const()) as usize);
     sym.insert("load_quote".into(),  (load_quote as *const()) as usize);

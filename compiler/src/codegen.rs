@@ -375,10 +375,10 @@ impl <'l> Gen<'l> {
 
   /// Creates an array struct roughly like this:
   /// 
-  /// struct array(T)
+  /// struct array(T) {
   ///   ptr : ptr(T)
   ///   length : u64
-  /// end
+  /// }
   /// 
   fn bounded_array_type(&mut self, t : &Type) -> StructType {
     let bt = self.to_basic_type(t);
@@ -996,6 +996,9 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         return Ok(None);
       }
       Content::Quote(e) => {
+        // TODO: this works by just allocating the quote on the heap and then just trusting that it will still be there
+        // at runtime. It works fine for a single-process JIT, although it's pretty hacky. It will NOT work for static
+        // compilation, or for any code passed between processes.
         let v = Box::into_raw(e.clone()) as u64;
         let v = self.gen.context.i64_type().const_int(v, false);
         let def = self.gen.info.find_type_def("expr").unwrap();

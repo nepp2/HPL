@@ -209,14 +209,6 @@ rusty_fork_test! {
   }
 
   #[test]
-  fn test_quote(){
-    let code = "
-      let q = #(1 + 1)
-    ";
-    assert_result(code, Val::Void);
-  }
-
-  #[test]
   fn test_build_module(){
     let code = format!(r#"
       let q = #(1 + 1)
@@ -225,6 +217,23 @@ rusty_fork_test! {
       f()
     "#, TOP_LEVEL_FUNCTION_NAME);
     assert_result(code.as_str(), Val::I64(2));
+  }
+
+  #[test]
+  fn test_quote_interpolation(){
+    let code = format!(r#"
+      fun test() {{
+        let a = #5
+        let b = #10
+        let q = #($a - $b)
+        let m = build_module(q)
+        let f = m.get_function("{}") as fun() => i64
+        f()
+      }}
+      test()
+    "#, TOP_LEVEL_FUNCTION_NAME);
+
+    assert_result(code.as_str(), Val::I64(-5));
   }
 
   #[test]

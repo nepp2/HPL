@@ -5,7 +5,7 @@ use crate::lexer;
 use crate::parser;
 use crate::typecheck;
 use crate::typecheck::{ Type, Val, TOP_LEVEL_FUNCTION_NAME };
-use crate::codegen::{Gen, CompiledModule};
+use crate::codegen::{Gen, CompiledModule, dump_module};
 use crate::c_interface::CSymbols;
 
 use std::fs::File;
@@ -242,7 +242,7 @@ pub fn compile_module(uid_generator : &mut UIDGenerator, expr : &Expr, external_
   };
 
   // TODO: provide an option for this?
-  // dump_module(&module);
+  // dump_module(&llvm_module);
 
   // Link c globals
   for (global_value, address) in globals_to_link.iter() {

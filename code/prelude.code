@@ -78,6 +78,18 @@ let literal_int_tag = 4
 let literal_bool_tag = 5
 let literal_unit_tag = 6
 
+// fun sym(s : string, loc : text_location) {
+//   let data = expr_data.new(symbol: s)
+//   let c = expr_content.new(symbol_tag, data)
+//   expr.new(loc, c)
+// }
+
+// fun sym(i : i64, loc : text_location) {
+//   let data = expr_data.new(literal_int: i)
+//   let c = expr_content.new(literal_int_tag, data)
+//   expr.new(loc, c)
+// }
+
 struct expr_content {
   tag : u8
   data : expr_data
@@ -95,6 +107,12 @@ struct expr {
 
 struct module_handle {
   id : u64
+}
+
+cbind template_quote : fun(e : ptr(expr), args : ptr(array(ptr(expr)))) => ptr(expr)
+
+fun template_quote(e : ptr(expr), args : array(ptr(expr))) {
+  template_quote(e, ref args)
 }
 
 cbind build_module : fun(compiler : ptr(u8), expr : ptr(expr)) => module_handle
