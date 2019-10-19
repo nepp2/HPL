@@ -520,6 +520,46 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
     Ok(())
   }
 
+  /// Converts a quote to a typed node and handles templating if necessary
+  fn quote_to_ast(&mut self, expr : &Expr, quoted_expr : &Expr) -> Result<TypedNode, Error> {
+    // TODO: this function is kind of verbose and difficult to read
+    let e = quoted_expr;
+    let mut template_args = vec![];
+    self.compile_template_arguments(e, &mut template_args)?;
+    let expr_def = self.t.find_type_def("expr").unwrap();
+    let expr_type = Type::Ptr(Box::new(Type::Def(expr_def.name.clone())));
+    let main_quote = node(expr, expr_type.clone(), Content::Quote(Box::new(e.clone())));
+    if template_args.len() > 0 {
+      let mut coerced_args = vec![];
+      let loc_def = self.t.find_type_def("text_location").unwrap();
+      let marker_def = self.t.find_type_def("text_marker").unwrap();
+      for n in template_args.into_iter() {
+        if n.type_tag == expr_type {
+          coerced_args.push(n);
+        }
+        else {
+          let overload_signature =
+            &[n.type_tag.clone(), Type::Def(loc_def.name.clone())];
+          if let Some(sym_def) = self.t.find_function("sym", overload_signature) {
+            let loc = loc_struct(expr, loc_def, marker_def);
+            coerced_args.push(function_call(expr, sym_def, vec![n, loc]));
+          }
+          else {
+            return error(expr, "unsupported type for template argument");
+          }
+        }
+      }
+      let overload_signature = &[expr_type.clone(), Type::Array(Box::new(expr_type.clone()))];
+      let template_quote_def =
+        self.t.find_function("template_quote", overload_signature).unwrap();
+      let array_literal = array_literal(expr, &expr_type, coerced_args);
+      Ok(function_call(expr, template_quote_def, vec![main_quote, array_literal]))
+    }
+    else {
+      Ok(main_quote)
+    }
+  }
+
   fn to_type_literal(&mut self, expr : &Expr, exprs : &[Expr]) -> Result<TypedNode, Error> {
     if exprs.len() < 1 {
       return error(expr, format!("malformed type instantiation"));
@@ -679,34 +719,8 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         }
         error(expr, "malformed let expression")
       }
-      ("#", [e]) => {
-        let mut template_args = vec![];
-        self.compile_template_arguments(e, &mut template_args)?;
-        let expr_def = self.t.find_type_def("expr").unwrap();
-        let expr_type = Type::Ptr(Box::new(Type::Def(expr_def.name.clone())));
-        let main_quote = node(expr, expr_type.clone(), Content::Quote(Box::new(e.clone())));
-        if template_args.len() > 0 {
-          for t in template_args.iter() {
-            if t.type_tag != expr_type {
-              return error(expr, "template args must be expressions");
-            }
-          }
-          let overload_signature = &[expr_type.clone(), Type::Array(Box::new(expr_type.clone()))];
-          let template_quote_def =
-            self.t.find_function("template_quote", overload_signature).unwrap();
-          let t = Type::Fun(template_quote_def.signature.clone());
-          let c = Content::FunctionReference(template_quote_def.function_reference());
-          let template_function = node(expr, t, c);
-          let template_args = Content::ArrayLiteral(template_args);
-          let array_type = Type::Array(Box::new(expr_type.clone()));
-          let array_literal = node(expr, array_type, template_args);
-          let function_args = vec![main_quote, array_literal];
-          let function_call = Content::FunctionCall(Box::new(template_function), function_args);
-          Ok(node(expr, expr_type, function_call))
-        }
-        else {
-          Ok(main_quote)
-        }
+      ("#", [quoted_expr]) => {
+        self.quote_to_ast(expr, quoted_expr)
       }
       ("=", [assign_expr, value_expr]) => {
         let a = self.to_ast(assign_expr)?;
@@ -954,6 +968,44 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
       // _ => error(expr, "unsupported expression"),
     }
   }
+}
+
+fn loc_struct(expr : &Expr, loc_def : &TypeDefinition, marker_def : &TypeDefinition) -> TypedNode {
+  let start = {
+    let col = u64_literal(expr, expr.loc.start.col as u64);
+    let line = u64_literal(expr, expr.loc.start.line as u64);
+    struct_instantiate(expr, marker_def, vec![col, line])
+  };
+  let end = {
+    let col = u64_literal(expr, expr.loc.end.col as u64);
+    let line = u64_literal(expr, expr.loc.end.line as u64);
+    struct_instantiate(expr, marker_def, vec![col, line])
+  };
+  struct_instantiate(expr, loc_def, vec![start, end])
+}
+
+fn u64_literal(expr : &Expr, i : u64) -> TypedNode {
+  node(expr, Type::U64, Content::Literal(Val::U64(i)))
+}
+
+fn array_literal(expr : &Expr, element_type : &Type, args : Vec<TypedNode>) -> TypedNode {
+  let args = Content::ArrayLiteral(args);
+  let array_type = Type::Array(Box::new(element_type.clone()));
+  node(expr, array_type, args)
+}
+
+fn function_call(expr : &Expr, def : &FunctionDefinition, args : Vec<TypedNode>) -> TypedNode {
+  let t = Type::Fun(def.signature.clone());
+  let c = Content::FunctionReference(def.function_reference());
+  let function_ref = node(expr, t, c);
+  let function_call = Content::FunctionCall(Box::new(function_ref), args);
+  node(expr, def.signature.return_type.clone(), function_call)
+}
+
+fn struct_instantiate(expr : &Expr, def : &TypeDefinition, args : Vec<TypedNode>) -> TypedNode {
+  node(expr,
+    Type::Def(def.name.clone()),
+    Content::StructInstantiate(def.name.clone(), args))
 }
 
 fn match_intrinsic(name : &str, args : &[TypedNode]) -> Option<Type> {
