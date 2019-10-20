@@ -52,8 +52,8 @@ struct text_marker {
 }
 
 struct text_location {
-  from : text_marker
-  to : text_marker
+  start : text_marker
+  end: text_marker
 }
 
 union expr_data {
@@ -86,6 +86,8 @@ fun sym(s : string, loc : text_location) {
 
 fun sym(i : i64, loc : text_location) {
   let data = expr_data.new(literal_int: i)
+  let data = expr_data.new(literal_int: i)
+  print("loc: ") ; print(loc.start.line) ; println()
   let c = expr_content.new(literal_int_tag, data)
   expr.new(loc, c)
 }

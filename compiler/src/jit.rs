@@ -242,7 +242,7 @@ pub fn compile_module(uid_generator : &mut UIDGenerator, expr : &Expr, external_
   };
 
   // TODO: provide an option for this?
-  // dump_module(&llvm_module);
+  dump_module(&llvm_module);
 
   // Link c globals
   for (global_value, address) in globals_to_link.iter() {

@@ -542,7 +542,10 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
             &[n.type_tag.clone(), Type::Def(loc_def.name.clone())];
           if let Some(sym_def) = self.t.find_function("sym", overload_signature) {
             let loc = loc_struct(expr, loc_def, marker_def);
-            coerced_args.push(function_call(expr, sym_def, vec![n, loc]));
+            let expr_val = function_call(expr, sym_def, vec![n, loc]);
+            let expr_ptr_type = Type::Ptr(Box::new(expr_val.type_tag.clone()));
+            let c = Content::IntrinsicCall(self.cached("ref"), vec![expr_val]);
+            coerced_args.push(node(expr, expr_ptr_type, c));
           }
           else {
             return error(expr, "unsupported type for template argument");

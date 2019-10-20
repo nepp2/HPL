@@ -1,6 +1,6 @@
 
 
-let a = #$1
+let a = #$4
 let b = #2
 
 let e = #($a + $b)
@@ -10,3 +10,4 @@ let e = #($a + $b)
 
 print(e)
 
+(deref a).content.tag
