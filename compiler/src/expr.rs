@@ -77,21 +77,22 @@ impl ExprContent {
   }
 }
 
+/// Owned array, compatible with Cauldron's array implementation
 #[repr(C)]
 pub struct SArray<T> {
   pub data : *mut T,
-  pub len : u64,
+  pub length : u64,
 }
 
 impl <T> SArray<T> {
   fn new(mut v : Vec<T>) -> SArray<T> {
-    let a = SArray { len: v.len() as u64, data: v.as_mut_ptr() };
+    let a = SArray { length: v.len() as u64, data: v.as_mut_ptr() };
     std::mem::forget(v);
     a
   }
 
   pub fn as_slice(&self) -> &[T] {
-    unsafe { std::slice::from_raw_parts(self.data, self.len as usize) }
+    unsafe { std::slice::from_raw_parts(self.data, self.length as usize) }
   }
 }
 
@@ -104,7 +105,7 @@ impl <T : fmt::Debug> fmt::Debug for SArray<T> {
 impl <T> Drop for SArray<T> {
   fn drop(&mut self) {
     unsafe {
-      Vec::from_raw_parts(self.data, self.len as usize, self.len as usize)
+      Vec::from_raw_parts(self.data, self.length as usize, self.length as usize)
     };
   }
 }
@@ -112,7 +113,7 @@ impl <T> Drop for SArray<T> {
 impl <T : Clone> Clone for SArray<T> {
   fn clone(&self) -> Self {
     let v = unsafe {
-      Vec::from_raw_parts(self.data, self.len as usize, self.len as usize)
+      Vec::from_raw_parts(self.data, self.length as usize, self.length as usize)
     };
     let a = SArray::new(v.clone());
     std::mem::forget(v);

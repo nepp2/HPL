@@ -178,7 +178,7 @@ rusty_fork_test! {
 
   #[test]
   fn test_union() {
-    let code = "
+    let a = "
       struct bar {
         a : i32
         b : i32
@@ -191,7 +191,18 @@ rusty_fork_test! {
       v.i = bar.new(((v.u as i64) + 16) as i32, 0 as i32)
       v.u
     ";
-    assert_result(code, Val::U64(32));
+    assert_result(a, Val::U64(32));
+    // The expr type returned by "sym" makes use of a union
+    let b = "
+      let a = {
+        let zero = text_marker.new(0 as u64, 0 as u64)
+        let loc = text_location.new(zero, zero)
+        sym(5, loc)
+      }
+      //let b = ref a
+      (deref ref a).content.data.literal_int
+    ";
+    assert_result(b, Val::I64(5));
   }
 
   #[test]
@@ -221,7 +232,7 @@ rusty_fork_test! {
 
   #[test]
   fn test_quote_interpolation(){
-    let code = format!(r#"
+    let a = format!(r#"
       fun test() {{
         let a = #5
         let b = #10
@@ -232,8 +243,20 @@ rusty_fork_test! {
       }}
       test()
     "#, TOP_LEVEL_FUNCTION_NAME);
+    let b = format!(r#"
+      fun test(v : i64) {{
+        let a = #$v
+        let b = #10
+        let q = #($a - $b)
+        let m = build_module(q)
+        let f = m.get_function("{}") as fun() => i64
+        f()
+      }}
+      test(3)
+    "#, TOP_LEVEL_FUNCTION_NAME);
 
-    assert_result(code.as_str(), Val::I64(-5));
+    assert_result(a.as_str(), Val::I64(-5));
+    assert_result(b.as_str(), Val::I64(-7));
   }
 
   #[test]

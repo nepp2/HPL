@@ -24,40 +24,40 @@ pub struct SModuleHandle {
   pub id : u64,
 }
 
-/// A sized array that is compatible with the Cauldron's array representation
+/// A borrowed slice that is compatible with the Cauldron's array representation
 #[no_mangle]
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct SArray<T> {
-  pub ptr : *mut T,
+pub struct SSlice<T> {
+  pub data : *mut T,
   pub length : u64,
 }
 
-impl <T> SArray<T> {
+impl <T> SSlice<T> {
   pub fn from_slice(s : &[T]) -> Self {
-    let ptr = s.as_ptr() as *mut T;
-    SArray { ptr, length: s.len() as u64 }
+    let data = s.as_ptr() as *mut T;
+    SSlice { data, length: s.len() as u64 }
   }
 
   pub fn as_slice(&self) -> &[T] {
     unsafe {
-      std::slice::from_raw_parts(self.ptr, self.length as usize)
+      std::slice::from_raw_parts(self.data, self.length as usize)
     }
   }
 }
 
 /// A sized string that is compatible with the Cauldron's string representation
-pub type SStr = SArray<u8>;
+pub type SStr = SSlice<u8>;
 
 impl SStr {
   pub fn from_str(s : &str) -> Self {
-    let ptr = (s as *const str) as *mut u8;
-    SStr { ptr, length: s.len() as u64 }
+    let data = (s as *const str) as *mut u8;
+    SStr { data, length: s.len() as u64 }
   }
 
   pub fn as_str(&self) -> &str {
     unsafe {
-      let slice = std::slice::from_raw_parts(self.ptr, self.length as usize);
+      let slice = std::slice::from_raw_parts(self.data, self.length as usize);
       std::str::from_utf8_unchecked(slice)
     }
   }
@@ -119,7 +119,7 @@ pub extern "C" fn get_function(
 }
 
 #[no_mangle]
-pub extern "C" fn template_quote(e : &Expr, args : SArray<&Expr>) -> Box<Expr> {
+pub extern "C" fn template_quote(e : &Expr, args : SSlice<&Expr>) -> Box<Expr> {
   fn template(e : &Expr, args : &[&Expr], next_arg : &mut usize) -> Expr {
     if let Some((name, es)) = e.try_construct() {
       match name {
