@@ -53,15 +53,6 @@ use libc::c_char;
 
 type Sig = unsafe extern fn(LLVMExecutionEngineRef, *const c_char) -> u64;
 
-fn call_dynamic() {
-  let lib = lib::Library::new("target/debug/deps/compiler.dll").unwrap();
-  unsafe {
-    let f = lib.get::<Sig>(b"LLVMGetFunctionAddress");
-    println!("Loaded: {:?}", f);
-    //Ok(func())
-  }
-}
-
 fn main(){
   // call_dynamic();
   let args: Vec<String> = env::args().collect();
