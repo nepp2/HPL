@@ -1,3 +1,17 @@
+# THOUGHTS - 22/10/2019
+
+## RC pointers
+
+I'm thinking about how to implement reference-counted pointers, and prototyping in the scratchpad.
+
+## Module issues
+
+I realised that my `build_module` function could break Rust's borrowing rules quite badly. It borrows all of the stuff from `Interpreter`, which _might_ already be borrowed for the loading of the parent module. Although since the parent module is actually being run, maybe it's okay?
+
+## For Loops
+
+I had a think about implementing for loops. The plan is to do it without any new codegen code, by transforming the AST to reuse existing features (like while loops). I think it would work fine, but it's slightly irritating to implement, and I'm not sure how to define a generic interface for iteration yet. I could just enforce the use of the range struct.
+
 # TODO - 21/10/2019
 
 There is some kind of bug in my quote templating tests. However, the bug might actually be in the mapping between the `Expr` type in my Rust code and the `expr` type in the scripting language.

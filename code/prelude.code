@@ -11,6 +11,8 @@ struct string {
 
 cbind malloc : fun(size: u32) => ptr(u8)
 
+cbind free : fun(size: u32)
+
 struct lib_handle {
   handle : u64
 }

@@ -1,8 +1,45 @@
 
-let a = #$4
-let b = #2
-let e = #($a + $b)
+struct counted {
+  count : i64
+}
 
-print("a: "); print(a)
-print("b: "); print(b)
-print("e: "); print(e)
+struct resource {
+  count : i64
+}
+
+fun implement_managed(t : ptr(expr)) {
+  build_module(#{
+    fun heap(v : $t) {
+      let bytes = sizeof($t)
+      let p = malloc(bytes as u32) as ptr($t)
+      deref p = v
+      p
+    }
+
+    fun Release(p : ptr($t)) {
+      p.count = p.count - 1
+      if p.count <= 0 {
+        free(p as u32)
+      }
+    }
+
+    fun Clone(p : ptr($t)) {
+      p.count = p.count + 1
+      p
+    }
+  })
+}
+
+implement_managed(#counted)
+
+build_module(#{
+  let c = counted.new(1)
+
+  fun blah(c : counted) {
+
+  }
+
+  print("final count: "); print(c.count); println()
+})
+
+()

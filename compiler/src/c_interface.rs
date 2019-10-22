@@ -84,6 +84,7 @@ static TEST_GLOBAL : i64 = 47;
 
 extern {
   pub fn malloc(size: usize) -> *mut u8;
+  pub fn free(size: usize);
 }
 
 #[no_mangle]
@@ -237,6 +238,7 @@ impl CSymbols {
     sym.insert("load_library".into(), (load_library_c as *const()) as usize);
     sym.insert("load_symbol".into(), (load_symbol as *const()) as usize);
     sym.insert("malloc".into(), (malloc as *const()) as usize);
+    sym.insert("free".into(), (free as *const()) as usize);
 
     sym.insert("print_string".into(), (print_string as *const()) as usize);
     sym.insert("print_expr".into(), (print_expr as *const()) as usize);
