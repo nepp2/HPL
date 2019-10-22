@@ -21,7 +21,12 @@ use inkwell::targets::{InitializationConfig, Target };
 
 use llvm_sys::support::LLVMLoadLibraryPermanently;
 
+// TODO: Get rid of this static mut?
 static mut LOADED_SYMBOLS : bool = false;
+
+// TODO: Put these options somewhere more sensible
+static DEBUG_PRINTING : bool = false;
+static ENABLE_IR_OPTIMISATION : bool = false;
 
 // TODO: fix this gross hack
 #[cfg(not(test))]
@@ -204,8 +209,9 @@ impl InterpreterInner {
 }
 
 pub fn compile_module(uid_generator : &mut UIDGenerator, expr : &Expr, external_modules : &[CompiledModule], c_symbols : &CSymbols, context : &mut Context, cache : &StringCache) -> Result<CompiledModule, Error> {
-  // TODO: provide an option for this?
-  // println!("{}", expr);
+  if DEBUG_PRINTING {
+    println!("{}", expr);
+  }
 
   let modules : Vec<_> = external_modules.iter().map(|c| &c.info).collect();
 
@@ -218,18 +224,17 @@ pub fn compile_module(uid_generator : &mut UIDGenerator, expr : &Expr, external_
     llvm_module.create_jit_execution_engine(OptimizationLevel::None)
     .map_err(|e| error_raw(expr, e.to_string()))?;
 
-  // TODO llvm_module.set_target(target: &Target);
-
-  // TODO: enable passes again (and figure out what to include)
   let pm = PassManager::create(&llvm_module);
-  // pm.add_instruction_combining_pass();
-  // pm.add_reassociate_pass();
-  // pm.add_gvn_pass();
-  // pm.add_cfg_simplification_pass();
-  // pm.add_basic_alias_analysis_pass();
-  // pm.add_promote_memory_to_register_pass();
-  // pm.add_instruction_combining_pass();
-  // pm.add_reassociate_pass();  
+  if ENABLE_IR_OPTIMISATION {
+    pm.add_instruction_combining_pass();
+    pm.add_reassociate_pass();
+    pm.add_gvn_pass();
+    pm.add_cfg_simplification_pass();
+    pm.add_basic_alias_analysis_pass();
+    pm.add_promote_memory_to_register_pass();
+    pm.add_instruction_combining_pass();
+    pm.add_reassociate_pass();
+  }
   pm.initialize();
 
   let mut globals_to_link : Vec<(GlobalValue, usize)> = vec![];
@@ -241,8 +246,9 @@ pub fn compile_module(uid_generator : &mut UIDGenerator, expr : &Expr, external_
     jit.codegen_module(&info)?
   };
 
-  // TODO: provide an option for this?
-  // dump_module(&llvm_module);
+  if DEBUG_PRINTING {
+    dump_module(&llvm_module);
+  }
 
   // Link c globals
   for (global_value, address) in globals_to_link.iter() {

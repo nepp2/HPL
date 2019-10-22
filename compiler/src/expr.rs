@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashSet;
 
-use crate::error::{Error, TextLocation, error, error_raw };
+use crate::error::{Error, TextLocation, error_raw };
 use crate::c_interface::SStr;
 
 /// An immutable, reference counted string

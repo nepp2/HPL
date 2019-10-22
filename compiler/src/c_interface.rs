@@ -1,13 +1,11 @@
 // external C interface for the compiler (so that the language can use it)
 
 use crate::jit::{InterpreterInner};
-use crate::lexer;
 use crate::expr::{RefStr, Expr, ExprContent};
 
 use std::fs::File;
 use std::io::Read;
-use std::ffi::{CStr, CString};
-use std::os::raw::c_char;
+use std::ffi::CString;
 use std::collections::HashMap;
 use std::path::Path;
 use std::fmt;

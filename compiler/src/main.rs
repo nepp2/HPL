@@ -4,7 +4,7 @@
 #[cfg(test)]
 #[macro_use] extern crate rusty_fork;
 
-//#[macro_use] extern crate lazy_static;
+// #[macro_use] extern crate lazy_static;
 // #[macro_use] extern crate maplit;
 
 pub mod error;
@@ -47,14 +47,12 @@ fn load_and_run(path : &str) {
   println!("{}", print_result(result));
 }
 
-use libloading as lib;
 use llvm_sys::execution_engine::LLVMExecutionEngineRef;
 use libc::c_char;
 
 type Sig = unsafe extern fn(LLVMExecutionEngineRef, *const c_char) -> u64;
 
 fn main(){
-  // call_dynamic();
   let args: Vec<String> = env::args().collect();
   let args: Vec<&str> = args.iter().map(|s| s.as_ref()).collect();
   match args[1..] {
