@@ -86,11 +86,15 @@ fun sym(s : string, loc : text_location) {
 
 fun sym(i : i64, loc : text_location) {
   let data = expr_data.new(literal_int: i)
-  print("loc: ") ; print(loc.start.line) ; println()
   let c = expr_content.new(literal_int_tag, data)
   expr.new(loc, c)
 }
 
+// This style of tagged union is not really correct! It happens to work here
+// because a u64 tag never triggers padding, but it will break if I change the
+// tag to u8. To use a u8 tag I'd need to create a struct for each variant with
+// the tag on each, and then a union of those structs. This can result in a
+// more compact representation, but it's also a lot more boilerplate.
 struct expr_content {
   tag : u64
   data : expr_data

@@ -15,6 +15,13 @@ Okay, it looks like the problem is that my structs are not actually compatible w
 
 I get the bug when I represent the union tag as a `u8`, but it works fine if I change the representation to a `u64`. I'm not sure why this is, as everything I've read suggests that llvm should not treat `{ i8, i64 }` as a packed struct. The C examples I've tried on Godbolt don't seem to. However, I did find a Rust example in which padding was generated. I'm still unclear on exactly what triggered this.
 
+## Maybe solved
+
+The problem seems to be the way that Rust handles C representations of its enums (when they are acting as tagged unions). This is described here: https://rust-lang.github.io/rfcs/2195-really-tagged-unions.html
+
+The short version is that an enum declared with `repr(u8)` is represented as a bunch of structs which each have their own tag field, and live together in a union. I'm not sure if any other variation currently works. I read that `repr(C, u8)` was planned to work differently, but I'm not sure if it's actually implemented.
+
+Anyway, I got the tests to pass.
 
 # THOUGHTS - 17/10/2019
 

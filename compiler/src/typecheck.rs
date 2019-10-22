@@ -486,7 +486,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
   }
 
   // TODO: this coerces empty arrays into whatever type they're supposed to have.
-  // It's probably broken though, because it's using the pointer type instead of the array type.Clone
+  // It's probably broken though, because it's using the pointer type instead of the array type.
   // No idea. Decide what to do with it!
   //
   // fn coerce_to_type(&mut self, mut node : TypedNode, t : &Type) -> Result<TypedNode, Error> {
@@ -897,6 +897,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
           let array = self.to_ast(array_expr)?;
           let inner_type = match &array.type_tag {
             Type::Array(t) => *(t).clone(),
+            Type::Ptr(t) => *(t).clone(),
             _ => return error(array_expr, "expected array"),
           };
           let index = self.to_ast(index_expr)?;

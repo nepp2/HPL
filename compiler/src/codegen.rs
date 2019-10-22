@@ -825,7 +825,6 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
   fn codegen_function_call(&mut self, function_value : &TypedNode, args : &[TypedNode])
     -> Result<Option<GenVal>, Error>
   {
-    //let f = self.get_linked_function_reference(def);
     let mut arg_vals = vec!();
     let function_pointer = self.codegen_pointer(function_value)?;
     for a in args.iter() {
@@ -1108,9 +1107,16 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
       Content::Index(ns) => {
         let (array_node, index_node) = (&ns.0, &ns.1);
         // TODO: add bounds checks
-        let array = self.codegen_struct(array_node)?;
+        let array_ptr = match array_node.type_tag {
+          Type::Array(_) => {
+            let array = self.codegen_struct(array_node)?;
+            // TODO: is this right?
+            self.builder.build_extract_value(array, 0, "array_pointer").unwrap().into_pointer_value()
+          }
+          Type::Ptr(_) => self.codegen_pointer(array_node)?,
+          _ => panic!("unsupported index type"),
+        };
         let index = self.codegen_int(index_node)?;
-        let array_ptr = self.builder.build_extract_value(array, 0, "array_pointer").unwrap().into_pointer_value(); // TODO: is this right?
         let element_ptr = unsafe { self.builder.build_gep(array_ptr, &[index], "element_ptr") };
         pointer(element_ptr)
       }

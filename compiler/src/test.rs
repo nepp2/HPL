@@ -340,6 +340,29 @@ rusty_fork_test! {
     assert_eq!(b.z, 45640.5);
   }
 
+  #[test]
+  fn test_enum_alignment() {
+    let mut i = interpreter();
+    #[repr(u8)]
+    #[derive(PartialEq, Debug)]
+    enum Blah { A(u8), B(i64) }
+    let code = r#"
+      struct a { tag : u8; data : u8 }
+      struct b { tag : u8; data : i64 }
+      union blah {
+        a : a
+        b : b
+      }
+      fun main(v : ptr(blah)) {
+        v[0] = blah.new(a: a.new(0 as u8, 17 as u8))
+        v[1] = blah.new(b: b.new(1 as u8, 67))
+      }
+    "#;
+    let blah : [Blah ; 2] = i.run_with_pointer_return(code, "main").unwrap();
+    assert_eq!(blah[0], Blah::A(17));
+    assert_eq!(blah[1], Blah::B(67));
+  }
+
   /// TODO: test that structs are passed into C functions correctly
   // #[test]
   // fn test_struct_abi() {
@@ -425,14 +448,14 @@ rusty_fork_test! {
   }
 
   // TODO: not yet implemented
-  //
+  
   // #[test]
   // fn test_out_of_order_functions(){
   //   let code = "
   //     let a = foo()
-  //     fun foo()
+  //     fun foo() {
   //       10
-  //     end
+  //     }
   //     a
   //   ";
   //   assert_result(code, Val::I64(10));

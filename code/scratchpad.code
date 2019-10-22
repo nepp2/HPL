@@ -1,33 +1,8 @@
 
-// union Blah {
-//   x : i64
-//   y : i64
-// }
-
-// struct Bloo {
-//   c : u8
-//   b : Blah
-// }
-
-// fun blah(o : ptr(Bloo)) {
-//   (deref o).b.y
-// }
-
-//let a = #$4
-let a = {
-  let zero = text_marker.new(0 as u64, 0 as u64)
-  let loc = text_location.new(zero, zero)
-  sym(4, loc)
-}
+let a = #$4
 let b = #2
+let e = #($a + $b)
 
-let e = #($(ref a) + $b)
-
-// print((deref e).content.tag as u64)
-// println()
-
-print("a: "); print(ref a)
+print("a: "); print(a)
 print("b: "); print(b)
 print("e: "); print(e)
-
-(deref b).content.data.literal_int

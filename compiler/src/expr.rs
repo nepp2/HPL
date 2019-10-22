@@ -26,7 +26,7 @@ impl UIDGenerator {
   }
 }
 
-#[repr(C, u8)]
+#[repr(u64)]
 #[derive(Debug)]
 pub enum ExprContent {
   List(SStr, SArray<Expr>),
