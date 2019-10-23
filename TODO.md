@@ -1,3 +1,29 @@
+# THOUGHTS - 23/10/2019
+
+I am very bad at explaining the point of this project, on any kind of vaguely detailed technical level. Internally I have been thinking of the language and compiler as an alternative to Terra and Extempore which aims to unify the high-performance language and the metaprogramming language. But I suspect this explanation would mostly result in blank stares.
+
+## Function duplication issue
+
+I realised that I need to consider a very simple but also very important optimisation for generic functions. For example, the Drop function for a reference-counted pointer should be shared. However, other functions might not be shared, because they could dispatch differently on an overloaded function.
+
+This is maybe not much of a pressing issue.
+
+## The fastest way forward
+
+I am stuck worrying about the best way to enable a user-friendly way to make widespread use of reference-counted pointers. If I instead take my lead from HPC#, I don't really need to. All I need is reference-counted containers, like arrays.
+
+## Rules for Move and Drop
+
+They need to be inserted in various places:
+
+1. When exiting a block (either at a break, return or just the last statement)
+  - Call Drop on all variables now out of scope (except for function parameters)
+2. When a value is assigned
+  - Call Drop on the current value
+  - Call Move on the new value
+3. On returning a value from a function
+4. On any value that is returned from a function without being assigned?
+
 # THOUGHTS - 22/10/2019
 
 ## RC pointers

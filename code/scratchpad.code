@@ -11,19 +11,23 @@ fun implement_managed(t : ptr(expr)) {
   build_module(#{
     fun heap(v : $t) {
       let bytes = sizeof($t)
+      print("Resource allocated"); println()
       let p = malloc(bytes as u32) as ptr($t)
       deref p = v
       p
     }
 
-    fun Release(p : ptr($t)) {
+    fun Drop(p : ptr($t)) {
       p.count = p.count - 1
+      print("Drop called"); println()
       if p.count <= 0 {
-        free(p as u32)
+        print("Resource released"); println()
+        free(p as ptr(u8))
       }
     }
 
     fun Clone(p : ptr($t)) {
+      print("Clone called"); println()
       p.count = p.count + 1
       p
     }
@@ -33,11 +37,27 @@ fun implement_managed(t : ptr(expr)) {
 implement_managed(#counted)
 
 build_module(#{
-  let c = counted.new(1)
+  fun bloo() {
+    let c = counted.new(1).heap()
 
-  fun blah(c : counted) {
+    fun blah(c : ptr(counted)) {
+      let c2 = c.Clone()
+      if c2.count > 0 {
+        let c3 = c2.Clone()
+        (c3)
+        c3.Drop()
+      }
+      c2.Drop()
+    }
 
+    blah(c)
+    let r = c.Clone()
+    c.Drop()
+    r
   }
+
+  let c = bloo()
+  c.Drop()
 
   print("final count: "); print(c.count); println()
 })

@@ -807,9 +807,18 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
       }
       ("block", exprs) => {
         self.scope_map.push(HashMap::new());
-        let nodes = exprs.iter().map(|e| self.to_ast(e)).collect::<Result<Vec<TypedNode>, Error>>()?;
+        let mut nodes = vec![];
+        if let Some(last) = exprs.last() {
+          for e in &exprs[0..exprs.len()-1] {
+            nodes.push(self.to_ast(e)?);
+          }
+          let n = self.to_ast(last)?;
+          nodes.push(n);
+        }
+        //let nodes = exprs.iter().map(|e| self.to_ast(e)).collect::<Result<Vec<TypedNode>, Error>>()?;
         self.scope_map.pop();
-        Ok(block(expr, nodes))
+        let t = nodes.last().map(|n| n.type_tag.clone()).unwrap_or(Type::Void);
+        Ok(node(expr, t, Block(nodes)))
       }
       ("cbind", [e]) => {
         if let (":", [name_expr, type_expr]) = e.unwrap_construct()? {
@@ -1034,11 +1043,6 @@ fn loc_struct(expr : &Expr, loc_def : &TypeDefinition, marker_def : &TypeDefinit
     struct_instantiate(expr, marker_def, vec![col, line])
   };
   struct_instantiate(expr, loc_def, vec![start, end])
-}
-
-fn block(expr : &Expr, nodes : Vec<TypedNode>) -> TypedNode {
-  let t = nodes.last().map(|n| n.type_tag.clone()).unwrap_or(Type::Void);
-  node(expr, t, Block(nodes))
 }
 
 fn u64_literal(expr : &Expr, i : u64) -> TypedNode {

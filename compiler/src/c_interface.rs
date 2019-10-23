@@ -84,7 +84,7 @@ static TEST_GLOBAL : i64 = 47;
 
 extern {
   pub fn malloc(size: usize) -> *mut u8;
-  pub fn free(size: usize);
+  pub fn free(ptr: *mut u8);
 }
 
 #[no_mangle]
