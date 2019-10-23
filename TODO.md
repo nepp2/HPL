@@ -21,8 +21,23 @@ They need to be inserted in various places:
 2. When a value is assigned
   - Call Drop on the current value
   - Call Move on the new value
-3. On returning a value from a function
-4. On any value that is returned from a function without being assigned?
+3. When a value is passed into a constructor
+4. On returning a value from a function
+5. On any value that is returned from a function without being assigned?
+
+I've gotten lost on this. This is basically the same as Constructors and Destructors in C++, with the addition of either Move or Clone. Or both? Really I'm suggesting that the function should detect whether something is used once, twice or not at all. In that case it should be built into the type system, really. Any struct can be either Copy or Move. This property must be inferred based on its contents. If it is Move, it must be cloned and dropped appropriately. Any variable referring to a move type, then, must carry information about whether it has been moved.
+
+This is actually pretty difficult, because I have to handle situations like this:
+
+```rust
+  let r = some_resource()
+  if cond {
+    consume(r)
+  }
+  // is r consumed?
+```
+
+If one branch of an if statement consumes a Move value, then the other one must as well, even if the other branch doesn't explicitly exist. Can I just choose the hamfisted option instead? I detect if something is Move, and then I just call functions everywhere to make sure it gets shepherded around correctly. I remember implementing a system this way in the past.
 
 # THOUGHTS - 22/10/2019
 
