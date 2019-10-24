@@ -7,6 +7,22 @@ struct resource {
   count : i64
 }
 
+struct rc {
+  count : i64
+  data : u8
+}
+
+fun rc_drop(p : ptr(rc)) {
+  rc.count = rc.count - 1
+  if rc.count <= 0 {
+    free(p)
+  }
+}
+
+fun to_ptr(p : ptr(rc)) {
+  ref rc.data
+}
+
 fun implement_managed(t : ptr(expr)) {
   build_module(#{
     fun heap(v : $t) {
@@ -51,7 +67,7 @@ build_module(#{
     }
 
     blah(c)
-    let r = c.Clone()
+    let r = c
     c.Drop()
     r
   }

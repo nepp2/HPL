@@ -1147,6 +1147,8 @@ pub fn to_typed_module(uid_generator : &mut UIDGenerator, local_symbol_table : &
     }
   }
 
+  // TODO: figure out which types are Move and which are Copy
+
   let name = cache.get(TOP_LEVEL_FUNCTION_NAME);
   if type_checker.module.functions.iter().find(|def| def.name_in_code == name).is_some() {
     return error(expr, "top level function already defined!");

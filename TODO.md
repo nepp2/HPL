@@ -1,5 +1,24 @@
 # THOUGHTS - 24/10/2019
 
+## On reference counting
+
+What if reference counting ONLY happens in response to block ends, function returns and field assignments?
+
+```rust
+  a.v = thing // (a.v.Drop(); a.v = thing.Move())
+  thing() // if the type is move, log the BasicValue with the block
+  v // if returned from a block and the type is move, call move
+  } // upon exiting the block, Drop all of the BasicValues logged so far (in reverse order? or does it matter?)
+```
+
+I think this works. It's kind of ugly, but oh well. I'm not sure how to optimise away the `Clone` and `Drop` reliably when returning something. Will I be able to compare BasicValue references? It's actually not just an optimisation, but absolutely essential for a resource that isn't just a refcount.
+
+It's also unclear how dereferencing an RC pointer should work.
+
+## Special-case reference counting?
+
+I could also implement reference counting as a special language feature, which then hooks into the Drop calls. If a type needs to be dropped properly, then it uses reference-counted pointers? This could introduce too much codegen machinery specific to a particular feature, however.
+
 ## On arrays and unsized types
 
 I should provide a language-level type for inline vectors. The size of the vector should be included in the type, and if left unspecified the vector should be considered "dynamically sized", which means it must be heap allocated and managed using unsafe code. A dynamically-sized vector can sit at the end of a struct, and can be used to implement runtime-managed types like heap-allocated arrays and RC pointers.
