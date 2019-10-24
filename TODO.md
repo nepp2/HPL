@@ -14,8 +14,7 @@ I plan to allow hotloaded modules to safely return values by checking that the r
   module m : i64 {
     5
   }
-  m.v
-
+  m.value
 ```
 
 Modules also need to be able to receive information from their host. There could be syntax for that, like:
