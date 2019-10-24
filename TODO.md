@@ -8,7 +8,38 @@ I'm not sure if vector is the right name. Or whether this is two different conce
 
 ## On module hotloading and type safety
 
-## On modules and compilation units
+I plan to allow hotloaded modules to safely return values by checking that the return type is understood by the host module. This is a bit tricky because modules are generated dynamically so their return type changes. This means that the host must assert the return type it expects, and an error is returned if the newly generated module doesn't return the type expected.
+
+```rust
+  module m : i64 {
+    5
+  }
+  m.v
+
+```
+
+Modules also need to be able to receive information from their host. There could be syntax for that, like:
+
+```rust
+  let a = some_value()
+  module(a) : i64 {
+    a.v + 4
+  }
+```
+
+But then how do I specify which other modules a module can see? Perhaps a better syntax would just be variable capture |_and_ module capture, like:
+
+```rust
+  module {
+    fun blah(a : i32, b : i32) { a + b }
+  }
+  let a = some_value()
+  module m : i64 {
+    blah(a.v, 4)
+  }
+```
+
+The module `m` captures the variable `a` and also now depends on the module containing `blah`.
 
 # THOUGHTS - 23/10/2019
 
