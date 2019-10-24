@@ -9,7 +9,6 @@ use crate::typecheck::{
   FunctionImplementation, GlobalDefinition };
 
 use std::collections::HashMap;
-use std::rc::Rc;
 
 use inkwell::AddressSpace;
 use inkwell::basic_block::BasicBlock;
