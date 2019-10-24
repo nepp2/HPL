@@ -246,12 +246,12 @@ type FunctionKey = Rc<FunctionIdentity>;
 //   }
 // }
 
-#[derive(Clone)]
+//#[derive(Clone)]
 pub struct TypedModule {
   pub id : u64,
-  pub types : HashMap<RefStr, Rc<TypeDefinition>>,
-  pub functions : Vec<Rc<FunctionDefinition>>,
-  pub globals : HashMap<RefStr, Rc<GlobalDefinition>>,
+  pub types : HashMap<RefStr, TypeDefinition>,
+  pub functions : Vec<FunctionDefinition>,
+  pub globals : HashMap<RefStr, GlobalDefinition>,
 }
 
 impl TypedModule {
@@ -323,11 +323,11 @@ impl <'l> TypeChecker<'l> {
     self.iter_modules().flat_map(|m| f(m).get(name)).nth(0)
   }
 
-  fn find_global(&self, name : &str) -> Option<&Rc<GlobalDefinition>> {
+  fn find_global(&self, name : &str) -> Option<&GlobalDefinition> {
     self.find_f(name, |m| &m.globals)
   }
 
-  fn find_function(&self, name : &str, args : &[Type]) -> Option<&Rc<FunctionDefinition>> {
+  fn find_function(&self, name : &str, args : &[Type]) -> Option<&FunctionDefinition> {
     self.iter_modules().flat_map(|m|
       m.functions.iter().find(|def|
         def.name_in_code.as_ref() == name &&
@@ -335,20 +335,20 @@ impl <'l> TypeChecker<'l> {
     .next()
   }
 
-  fn find_functions<'f>(&'f self, name : &'f str) -> impl Iterator<Item=&'f Rc<FunctionDefinition>> {
+  fn find_functions<'f>(&'f self, name : &'f str) -> impl Iterator<Item=&'f FunctionDefinition> {
     self.iter_modules().flat_map(move |m| m.functions.iter().filter(move |def| def.name_in_code.as_ref() == name))
   }
 
-  fn find_type_def(&self, name : &str) -> Option<&Rc<TypeDefinition>> {
+  fn find_type_def(&self, name : &str) -> Option<&TypeDefinition> {
     self.find_f(name, |m| &m.types)
   }
 
   fn add_global(&mut self, name : RefStr, def : GlobalDefinition) {
-    self.module.globals.insert(name, Rc::new(def));
+    self.module.globals.insert(name, def);
   }
 
   fn add_function(&mut self, def : FunctionDefinition) {
-    self.module.functions.push(Rc::new(def));
+    self.module.functions.push(def);
   }
 
   /// Converts expression into type. Logs symbol error if definition references a type that hasn't been defined yet
@@ -420,7 +420,7 @@ impl <'l> TypeChecker<'l> {
       // TODO: Generics?
       let name = self.cache.get(name);
       let def = TypeDefinition { name: name.clone(), fields, kind };
-      self.module.types.insert(name, Rc::new(def));
+      self.module.types.insert(name, def);
       return Ok(());
     }
     return error(expr, "malformed type definition");

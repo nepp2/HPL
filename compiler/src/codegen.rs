@@ -201,12 +201,12 @@ struct CompileInfo<'l> {
 
 impl <'l> CompileInfo<'l> {
 
-  fn find_type_def(&self, name : &str) -> Option<&'l Rc<TypeDefinition>> {
+  fn find_type_def(&self, name : &str) -> Option<&'l TypeDefinition> {
     self.type_info.types.get(name).or_else(||
       self.external_modules.iter().flat_map(|i| i.info.types.get(name)).next())
   }
 
-  fn find_external_function_def(&self, function_ref : &FunctionReference) -> Option<(&'l CompiledModule, &'l Rc<FunctionDefinition>)> {
+  fn find_external_function_def(&self, function_ref : &FunctionReference) -> Option<(&'l CompiledModule, &'l FunctionDefinition)> {
     self.external_modules.iter().find(|m| m.info.id == function_ref.module_id)
       .and_then(|m|
         m.info.functions.iter().find(|def|
@@ -216,7 +216,7 @@ impl <'l> CompileInfo<'l> {
       )
   }
 
-  fn find_external_global_def(&self, name : &str) -> Option<(&'l CompiledModule, &'l Rc<GlobalDefinition>)> {
+  fn find_external_global_def(&self, name : &str) -> Option<(&'l CompiledModule, &'l GlobalDefinition)> {
     self.external_modules.iter().flat_map(|m|
       m.info.globals.get(name)
       .map(|g| (m, g))

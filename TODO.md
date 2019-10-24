@@ -1,3 +1,15 @@
+# THOUGHTS - 24/10/2019
+
+## On arrays and unsized types
+
+I should provide a language-level type for inline vectors. The size of the vector should be included in the type, and if left unspecified the vector should be considered "dynamically sized", which means it must be heap allocated and managed using unsafe code. A dynamically-sized vector can sit at the end of a struct, and can be used to implement runtime-managed types like heap-allocated arrays and RC pointers.
+
+I'm not sure if vector is the right name. Or whether this is two different concepts which shouldn't be conflated.
+
+## On module hotloading and type safety
+
+## On modules and compilation units
+
 # THOUGHTS - 23/10/2019
 
 I am very bad at explaining the point of this project, on any kind of vaguely detailed technical level. Internally I have been thinking of the language and compiler as an alternative to Terra and Extempore which aims to unify the high-performance language and the metaprogramming language. But I suspect this explanation would mostly result in blank stares.
