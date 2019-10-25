@@ -449,13 +449,13 @@ fn try_parse_keyword_term(ps : &mut ParseState) -> Result<Option<Expr>, Error> {
     }
     "struct" => {
       ps.pop_type(TokenType::Symbol)?;
-      let name = parse_simple_string(ps)?;
+      let name = pratt_parse(ps, kp)?;
       let fields = parse_block_in_braces(ps)?;
       ps.add_list("struct", vec![name, fields], start)
     }
     "union" => {
       ps.pop_type(TokenType::Symbol)?;
-      let name = parse_simple_string(ps)?;
+      let name = pratt_parse(ps, kp)?;
       let fields = parse_block_in_braces(ps)?;
       ps.add_list("union", vec![name, fields], start)
     }

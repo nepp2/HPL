@@ -1,12 +1,12 @@
 
-// struct rc_heap {
-//   count : i64
-//   rc_data : u8
-// }
+struct rc_heap {
+  count : i64
+  rc_data : u8
+}
 
-// struct rc[T] {
-//   p : ptr(rc_heap)
-// }
+struct rc(T) {
+  p : ptr(rc_heap)
+}
 
 // fun Deref(p : rc[T]) {
 //   (&p.rc_data)

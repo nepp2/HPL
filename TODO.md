@@ -3,6 +3,58 @@
 What would I need to implement everything internally?
 What would I want the code that does it to look like?
 
+Decide whether to pursue this:
+
+``` Rust
+  #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+  pub struct TypeId { module_id : u64, type_id : u64 }
+
+  pub struct TypeDirectory {
+    types : HashMap<TypeId, ComplexType>
+  }
+
+  impl TypeDirectory {
+
+    fn display(&self, t : &Type, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+      match t {
+        Type::ComplexType(id) =>
+          self.display_complex(self.types.get(id).unwrap(), f),
+        t => write!(f, "{:?}", t),
+      }
+    }
+
+    fn display_complex(&self, t : &ComplexType, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+      match t {
+        ComplexType::Fun(sig) => {
+          write!(f, "fun({}) => {}",
+            sig.args.iter().map(|t| self.displayable(t)).join(", "),
+            self.displayable(&sig.return_type))
+        }
+        ComplexType::Def{name, params} =>
+          write!(f, "{}({})", name,
+            params.iter().map(|t| self.displayable(t)).join(", ")),
+        ComplexType::Array(t) => write!(f, "array({})", self.displayable(t)),
+        ComplexType::Ptr(t) => write!(f, "ptr({})", self.displayable(t)),
+      }
+    }
+
+    fn displayable<'l>(&'l self, t : &'l Type) -> DisplayableType<'l> {
+      DisplayableType { t, d: self }
+    }
+  }
+
+  struct DisplayableType<'l> {
+    t : TypeId,
+    d : &'l TypeDirectory,
+  }
+
+  impl <'l> fmt::Display for DisplayableType<'l> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+      self.d.display(self.t, f)
+    }
+  }
+```
+
 # THOUGHTS - 24/10/2019
 
 ## On reference counting
