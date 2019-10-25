@@ -1,26 +1,27 @@
 
-struct sdl_keysym
+struct sdl_keysym {
   scancode : u32
   sym : u32
   mod : u16
   unused : u32
-end
+}
 
-struct sdl_window_event
+struct sdl_window_event {
   window_id : u32
   event : u8
   data1 : i32
   data2 : i32
-end
+}
 
-struct sdl_keyboard_event
+struct sdl_keyboard_event {
   window_id : u32
   state : u8
   repeat : u8
   keysym : sdl_keysym
-end
+}
 
-struct sdl_padding
+// this exists to make sure the event union can hold all the cases (because I guess I haven't implemented the biggest ones)
+struct sdl_padding {
   a0 : i64
   a1 : i64
   a2 : i64
@@ -41,24 +42,28 @@ struct sdl_padding
   a17 : i64
   a18 : i64
   a19 : i64
-end
+}
 
-union sdl_event_content
+
+union sdl_event_content {
   none : i64
   window : sdl_window_event
   keyboard : sdl_keyboard_event
   padding : sdl_padding
-end
+}
 
-struct sdl_event
+struct sdl_event {
   event_type : u32
   timestamp : u32
   content : sdl_event_content
-end
+}
 
-struct sdl_rect
-  x : i32, y : i32, w : i32, h : i32
-end
+struct sdl_rect {
+  x : i32
+  y : i32
+  w : i32
+  h : i32
+}
 
 let SDL_QUIT = 256
 
@@ -74,43 +79,40 @@ let SDL_RENDERER_ACCELERATED = 2
 let SDL_RENDERER_PRESENTVSYNC = 4
 let SDL_RENDERER_TARGETTEXTURE = 8
 
-let sdl2 = load_library(ref "SDL2")
-let sdl_init = load_symbol(sdl2, ref "SDL_Init") as fun(u32) => i32
+let sdl2 = load_library(&"SDL2")
+let sdl_init = load_symbol(sdl2, &"SDL_Init") as fun(u32) => i32
 
-# title, x, y, w, h, flags
+struct sdl_window_handle { p : ptr(u8) }
+
+struct sdl_renderer_handle { p : ptr(u8) }
+
 let sdl_create_window =
-  load_symbol(sdl2, ref "SDL_CreateWindow")
-    as fun(ptr(u8), i32, i32, i32, i32, u32) => ptr(u8)
+  load_symbol(sdl2, &"SDL_CreateWindow")
+    as fun(title: ptr(u8), x : i32, y : i32, w : i32, h : i32, flags : u32) => sdl_window_handle
 
-# window, index, flags
 let sdl_create_renderer =
-  load_symbol(sdl2, ref "SDL_CreateRenderer")
-    as fun(ptr(u8), i32, u32) => ptr(u8)
+  load_symbol(sdl2, &"SDL_CreateRenderer")
+    as fun(window : sdl_window_handle, index : i32, flags : u32) => sdl_renderer_handle
 
-# renderer
 let sdl_clear =
-  load_symbol(sdl2, ref "SDL_RenderClear")
-    as fun(ptr(u8)) => i32
+  load_symbol(sdl2, &"SDL_RenderClear")
+    as fun(renderer : sdl_renderer_handle) => i32
 
-# renderer, r, g, b, a
 let sdl_set_draw_color =
-  load_symbol(sdl2, ref "SDL_SetRenderDrawColor")
-    as fun(ptr(u8), u8, u8, u8, u8) => i32
+  load_symbol(sdl2, &"SDL_SetRenderDrawColor")
+    as fun(renderer : sdl_renderer_handle, r : u8, g : u8, b : u8, a : u8) => i32
 
-# renderer
 let sdl_present =
-  load_symbol(sdl2, ref "SDL_RenderPresent")
-    as fun(ptr(u8))
+  load_symbol(sdl2, &"SDL_RenderPresent")
+    as fun(renderer : sdl_renderer_handle)
 
-# renderer, rect
 let sdl_fill_rect =
-  load_symbol(sdl2, ref "SDL_RenderFillRect")
-    as fun(ptr(u8), ptr(sdl_rect))
+  load_symbol(sdl2, &"SDL_RenderFillRect")
+    as fun(renderer : sdl_renderer_handle, rect : ptr(sdl_rect))
 
-# event
 let sdl_poll_event =
-  load_symbol(sdl2, ref "SDL_PollEvent")
-    as fun(ptr(sdl_event)) => i32
+  load_symbol(sdl2, &"SDL_PollEvent")
+    as fun(event : ptr(sdl_event)) => i32
 
 let SDL_INIT_VIDEO = 32 as u32
 let SDL_WINDOWPOS_UNDEFINED = 536805376 as i32

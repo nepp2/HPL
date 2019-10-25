@@ -199,8 +199,8 @@ rusty_fork_test! {
         let loc = text_location.new(zero, zero)
         sym(5, loc)
       }
-      //let b = ref a
-      (deref ref a).content.data.literal_int
+      //let b = &a
+      (*&a).content.data.literal_int
     ";
     assert_result(b, Val::I64(5));
   }
@@ -331,7 +331,7 @@ rusty_fork_test! {
         z : f32
       }
       fun main(a : ptr(blah)) {
-        deref a = blah.new(50 as i32, (0 as u64) as ptr(i64), 5390 as u64, 45640.5 as f32)
+        *a = blah.new(50 as i32, (0 as u64) as ptr(i64), 5390 as u64, 45640.5 as f32)
       }
     "#;
     let b : Blah = i.run_with_pointer_return(code, "main").unwrap();
@@ -384,7 +384,7 @@ rusty_fork_test! {
     let mut i = interpreter();
     let code = r#"
       fun main(a : ptr(string)) {
-        deref a = "Hello world"
+        *a = "Hello world"
       }
     "#;
     let s : SStr = i.run_with_pointer_return(code, "main").unwrap();

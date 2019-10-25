@@ -546,7 +546,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
             let loc = loc_struct(expr, loc_def, marker_def);
             let expr_val = function_call(expr, sym_def, vec![n, loc]);
             let expr_ptr_type = Type::Ptr(Box::new(expr_val.type_tag.clone()));
-            let c = IntrinsicCall(self.cached("ref"), vec![expr_val]);
+            let c = IntrinsicCall(self.cached("&"), vec![expr_val]);
             coerced_args.push(node(expr, expr_ptr_type, c));
           }
           else {
@@ -974,7 +974,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
       match &n.type_tag {
         Type::Ptr(t) => {
           let t : Type = (**t).clone();
-          let c = IntrinsicCall(self.cached("deref"), vec![n]);
+          let c = IntrinsicCall(self.cached("*"), vec![n]);
           n = node(expr, t, c);
         }
         _ => return Ok(n),
@@ -1088,8 +1088,8 @@ fn match_intrinsic(name : &str, args : &[TypedNode]) -> Option<Type> {
       (Type::F64, "-") => Some(Type::F64),
       (Type::I64, "-") => Some(Type::I64),
       (Type::Bool, "!") => Some(Type::Bool),
-      (Type::Ptr(t), "deref") => Some(*t.clone()),
-      (t, "ref") => Some(Type::Ptr(Box::new(t.clone()))),
+      (Type::Ptr(t), "*") => Some(*t.clone()),
+      (t, "&") => Some(Type::Ptr(Box::new(t.clone()))),
       _ => None,
     }
     _ => None,

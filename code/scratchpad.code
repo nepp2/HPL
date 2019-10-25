@@ -1,81 +1,115 @@
 
-struct counted {
-  count : i64
-}
+// struct rc_heap {
+//   count : i64
+//   rc_data : u8
+// }
 
-struct resource {
-  count : i64
-}
+// struct rc[T] {
+//   p : ptr(rc_heap)
+// }
 
-struct rc {
-  count : i64
-  data : u8
-}
+// fun Deref(p : rc[T]) {
+//   (&p.rc_data)
+// }
 
-fun rc_drop(p : ptr(rc)) {
-  rc.count = rc.count - 1
-  if rc.count <= 0 {
-    free(p)
-  }
-}
+// struct array_heap {
+//   length : i64
+//   array_data : u8
+// }
 
-fun to_ptr(p : ptr(rc)) {
-  ref rc.data
-}
+// struct array[T] {
+//   p : rc(array_heap)
+// }
 
-fun implement_managed(t : ptr(expr)) {
-  build_module(#{
-    fun heap(v : $t) {
-      let bytes = sizeof($t)
-      print("Resource allocated"); println()
-      let p = malloc(bytes as u32) as ptr($t)
-      deref p = v
-      p
-    }
+// fun Index[T](a : array[T], i : i64) {
+//   // should have bounds checks but whatever
+//   let p = &a.p.array_data
+//   p[i]
+// }
 
-    fun Drop(p : ptr($t)) {
-      p.count = p.count - 1
-      print("Drop called"); println()
-      if p.count <= 0 {
-        print("Resource released"); println()
-        free(p as ptr(u8))
-      }
-    }
+// let a = array(i64).new()
+// a.add(5)
+// a.add(5)
+// a.add(5)
 
-    fun Clone(p : ptr($t)) {
-      print("Clone called"); println()
-      p.count = p.count + 1
-      p
-    }
-  })
-}
 
-implement_managed(#counted)
+// struct counted {
+//   count : i64
+// }
 
-build_module(#{
-  fun bloo() {
-    let c = counted.new(1).heap()
+// struct resource {
+//   count : i64
+// }
 
-    fun blah(c : ptr(counted)) {
-      let c2 = c.Clone()
-      if c2.count > 0 {
-        let c3 = c2.Clone()
-        (c3)
-        c3.Drop()
-      }
-      c2.Drop()
-    }
+// struct rc {
+//   count : i64
+//   data : u8
+// }
 
-    blah(c)
-    let r = c
-    c.Drop()
-    r
-  }
+// fun rc_drop(p : ptr(rc)) {
+//   rc.count = rc.count - 1
+//   if rc.count <= 0 {
+//     free(p)
+//   }
+// }
 
-  let c = bloo()
-  c.Drop()
+// fun to_ptr(p : ptr(rc)) {
+//   &rc.data
+// }
 
-  print("final count: "); print(c.count); println()
-})
+// fun implement_managed(t : ptr(expr)) {
+//   build_module(#{
+//     fun heap(v : $t) {
+//       let bytes = sizeof($t)
+//       print("Resource allocated"); println()
+//       let p = malloc(bytes as u32) as ptr($t)
+//       *p = v
+//       p
+//     }
+
+//     fun Drop(p : ptr($t)) {
+//       p.count = p.count - 1
+//       print("Drop called"); println()
+//       if p.count <= 0 {
+//         print("Resource released"); println()
+//         free(p as ptr(u8))
+//       }
+//     }
+
+//     fun Clone(p : ptr($t)) {
+//       print("Clone called"); println()
+//       p.count = p.count + 1
+//       p
+//     }
+//   })
+// }
+
+// implement_managed(#counted)
+
+// build_module(#{
+//   fun bloo() {
+//     let c = counted.new(1).heap()
+
+//     fun blah(c : ptr(counted)) {
+//       let c2 = c.Clone()
+//       if c2.count > 0 {
+//         let c3 = c2.Clone()
+//         (c3)
+//         c3.Drop()
+//       }
+//       c2.Drop()
+//     }
+
+//     blah(c)
+//     let r = c
+//     c.Drop()
+//     r
+//   }
+
+//   let c = bloo()
+//   c.Drop()
+
+//   print("final count: "); print(c.count); println()
+// })
 
 ()

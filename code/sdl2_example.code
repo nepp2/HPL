@@ -1,7 +1,7 @@
 
 # print_expr(e)
 
-let sdl2 = load_quote(compiler, ref "sdl2")
+let sdl2 = load_quote(compiler, &"sdl2")
 
 print_expr(sdl2)
 

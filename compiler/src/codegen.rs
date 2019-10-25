@@ -872,11 +872,11 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
             (Type::F64, "-") => unary_op!(build_float_neg, FloatValue, a, self),
             (Type::I64, "-") => unary_op!(build_int_neg, IntValue, a, self),
             (Type::Bool, "!") => unary_op!(build_not, IntValue, a, self),
-            (Type::Ptr(_), "deref") => {
+            (Type::Ptr(_), "*") => {
               let ptr = self.codegen_pointer(a)?;
               pointer(ptr)
             }
-            (_, "ref") => self.codegen_address_of_expression(a)?,
+            (_, "&") => self.codegen_address_of_expression(a)?,
             _ => return error(node.loc, "encountered unrecognised intrinsic"),
           }
         }

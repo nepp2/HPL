@@ -1,3 +1,8 @@
+# THOUGHTS - 25/10/2019
+
+What would I need to implement everything internally?
+What would I want the code that does it to look like?
+
 # THOUGHTS - 24/10/2019
 
 ## On reference counting

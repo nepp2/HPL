@@ -28,7 +28,7 @@ cbind print_u64 : fun(v : u64)
 cbind print_f64 : fun(v : f64)
 cbind print_bool : fun(v : bool)
 
-fun print(s : string) { print_string(ref s) }
+fun print(s : string) { print_string(&s) }
 fun print(v : i64) { print_i64(v) }
 fun print(v : u64) { print_u64(v) }
 fun print(v : f64) { print_f64(v) }
@@ -119,7 +119,7 @@ struct module_handle {
 cbind template_quote : fun(e : ptr(expr), args : ptr(array(ptr(expr)))) => ptr(expr)
 
 fun template_quote(e : ptr(expr), args : array(ptr(expr))) {
-  template_quote(e, ref args)
+  template_quote(e, &args)
 }
 
 cbind build_module : fun(compiler : ptr(u8), expr : ptr(expr)) => module_handle
@@ -133,5 +133,5 @@ cbind get_function :
   => ptr(u8)
 
 fun get_function(module : module_handle, name : string) {
-  get_function(compiler, module, ref name)
+  get_function(compiler, module, &name)
 }
