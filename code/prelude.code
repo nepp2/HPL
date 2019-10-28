@@ -1,4 +1,8 @@
 
+cbind malloc : fun(size: u64) => ptr(u8)
+cbind free : fun(ptr: ptr(u8))
+cbind memcpy : fun(dest : ptr(u8), src : ptr(u8), length : u64) => ptr(u8)
+
 struct range {
   start : i64
   limit : i64
@@ -9,9 +13,17 @@ struct string {
   length : u64
 }
 
-cbind malloc : fun(size: u32) => ptr(u8)
+fun +(a : u64, b : u64) {
+  ((a as i64) + (b as i64)) as u64
+}
 
-cbind free : fun(ptr: ptr(u8))
+fun +(a : string, b : string) {
+ let length = a.length + b.length
+ let data = malloc(length)
+ memcpy(data, a.data, a.length)
+ memcpy(&data[a.length as i64], b.data, b.length)
+ string.new(data, length)
+}
 
 struct lib_handle {
   handle : u64
@@ -116,6 +128,14 @@ struct module_handle {
   id : u64
 }
 
+cbind expr_to_string : fun(out : ptr(string), e : ptr(expr))
+
+fun to_string(e : ptr(expr)) {
+  let out = string.new(0 as u64 as ptr(u8), 0 as u64)
+  expr_to_string(&out, e)
+  out
+}
+
 cbind template_quote : fun(e : ptr(expr), args : ptr(array(ptr(expr)))) => ptr(expr)
 
 fun template_quote(e : ptr(expr), args : array(ptr(expr))) {
@@ -129,8 +149,7 @@ fun build_module(expr : ptr(expr)) {
 }
 
 cbind get_function :
-  fun(compiler : ptr(u8), module : module_handle, name : ptr(string))
-  => ptr(u8)
+  fun(compiler : ptr(u8), module : module_handle, name : ptr(string)) => ptr(u8)
 
 fun get_function(module : module_handle, name : string) {
   get_function(compiler, module, &name)

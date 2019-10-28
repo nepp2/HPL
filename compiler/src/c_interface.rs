@@ -85,6 +85,7 @@ static TEST_GLOBAL : i64 = 47;
 extern {
   pub fn malloc(size: usize) -> *mut u8;
   pub fn free(ptr: *mut u8);
+  pub fn memcpy(dest : *mut u8, src: *const u8, count : usize) -> *mut u8;
 }
 
 #[no_mangle]
@@ -157,6 +158,14 @@ pub extern "C" fn print_type<T : std::fmt::Display>(t : T) {
 #[no_mangle]
 pub extern "C" fn print_expr(e : &Expr) {
   println!("{}", e);
+}
+
+#[no_mangle]
+pub extern "C" fn expr_to_string(out : &mut SStr, e : &Expr) {
+  let string = format!("{}", e);
+  let s = SStr::from_str(string.as_str());
+  std::mem::forget(string);
+  *out = s;
 }
 
 /// defined for the test suite only
@@ -239,6 +248,8 @@ impl CSymbols {
     sym.insert("load_symbol".into(), (load_symbol as *const()) as usize);
     sym.insert("malloc".into(), (malloc as *const()) as usize);
     sym.insert("free".into(), (free as *const()) as usize);
+    sym.insert("memcpy".into(), (memcpy as *const()) as usize);
+    
 
     sym.insert("print_string".into(), (print_string as *const()) as usize);
     sym.insert("print_expr".into(), (print_expr as *const()) as usize);
@@ -248,11 +259,13 @@ impl CSymbols {
     sym.insert("print_bool".into(), (print_type::<bool> as *const()) as usize);
 
     sym.insert("template_quote".into(),  (template_quote as *const()) as usize);
-    sym.insert("test_add".into(), (test_add as *const()) as usize);
     sym.insert("thread_sleep".into(), (thread_sleep as *const()) as usize);
     sym.insert("load_quote".into(),  (load_quote as *const()) as usize);
     sym.insert("build_module".into(),  (build_module as *const()) as usize);
     sym.insert("get_function".into(),  (get_function as *const()) as usize);
+    sym.insert("expr_to_string".into(),  (expr_to_string as *const()) as usize);
+
+    sym.insert("test_add".into(), (test_add as *const()) as usize);
     sym.insert("test_global".into(), (&TEST_GLOBAL as *const i64) as usize);
 
     // This is a bit confusing. When we link to a global we do it by passing a

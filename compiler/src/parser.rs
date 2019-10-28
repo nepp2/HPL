@@ -82,9 +82,9 @@ fn parse_config() -> ParseConfig {
   c.infix_prefix(&["+", "-"], &["-"]);
   c.infix(&["*", "/", "%"]);
   c.infix_prefix(&["=>"], &["!", "&", "*",]);
-  c.prefix(&["#", "$"]);
   c.infix(&["(", "["]);
   c.infix(&["."]);
+  c.prefix(&["#", "$"]);
   c
 }
 
@@ -470,7 +470,7 @@ fn try_parse_keyword_term(ps : &mut ParseState) -> Result<Option<Expr>, Error> {
       let is_full_definition = ps.peek()?.symbol.as_ref() != "(";
       if is_full_definition {
         // Parse name
-        es.push(parse_simple_string(ps)?);
+        es.push(parse_prefix(ps)?);
       }
       // arguments
       ps.expect("(")?;

@@ -25,7 +25,8 @@ use llvm_sys::support::LLVMLoadLibraryPermanently;
 static mut LOADED_SYMBOLS : bool = false;
 
 // TODO: Put these options somewhere more sensible
-static DEBUG_PRINTING : bool = false;
+static DEBUG_PRINTING_EXPRS : bool = false;
+static DEBUG_PRINTING_IR : bool = false;
 static ENABLE_IR_OPTIMISATION : bool = false;
 
 // TODO: fix this gross hack
@@ -209,7 +210,7 @@ impl InterpreterInner {
 }
 
 pub fn compile_module(uid_generator : &mut UIDGenerator, expr : &Expr, external_modules : &[CompiledModule], c_symbols : &CSymbols, context : &mut Context, cache : &StringCache) -> Result<CompiledModule, Error> {
-  if DEBUG_PRINTING {
+  if DEBUG_PRINTING_EXPRS {
     println!("{}", expr);
   }
 
@@ -246,7 +247,7 @@ pub fn compile_module(uid_generator : &mut UIDGenerator, expr : &Expr, external_
     jit.codegen_module(&info)?
   };
 
-  if DEBUG_PRINTING {
+  if DEBUG_PRINTING_IR {
     dump_module(&llvm_module);
   }
 
