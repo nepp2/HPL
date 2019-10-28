@@ -70,12 +70,13 @@ fun declare_array(element_type : ptr(expr)) {
   })
 }
 
-//rc(#array_i64, #array_inner)
-
 declare_array(#i64)
 
+declare_array(#string)
+
 build_module(#{
-  let a = array_i64([0, 1, 2, 20, 534, 3, 4])
+  //let a = array_i64([0, 1, 2, 20, 534, 3, 4])
+  let a = array_string(["hello", "world"])
   let i = 0;
   while i < a.len() {
     print("a: "); print(a.index(i)); println()
