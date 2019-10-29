@@ -838,6 +838,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
   fn codegen_expression(&mut self, node : &TypedNode) -> Result<Option<GenVal>, Error> {
     let v : GenVal = match &node.content {
       Content::FunctionCall(function_value, args) => {
+        // TODO: log values that need to be dropped
         return self.codegen_function_call(function_value, args);
       }
       Content::IntrinsicCall(name, args) => {
@@ -984,6 +985,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         }
       }
       Content::Block(nodes) => {
+        // TODO: call any necessary Drop functions
         let node_count = nodes.len();
         if node_count > 0 {
           for i in 0..(node_count-1) {
@@ -1015,6 +1017,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         return Ok(None);
       }
       Content::StructInstantiate(struct_name, args) => {
+        // TODO: log values that need to be dropped
         let a : Result<Vec<BasicValueEnum>, Error> =
           args.iter().map(|a| self.codegen_value(a)).collect();
         //let def = self.find_type_def(&self.gen.type_info, struct_name).unwrap();
@@ -1120,6 +1123,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         pointer(element_ptr)
       }
       Content::Assignment(ns) => {
+        // TODO: call Drop and Clone
         let (assign_node, value_node) = (&ns.0, &ns.1);
         let assign_location = self.codegen_expression(assign_node)?.unwrap();
         let ptr = match assign_location.storage {
@@ -1213,6 +1217,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
   }
 
   fn codegen_return(&mut self, value_node : Option<&TypedNode>) -> Result<(), Error> {
+    // TODO: Call the necessary Drop and Clone functions
     if let Some(value_node) = value_node {
       let v = self.codegen_expression_to_register(value_node)?;
       self.builder.build_return(v.as_ref().map(|v| v as &dyn BasicValue));

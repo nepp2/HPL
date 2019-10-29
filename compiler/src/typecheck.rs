@@ -110,6 +110,9 @@ pub struct TypeDefinition {
   pub name : RefStr,
   pub fields : Vec<(RefStr, Type)>,
   pub kind : TypeKind,
+  pub drop_function : Option<FunctionReference>,
+  pub clone_function : Option<FunctionReference>,
+  pub definition_location : TextLocation,
 }
 
 #[derive(Debug)]
@@ -127,6 +130,7 @@ pub struct FunctionDefinition {
   pub args : Vec<RefStr>,
   pub signature : Rc<FunctionSignature>,
   pub implementation : FunctionImplementation,
+  pub definition_location : TextLocation,
 }
 
 impl FunctionDefinition {
@@ -157,7 +161,7 @@ pub static TOP_LEVEL_FUNCTION_NAME : &'static str = "top_level";
 pub enum VarScope { Local, Global }
 
 /// Identifies a specific function from a specific module with a specific argument list
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FunctionReference {
   pub name_in_code : RefStr,
   pub name_for_codegen : RefStr,
@@ -419,7 +423,12 @@ impl <'l> TypeChecker<'l> {
       }
       // TODO: Generics?
       let name = self.cache.get(name);
-      let def = TypeDefinition { name: name.clone(), fields, kind };
+      let def = TypeDefinition {
+        name: name.clone(),
+        fields, kind,
+        drop_function: None, clone_function: None,
+        definition_location: expr.loc,
+      };
       self.module.types.insert(name, def);
       return Ok(());
     }
@@ -844,6 +853,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
               signature: sig.clone(),
               implementation: FunctionImplementation::CFunction(address),
               module_id: self.t.module.id,
+              definition_location: expr.loc,
             };
             self.t.add_function(def);
           }
@@ -886,6 +896,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
             signature,
             implementation: FunctionImplementation::Normal(body),
             module_id: self.t.module.id,
+            definition_location: expr.loc,
           };
           self.t.add_function(def);
           return Ok(node(expr, Type::Void, FunctionDefinition(name)))
@@ -1147,6 +1158,49 @@ pub fn to_typed_module(uid_generator : &mut UIDGenerator, local_symbol_table : &
     }
   }
 
+  // Look for drop functions and clone functions
+  fn register_f(
+    type_checker : &mut TypeChecker,
+    function_name : &str,
+    f : fn(&mut TypeDefinition, &FunctionDefinition) -> Result<(), Error>)
+      -> Result<(), Error>
+  {
+    let functions = type_checker.module.functions.iter().filter(move |def| def.name_in_code.as_ref() == function_name);
+    for fun_def in functions {
+      if let [Type::Ptr(t)] = fun_def.signature.args.as_slice() {
+        if let Type::Def(n) = &**t {
+          if let Some(type_def) = type_checker.module.types.get_mut(n) {
+            if type_def.kind == TypeKind::Struct {
+              f(type_def, fun_def)?;
+            }
+          }
+          else {
+            println!("Types: {:?}", type_checker.module.types.keys());
+            return error(fun_def.definition_location,
+              format!("Function {} must be defined in the same module as type {}.", function_name, n));
+          }
+        }
+      }
+    }    
+    Ok(())
+  }
+  register_f(&mut type_checker, "Drop", |td, fd| {
+    if fd.signature.return_type == Type::Void {
+      td.drop_function = Some(fd.function_reference());
+      return Ok(());
+    }
+    error(fd.definition_location, "Drop function must have void return")
+  })?;
+  register_f(&mut type_checker, "Clone", |td, fd| {
+    if let Type::Def(n) = &fd.signature.return_type {
+      if n == &td.name {
+        td.clone_function = Some(fd.function_reference());
+        return Ok(());
+      }
+    }
+    error(fd.definition_location, "Clone function must return new instance")
+  })?;
+
   // TODO: figure out which types are Move and which are Copy
 
   let name = cache.get(TOP_LEVEL_FUNCTION_NAME);
@@ -1164,6 +1218,7 @@ pub fn to_typed_module(uid_generator : &mut UIDGenerator, local_symbol_table : &
     signature,
     implementation: FunctionImplementation::Normal(body),
     module_id: type_checker.module.id,
+    definition_location: expr.loc,
   };
   type_checker.add_function(def);
   Ok(module)

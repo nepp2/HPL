@@ -171,6 +171,19 @@ fun declare_rc(name : ptr(expr), inner_type : ptr(expr)) {
     fun deref(rc : $name) {
       &rc.ptr.rc_data as ptr($inner_type)
     }
+
+    fun Drop(rc : ptr($name)) {
+      let inner = rc.ptr
+      inner.count = inner.count - 1
+      if inner.count <= 0 {
+        free(rc.ptr as ptr(u8))
+      }
+    }
+
+    fun Clone(rc : ptr($name)) {
+      rc.ptr.count = rc.ptr.count + 1
+      *rc
+    }
   })
 }
 
