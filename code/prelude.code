@@ -154,3 +154,82 @@ cbind get_function :
 fun get_function(module : module_handle, name : string) {
   get_function(compiler, module, &name)
 }
+
+// ----------------- DEFINE RC AND ARRAY STUFF -------------------
+
+struct rc_inner {
+  count : i64
+  rc_data : u8
+}
+
+fun declare_rc(name : ptr(expr), inner_type : ptr(expr)) {
+  build_module(#{
+    struct $name {
+      ptr : ptr(rc_inner)
+    }
+
+    fun deref(rc : $name) {
+      &rc.ptr.rc_data as ptr($inner_type)
+    }
+  })
+}
+
+struct array_inner {
+  length : i64
+  array_data : u8
+}
+
+fun declare_array(element_type : ptr(expr)) {
+  let array_type_name = #$("array_" + element_type.to_string())
+  declare_rc(array_type_name, #array_inner)
+
+  build_module(#{
+
+    fun inner(a : $array_type_name) {
+      &a.ptr.rc_data as ptr(array_inner)
+    }
+
+    fun len(a : $array_type_name) {
+      a.inner().length
+    }
+
+    fun index_address(a : $array_type_name, i : i64) {
+      let p = &a.ptr.rc_data as ptr(array_inner)
+      let p = &p.array_data as ptr($element_type)
+      &p[i]
+    }
+
+    fun index(a : $array_type_name, i : i64) {
+      *a.index_address(i)
+    }
+
+    fun $array_type_name(values : array($element_type)) {
+      let length = {
+        let s = &values as ptr(string)
+        s.length
+      }
+      // This is verbose, because I don't support unsigned multiplication yet
+      let element_bytes = ((sizeof($element_type) as i64) * (length as i64)) as u64
+      let total_bytes = {
+        // This is a hack to find the offset to the first element
+        let dummy = $array_type_name.new(0 as u64 as ptr(rc_inner))
+        let offset = dummy.index_address(0) as u64
+        offset + element_bytes
+      }
+      // I can't initialise the array pointer without knowing the name of the
+      // internal rc type that was generated to hold the array, which I don't
+      // know
+      let array = *(&malloc(total_bytes) as ptr($array_type_name))
+      array.inner().length = length
+      let src = &values[0] as ptr(u8)
+      memcpy(array.index_address(0) as ptr(u8), src, element_bytes)
+      array
+    }
+  })
+}
+
+declare_array(#i64)
+
+declare_array(#string)
+
+()
