@@ -88,7 +88,7 @@ macro_rules! compare_op {
 
 /// Indicates whether a value is a pointer to the stack,
 /// or stored directly in a register.
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 enum Storage {
   Register,
   Pointer,
@@ -182,12 +182,29 @@ pub struct Gen<'l> {
   pm : &'l PassManager<FunctionValue>,
 }
 
+struct Destructible {
+  value : PointerValue,
+  drop_reference : FunctionValue,
+}
+
+struct Block {
+  destructibles : Vec<Destructible>,
+}
+
+impl Block {
+  fn new() -> Self {
+    Block { destructibles: vec![] }
+  }
+}
+
 /// Code generates a single function (can spawn children to code-generate internal functions)
 pub struct GenFunction<'l, 'lg> {
   gen : &'l mut Gen<'lg>,
   builder: Builder,
 
   variables: HashMap<RefStr, PointerValue>,
+
+  blocks: Vec<Block>,
 
   /// A stack of values indicating the entry and exit labels for each loop
   loop_labels: Vec<LoopLabels>,
@@ -524,7 +541,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
   pub fn new(gen: &'l mut Gen<'lg>) -> GenFunction<'l, 'lg> {
     let builder = gen.context.create_builder();
     let variables = HashMap::new();
-    GenFunction{ gen, builder, variables, loop_labels: vec!() }
+    GenFunction{ gen, builder, variables, blocks: vec![Block::new()], loop_labels: vec![] }
   }
 
   fn create_entry_block_alloca(&self, t : BasicTypeEnum, name : &str) -> PointerValue {
@@ -782,18 +799,22 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
     pointer(ptr)
   }
 
-  fn codegen_address_of_expression(&mut self, value : &TypedNode) -> Result<GenVal, Error> {
-    let v = self.codegen_expression(value)?.unwrap();
+  fn codegen_address_of_genval(&mut self, v : GenVal) -> Result<PointerValue, Error> {
     match v.storage {
       Storage::Register => {
         let ptr = self.create_entry_block_alloca(v.value.get_type(), "reference");
         self.builder.build_store(ptr, v.value);
-        Ok(reg(ptr.into()))
+        Ok(ptr)
       }
       Storage::Pointer => {
-        Ok(reg(v.value))
+        Ok(*v.value.as_pointer_value())
       }
     }
+  }
+
+  fn codegen_address_of_expression(&mut self, value : &TypedNode) -> Result<GenVal, Error> {
+    let v = self.codegen_expression(value)?.unwrap();
+    Ok(reg(self.codegen_address_of_genval(v)?.into()))
   }
 
   /// ensure necessary definitions are inserted and linking operations performed when a function is referenced
@@ -835,11 +856,32 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
     return Ok(r.map(reg));
   }
 
+  /// If the value provided has just been created, it may need to be dropped later.
+  /// This depends on whether or not it has a Drop function defined.
+  /// These semantics were intended for implementing RC pointers, and may prove to be limited for
+  /// other purposes.
+  fn codegen_value_creation(&mut self, t : &Type, v : Option<GenVal>) -> Result<Option<GenVal>, Error> {
+    if let Type::Def(name) = t {
+      let def = self.gen.info.find_type_def(name).unwrap();
+      if let Some(drop) = &def.drop_function {
+        let f = self.get_linked_function_reference(drop);
+        let p = self.codegen_address_of_genval(v.unwrap())?;
+        let d = Destructible{ drop_reference: f, value: p };
+        self.blocks.last_mut().unwrap().destructibles.push(d);
+        return Ok(Some(pointer(p)));
+      }
+    }
+    return Ok(v);
+  }
+
   fn codegen_expression(&mut self, node : &TypedNode) -> Result<Option<GenVal>, Error> {
     let v : GenVal = match &node.content {
       Content::FunctionCall(function_value, args) => {
-        // TODO: log values that need to be dropped
-        return self.codegen_function_call(function_value, args);
+        let ret_val = self.codegen_function_call(function_value, args)?;
+        // We consider any value returned from a function to have been "just created", and
+        // so it may need to be dropped later. These semantics are discussed on the doc comment
+        // of the function below.
+        return self.codegen_value_creation(&node.type_tag, ret_val);
       }
       Content::IntrinsicCall(name, args) => {
         if let [a, b] = args.as_slice() {
