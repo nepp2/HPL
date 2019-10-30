@@ -176,16 +176,14 @@ pub enum Content {
   /// TODO: Drop and Clone semantics
   Assignment(Box<(TypedNode, TypedNode)>),
   IfThen(Box<(TypedNode, TypedNode)>),
-  /// TODO: New value
   IfThenElse(Box<(TypedNode, TypedNode, TypedNode)>),
-  /// TODO: return new value, drop previous values
+  /// TODO: clone new value, drop previous values
   Block(Vec<TypedNode>),
   Quote(Box<Expr>),
   FunctionReference(FunctionReference),
   FunctionDefinition(RefStr),
   CBind(RefStr),
   TypeDefinition(RefStr),
-  /// TODO: New value
   StructInstantiate(RefStr, Vec<TypedNode>),
   UnionInstantiate(RefStr, Box<(RefStr, TypedNode)>),
   FieldAccess(Box<(TypedNode, RefStr)>),
@@ -195,11 +193,10 @@ pub enum Content {
   FunctionCall(Box<TypedNode>, Vec<TypedNode>),
   IntrinsicCall(RefStr, Vec<TypedNode>),
   While(Box<(TypedNode, TypedNode)>),
-  /// TODO: Clone return, Drop all block values
+  /// TODO: clone return, drop all block values down the stack
   ExplicitReturn(Option<Box<TypedNode>>),
   Convert(Box<TypedNode>),
   SizeOf(Box<Type>),
-  MoveValue(Box<TypedNode>),
   Break,
 }
 
@@ -208,8 +205,13 @@ use Content::*;
 /// This indicates whether the type is a full value, or just a reference to one.
 /// When an expression is evaluated to a full value, it may need to be dropped later.
 /// When a reference turns into a value, it may need to be cloned.
-#[derive(Debug)]
-pub enum NodeValueType { Value, Reference, Null }
+#[derive(Debug, PartialEq)]
+pub enum NodeValueType {
+  Val,
+  Ref,
+  Mut,
+  Nil,
+}
 
 #[derive(Debug)]
 pub struct TypedNode {
@@ -220,17 +222,17 @@ pub struct TypedNode {
 
 impl TypedNode {
 
-  fn node_value_type(&self) -> NodeValueType {
+  pub fn node_value_type(&self) -> NodeValueType {
     match &self.content {
       Content::FieldAccess(_) | Content::FunctionReference(_) |
       Content::Index(_) | Content::Literal(_) | Content::Quote(_) |
       Content::VariableReference(_)
-        => NodeValueType::Reference,
+        => NodeValueType::Ref,
       Content::Block(_) | Content::FunctionCall(_, _) |
       Content::IfThenElse(_) | Content::IntrinsicCall(_, _) |
       Content::StructInstantiate(_, _) | Content::UnionInstantiate(_, _)
-        => NodeValueType::Value,
-      _ => NodeValueType::Null,
+        => NodeValueType::Val,
+      _ => NodeValueType::Nil,
     }
   }
 
