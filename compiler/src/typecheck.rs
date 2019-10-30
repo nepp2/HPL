@@ -173,30 +173,43 @@ pub enum Content {
   Literal(Val),
   VariableReference(RefStr),
   VariableInitialise(RefStr, Box<TypedNode>, VarScope),
+  /// TODO: Drop and Clone semantics
   Assignment(Box<(TypedNode, TypedNode)>),
   IfThen(Box<(TypedNode, TypedNode)>),
+  /// TODO: New value
   IfThenElse(Box<(TypedNode, TypedNode, TypedNode)>),
+  /// TODO: return new value, drop previous values
   Block(Vec<TypedNode>),
   Quote(Box<Expr>),
   FunctionReference(FunctionReference),
   FunctionDefinition(RefStr),
   CBind(RefStr),
   TypeDefinition(RefStr),
+  /// TODO: New value
   StructInstantiate(RefStr, Vec<TypedNode>),
   UnionInstantiate(RefStr, Box<(RefStr, TypedNode)>),
   FieldAccess(Box<(TypedNode, RefStr)>),
   Index(Box<(TypedNode, TypedNode)>),
   ArrayLiteral(Vec<TypedNode>),
+  /// TODO: New value
   FunctionCall(Box<TypedNode>, Vec<TypedNode>),
   IntrinsicCall(RefStr, Vec<TypedNode>),
   While(Box<(TypedNode, TypedNode)>),
+  /// TODO: Clone return, Drop all block values
   ExplicitReturn(Option<Box<TypedNode>>),
   Convert(Box<TypedNode>),
   SizeOf(Box<Type>),
+  MoveValue(Box<TypedNode>),
   Break,
 }
 
 use Content::*;
+
+/// This indicates whether the type is a full value, or just a reference to one.
+/// When an expression is evaluated to a full value, it may need to be dropped later.
+/// When a reference turns into a value, it may need to be cloned.
+#[derive(Debug)]
+pub enum NodeValueType { Value, Reference, Null }
 
 #[derive(Debug)]
 pub struct TypedNode {
@@ -206,6 +219,21 @@ pub struct TypedNode {
 }
 
 impl TypedNode {
+
+  fn node_value_type(&self) -> NodeValueType {
+    match &self.content {
+      Content::FieldAccess(_) | Content::FunctionReference(_) |
+      Content::Index(_) | Content::Literal(_) | Content::Quote(_) |
+      Content::VariableReference(_)
+        => NodeValueType::Reference,
+      Content::Block(_) | Content::FunctionCall(_, _) |
+      Content::IfThenElse(_) | Content::IntrinsicCall(_, _) |
+      Content::StructInstantiate(_, _) | Content::UnionInstantiate(_, _)
+        => NodeValueType::Value,
+      _ => NodeValueType::Null,
+    }
+  }
+
   fn assert_type(&self, expected : Type) -> Result<(), Error> {
     if self.type_tag == expected {
       Ok(())
@@ -217,11 +245,7 @@ impl TypedNode {
 }
 
 fn node(expr : &Expr, type_tag : Type, content : Content) -> TypedNode {
-  TypedNode {
-    type_tag,
-    content,
-    loc: expr.loc,
-  }
+  TypedNode { type_tag, content, loc: expr.loc }
 }
 
 pub struct GlobalDefinition {
