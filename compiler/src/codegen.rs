@@ -902,9 +902,9 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
   fn codegen_cloned_expression(&mut self, node : &TypedNode) -> Result<Option<GenVal>, Error> {
     let val = self.codegen_without_drop_value_registration(node)?;
     if let Some(clone) = self.get_linked_clone_reference(&node.type_tag) {
-      let val = self.genval_to_register(val);
-      let fp = clone.as_global_value().as_pointer_value();
-      Ok(self.build_function_call(fp, &[val.unwrap()], "cloned"))
+      let val = self.codegen_address_of_genval(val.unwrap())?;
+      let fun_ptr = clone.as_global_value().as_pointer_value();
+      Ok(self.build_function_call(fun_ptr, &[val.into()], "cloned"))
     }
     else {
       Ok(val)
