@@ -1,3 +1,13 @@
+# THOUGHTS - 31/10/2019
+
+Close to finishing a crude Drop and Clone system.
+
+There are two (big) outstanding problems:
+
+1. I don't detect whether an assignment is into a variable or a field/array. I think these are the only times a drop/clone should happen. It's worth noting that it would be very hard to tell what's behind a raw pointer. I could make all assignments do a clone as long as they _aren't_ to a local variable, but then I'd have to prevent people from taking raw pointers to local variables.
+
+2. Drop does not do anything about nested types! To implement this via metaprogramming I'd need some type introspection features.
+
 # THOUGHTS - 29/10/2019
 
 ## RC pointers, arrays and strings

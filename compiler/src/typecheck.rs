@@ -168,7 +168,7 @@ pub struct FunctionReference {
   pub module_id : u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LabelId {
   id : u64
 }

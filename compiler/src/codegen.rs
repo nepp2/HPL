@@ -177,6 +177,7 @@ pub struct Gen<'l> {
   pm : &'l PassManager<FunctionValue>,
 }
 
+#[derive(Clone, Copy)]
 struct Destructible {
   value : PointerValue,
   drop_reference : FunctionValue,
@@ -193,6 +194,9 @@ impl Block {
 }
 
 struct LabelState {
+  /// Indicates how many blocks there are beneath this label
+  block_depth : usize,
+
   exit_block : BasicBlock,
   phi_values : Vec<(BasicValueEnum, BasicBlock)>,
 }
@@ -206,8 +210,8 @@ pub struct GenFunction<'l, 'lg> {
 
   blocks: Vec<Block>,
 
-  /// the labels in scopes and their state
-  labels_in_scope: HashMap<LabelId, LabelState>,
+  /// stack of labels in scopes and their state
+  labels_in_scope: Vec<(LabelId, LabelState)>,
 }
 
 struct CompileInfo<'l> {
@@ -541,7 +545,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
   pub fn new(gen: &'l mut Gen<'lg>) -> GenFunction<'l, 'lg> {
     let builder = gen.context.create_builder();
     let variables = HashMap::new();
-    GenFunction{ gen, builder, variables, blocks: vec![Block::new()], labels_in_scope: HashMap::new() }
+    GenFunction{ gen, builder, variables, blocks: vec![Block::new()], labels_in_scope: vec![] }
   }
 
   fn create_entry_block_alloca(&self, t : BasicTypeEnum, name : &str) -> PointerValue {
@@ -899,15 +903,24 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
     return Ok(v);
   }
 
-  fn codegen_cloned_expression(&mut self, node : &TypedNode) -> Result<Option<GenVal>, Error> {
-    let val = self.codegen_without_drop_value_registration(node)?;
-    if let Some(clone) = self.get_linked_clone_reference(&node.type_tag) {
+  fn codegen_cloned_expression(&mut self, t : &Type, val : Option<GenVal>) -> Result<Option<GenVal>, Error> {
+    if let Some(clone) = self.get_linked_clone_reference(t) {
       let val = self.codegen_address_of_genval(val.unwrap())?;
       let fun_ptr = clone.as_global_value().as_pointer_value();
       Ok(self.build_function_call(fun_ptr, &[val.into()], "cloned"))
     }
     else {
       Ok(val)
+    }
+  }
+
+  fn codegen_owned_expression(&mut self, node : &TypedNode) -> Result<Option<GenVal>, Error> {
+    let val = self.codegen_without_drop_value_registration(node)?;
+    if node.node_value_type() == NodeValueType::Val {
+      Ok(val)
+    }
+    else {
+      self.codegen_cloned_expression(&node.type_tag, val)
     }
   }
 
@@ -1021,11 +1034,12 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         let block = self.builder.get_insert_block().unwrap();
         let f = block.get_parent().unwrap();
         let exit_block = self.gen.context.append_basic_block(&f, "exit_label");
-        let label_state = LabelState { exit_block, phi_values: vec![] };
-        self.labels_in_scope.insert(*label, label_state);
+        let block_depth = self.blocks.len();
+        let label_state = LabelState { block_depth, exit_block, phi_values: vec![] };
+        self.labels_in_scope.push((*label, label_state));
         let value = self.codegen_expression_to_register(inner_node)?;
         let block = self.builder.get_insert_block().unwrap();
-        let label_state = self.labels_in_scope.remove(label).unwrap();
+        let (_, label_state) = self.labels_in_scope.pop().unwrap();
         self.builder.build_unconditional_branch(&label_state.exit_block);
         self.builder.position_at_end(&label_state.exit_block);
         if let Some(v) = value {
@@ -1086,8 +1100,8 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
           for i in 0..(node_count-1) {
             self.codegen_expression(&nodes[i])?;
           }
-          // Make sure the last value is cloned
-          self.codegen_cloned_expression(&nodes[node_count-1])
+          // Make sure the last value is owned
+          self.codegen_owned_expression(&nodes[node_count-1])
         }
         else {
           Ok(None)
@@ -1226,7 +1240,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         pointer(element_ptr)
       }
       Content::Assignment(ns) => {
-        // TODO: call Drop and Clone
+        // TODO: WHAT IS BEING ASSIGNED TO? Should only work for FIELDS and ARRAYS
         let (assign_node, value_node) = (&ns.0, &ns.1);
         let assign_location = self.codegen_expression(assign_node)?.unwrap();
         let assign_ptr = match assign_location.storage {
@@ -1237,8 +1251,8 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
             return error(assign_node.loc, "cannot assign to this construct");
           }
         };
-        // Clone the value being assigned
-        let val = self.codegen_cloned_expression(value_node)?;
+        // Make sure the value being assigned is fully owned
+        let val = self.codegen_owned_expression(value_node)?;
         // Drop the value being overwritten
         if let Some(drop_reference) = self.get_linked_drop_reference(&assign_node.type_tag) {
           let d = Destructible { drop_reference, value: assign_ptr };
@@ -1285,13 +1299,29 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         reg(f.as_global_value().as_pointer_value().into())
       }
       Content::BreakToLabel(label, inner_node) => {
-        let v = inner_node.as_ref().map(|n| self.codegen_expression_to_register(n)).unwrap_or(Ok(None))?;
-        if let Some(label_state) = self.labels_in_scope.get_mut(label) {
+        // Generate fully owned value
+        let v = inner_node.as_ref().map(|n| {
+          let v = self.codegen_owned_expression(n)?;
+          Ok(self.genval_to_register(v))
+        }).unwrap_or(Ok(None))?;
+        let label_state = self.labels_in_scope.iter_mut().find(|(l, _)| l == label);
+        if let Some((_, label_state)) = label_state {
           if let Some(v) = v {
             let block = self.builder.get_insert_block().unwrap();
             label_state.phi_values.push((v, block));
           }
-          self.builder.build_unconditional_branch(&label_state.exit_block);
+          let exit_block = label_state.exit_block;
+          let label_block_depth = label_state.block_depth;
+          // Drop all the values we're about to jump past
+          let destructibles =
+            self.blocks.iter().skip(label_block_depth).rev()
+            .flat_map(|b| b.destructibles.iter()).cloned()
+            .collect::<Vec<_>>();
+          for d in destructibles {
+            self.codegen_drop_value(d);
+          }
+          //let i = self.labels_in_scope.iter().rev().take_while(||);
+          self.builder.build_unconditional_branch(&exit_block);
           // create a dummy block to hold instructions after the branch
           let f = self.builder.get_insert_block().unwrap().get_parent().unwrap();
           let dummy_block = self.gen.context.append_basic_block(&f, "dummy_block");
