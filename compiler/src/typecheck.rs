@@ -168,7 +168,7 @@ pub struct FunctionReference {
   pub module_id : u64,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LabelId {
   id : u64
 }
@@ -195,15 +195,12 @@ pub enum Content {
   FunctionCall(Box<TypedNode>, Vec<TypedNode>),
   IntrinsicCall(RefStr, Vec<TypedNode>),
   While(Box<(TypedNode, TypedNode)>),
-  /// TODO: clone return, drop all block values down the stack
-  ExplicitReturn(Option<Box<TypedNode>>),
   Convert(Box<TypedNode>),
   SizeOf(Box<Type>),
 
-  //Label(LabelId),
-  //BreakToLabel(LabelId, Option<Box<TypedNode>>),
-  /// TODO: clone return, drop all block values down the stack
-  Break,
+  Label(Box<TypedNode>, LabelId),
+  /// TODO: clone returned value, dropping all block values down the stack
+  BreakToLabel(LabelId, Option<Box<TypedNode>>),
 }
 
 use Content::*;
@@ -317,6 +314,8 @@ pub struct FunctionChecker<'l, 'lt> {
 
   is_top_level : bool,
   variables: HashMap<RefStr, Type>,
+
+  labels_in_scope : Vec<LabelId>,
 
   /// Tracks which variables are available, when.
   /// Used to rename variables with clashing names.
@@ -495,6 +494,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
     FunctionChecker {
       t,
       is_top_level,
+      labels_in_scope : vec![],
       variables,
       scope_map: vec!(global_map),
     }
@@ -667,9 +667,6 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
   fn construct_to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
     let (instr, children) = expr.unwrap_construct()?;
     match (instr, children) {
-      ("break", []) => {
-        return Ok(node(expr, Type::Void, Break));
-      }
       ("call", exprs) => {
         let function_expr = &exprs[0];
         match function_expr.try_symbol() {
@@ -786,12 +783,20 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
           else {
             (None, Type::Void)
           };
-        Ok(node(expr, type_tag, ExplicitReturn(return_val)))
+        let c = BreakToLabel(*self.labels_in_scope.first().unwrap(), return_val);
+        Ok(node(expr, type_tag, c))
       }
       ("while", [condition_expr, body_expr]) => {
+        let label = LabelId { id: self.t.uid_generator.next() };
+        // Add label to scope in case the loop breaks
+        self.labels_in_scope.push(label);
         let condition = self.to_ast(condition_expr)?;
         let body = self.to_ast(body_expr)?;
-        Ok(node(expr, Type::Void, While(Box::new((condition, body)))))
+        let while_node = node(expr, Type::Void, While(Box::new((condition, body))));
+        let labelled_while = node(expr, Type::Void, Label(Box::new(while_node), label));
+        // Remove label
+        self.labels_in_scope.pop();
+        Ok(labelled_while)
       }
       // ("for", [var_range_expr, body_expr]) => {
       //   if let Some(("in", [var, range])) = var_range_expr.try_construct() {
@@ -913,7 +918,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
           }
           let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
           let mut function_checker = FunctionChecker::new(self.t, false, args);
-          let body = function_checker.to_ast(function_body)?;
+          let body = function_checker.to_function_body(function_body)?;
           if self.t.find_function(&name, arg_types.as_slice()).is_some() {
             return error(expr, "function with that name already defined");
           }
@@ -1034,7 +1039,8 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         // this is just a normal symbol
         let s = self.cached(s.as_str());
         if s.as_ref() == "break" {
-          return Ok(node(expr, Type::Void, Break));
+          let c = BreakToLabel(*self.labels_in_scope.last().unwrap(), None);
+          return Ok(node(expr, Type::Void, c));
         }
         if let Some(variable) = self.variable_to_ast(expr, &s) {
           return Ok(variable)
@@ -1071,6 +1077,19 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
       },
       // _ => error(expr, "unsupported expression"),
     }
+  }
+
+  fn to_function_body(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
+    if self.labels_in_scope.len() != 0 {
+      panic!("labels_in_scope in invalid state");
+    }
+    let label = LabelId{ id: self.t.uid_generator.next() };
+    self.labels_in_scope.push(label);
+    let body = self.to_ast(expr)?;
+    self.labels_in_scope.pop();
+    let t = body.type_tag.clone();
+    let c = Label(Box::new(body), label);
+    Ok(node(expr, t, c))
   }
 }
 
@@ -1180,7 +1199,7 @@ pub fn to_typed_module(uid_generator : &mut UIDGenerator, local_symbol_table : &
   // Process the rest of the module (adds functions and globals)
   let mut function_checker =
     FunctionChecker::new(&mut type_checker, true, HashMap::new());
-  let body = function_checker.to_ast(expr)?;
+  let body = function_checker.to_function_body(expr)?;
 
   // Check any unresolved symbols
   let unresolved_types : Vec<_> = type_checker.type_definition_references.drain(0..).collect();

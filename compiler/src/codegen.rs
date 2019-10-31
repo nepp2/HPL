@@ -6,7 +6,7 @@ use crate::expr::RefStr;
 use crate::typecheck::{
   TypedNode, Content, Type, Val, TypeDefinition, TypeKind,
   FunctionReference, FunctionDefinition, VarScope, TypedModule,
-  FunctionImplementation, GlobalDefinition, NodeValueType };
+  FunctionImplementation, GlobalDefinition, NodeValueType, LabelId };
 
 use std::collections::HashMap;
 
@@ -110,11 +110,6 @@ fn pointer(ptr : PointerValue) -> GenVal {
   GenVal { storage: Storage::Pointer, value: ptr.as_basic_value_enum() }
 }
 
-struct LoopLabels {
-  condition : BasicBlock,
-  exit : BasicBlock,
-}
-
 fn const_null(t : BasicTypeEnum) -> BasicValueEnum {
   use BasicTypeEnum::*;
   match t {
@@ -197,6 +192,11 @@ impl Block {
   }
 }
 
+struct LabelState {
+  exit_block : BasicBlock,
+  phi_values : Vec<(BasicValueEnum, BasicBlock)>,
+}
+
 /// Code generates a single function (can spawn children to code-generate internal functions)
 pub struct GenFunction<'l, 'lg> {
   gen : &'l mut Gen<'lg>,
@@ -206,8 +206,8 @@ pub struct GenFunction<'l, 'lg> {
 
   blocks: Vec<Block>,
 
-  /// A stack of values indicating the entry and exit labels for each loop
-  loop_labels: Vec<LoopLabels>,
+  /// the labels in scopes and their state
+  labels_in_scope: HashMap<LabelId, LabelState>,
 }
 
 struct CompileInfo<'l> {
@@ -541,7 +541,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
   pub fn new(gen: &'l mut Gen<'lg>) -> GenFunction<'l, 'lg> {
     let builder = gen.context.create_builder();
     let variables = HashMap::new();
-    GenFunction{ gen, builder, variables, blocks: vec![Block::new()], loop_labels: vec![] }
+    GenFunction{ gen, builder, variables, blocks: vec![Block::new()], labels_in_scope: HashMap::new() }
   }
 
   fn create_entry_block_alloca(&self, t : BasicTypeEnum, name : &str) -> PointerValue {
@@ -984,36 +984,21 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         let cond_block = self.gen.context.append_basic_block(&f, "cond");
         let body_block = self.gen.context.append_basic_block(&f, "loop_body");
         let exit_block = self.gen.context.append_basic_block(&f, "loop_exit");
-        let labels = LoopLabels { condition: cond_block, exit: exit_block };
         // jump to condition
-        self.builder.build_unconditional_branch(&labels.condition);
+        self.builder.build_unconditional_branch(&cond_block);
         // conditional branch
-        self.builder.position_at_end(&labels.condition);
+        self.builder.position_at_end(&cond_block);
         let cond_value = self.codegen_int(cond_node)?;
-        self.builder.build_conditional_branch(cond_value, &body_block, &labels.exit);
+        self.builder.build_conditional_branch(cond_value, &body_block, &exit_block);
         // loop body
         self.builder.position_at_end(&body_block);
-        self.loop_labels.push(labels);
         self.codegen_expression(body_node)?;
-        let labels = self.loop_labels.pop().unwrap();
+
         // loop back to start
-        self.builder.build_unconditional_branch(&labels.condition);
+        self.builder.build_unconditional_branch(&cond_block);
         // exit
-        self.builder.position_at_end(&labels.exit);
+        self.builder.position_at_end(&exit_block);
         return Ok(None);
-      }
-      Content::Break => {
-        if let Some(labels) = self.loop_labels.last() {
-          self.builder.build_unconditional_branch(&labels.exit);
-          // create a dummy block to hold instructions after the break
-          let f = self.builder.get_insert_block().unwrap().get_parent().unwrap();
-          let dummy_block = self.gen.context.append_basic_block(&f, "dummy_block");
-          self.builder.position_at_end(&dummy_block);
-          return Ok(None);
-        }
-        else {
-          return error(node.loc, "can only break inside a loop");
-        }
       }
       Content::IfThen(ns) => {
         let (cond_node, then_node) = (&ns.0, &ns.1);
@@ -1031,6 +1016,29 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         // end block
         self.builder.position_at_end(&end_block);
         return Ok(None);
+      }
+      Content::Label(inner_node, label) => {
+        let block = self.builder.get_insert_block().unwrap();
+        let f = block.get_parent().unwrap();
+        let exit_block = self.gen.context.append_basic_block(&f, "exit_label");
+        let label_state = LabelState { exit_block, phi_values: vec![] };
+        self.labels_in_scope.insert(*label, label_state);
+        let value = self.codegen_expression_to_register(inner_node)?;
+        let block = self.builder.get_insert_block().unwrap();
+        let label_state = self.labels_in_scope.remove(label).unwrap();
+        self.builder.build_unconditional_branch(&label_state.exit_block);
+        self.builder.position_at_end(&label_state.exit_block);
+        if let Some(v) = value {
+          let phi = self.builder.build_phi(v.get_type(), "label_return");
+          phi.add_incoming(&[(&v, &block)]);
+          for (v, b) in label_state.phi_values.iter() {
+            phi.add_incoming(&[(v, b)]);
+          }
+          reg(phi.as_basic_value())
+        }
+        else {
+          return Ok(None);
+        }
       }
       Content::IfThenElse(ns) => {
         let (cond_node, then_node, else_node) = (&ns.0, &ns.1, &ns.2);
@@ -1276,13 +1284,21 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         let f = self.get_linked_function_reference(fr);
         reg(f.as_global_value().as_pointer_value().into())
       }
-      Content::ExplicitReturn(n) => {
-        self.codegen_return(n.as_ref().map(|b| b as &TypedNode))?;
-        // create a dummy block to hold instructions after the return
-        let f = self.builder.get_insert_block().unwrap().get_parent().unwrap();
-        let dummy_block = self.gen.context.append_basic_block(&f, "dummy_block");
-        self.builder.position_at_end(&dummy_block);
-        return Ok(None);
+      Content::BreakToLabel(label, inner_node) => {
+        let v = inner_node.as_ref().map(|n| self.codegen_expression_to_register(n)).unwrap_or(Ok(None))?;
+        if let Some(label_state) = self.labels_in_scope.get_mut(label) {
+          if let Some(v) = v {
+            let block = self.builder.get_insert_block().unwrap();
+            label_state.phi_values.push((v, block));
+          }
+          self.builder.build_unconditional_branch(&label_state.exit_block);
+          // create a dummy block to hold instructions after the branch
+          let f = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+          let dummy_block = self.gen.context.append_basic_block(&f, "dummy_block");
+          self.builder.position_at_end(&dummy_block);
+          return Ok(None);
+        }
+        return error(node.loc, "label not found");
       }
       Content::Literal(v) => {
         match v {
