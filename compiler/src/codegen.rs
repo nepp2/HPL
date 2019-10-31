@@ -847,6 +847,12 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
     }
   }
 
+  fn build_function_call(&mut self, f : PointerValue, args : &[BasicValueEnum], name : &str) -> Option<GenVal> {
+    let call = self.builder.build_call(f, args, name);
+    let r = call.try_as_basic_value().left();
+    return r.map(reg);
+  }
+
   fn codegen_function_call(&mut self, function_value : &TypedNode, args : &[TypedNode])
     -> Result<Option<GenVal>, Error>
   {
@@ -856,35 +862,67 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
       let v = self.codegen_value(a)?;
       arg_vals.push(v);
     }
-    let call = self.builder.build_call(function_pointer, arg_vals.as_slice(), "tmp");
-    let r = call.try_as_basic_value().left();
-    return Ok(r.map(reg));
+    Ok(self.build_function_call(function_pointer, arg_vals.as_slice(), "return_val"))
+  }
+
+  fn get_linked_drop_reference(&mut self, t : &Type) -> Option<FunctionValue> {
+    if let Type::Def(name) = t {
+      let def = self.gen.info.find_type_def(name).unwrap();
+      if let Some(drop) = &def.drop_function {
+        return Some(self.get_linked_function_reference(drop));
+      }
+    }
+    None
+  }
+
+  fn get_linked_clone_reference(&mut self, t : &Type) -> Option<FunctionValue> {
+    if let Type::Def(name) = t {
+      let def = self.gen.info.find_type_def(name).unwrap();
+      if let Some(clone) = &def.clone_function {
+        return Some(self.get_linked_function_reference(clone));
+      }
+    }
+    None
   }
 
   /// Makes sure newly created values that need to be dropped are registered with the block that they
   /// were created in. This means they must have an address on the stack.
-  fn codegen_block_value_registration(&mut self, node : &TypedNode, v : Option<GenVal>) -> Result<Option<GenVal>, Error> {
+  fn codegen_drop_value_registration(&mut self, node : &TypedNode, v : Option<GenVal>) -> Result<Option<GenVal>, Error> {
     if node.node_value_type() == NodeValueType::Val {
-      if let Type::Def(name) = &node.type_tag {
-        let def = self.gen.info.find_type_def(name).unwrap();
-        if let Some(drop) = &def.drop_function {
-          let f = self.get_linked_function_reference(drop);
-          let p = self.codegen_address_of_genval(v.unwrap())?;
-          let d = Destructible{ drop_reference: f, value: p };
-          self.blocks.last_mut().unwrap().destructibles.push(d);
-          return Ok(Some(pointer(p)));
-        }
+      if let Some(drop_reference) = self.get_linked_drop_reference(&node.type_tag) {
+        let p = self.codegen_address_of_genval(v.unwrap())?;
+        let d = Destructible{ drop_reference, value: p };
+        self.blocks.last_mut().unwrap().destructibles.push(d);
+        return Ok(Some(pointer(p)));        
       }
     }
     return Ok(v);
   }
 
-  fn codegen_expression(&mut self, node : &TypedNode) -> Result<Option<GenVal>, Error> {
-    let v = self.codegen_before_block_value_registration(node)?;
-    return self.codegen_block_value_registration(&node, v);
+  fn codegen_cloned_expression(&mut self, node : &TypedNode) -> Result<Option<GenVal>, Error> {
+    let val = self.codegen_without_drop_value_registration(node)?;
+    if let Some(clone) = self.get_linked_clone_reference(&node.type_tag) {
+      let val = self.genval_to_register(val);
+      let fp = clone.as_global_value().as_pointer_value();
+      Ok(self.build_function_call(fp, &[val.unwrap()], "cloned"))
+    }
+    else {
+      Ok(val)
+    }
   }
 
-  fn codegen_before_block_value_registration(&mut self, node : &TypedNode) -> Result<Option<GenVal>, Error> {
+  fn codegen_drop_value(&mut self, d : Destructible) {
+    let fp = d.drop_reference.as_global_value().as_pointer_value();
+    self.build_function_call(fp, &[d.value.into()], "void");
+  }
+
+
+  fn codegen_expression(&mut self, node : &TypedNode) -> Result<Option<GenVal>, Error> {
+    let v = self.codegen_without_drop_value_registration(node)?;
+    return self.codegen_drop_value_registration(&node, v);
+  }
+
+  fn codegen_without_drop_value_registration(&mut self, node : &TypedNode) -> Result<Option<GenVal>, Error> {
     let v : GenVal = match &node.content {
       Content::FunctionCall(function_value, args) => {
         return self.codegen_function_call(function_value, args);
@@ -1035,13 +1073,22 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
       Content::Block(nodes) => {
         // TODO: call any necessary Drop functions
         let node_count = nodes.len();
-        if node_count > 0 {
+        self.blocks.push(Block::new());
+        let block_value = if node_count > 0 {
           for i in 0..(node_count-1) {
             self.codegen_expression(&nodes[i])?;
           }
-          return self.codegen_expression(&nodes[node_count-1]);
+          // Make sure the last value is cloned
+          self.codegen_cloned_expression(&nodes[node_count-1])
         }
-        return Ok(None);
+        else {
+          Ok(None)
+        };
+        let b = self.blocks.pop().unwrap();
+        for d in b.destructibles {
+          self.codegen_drop_value(d);
+        }
+        return block_value;
       }
       Content::Quote(e) => {
         // TODO: this works by just allocating the quote on the heap and then just trusting that it will still be there
@@ -1174,7 +1221,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         // TODO: call Drop and Clone
         let (assign_node, value_node) = (&ns.0, &ns.1);
         let assign_location = self.codegen_expression(assign_node)?.unwrap();
-        let ptr = match assign_location.storage {
+        let assign_ptr = match assign_location.storage {
           Storage::Pointer => {
             *assign_location.value.as_pointer_value()
           }
@@ -1182,11 +1229,17 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
             return error(assign_node.loc, "cannot assign to this construct");
           }
         };
+        // Clone the value being assigned
+        let val = self.codegen_cloned_expression(value_node)?;
+        // Drop the value being overwritten
+        if let Some(drop_reference) = self.get_linked_drop_reference(&assign_node.type_tag) {
+          let d = Destructible { drop_reference, value: assign_ptr };
+          self.codegen_drop_value(d);
+        }
         // TODO: this is very inefficient when assigning large structs. Can optimise
         // by detecting pointers and using the memcopy intrinsic
-        let val = self.codegen_expression(value_node)?;
         let reg_val = self.genval_to_register(val).unwrap();
-        self.builder.build_store(ptr, reg_val);
+        self.builder.build_store(assign_ptr, reg_val);
         return Ok(None);
       }
       Content::VariableInitialise(name, value_node, var_scope) => {

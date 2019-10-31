@@ -168,16 +168,19 @@ pub struct FunctionReference {
   pub module_id : u64,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct LabelId {
+  id : u64
+}
+
 #[derive(Debug)]
 pub enum Content {
   Literal(Val),
   VariableReference(RefStr),
   VariableInitialise(RefStr, Box<TypedNode>, VarScope),
-  /// TODO: Drop and Clone semantics
   Assignment(Box<(TypedNode, TypedNode)>),
   IfThen(Box<(TypedNode, TypedNode)>),
   IfThenElse(Box<(TypedNode, TypedNode, TypedNode)>),
-  /// TODO: clone new value, drop previous values
   Block(Vec<TypedNode>),
   Quote(Box<Expr>),
   FunctionReference(FunctionReference),
@@ -189,7 +192,6 @@ pub enum Content {
   FieldAccess(Box<(TypedNode, RefStr)>),
   Index(Box<(TypedNode, TypedNode)>),
   ArrayLiteral(Vec<TypedNode>),
-  /// TODO: New value
   FunctionCall(Box<TypedNode>, Vec<TypedNode>),
   IntrinsicCall(RefStr, Vec<TypedNode>),
   While(Box<(TypedNode, TypedNode)>),
@@ -197,6 +199,10 @@ pub enum Content {
   ExplicitReturn(Option<Box<TypedNode>>),
   Convert(Box<TypedNode>),
   SizeOf(Box<Type>),
+
+  //Label(LabelId),
+  //BreakToLabel(LabelId, Option<Box<TypedNode>>),
+  /// TODO: clone return, drop all block values down the stack
   Break,
 }
 
