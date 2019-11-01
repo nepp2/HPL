@@ -1,6 +1,7 @@
 
 use crate::expr::{StringCache, RefStr};
 use crate::error::{Error, TextLocation, TextMarker, error_raw};
+use std::fmt;
 
 const SYNTAX : &'static [&'static str] =
   &["==", "!=", "<=", ">=", "=>", "+=", "-=", "*=", "/=", "||",
@@ -15,9 +16,35 @@ pub enum TokenType {
 
 #[derive(Clone)]
 pub struct Token {
-  pub symbol : RefStr,
+  string : RefStr,
   pub token_type : TokenType,
   pub loc : TextLocation,
+}
+
+impl fmt::Display for Token {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "{:?}({})", self.token_type, self.string)
+  }
+}
+
+impl Token {
+  pub fn symbol(&self) -> Option<&RefStr> {
+    match self.token_type {
+      TokenType::Symbol => Some(&self.string), _ => None
+    }
+  }
+
+  pub fn literal(&self) -> Option<&RefStr> {
+    match self.token_type {
+      TokenType::Symbol => None,
+      TokenType::FloatLiteral | TokenType::IntLiteral | TokenType::StringLiteral
+        => Some(&self.string)
+    }
+  }
+
+  pub fn to_string(&self) -> String {
+    self.string.as_ref().into()
+  }
 }
 
 struct CStream<'l> {
@@ -77,10 +104,10 @@ impl <'l> CStream<'l> {
 
   fn complete_token(&mut self, start_loc : StreamLocation, token_type : TokenType) {
     let loc = self.get_text_location(start_loc);
-    let symbol = self.symbols.get(self.current_token.as_ref());
+    let string = self.symbols.get(self.current_token.as_ref());
     self.current_token.clear();
     let t = Token {
-      symbol,
+      string,
       token_type: token_type,
       loc : loc,
     };

@@ -206,6 +206,9 @@ pub struct GenFunction<'l, 'lg> {
   gen : &'l mut Gen<'lg>,
   builder: Builder,
 
+  // the llvm function being populated
+  fn_val : FunctionValue,
+
   variables: HashMap<RefStr, PointerValue>,
 
   blocks: Vec<Block>,
@@ -302,8 +305,7 @@ impl <'l> Gen<'l> {
 
     // codegen the functions
     for (p, def, body) in functions_to_codegen {
-      let gen_function = GenFunction::new(&mut self);
-      gen_function.codegen_function(p, body, def.args.as_slice())?;
+      GenFunction::codegen_function(&mut self, p, body, def.args.as_slice())?;
     }
 
     Ok(())
@@ -544,15 +546,14 @@ impl <'l> Gen<'l> {
 
 impl <'l, 'lg> GenFunction<'l, 'lg> {
 
-  pub fn new(gen: &'l mut Gen<'lg>) -> GenFunction<'l, 'lg> {
-    let builder = gen.context.create_builder();
+  pub fn new(gen: &'l mut Gen<'lg>, builder : Builder, fn_val : FunctionValue) -> GenFunction<'l, 'lg> {
     let variables = HashMap::new();
-    GenFunction{ gen, builder, variables, blocks: vec![Block::new()], labels_in_scope: vec![] }
+    GenFunction{ gen, fn_val, builder, variables, blocks: vec![Block::new()], labels_in_scope: vec![] }
   }
 
   fn create_entry_block_alloca(&self, t : BasicTypeEnum, name : &str) -> PointerValue {
     let current_block = self.builder.get_insert_block().unwrap();
-    let function = current_block.get_parent().unwrap();
+    let function = self.fn_val;
     let entry = function.get_first_basic_block().unwrap();
     match entry.get_first_instruction() {
       Some(fi) => self.builder.position_before(&fi),
@@ -758,8 +759,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
       Or => self.gen.context.bool_type().const_int(1, false),
     };
     // create basic blocks
-    let a_start_block = self.builder.get_insert_block().unwrap();
-    let f = a_start_block.get_parent().unwrap();
+    let f = self.fn_val;
     let b_start_block = self.gen.context.append_basic_block(&f, "b_block");
     let end_block = self.gen.context.append_basic_block(&f, "end");
     // compute a
@@ -894,12 +894,15 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
   /// Makes sure newly created values that need to be dropped are registered with the block that they
   /// were created in. This means they must have an address on the stack.
   fn codegen_drop_value_registration(&mut self, node : &TypedNode, v : Option<GenVal>) -> Result<Option<GenVal>, Error> {
-    if node.node_value_type() == NodeValueType::Val {
+    if node.node_value_type() == NodeValueType::Owned {
       if let Some(drop_reference) = self.get_linked_drop_reference(&node.type_tag) {
-        let p = self.codegen_address_of_genval(v.unwrap())?;
-        let d = Destructible{ drop_reference, value: p };
-        self.blocks.last_mut().unwrap().destructibles.push(d);
-        return Ok(Some(pointer(p)));        
+        if drop_reference != self.fn_val {
+          // do not auto-drop recursively
+          let p = self.codegen_address_of_genval(v.unwrap())?;
+          let d = Destructible{ drop_reference, value: p };
+          self.blocks.last_mut().unwrap().destructibles.push(d);
+          return Ok(Some(pointer(p)));
+        }
       }
     }
     return Ok(v);
@@ -907,18 +910,19 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
 
   fn codegen_cloned_expression(&mut self, t : &Type, val : Option<GenVal>) -> Result<Option<GenVal>, Error> {
     if let Some(clone) = self.get_linked_clone_reference(t) {
-      let val = self.codegen_address_of_genval(val.unwrap())?;
-      let fun_ptr = clone.as_global_value().as_pointer_value();
-      Ok(self.build_function_call(fun_ptr, &[val.into()], "cloned"))
+      // do not auto-clone recursively
+      if clone != self.fn_val {
+        let val = self.codegen_address_of_genval(val.unwrap())?;
+        let fun_ptr = clone.as_global_value().as_pointer_value();
+        return Ok(self.build_function_call(fun_ptr, &[val.into()], "cloned"));
+      }
     }
-    else {
-      Ok(val)
-    }
+    Ok(val)
   }
 
   fn codegen_owned_expression(&mut self, node : &TypedNode) -> Result<Option<GenVal>, Error> {
     let val = self.codegen_without_drop_value_registration(node)?;
-    if node.node_value_type() == NodeValueType::Val {
+    if node.node_value_type() == NodeValueType::Owned {
       Ok(val)
     }
     else {
@@ -995,7 +999,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
       }
       Content::While(ns) => {
         let (cond_node, body_node) = (&ns.0, &ns.1);
-        let f = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+        let f = self.fn_val;
         let cond_block = self.gen.context.append_basic_block(&f, "cond");
         let body_block = self.gen.context.append_basic_block(&f, "loop_body");
         let exit_block = self.gen.context.append_basic_block(&f, "loop_exit");
@@ -1017,8 +1021,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
       }
       Content::IfThen(ns) => {
         let (cond_node, then_node) = (&ns.0, &ns.1);
-        let block = self.builder.get_insert_block().unwrap();
-        let f = block.get_parent().unwrap();
+        let f = self.fn_val;
         let then_block = self.gen.context.append_basic_block(&f, "then");
         let end_block = self.gen.context.append_basic_block(&f, "endif");
         // conditional branch
@@ -1033,8 +1036,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         return Ok(None);
       }
       Content::Label(inner_node, label) => {
-        let block = self.builder.get_insert_block().unwrap();
-        let f = block.get_parent().unwrap();
+        let f = self.fn_val;
         let exit_block = self.gen.context.append_basic_block(&f, "exit_label");
         let block_depth = self.blocks.len();
         let label_state = LabelState { block_depth, exit_block, phi_values: vec![] };
@@ -1059,8 +1061,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
       Content::IfThenElse(ns) => {
         let (cond_node, then_node, else_node) = (&ns.0, &ns.1, &ns.2);
         // create basic blocks
-        let block = self.builder.get_insert_block().unwrap();
-        let f = block.get_parent().unwrap();
+        let f = self.fn_val;
         let then_start_block = self.gen.context.append_basic_block(&f, "then");
         let else_start_block = self.gen.context.append_basic_block(&f, "else");
         let end_block = self.gen.context.append_basic_block(&f, "endif");
@@ -1325,8 +1326,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
           //let i = self.labels_in_scope.iter().rev().take_while(||);
           self.builder.build_unconditional_branch(&exit_block);
           // create a dummy block to hold instructions after the branch
-          let f = self.builder.get_insert_block().unwrap().get_parent().unwrap();
-          let dummy_block = self.gen.context.append_basic_block(&f, "dummy_block");
+          let dummy_block = self.gen.context.append_basic_block(&self.fn_val, "dummy_block");
           self.builder.position_at_end(&dummy_block);
           return Ok(None);
         }
@@ -1379,17 +1379,17 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
   }
 
   fn codegen_function(
-    mut self,
+    gen : &mut Gen,
     prototype_handle : FunctionValue,
     body : &TypedNode,
     args : &[RefStr])
       -> Result<FunctionValue, Error>
   {
     // this function is here because Rust doesn't have a proper try/catch yet
-    fn generate(
-      function : FunctionValue, body : &TypedNode,
-      args : &[RefStr], genf : &mut GenFunction) -> Result<(), Error>
+    fn generate(body : &TypedNode, args : &[RefStr], genf : &mut GenFunction)
+      -> Result<(), Error>
     {
+      let function = genf.fn_val;
       let entry = genf.gen.context.append_basic_block(&function, "entry");
 
       genf.builder.position_at_end(&entry);
@@ -1413,10 +1413,13 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
       }
     }
 
-    match generate(prototype_handle, body, args, &mut self) {
+    let builder = gen.context.create_builder();
+    let mut gen_function = GenFunction::new(gen, builder, prototype_handle);
+
+    match generate(body, args, &mut gen_function) {
       Ok(_) => Ok(prototype_handle),
       Err(e) => {
-        dump_module(self.gen.module);
+        dump_module(gen_function.gen.module);
         // This library uses copy semantics for a resource can be deleted,
         // because it is usually not deleted. As a result, it's possible to
         // get use-after-free bugs, so this operation is unsafe. I'm sure

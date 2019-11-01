@@ -233,6 +233,7 @@ fun declare_array(element_type : ptr(expr)) {
       // internal rc type that was generated to hold the array, which I don't
       // know
       let array = *(&malloc(total_bytes) as ptr($array_type_name))
+      array.ptr.count = 0
       array.inner().length = length
       let src = &values[0] as ptr(u8)
       memcpy(array.index_address(0) as ptr(u8), src, element_bytes)

@@ -229,7 +229,7 @@ impl fmt::Display for Expr {
           write!(f, ")")?;
           Ok(())
         }
-        ExprContent::LiteralString(s) => write!(f, "{}", s.as_str()),
+        ExprContent::LiteralString(s) => write!(f, "\"{}\"", s.as_str()),
         ExprContent::LiteralFloat(v) => write!(f, "{}", v),
         ExprContent::LiteralInt(v) => write!(f, "{}", v),
         ExprContent::LiteralBool(v) => write!(f, "{}", v),

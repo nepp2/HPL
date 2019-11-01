@@ -208,7 +208,7 @@ use Content::*;
 /// When a reference turns into a value, it may need to be cloned.
 #[derive(Debug, PartialEq)]
 pub enum NodeValueType {
-  Val,
+  Owned,
   Ref,
   Mut,
   Nil,
@@ -228,12 +228,11 @@ impl TypedNode {
       Content::FieldAccess(_) | Content::FunctionReference(_) |
       Content::Index(_) | Content::IntrinsicCall(_, _) |
       Content::Literal(_) | Content::Quote(_) |
-      Content::VariableReference(_)
+      Content::VariableReference(_) | Content::StructInstantiate(_, _)
         => NodeValueType::Ref,
       Content::Block(_) | Content::FunctionCall(_, _) |
-      Content::IfThenElse(_) | Content::StructInstantiate(_, _) |
-      Content::UnionInstantiate(_, _)
-        => NodeValueType::Val,
+      Content::IfThenElse(_) | Content::UnionInstantiate(_, _)
+        => NodeValueType::Owned,
       _ => NodeValueType::Nil,
     }
   }
