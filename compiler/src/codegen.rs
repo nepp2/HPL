@@ -15,7 +15,7 @@ use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::{Context};
 use inkwell::module::{Module, Linkage};
-use inkwell::attributes::Attribute;
+use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::passes::PassManager;
 use inkwell::types::{
   BasicTypeEnum, BasicType, StructType, PointerType, FunctionType, AnyTypeEnum, ArrayType,
@@ -110,15 +110,15 @@ fn pointer(ptr : PointerValue) -> GenVal {
   GenVal { storage: Storage::Pointer, value: ptr.as_basic_value_enum() }
 }
 
-fn const_null(t : BasicTypeEnum) -> BasicValueEnum {
+fn const_zero(t : BasicTypeEnum) -> BasicValueEnum {
   use BasicTypeEnum::*;
   match t {
-    FloatType(t) => t.const_null().into(),
-    IntType(t) => t.const_null().into(),
-    ArrayType(t) => t.const_null().into(),
+    FloatType(t) => t.const_zero().into(),
+    IntType(t) => t.const_zero().into(),
+    ArrayType(t) => t.const_zero().into(),
     PointerType(t) => t.const_null().into(),
-    StructType(t) => t.const_null().into(),
-    VectorType(t) => t.const_null().into(),
+    StructType(t) => t.const_zero().into(),
+    VectorType(t) => t.const_zero().into(),
   }
 }
 
@@ -280,7 +280,7 @@ impl <'l> Gen<'l> {
       }
       else {
         let t = self.to_basic_type(&def.type_tag).unwrap();
-        self.add_global(const_null(t), false, &name);
+        self.add_global(const_zero(t), false, &name);
       }
     }
 
@@ -319,7 +319,9 @@ impl <'l> Gen<'l> {
     let fn_type = self.to_function_type(arg_types, return_type);
     let function = self.module.add_function(name, fn_type, None);
 
-    let i : u32 = !0; //LLVMAttributeFunctionIndex;
+    // let i : u32 = !0; //LLVMAttributeFunctionIndex;
+    // TODO: is this equivalent to the old line above?
+    let i = AttributeLoc::Function;
     //function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("norecurse"), 0));
     function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("nounwind"), 0));
     function.add_attribute(i, self.context.create_enum_attribute(Attribute::get_named_enum_kind_id("nonlazybind"), 0));
@@ -339,7 +341,7 @@ impl <'l> Gen<'l> {
   fn to_basic_type_no_cycle(&mut self, t : &Type) -> Option<BasicTypeEnum> {
     match t {
       Type::Ptr(_t) => {
-        let t = self.context.void_type().ptr_type(AddressSpace::Generic);
+        let t = self.context.i8_type().ptr_type(AddressSpace::Generic);
         Some(t.into())
       }
       _ => {
@@ -478,7 +480,7 @@ impl <'l> Gen<'l> {
       }
     }
     else {
-      self.context.void_type().ptr_type(AddressSpace::Generic)
+      self.context.i8_type().ptr_type(AddressSpace::Generic)
     }
   }
 
@@ -551,7 +553,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
   fn create_entry_block_alloca(&self, t : BasicTypeEnum, name : &str) -> PointerValue {
     let current_block = self.builder.get_insert_block().unwrap();
     let function = current_block.get_parent().unwrap();
-    let entry = function.get_entry_basic_block().unwrap();
+    let entry = function.get_first_basic_block().unwrap();
     match entry.get_first_instruction() {
       Some(fi) => self.builder.position_before(&fi),
       None => self.builder.position_at_end(&entry),
@@ -788,7 +790,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
     for (i, v) in args.iter().enumerate() {
       let field_val = if let BasicValueEnum::PointerValue(pv) = v {
         // Cast all pointer types to void before assigning to struct fields
-        let void_ptr_type = self.gen.context.void_type().ptr_type(AddressSpace::Generic);
+        let void_ptr_type = self.gen.context.i8_type().ptr_type(AddressSpace::Generic);
         self.builder.build_pointer_cast(*pv, void_ptr_type, "void_cast").into()
       }
       else {

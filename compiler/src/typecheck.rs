@@ -9,8 +9,6 @@ use crate::expr::{StringCache, RefStr, Expr, ExprContent, UIDGenerator};
 
 use std::collections::HashMap;
 
-use std::hash::Hash;
-
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub enum Type {
   Void,
