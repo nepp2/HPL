@@ -226,12 +226,13 @@ impl TypedNode {
   pub fn node_value_type(&self) -> NodeValueType {
     match &self.content {
       Content::FieldAccess(_) | Content::FunctionReference(_) |
-      Content::Index(_) | Content::Literal(_) | Content::Quote(_) |
+      Content::Index(_) | Content::IntrinsicCall(_, _) |
+      Content::Literal(_) | Content::Quote(_) |
       Content::VariableReference(_)
         => NodeValueType::Ref,
       Content::Block(_) | Content::FunctionCall(_, _) |
-      Content::IfThenElse(_) | Content::IntrinsicCall(_, _) |
-      Content::StructInstantiate(_, _) | Content::UnionInstantiate(_, _)
+      Content::IfThenElse(_) | Content::StructInstantiate(_, _) |
+      Content::UnionInstantiate(_, _)
         => NodeValueType::Val,
       _ => NodeValueType::Nil,
     }
