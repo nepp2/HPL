@@ -29,24 +29,24 @@ pub struct LabelId {
 #[derive(Debug)]
 pub enum Content {
   Literal(Val),
-  VariableInitialise{ name: RefStr, value: NodeId },
+  VariableInitialise{ name: RefStr, type_tag: Option<Box<Expr>>, value: NodeId },
   Assignment{ assignee: NodeId , value: NodeId },
   IfThen{ condition: NodeId, then_branch: NodeId },
   IfThenElse{ condition: NodeId, then_branch: NodeId, else_branch: NodeId },
   Block(Vec<NodeId>),
   Quote(Box<Expr>),
   Reference(RefStr),
-  FunctionDefinition{ name: RefStr, args: Vec<(RefStr, Option<NodeId>)>, body: NodeId },
+  FunctionDefinition{ name: RefStr, args: Vec<(RefStr, Option<Box<Expr>>)>, return_tag: Option<Box<Expr>>, body: NodeId },
   CBind { name: RefStr, type_tag : NodeId },
-  StructDefinition{ name: RefStr, fields: Vec<(RefStr, Option<NodeId>)> },
-  UnionDefinition{ name: RefStr, fields: Vec<(RefStr, Option<NodeId>)> },
+  StructDefinition{ name: RefStr, fields: Vec<(RefStr, Option<Box<Expr>>)> },
+  UnionDefinition{ name: RefStr, fields: Vec<(RefStr, Option<Box<Expr>>)> },
   TypeConstructor{ name: RefStr, field_values: Vec<(Option<RefStr>, NodeId)> },
   FieldAccess{ container: NodeId, field: RefStr },
   Index{ container: NodeId, index: NodeId },
   ArrayLiteral(Vec<NodeId>),
   FunctionCall{ function: NodeId, args: Vec<NodeId> },
   While{ condition: NodeId, body: NodeId },
-  Convert{ from_value: NodeId, into_type: NodeId },
+  Convert{ from_value: NodeId, into_type: Box<Expr> },
   SizeOf{ type_tag: NodeId },
 
   Label{ label: LabelId, body: NodeId },
@@ -96,6 +96,35 @@ pub struct Nodes {
   root : NodeId,
 }
 
+impl Nodes {
+  pub fn get(&self, id : NodeId) -> &Node {
+    self.nodes.get(&id).unwrap()
+  }
+
+  pub fn node_ref(&self, id : NodeId) -> NodeRef {
+    NodeRef{ n: self.nodes.get(&id).unwrap(), nodes: self }
+  }
+}
+
+pub struct NodeRef<'l> {
+  pub n : &'l Node,
+  pub nodes : &'l Nodes,
+}
+
+impl <'l> NodeRef<'l> {
+  pub fn get(&self, id : NodeId) -> NodeRef<'l> {
+    self.nodes.node_ref(id)
+  }
+
+  pub fn content(&self) -> &Content {
+    &self.n.content
+  }
+
+  pub fn id(&self) -> NodeId {
+    self.n.id
+  }
+}
+
 impl <'l> NodeConverter<'l> {
 
   fn node(&mut self, expr : &Expr, content : Content) -> NodeId {
@@ -129,10 +158,10 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     }
   }
 
-  fn typed_symbol(&mut self, e : &Expr) -> Result<(RefStr, Option<NodeId>), Error> {
+  fn typed_symbol(&mut self, e : &Expr) -> Result<(RefStr, Option<Box<Expr>>), Error> {
     if let Some((":", [s, t])) = e.try_construct() {
       let name = self.cached(s.unwrap_symbol()?);
-      let type_tag = self.to_node(t)?;
+      let type_tag = t.clone().into();
       Ok((name, Some(type_tag)))
     }
     else if let Ok(s) = e.unwrap_symbol() {
@@ -238,14 +267,14 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       }
       ("as", [from_value, into_type]) => {
         let from_value = self.to_node(from_value)?;
-        let into_type = self.to_node(into_type)?;
+        let into_type = into_type.clone().into();
         Ok(self.node(expr, Convert{ from_value, into_type }))
       }
       ("let", [e]) => {
         if let Some(("=", [name_expr, value_expr])) = e.try_construct() {
           let name = self.cached(name_expr.unwrap_symbol()?);
           let value = self.to_node(value_expr)?;
-          let c = VariableInitialise{ name, value };
+          let c = VariableInitialise{ name, type_tag: None, value };
           return Ok(self.node(expr, c));
         }
         error(expr, "malformed let expression")
@@ -351,7 +380,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
             .collect::<Result<Vec<_>, Error>>()?;
           let mut function_checker = FunctionConverter::new(self.t);
           let body = function_checker.to_function_body(function_body)?;
-          return Ok(self.node(expr, FunctionDefinition{name, args, body}));
+          return Ok(self.node(expr, FunctionDefinition{name, args, return_tag: None, body}));
         }
         error(expr, "malformed function definition")
       }
@@ -464,7 +493,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
   }
 
   fn let_var(&mut self, expr : &Expr, name : RefStr, val : NodeId) -> NodeId {
-    self.node(expr, VariableInitialise{ name, value: val })
+    self.node(expr, VariableInitialise{ name, type_tag: None, value: val })
   }
 
   fn field_access(&mut self, expr : &Expr, container : NodeId, field : RefStr) -> NodeId {

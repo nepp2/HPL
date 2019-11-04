@@ -23,6 +23,7 @@ libc = "0.2"
 libloading = "0.5"
 subprocess = "0.1.18"
 im-rc = "13.0.0"
+bimap = "0.4"
 
 [dependencies.inkwell]
 git = "https://github.com/nepp2/inkwell"
