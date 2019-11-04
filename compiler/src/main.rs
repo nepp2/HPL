@@ -13,6 +13,7 @@ pub mod parser;
 pub mod expr;
 pub mod watcher;
 pub mod structure;
+pub mod typecheck2;
 pub mod typecheck;
 pub mod codegen;
 pub mod jit;

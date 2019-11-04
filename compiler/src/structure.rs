@@ -91,19 +91,12 @@ pub struct FunctionConverter<'l, 'lt> {
   labels_in_scope : Vec<LabelId>,
 }
 
-impl <'l> NodeConverter<'l> {
+pub struct Nodes {
+  nodes : HashMap<NodeId, Node>,
+  root : NodeId,
+}
 
-  pub fn new(
-    uid_generator : &'l mut UIDGenerator,
-    cache : &'l StringCache)
-      -> NodeConverter<'l>
-  {
-    NodeConverter {
-      uid_generator,
-      nodes: HashMap::new(),
-      cache,
-    }
-  }
+impl <'l> NodeConverter<'l> {
 
   fn node(&mut self, expr : &Expr, content : Content) -> NodeId {
     let id = NodeId { id: self.uid_generator.next() };
@@ -112,9 +105,20 @@ impl <'l> NodeConverter<'l> {
     id
   }
 
-  pub fn to_ast(&mut self, expr : &Expr) -> Result<NodeId, Error> {
-    let mut fc = FunctionConverter::new(self);
-    fc.to_ast(expr)
+  pub fn to_nodes(
+    uid_generator : &'l mut UIDGenerator,
+    cache : &'l StringCache,
+    expr : &Expr)
+      -> Result<Nodes, Error>
+  {
+    let mut nc = NodeConverter {
+      uid_generator,
+      nodes: HashMap::new(),
+      cache,
+    };
+    let mut fc = FunctionConverter::new(&mut nc);
+    let root = fc.to_node(expr)?;
+    Ok(Nodes{ root, nodes: nc.nodes })
   }
 }
 
@@ -128,7 +132,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
   fn typed_symbol(&mut self, e : &Expr) -> Result<(RefStr, Option<NodeId>), Error> {
     if let Some((":", [s, t])) = e.try_construct() {
       let name = self.cached(s.unwrap_symbol()?);
-      let type_tag = self.to_ast(t)?;
+      let type_tag = self.to_node(t)?;
       Ok((name, Some(type_tag)))
     }
     else if let Ok(s) = e.unwrap_symbol() {
@@ -147,7 +151,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
   fn compile_template_arguments(&mut self, e : &Expr, args : &mut Vec<NodeId>) -> Result<(), Error> {
     match e.try_construct() {
       Some(("$", [e])) => {
-        args.push(self.to_ast(e)?);
+        args.push(self.to_node(e)?);
       }
       Some((_, es)) => {
         for e in es {
@@ -164,7 +168,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
   }
 
   /// Converts a quote to a typed node and handles templating if necessary
-  fn quote_to_ast(&mut self, expr : &Expr, quoted_expr : &Expr) -> Result<NodeId, Error> {
+  fn quote_to_node(&mut self, expr : &Expr, quoted_expr : &Expr) -> Result<NodeId, Error> {
     // TODO: this function is kind of verbose and difficult to read
     let e = quoted_expr;
     let mut template_args = vec![];
@@ -199,10 +203,10 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       field_exprs.iter().map(|e| {
         if let Some((":", [name, value])) = e.try_construct() {
           let name = self.cached(name.unwrap_symbol()?);
-          Ok((Some(name), self.to_ast(value)?))
+          Ok((Some(name), self.to_node(value)?))
         }
         else {
-          Ok((None, self.to_ast(e)?))
+          Ok((None, self.to_node(e)?))
         }
       })
       .collect::<Result<Vec<(Option<RefStr>, NodeId)>, Error>>()?;
@@ -210,7 +214,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     Ok(self.node(expr, c))
   }
 
-  fn construct_to_ast(&mut self, expr : &Expr) -> Result<NodeId, Error> {
+  fn construct_to_node(&mut self, expr : &Expr) -> Result<NodeId, Error> {
     let (instr, children) = expr.unwrap_construct()?;
     match (instr, children) {
       ("call", exprs) => {
@@ -219,42 +223,42 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
           Some("new") => return self.to_type_constructor(expr, &exprs[1..]),
           Some("sizeof") => {
             if exprs.len() == 2 {
-              let type_tag = self.to_ast(&exprs[1])?;
+              let type_tag = self.to_node(&exprs[1])?;
               return Ok(self.node(expr, SizeOf{ type_tag }));
             }
           }
           _ => (),
         }
         let args =
-          exprs[1..].iter().map(|e| self.to_ast(e))
+          exprs[1..].iter().map(|e| self.to_node(e))
           .collect::<Result<Vec<NodeId>, Error>>()?;
-        let function = self.to_ast(function_expr)?;
+        let function = self.to_node(function_expr)?;
         let content = FunctionCall{ function, args };
         return Ok(self.node(expr, content));
       }
       ("as", [from_value, into_type]) => {
-        let from_value = self.to_ast(from_value)?;
-        let into_type = self.to_ast(into_type)?;
+        let from_value = self.to_node(from_value)?;
+        let into_type = self.to_node(into_type)?;
         Ok(self.node(expr, Convert{ from_value, into_type }))
       }
       ("let", [e]) => {
         if let Some(("=", [name_expr, value_expr])) = e.try_construct() {
           let name = self.cached(name_expr.unwrap_symbol()?);
-          let value = self.to_ast(value_expr)?;
+          let value = self.to_node(value_expr)?;
           let c = VariableInitialise{ name, value };
           return Ok(self.node(expr, c));
         }
         error(expr, "malformed let expression")
       }
       ("#", [quoted_expr]) => {
-        self.quote_to_ast(expr, quoted_expr)
+        self.quote_to_node(expr, quoted_expr)
       }
       ("return", exprs) => {
         if exprs.len() > 1 {
           return error(expr, format!("malformed return expression"));
         }
         let return_value = if let [e] = exprs {
-          let v = self.to_ast(&e)?;
+          let v = self.to_node(&e)?;
           Some(v)
         }
         else {
@@ -268,8 +272,8 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         let label = LabelId { id: self.t.uid_generator.next() };
         // Add label to scope in case the loop breaks
         self.labels_in_scope.push(label);
-        let condition = self.to_ast(condition_expr)?;
-        let body = self.to_ast(body_expr)?;
+        let condition = self.to_node(condition_expr)?;
+        let body = self.to_node(body_expr)?;
         let while_node = self.node(expr, While{ condition, body });
         let labelled_while = self.node(expr, Label{ label, body: while_node });
         // Remove label
@@ -293,7 +297,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       //       let range_var = self.cached("@range_var");
       //       let end_var = self.cached("@end_var");
       //       let loop_var = self.cached("@loop_var");
-      //       let range_node = self.to_ast(range)?;
+      //       let range_node = self.to_node(range)?;
       //       let for_block = block(expr, vec![
       //         let_var(expr, range_var.clone(), range_node),
       //         let_var(expr, end_var.clone(), field_access(expr, range_var.clone(), "end")),
@@ -301,7 +305,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       //         self.node(expr, Type::Void, While((
       //           intrinsic("<", vec![loop_var, end_var]),
       //           block(expr, vec![
-      //             self.to_ast(body_expr)?,
+      //             self.to_node(body_expr)?,
       //             assignment(loop_var, intrinsic("+", vec![loop_var, literal_int(1)])),
       //           ])
       //         )))
@@ -315,10 +319,10 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         if exprs.len() > 3 {
           return error(expr, "malformed if expression");
         }
-        let condition = self.to_ast(&exprs[0])?;
-        let then_branch = self.to_ast(&exprs[1])?;
+        let condition = self.to_node(&exprs[0])?;
+        let then_branch = self.to_node(&exprs[1])?;
         if exprs.len() == 3 {
-          let else_branch = self.to_ast(&exprs[2])?;
+          let else_branch = self.to_node(&exprs[2])?;
           let c = IfThenElse{ condition, then_branch, else_branch };
           Ok(self.node(expr, c))
         }
@@ -327,13 +331,13 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         }
       }
       ("block", exprs) => {
-        let nodes = exprs.iter().map(|e| self.to_ast(e)).collect::<Result<Vec<NodeId>, Error>>()?;
+        let nodes = exprs.iter().map(|e| self.to_node(e)).collect::<Result<Vec<NodeId>, Error>>()?;
         Ok(self.node(expr, Block(nodes)))
       }
       ("cbind", [e]) => {
         if let (":", [name_expr, type_expr]) = e.unwrap_construct()? {
           let name = self.cached(name_expr.unwrap_symbol()?);
-          let type_tag = self.to_ast(type_expr)?;
+          let type_tag = self.to_node(type_expr)?;
           return Ok(self.node(expr, CBind{ name, type_tag }));
         }
         error(expr, "invalid cbind expression")
@@ -368,7 +372,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         Ok(self.node(expr, StructDefinition{name, fields}))
       }
       (".", [container_expr, field_expr]) => {
-        let container = self.to_ast(container_expr)?;
+        let container = self.to_node(container_expr)?;
         let field = self.cached(field_expr.unwrap_symbol()?);
         let c = FieldAccess{ container, field };
         Ok(self.node(expr, c))
@@ -376,15 +380,15 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       ("array", exprs) => {
         let mut elements = vec!();
         for e in exprs {
-          elements.push(self.to_ast(e)?);
+          elements.push(self.to_node(e)?);
         }
         Ok(self.node(expr, ArrayLiteral(elements)))
       }
       ("index", exprs) => {
         let array_expr = &exprs[0];
         if let [index_expr] = &exprs[1..] {
-          let container = self.to_ast(array_expr)?;
-          let index = self.to_ast(index_expr)?;
+          let container = self.to_node(array_expr)?;
+          let index = self.to_node(index_expr)?;
           return Ok(self.node(expr, Index{ container, index }));
         }
         error(expr, "malformed array index expression")
@@ -395,10 +399,10 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     }
   }
 
-  pub fn to_ast(&mut self, expr : &Expr) -> Result<NodeId, Error> {
+  pub fn to_node(&mut self, expr : &Expr) -> Result<NodeId, Error> {
     match &expr.content {
       ExprContent::List(_, _) => {
-        return self.construct_to_ast(expr);
+        return self.construct_to_node(expr);
       }
       ExprContent::Symbol(s) => {
         // this is just a normal symbol
@@ -439,7 +443,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     }
     let label = LabelId{ id: self.t.uid_generator.next() };
     self.labels_in_scope.push(label);
-    let body = self.to_ast(expr)?;
+    let body = self.to_node(expr)?;
     self.labels_in_scope.pop();
     let c = Label{ label, body };
     Ok(self.node(expr, c))
