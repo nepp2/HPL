@@ -1,12 +1,6 @@
 
-use std::rc::Rc;
-use std::fmt::Write;
-use itertools::Itertools;
-
-use crate::error::{Error, error, error_raw, TextLocation};
+use crate::error::{Error, error, TextLocation};
 use crate::expr::{StringCache, RefStr, Expr, ExprContent, UIDGenerator};
-
-use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Val {
@@ -25,9 +19,6 @@ pub enum Val {
 
 pub static TOP_LEVEL_FUNCTION_NAME : &'static str = "top_level";
 
-#[derive(Debug, Clone, Copy)]
-pub enum VarScope { Local, Global }
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LabelId {
   id : u64
@@ -36,28 +27,28 @@ pub struct LabelId {
 #[derive(Debug)]
 pub enum Content {
   Literal(Val),
-  VariableInitialise(RefStr, Box<TypedNode>, VarScope),
-  Assignment(Box<(TypedNode, TypedNode)>),
-  IfThen(Box<(TypedNode, TypedNode)>),
-  IfThenElse(Box<(TypedNode, TypedNode, TypedNode)>),
+  VariableInitialise{ name: RefStr, value: Box<TypedNode> },
+  Assignment{ assignee: Box<TypedNode> , value: Box<TypedNode> },
+  IfThen{ condition: Box<TypedNode>, then_branch: Box<TypedNode> },
+  IfThenElse{ condition: Box<TypedNode>, then_branch: Box<TypedNode>, else_branch: Box<TypedNode> },
   Block(Vec<TypedNode>),
   Quote(Box<Expr>),
   Reference(RefStr),
-  FunctionDefinition(RefStr),
-  CBind(RefStr),
-  TypeDefinition(RefStr),
-  TypeConstructor(RefStr, Vec<(Option<RefStr>, TypedNode)>),
-  FieldAccess(Box<(TypedNode, RefStr)>),
-  Index(Box<(TypedNode, TypedNode)>),
+  FunctionDefinition{ name: RefStr, args: Vec<(RefStr, Option<TypedNode>)>, body: Box<TypedNode> },
+  CBind { name: RefStr, type_tag : Box<TypedNode> },
+  StructDefinition{ name: RefStr, fields: Vec<(RefStr, Option<TypedNode>)> },
+  UnionDefinition{ name: RefStr, fields: Vec<(RefStr, Option<TypedNode>)> },
+  TypeConstructor{ name: RefStr, field_values: Vec<(Option<RefStr>, TypedNode)> },
+  FieldAccess{ container: Box<TypedNode>, field: RefStr },
+  Index{ container: Box<TypedNode>, index: Box<TypedNode> },
   ArrayLiteral(Vec<TypedNode>),
-  FunctionCall(Box<TypedNode>, Vec<TypedNode>),
-  While(Box<(TypedNode, TypedNode)>),
-  Convert(Box<(TypedNode, TypedNode)>),
-  SizeOf(Box<TypedNode>),
+  FunctionCall{ function: Box<TypedNode>, args: Vec<TypedNode> },
+  While{ condition: Box<TypedNode>, body: Box<TypedNode> },
+  Convert{ from_value: Box<TypedNode>, into_type: Box<TypedNode> },
+  SizeOf{ type_tag: Box<TypedNode> },
 
-  Label(Box<TypedNode>, LabelId),
-  /// TODO: clone returned value, dropping all block values down the stack
-  BreakToLabel(LabelId, Option<Box<TypedNode>>),
+  Label{ label: LabelId, body: Box<TypedNode> },
+  BreakToLabel{ label: LabelId, return_value: Option<Box<TypedNode>> },
 }
 
 use Content::*;
@@ -82,51 +73,41 @@ struct SymbolReference {
   reference_location : TextLocation,
 }
 
-pub struct TypeChecker<'l> {
+pub struct NodeConverter<'l> {
   uid_generator : &'l mut UIDGenerator,
-  local_symbol_table : &'l HashMap<RefStr, usize>,
-
-  type_definition_references : Vec<SymbolReference>,
 
   cache: &'l StringCache,
 }
 
-pub struct FunctionChecker<'l, 'lt> {
-  t : &'l mut TypeChecker<'lt>,
-
-  is_top_level : bool,
+pub struct FunctionConverter<'l, 'lt> {
+  t : &'l mut NodeConverter<'lt>,
 
   labels_in_scope : Vec<LabelId>,
 }
 
-impl <'l> TypeChecker<'l> {
+impl <'l> NodeConverter<'l> {
 
   pub fn new(
     uid_generator : &'l mut UIDGenerator,
-    local_symbol_table : &'l HashMap<RefStr, usize>,
     cache : &'l StringCache)
-      -> TypeChecker<'l>
+      -> NodeConverter<'l>
   {
-    TypeChecker {
+    NodeConverter {
       uid_generator,
-      local_symbol_table,
-      type_definition_references: vec!(),
       cache,
     }
   }
+
+  pub fn to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
+    let mut fc = FunctionConverter::new(self);
+    fc.to_ast(expr)
+  }
 }
 
-impl <'l, 'lt> FunctionChecker<'l, 'lt> {
+impl <'l, 'lt> FunctionConverter<'l, 'lt> {
 
-  pub fn new(
-    t : &'l mut TypeChecker<'lt>,
-    is_top_level : bool)
-      -> FunctionChecker<'l, 'lt>
-  {
-    FunctionChecker {
-      t,
-      is_top_level,
-      labels_in_scope : vec![],
+  pub fn new(t : &'l mut NodeConverter<'lt>) -> FunctionConverter<'l, 'lt> {
+    FunctionConverter { t, labels_in_scope : vec![],
     }
   }
 
@@ -172,9 +153,17 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
     self.compile_template_arguments(e, &mut template_args)?;
     let main_quote = node(expr, Quote(Box::new(e.clone())));
     if template_args.len() > 0 {
-      let template_quote_ref = reference(expr, self.cached("template_quote"));
-      let array_literal = array_literal(expr, template_args);
-      Ok(function_call(expr, template_quote_ref, vec![main_quote, array_literal]))
+      let mut coerced_args = vec![];
+      let loc_name = self.cached("text_location");
+      let marker_name = self.cached("text_marker");
+      for n in template_args.into_iter() {
+        let loc = loc_struct(expr, loc_name.clone(), marker_name.clone());
+        let expr_val = function_call(expr, self.cached("sym"), vec![n, loc]);
+        let arg = function_call(expr, self.cached("&"), vec![expr_val]);
+        coerced_args.push(arg);
+      }
+      let array_literal = array_literal(expr, coerced_args);
+      Ok(function_call(expr, self.cached("template_quote"), vec![main_quote, array_literal]))
     }
     else {
       Ok(main_quote)
@@ -187,8 +176,8 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
     }
     let name_expr = &exprs[0];
     let field_exprs = &exprs[1..];
-    let name = name_expr.unwrap_symbol()?;
-    let fields =
+    let name = self.cached(name_expr.unwrap_symbol()?);
+    let field_values =
       field_exprs.iter().map(|e| {
         if let Some((":", [name, value])) = e.try_construct() {
           let name = self.cached(name.unwrap_symbol()?);
@@ -199,7 +188,7 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         }
       })
       .collect::<Result<Vec<(Option<RefStr>, TypedNode)>, Error>>()?;
-    let c = TypeConstructor(self.cached(name), fields);
+    let c = TypeConstructor{ name, field_values };
     Ok(node(expr, c))
   }
 
@@ -212,8 +201,8 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
           Some("new") => return self.to_type_constructor(expr, &exprs[1..]),
           Some("sizeof") => {
             if exprs.len() == 2 {
-              let type_tag = self.to_ast(&exprs[1])?;
-              return Ok(node(expr, SizeOf(Box::new(type_tag))));
+              let type_tag = Box::new(self.to_ast(&exprs[1])?);
+              return Ok(node(expr, SizeOf{ type_tag }));
             }
           }
           _ => (),
@@ -221,72 +210,50 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         let args =
           exprs[1..].iter().map(|e| self.to_ast(e))
           .collect::<Result<Vec<TypedNode>, Error>>()?;
-        // Slight confusing control flow. This block returns a function pointer value, but only
-        // if it fails to return early (which it will do if it finds either a matching intrinsic
-        // or a matching function overload). It's structured this way to give better error messages.
-        let function_value = self.to_ast(function_expr)?;
-        let content = FunctionCall(Box::new(function_value), args);
+        let function = Box::new(self.to_ast(function_expr)?);
+        let content = FunctionCall{ function, args };
         return Ok(node(expr, content));
       }
-      ("as", [a, b]) => {
-        let a = self.to_ast(a)?;
-        let b = self.to_ast(b)?;
-        Ok(node(expr, Convert(Box::new((a, b)))))
+      ("as", [from_value, into_type]) => {
+        let from_value = Box::new(self.to_ast(from_value)?);
+        let into_type = Box::new(self.to_ast(into_type)?);
+        Ok(node(expr, Convert{ from_value, into_type }))
       }
       ("let", [e]) => {
         if let Some(("=", [name_expr, value_expr])) = e.try_construct() {
           let name = self.cached(name_expr.unwrap_symbol()?);
-          let v = Box::new(self.to_ast(value_expr)?);
-          // The first scope is used for function arguments. The second
-          // is the top level of the function.
-          let c = if self.is_top_level && self.scope_map.len() == 2 {
-            // global variable
-            let def = GlobalDefinition { name: name.clone(), type_tag: v.type_tag.clone(), c_address: None };
-            self.t.add_global(name.clone(), def);
-            VariableInitialise(name, v, VarScope::Global)
-          }
-          else {
-            // local variable
-            let scoped_name = self.create_scoped_variable_name(name);
-            self.variables.insert(scoped_name.clone(), v.type_tag.clone());
-            VariableInitialise(scoped_name, v, VarScope::Local)
-          };
-          return Ok(node(expr, Type::Void, c));
+          let value = Box::new(self.to_ast(value_expr)?);
+          let c = VariableInitialise{ name, value };
+          return Ok(node(expr, c));
         }
         error(expr, "malformed let expression")
       }
       ("#", [quoted_expr]) => {
         self.quote_to_ast(expr, quoted_expr)
       }
-      ("=", [assign_expr, value_expr]) => {
-        let a = self.to_ast(assign_expr)?;
-        let b = self.to_ast(value_expr)?;
-        Ok(node(expr, Type::Void, Assignment(Box::new((a, b)))))
-      }
       ("return", exprs) => {
         if exprs.len() > 1 {
           return error(expr, format!("malformed return expression"));
         }
-        let (return_val, type_tag) =
-          if exprs.len() == 1 {
-            let v = self.to_ast(&exprs[0])?;
-            let t = v.type_tag.clone();
-            (Some(Box::new(v)), t)
-          }
-          else {
-            (None, Type::Void)
-          };
-        let c = BreakToLabel(*self.labels_in_scope.first().unwrap(), return_val);
-        Ok(node(expr, type_tag, c))
+        let return_value = if let [e] = exprs {
+          let v = self.to_ast(&e)?;
+          Some(Box::new(v))
+        }
+        else {
+          None
+        };
+        let label = *self.labels_in_scope.first().unwrap();
+        let c = BreakToLabel{ label, return_value };
+        Ok(node(expr, c))
       }
       ("while", [condition_expr, body_expr]) => {
         let label = LabelId { id: self.t.uid_generator.next() };
         // Add label to scope in case the loop breaks
         self.labels_in_scope.push(label);
-        let condition = self.to_ast(condition_expr)?;
-        let body = self.to_ast(body_expr)?;
-        let while_node = node(expr, Type::Void, While(Box::new((condition, body))));
-        let labelled_while = node(expr, Type::Void, Label(Box::new(while_node), label));
+        let condition = Box::new(self.to_ast(condition_expr)?);
+        let body = Box::new(self.to_ast(body_expr)?);
+        let while_node = node(expr, While{ condition, body });
+        let labelled_while = node(expr, Label{ label, body: Box::new(while_node) });
         // Remove label
         self.labels_in_scope.pop();
         Ok(labelled_while)
@@ -305,12 +272,14 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
       //           }
       //         }
       //       */
-
+      //       let range_var = self.cached("@range_var");
+      //       let end_var = self.cached("@end_var");
+      //       let loop_var = self.cached("@loop_var");
       //       let range_node = self.to_ast(range)?;
       //       let for_block = block(expr, vec![
-      //         let_var(expr, range_var, range_node),
-      //         let_var(expr, end_var, field_access(expr, range_var, "end")),
-      //         let_var(expr, loop_var, field_access(expr, range_var, "start")),
+      //         let_var(expr, range_var.clone(), range_node),
+      //         let_var(expr, end_var.clone(), field_access(expr, range_var.clone(), "end")),
+      //         let_var(expr, loop_var.clone(), field_access(expr, range_var.clone(), "start")),
       //         node(expr, Type::Void, While((
       //           intrinsic("<", vec![loop_var, end_var]),
       //           block(expr, vec![
@@ -328,186 +297,82 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         if exprs.len() > 3 {
           return error(expr, "malformed if expression");
         }
-        let condition = self.to_ast(&exprs[0])?;
-        condition.assert_type(Type::Bool)?;
-        let then_branch = self.to_ast(&exprs[1])?;
+        let condition = Box::new(self.to_ast(&exprs[0])?);
+        let then_branch = Box::new(self.to_ast(&exprs[1])?);
         if exprs.len() == 3 {
-          let else_branch = self.to_ast(&exprs[2])?;
-          if then_branch.type_tag != else_branch.type_tag {
-            return error(expr, "if/else branch type mismatch");
-          }
-          let t = then_branch.type_tag.clone();
-          let c = IfThenElse(Box::new((condition, then_branch, else_branch)));
-          Ok(node(expr, t, c))
+          let else_branch = Box::new(self.to_ast(&exprs[2])?);
+          let c = IfThenElse{ condition, then_branch, else_branch };
+          Ok(node(expr, c))
         }
         else {
-          Ok(node(expr, Type::Void, IfThen(Box::new((condition, then_branch)))))
+          Ok(node(expr, IfThen{ condition, then_branch }))
         }
       }
       ("block", exprs) => {
-        self.scope_map.push(HashMap::new());
-        let mut nodes = vec![];
-        if let Some(last) = exprs.last() {
-          for e in &exprs[0..exprs.len()-1] {
-            nodes.push(self.to_ast(e)?);
-          }
-          let n = self.to_ast(last)?;
-          nodes.push(n);
-        }
-        //let nodes = exprs.iter().map(|e| self.to_ast(e)).collect::<Result<Vec<TypedNode>, Error>>()?;
-        self.scope_map.pop();
-        let t = nodes.last().map(|n| n.type_tag.clone()).unwrap_or(Type::Void);
-        Ok(node(expr, t, Block(nodes)))
+        let nodes = exprs.iter().map(|e| self.to_ast(e)).collect::<Result<Vec<TypedNode>, Error>>()?;
+        Ok(node(expr, Block(nodes)))
       }
       ("cbind", [e]) => {
         if let (":", [name_expr, type_expr]) = e.unwrap_construct()? {
           let name = self.cached(name_expr.unwrap_symbol()?);
-          let type_tag = self.t.to_type(type_expr)?;
-          let address = self.t.local_symbol_table.get(&name).map(|v| *v);
-          if address.is_none() {
-            // TODO: check the signature of the function too
-            println!("Warning: C binding '{}' not linked. LLVM linker may link it instead.", name);
-            // return error(expr, "tried to bind non-existing C function")
-          }
-          // TODO: Why is it necessary to treat function pointers specially? If I treat
-          // them as globals the tests stop passing, but I'm not sure why.
-          if let Type::Fun(sig) = &type_tag {
-            let args =
-              sig.args.iter().enumerate().
-              map(|(i, _)| ((i + 65) as u8 as char).to_string().into())
-              .collect();
-            let def = FunctionDefinition {
-              name_in_code: name.clone(),
-              name_for_codegen: name.clone(),
-              args,
-              signature: sig.clone(),
-              implementation: FunctionImplementation::CFunction(address),
-              module_id: self.t.module.id,
-              definition_location: expr.loc,
-            };
-            self.t.add_function(def);
-          }
-          else {
-            let def = GlobalDefinition { name: name.clone(), type_tag, c_address: address };
-            self.t.add_global(name.clone(), def);
-          }
-          return Ok(node(expr, Type::Void, CBind(name)))
+          let type_tag = Box::new(self.to_ast(type_expr)?);
+          return Ok(node(expr, CBind{ name, type_tag }));
         }
         error(expr, "invalid cbind expression")
       }
       ("fun", exprs) => {
-        if let [name, args_exprs, function_body] = exprs {
+        if let [name, args_expr, function_body] = exprs {
           let name = self.cached(name.unwrap_symbol()?);
-          let args_exprs = args_exprs.children();
-          let mut arg_names = vec!();
-          let mut arg_types = vec!();
-          for arg in args_exprs.iter() {
-            let (name, type_tag) = self.t.typed_symbol(arg)?;
-            if type_tag == Type::Void {
-              return error(expr, "functions args cannot be void");
-            }
-            arg_names.push(name);
-            arg_types.push(type_tag);
-          }
-          let args = arg_names.iter().cloned().zip(arg_types.iter().cloned()).collect();
-          let mut function_checker = FunctionChecker::new(self.t, false, args);
-          let body = function_checker.to_function_body(function_body)?;
-          if self.t.find_function(&name, arg_types.as_slice()).is_some() {
-            return error(expr, "function with that name already defined");
-          }
-          let signature = Rc::new(FunctionSignature {
-            return_type: body.type_tag.clone(),
-            args: arg_types,
-          });
-          let def = FunctionDefinition {
-            name_in_code: name.clone(),
-            name_for_codegen: format!("{}.{}", name, self.t.uid_generator.next()).into(),
-            args: arg_names,
-            signature,
-            implementation: FunctionImplementation::Normal(body),
-            module_id: self.t.module.id,
-            definition_location: expr.loc,
-          };
-          self.t.add_function(def);
-          return Ok(node(expr, Type::Void, FunctionDefinition(name)))
+          let args =
+            args_expr.children().iter()
+            .map(|e| self.typed_symbol(e))
+            .collect::<Result<Vec<_>, Error>>()?;
+          let mut function_checker = FunctionConverter::new(self.t);
+          let body = Box::new(function_checker.to_function_body(function_body)?);
+          return Ok(node(expr, FunctionDefinition{name, args, body}));
         }
         error(expr, "malformed function definition")
       }
-      ("union", exprs) => {
-        let name = self.cached(&exprs[0].unwrap_symbol()?);
-        Ok(node(expr, Type::Void, TypeDefinition(name)))
+      ("union", [name, fields_expr]) => {
+        let name = self.cached(name.unwrap_symbol()?);
+        let fields =
+          fields_expr.children().iter()
+          .map(|e| self.typed_symbol(e))
+          .collect::<Result<Vec<_>, Error>>()?;
+        Ok(node(expr, UnionDefinition{name, fields}))
       }
-      ("struct", exprs) => {
-        let name = self.cached(&exprs[0].unwrap_symbol()?);
-        Ok(node(expr, Type::Void, TypeDefinition(name)))
+      ("struct", [name, fields_expr]) => {
+        let name = self.cached(name.unwrap_symbol()?);
+        let fields =
+          fields_expr.children().iter()
+          .map(|e| self.typed_symbol(e))
+          .collect::<Result<Vec<_>, Error>>()?;
+        Ok(node(expr, StructDefinition{name, fields}))
       }
       (".", [container_expr, field_expr]) => {
-        let container_val = self.to_ast_dereferenced(container_expr)?;
-        let field_name = self.cached(field_expr.unwrap_symbol()?);
-        let def = match &container_val.type_tag {
-          Type::Def(type_name) => self.t.find_type_def(type_name).unwrap(),
-          _ => return error(container_expr, format!("expected struct or union, found {:?}", container_val.type_tag)),
-        };
-        let (_, field_type) =
-          def.fields.iter().find(|(n, _)| n==&field_name)
-          .ok_or_else(|| error_raw(field_expr, "type does not have field with this name"))?;
-        let field_type = field_type.clone();
-        let c = FieldAccess(Box::new((container_val, field_name)));
-        Ok(node(expr, field_type, c))
+        let container = Box::new(self.to_ast(container_expr)?);
+        let field = self.cached(field_expr.unwrap_symbol()?);
+        let c = FieldAccess{ container, field };
+        Ok(node(expr, c))
       }
       ("array", exprs) => {
         let mut elements = vec!();
         for e in exprs {
           elements.push(self.to_ast(e)?);
         }
-        let t =
-          if let Some(a) = elements.first() {
-            for b in &elements[1..] {
-              if a.type_tag != b.type_tag {
-                return error(expr, format!("array initialiser contains more than one type."));
-              }
-            }
-            a.type_tag.clone()
-          }
-          else {
-            // dummy value for an empty array
-            Type::U8
-          };
-        Ok(node(expr, Type::Array(Box::new(t)), ArrayLiteral(elements)))
+        Ok(node(expr, ArrayLiteral(elements)))
       }
       ("index", exprs) => {
         let array_expr = &exprs[0];
         if let [index_expr] = &exprs[1..] {
-          let array = self.to_ast(array_expr)?;
-          let inner_type = match &array.type_tag {
-            Type::Array(t) => *(t).clone(),
-            Type::Ptr(t) => *(t).clone(),
-            _ => return error(array_expr, "expected array"),
-          };
-          let index = self.to_ast(index_expr)?;
-          if index.type_tag != Type::I64 {
-            return error(array_expr, "expected integer");
-          }
-          return Ok(node(expr, inner_type, Index(Box::new((array, index)))));
+          let container = self.to_ast(array_expr)?.into();
+          let index = self.to_ast(index_expr)?.into();
+          return Ok(node(expr, Index{ container, index }));
         }
         error(expr, "malformed array index expression")
       }
       (construct, _) => {
         error(expr, format!("invalid '{}' expression", construct))
-      }
-    }
-  }
-
-  fn to_ast_dereferenced(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
-    let mut n = self.to_ast(expr)?;
-    loop {
-      match &n.type_tag {
-        Type::Ptr(t) => {
-          let t : Type = (**t).clone();
-          let c = IntrinsicCall(self.cached("*"), vec![n]);
-          n = node(expr, t, c);
-        }
-        _ => return Ok(n),
       }
     }
   }
@@ -521,41 +386,30 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
         // this is just a normal symbol
         let s = self.cached(s.as_str());
         if s.as_ref() == "break" {
-          let c = BreakToLabel(*self.labels_in_scope.last().unwrap(), None);
-          return Ok(node(expr, Type::Void, c));
+          let label = *self.labels_in_scope.last().unwrap();
+          let c = BreakToLabel{ label , return_value: None };
+          return Ok(node(expr, c));
         }
-        if let Some(variable) = self.variable_to_ast(expr, &s) {
-          return Ok(variable)
-        }
-        let mut function_iter = self.t.find_functions(&s);
-        if let Some(def) = function_iter.next() {
-          if function_iter.next().is_some() {
-            return error(expr, "can't disambiguate multiple functions with the same name");
-          }
-          let c = FunctionReference(def.function_reference());
-          return Ok(node(expr, Type::Fun(def.signature.clone()), c));
-        }
-        error(expr, format!("unknown symbol '{}'", s))
+        return Ok(node(expr, Reference(s)));
       }
       ExprContent::LiteralString(s) => {
         let v = Val::String(s.as_str().to_string());
-        let s = self.t.find_type_def("string").unwrap();
-        Ok(node(expr, Type::Def(s.name.clone()), Literal(v)))
+        Ok(node(expr, Literal(v)))
       }
       ExprContent::LiteralFloat(f) => {
         let v = Val::F64(*f as f64);
-        Ok(node(expr, Type::F64, Literal(v)))
+        Ok(node(expr, Literal(v)))
       }
       ExprContent::LiteralInt(v) => {
         let v = Val::I64(*v as i64);
-        Ok(node(expr, Type::I64, Literal(v)))
+        Ok(node(expr, Literal(v)))
       }
       ExprContent::LiteralBool(b) => {
         let v = Val::Bool(*b);
-        Ok(node(expr, Type::Bool, Literal(v)))
+        Ok(node(expr, Literal(v)))
       },
       ExprContent::LiteralUnit => {
-        Ok(node(expr, Type::Void, Literal(Val::Void)))
+        Ok(node(expr, Literal(Val::Void)))
       },
       // _ => error(expr, "unsupported expression"),
     }
@@ -567,26 +421,37 @@ impl <'l, 'lt> FunctionChecker<'l, 'lt> {
     }
     let label = LabelId{ id: self.t.uid_generator.next() };
     self.labels_in_scope.push(label);
-    let body = self.to_ast(expr)?;
+    let body = self.to_ast(expr)?.into();
     self.labels_in_scope.pop();
-    let t = body.type_tag.clone();
-    let c = Label(Box::new(body), label);
-    Ok(node(expr, t, c))
+    let c = Label{ label, body };
+    Ok(node(expr, c))
   }
 }
 
-fn loc_struct(expr : &Expr, loc_def : &TypeDefinition, marker_def : &TypeDefinition) -> TypedNode {
+fn loc_struct(expr : &Expr, loc_name : RefStr, marker_name : RefStr) -> TypedNode {
   let start = {
     let col = u64_literal(expr, expr.loc.start.col as u64);
     let line = u64_literal(expr, expr.loc.start.line as u64);
-    struct_instantiate(expr, marker_def, vec![col, line])
+    type_constructor(expr, marker_name.clone(), vec![col, line])
   };
   let end = {
     let col = u64_literal(expr, expr.loc.end.col as u64);
     let line = u64_literal(expr, expr.loc.end.line as u64);
-    struct_instantiate(expr, marker_def, vec![col, line])
+    type_constructor(expr, marker_name, vec![col, line])
   };
-  struct_instantiate(expr, loc_def, vec![start, end])
+  type_constructor(expr, loc_name, vec![start, end])
+}
+
+fn let_var(expr : &Expr, name : RefStr, val : TypedNode) -> TypedNode {
+  node(expr, VariableInitialise{ name, value: val.into() })
+}
+
+fn field_access(expr : &Expr, container : TypedNode, field : RefStr) -> TypedNode {
+  node(expr, FieldAccess{ container: container.into(), field })
+}
+
+fn block(expr : &Expr, args : Vec<TypedNode>) -> TypedNode {
+  node(expr, Block(args))
 }
 
 fn u64_literal(expr : &Expr, i : u64) -> TypedNode {
@@ -602,106 +467,13 @@ fn reference(expr : &Expr, name : RefStr) -> TypedNode {
   node(expr, Content::Reference(name))
 }
 
-fn function_call(expr : &Expr, function : TypedNode, args : Vec<TypedNode>) -> TypedNode {
-  let function_ref = node(expr, t, c);
-  let function_call = FunctionCall(Box::new(function_ref), args);
-  node(expr, def.signature.return_type.clone(), function_call)
+fn function_call(expr : &Expr, function : RefStr, args : Vec<TypedNode>) -> TypedNode {
+  let function = node(expr, Reference(function)).into();
+  let function_call = FunctionCall{ function, args };
+  node(expr, function_call)
 }
 
-fn struct_instantiate(expr : &Expr, def : &TypeDefinition, args : Vec<TypedNode>) -> TypedNode {
-  node(expr,
-    Type::Def(def.name.clone()),
-    StructInstantiate(def.name.clone(), args))
-}
-
-pub fn to_typed_module(uid_generator : &mut UIDGenerator, local_symbol_table : &HashMap<RefStr, usize>, modules : &[&TypedModule], cache : &StringCache, expr : &Expr) -> Result<TypedModule, Error> {
-  let mut module = TypedModule::new(uid_generator.next());
-  let mut type_checker =
-    TypeChecker::new(uid_generator, &mut module, modules, local_symbol_table, cache);
-  
-  let mut types = vec!();
-  find_type_definitions(expr, &mut types);
-
-  // Process the types
-  for e in types {
-    type_checker.add_type_definition(e)?;
-  }
-
-  // Process the rest of the module (adds functions and globals)
-  let mut function_checker =
-    FunctionChecker::new(&mut type_checker, true, HashMap::new());
-  let body = function_checker.to_function_body(expr)?;
-
-  // Check any unresolved symbols
-  let unresolved_types : Vec<_> = type_checker.type_definition_references.drain(0..).collect();
-  for t in unresolved_types {
-    if type_checker.find_type_def(&t.symbol_name).is_none() {
-      return error(t.reference_location, format!("type definition '{}' not found", t.symbol_name));
-    }
-  }
-
-  // Look for drop functions and clone functions
-  fn register_f(
-    type_checker : &mut TypeChecker,
-    function_name : &str,
-    f : fn(&mut TypeDefinition, &FunctionDefinition) -> Result<(), Error>)
-      -> Result<(), Error>
-  {
-    let functions = type_checker.module.functions.iter().filter(move |def| def.name_in_code.as_ref() == function_name);
-    for fun_def in functions {
-      if let [Type::Ptr(t)] = fun_def.signature.args.as_slice() {
-        if let Type::Def(n) = &**t {
-          if let Some(type_def) = type_checker.module.types.get_mut(n) {
-            if type_def.kind == TypeKind::Struct {
-              f(type_def, fun_def)?;
-            }
-          }
-          else {
-            println!("Types: {:?}", type_checker.module.types.keys());
-            return error(fun_def.definition_location,
-              format!("Function {} must be defined in the same module as type {}.", function_name, n));
-          }
-        }
-      }
-    }    
-    Ok(())
-  }
-  register_f(&mut type_checker, "Drop", |td, fd| {
-    if fd.signature.return_type == Type::Void {
-      td.drop_function = Some(fd.function_reference());
-      return Ok(());
-    }
-    error(fd.definition_location, "Drop function must have void return")
-  })?;
-  register_f(&mut type_checker, "Clone", |td, fd| {
-    if let Type::Def(n) = &fd.signature.return_type {
-      if n == &td.name {
-        td.clone_function = Some(fd.function_reference());
-        return Ok(());
-      }
-    }
-    error(fd.definition_location, "Clone function must return new instance")
-  })?;
-
-  // TODO: figure out which types are Move and which are Copy
-
-  let name = cache.get(TOP_LEVEL_FUNCTION_NAME);
-  if type_checker.module.functions.iter().find(|def| def.name_in_code == name).is_some() {
-    return error(expr, "top level function already defined!");
-  }
-  let signature = Rc::new(FunctionSignature {
-    return_type: body.type_tag.clone(),
-    args: vec!(),
-  });
-  let def = FunctionDefinition {
-    name_in_code: name.clone(),
-    name_for_codegen: name,
-    args: vec!(),
-    signature,
-    implementation: FunctionImplementation::Normal(body),
-    module_id: type_checker.module.id,
-    definition_location: expr.loc,
-  };
-  type_checker.add_function(def);
-  Ok(module)
+fn type_constructor(expr : &Expr, name : RefStr, field_values : Vec<TypedNode>) -> TypedNode {
+  let field_values = field_values.into_iter().map(|a| (None, a)).collect();
+  node(expr, TypeConstructor{ name, field_values })
 }
