@@ -2,6 +2,8 @@
 use crate::error::{Error, error, TextLocation};
 use crate::expr::{StringCache, RefStr, Expr, ExprContent, UIDGenerator};
 
+use std::collections::HashMap;
+
 #[derive(Clone, PartialEq, Debug)]
 pub enum Val {
   Void,
@@ -27,40 +29,42 @@ pub struct LabelId {
 #[derive(Debug)]
 pub enum Content {
   Literal(Val),
-  VariableInitialise{ name: RefStr, value: Box<TypedNode> },
-  Assignment{ assignee: Box<TypedNode> , value: Box<TypedNode> },
-  IfThen{ condition: Box<TypedNode>, then_branch: Box<TypedNode> },
-  IfThenElse{ condition: Box<TypedNode>, then_branch: Box<TypedNode>, else_branch: Box<TypedNode> },
-  Block(Vec<TypedNode>),
+  VariableInitialise{ name: RefStr, value: NodeId },
+  Assignment{ assignee: NodeId , value: NodeId },
+  IfThen{ condition: NodeId, then_branch: NodeId },
+  IfThenElse{ condition: NodeId, then_branch: NodeId, else_branch: NodeId },
+  Block(Vec<NodeId>),
   Quote(Box<Expr>),
   Reference(RefStr),
-  FunctionDefinition{ name: RefStr, args: Vec<(RefStr, Option<TypedNode>)>, body: Box<TypedNode> },
-  CBind { name: RefStr, type_tag : Box<TypedNode> },
-  StructDefinition{ name: RefStr, fields: Vec<(RefStr, Option<TypedNode>)> },
-  UnionDefinition{ name: RefStr, fields: Vec<(RefStr, Option<TypedNode>)> },
-  TypeConstructor{ name: RefStr, field_values: Vec<(Option<RefStr>, TypedNode)> },
-  FieldAccess{ container: Box<TypedNode>, field: RefStr },
-  Index{ container: Box<TypedNode>, index: Box<TypedNode> },
-  ArrayLiteral(Vec<TypedNode>),
-  FunctionCall{ function: Box<TypedNode>, args: Vec<TypedNode> },
-  While{ condition: Box<TypedNode>, body: Box<TypedNode> },
-  Convert{ from_value: Box<TypedNode>, into_type: Box<TypedNode> },
-  SizeOf{ type_tag: Box<TypedNode> },
+  FunctionDefinition{ name: RefStr, args: Vec<(RefStr, Option<NodeId>)>, body: NodeId },
+  CBind { name: RefStr, type_tag : NodeId },
+  StructDefinition{ name: RefStr, fields: Vec<(RefStr, Option<NodeId>)> },
+  UnionDefinition{ name: RefStr, fields: Vec<(RefStr, Option<NodeId>)> },
+  TypeConstructor{ name: RefStr, field_values: Vec<(Option<RefStr>, NodeId)> },
+  FieldAccess{ container: NodeId, field: RefStr },
+  Index{ container: NodeId, index: NodeId },
+  ArrayLiteral(Vec<NodeId>),
+  FunctionCall{ function: NodeId, args: Vec<NodeId> },
+  While{ condition: NodeId, body: NodeId },
+  Convert{ from_value: NodeId, into_type: NodeId },
+  SizeOf{ type_tag: NodeId },
 
-  Label{ label: LabelId, body: Box<TypedNode> },
-  BreakToLabel{ label: LabelId, return_value: Option<Box<TypedNode>> },
+  Label{ label: LabelId, body: NodeId },
+  BreakToLabel{ label: LabelId, return_value: Option<NodeId> },
 }
 
 use Content::*;
 
-#[derive(Debug)]
-pub struct TypedNode {
-  pub content : Content,
-  pub loc : TextLocation,
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct NodeId {
+  id : u64,
 }
 
-fn node(expr : &Expr, content : Content) -> TypedNode {
-  TypedNode { content, loc: expr.loc }
+#[derive(Debug)]
+pub struct Node {
+  pub id : NodeId,
+  pub content : Content,
+  pub loc : TextLocation,
 }
 
 pub struct GlobalDefinition {
@@ -75,6 +79,8 @@ struct SymbolReference {
 
 pub struct NodeConverter<'l> {
   uid_generator : &'l mut UIDGenerator,
+
+  nodes : HashMap<NodeId, Node>,
 
   cache: &'l StringCache,
 }
@@ -94,11 +100,19 @@ impl <'l> NodeConverter<'l> {
   {
     NodeConverter {
       uid_generator,
+      nodes: HashMap::new(),
       cache,
     }
   }
 
-  pub fn to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
+  fn node(&mut self, expr : &Expr, content : Content) -> NodeId {
+    let id = NodeId { id: self.uid_generator.next() };
+    let n = Node { id, content, loc: expr.loc };
+    self.nodes.insert(id, n);
+    id
+  }
+
+  pub fn to_ast(&mut self, expr : &Expr) -> Result<NodeId, Error> {
     let mut fc = FunctionConverter::new(self);
     fc.to_ast(expr)
   }
@@ -111,7 +125,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     }
   }
 
-  fn typed_symbol(&mut self, e : &Expr) -> Result<(RefStr, Option<TypedNode>), Error> {
+  fn typed_symbol(&mut self, e : &Expr) -> Result<(RefStr, Option<NodeId>), Error> {
     if let Some((":", [s, t])) = e.try_construct() {
       let name = self.cached(s.unwrap_symbol()?);
       let type_tag = self.to_ast(t)?;
@@ -130,7 +144,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     self.t.cache.get(s)
   }
 
-  fn compile_template_arguments(&mut self, e : &Expr, args : &mut Vec<TypedNode>) -> Result<(), Error> {
+  fn compile_template_arguments(&mut self, e : &Expr, args : &mut Vec<NodeId>) -> Result<(), Error> {
     match e.try_construct() {
       Some(("$", [e])) => {
         args.push(self.to_ast(e)?);
@@ -145,32 +159,36 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     Ok(())
   }
 
+  fn node(&mut self, expr : &Expr, content : Content) -> NodeId {
+    self.t.node(expr, content)
+  }
+
   /// Converts a quote to a typed node and handles templating if necessary
-  fn quote_to_ast(&mut self, expr : &Expr, quoted_expr : &Expr) -> Result<TypedNode, Error> {
+  fn quote_to_ast(&mut self, expr : &Expr, quoted_expr : &Expr) -> Result<NodeId, Error> {
     // TODO: this function is kind of verbose and difficult to read
     let e = quoted_expr;
     let mut template_args = vec![];
     self.compile_template_arguments(e, &mut template_args)?;
-    let main_quote = node(expr, Quote(Box::new(e.clone())));
+    let main_quote = self.node(expr, Quote(Box::new(e.clone())));
     if template_args.len() > 0 {
       let mut coerced_args = vec![];
       let loc_name = self.cached("text_location");
       let marker_name = self.cached("text_marker");
       for n in template_args.into_iter() {
-        let loc = loc_struct(expr, loc_name.clone(), marker_name.clone());
-        let expr_val = function_call(expr, self.cached("sym"), vec![n, loc]);
-        let arg = function_call(expr, self.cached("&"), vec![expr_val]);
+        let loc = self.loc_struct(expr, loc_name.clone(), marker_name.clone());
+        let expr_val = self.function_call(expr, self.cached("sym"), vec![n, loc]);
+        let arg = self.function_call(expr, self.cached("&"), vec![expr_val]);
         coerced_args.push(arg);
       }
-      let array_literal = array_literal(expr, coerced_args);
-      Ok(function_call(expr, self.cached("template_quote"), vec![main_quote, array_literal]))
+      let array_literal = self.array_literal(expr, coerced_args);
+      Ok(self.function_call(expr, self.cached("template_quote"), vec![main_quote, array_literal]))
     }
     else {
       Ok(main_quote)
     }
   }
 
-  fn to_type_constructor(&mut self, expr : &Expr, exprs : &[Expr]) -> Result<TypedNode, Error> {
+  fn to_type_constructor(&mut self, expr : &Expr, exprs : &[Expr]) -> Result<NodeId, Error> {
     if exprs.len() < 1 {
       return error(expr, format!("malformed type instantiation"));
     }
@@ -187,12 +205,12 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
           Ok((None, self.to_ast(e)?))
         }
       })
-      .collect::<Result<Vec<(Option<RefStr>, TypedNode)>, Error>>()?;
+      .collect::<Result<Vec<(Option<RefStr>, NodeId)>, Error>>()?;
     let c = TypeConstructor{ name, field_values };
-    Ok(node(expr, c))
+    Ok(self.node(expr, c))
   }
 
-  fn construct_to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
+  fn construct_to_ast(&mut self, expr : &Expr) -> Result<NodeId, Error> {
     let (instr, children) = expr.unwrap_construct()?;
     match (instr, children) {
       ("call", exprs) => {
@@ -201,30 +219,30 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
           Some("new") => return self.to_type_constructor(expr, &exprs[1..]),
           Some("sizeof") => {
             if exprs.len() == 2 {
-              let type_tag = Box::new(self.to_ast(&exprs[1])?);
-              return Ok(node(expr, SizeOf{ type_tag }));
+              let type_tag = self.to_ast(&exprs[1])?;
+              return Ok(self.node(expr, SizeOf{ type_tag }));
             }
           }
           _ => (),
         }
         let args =
           exprs[1..].iter().map(|e| self.to_ast(e))
-          .collect::<Result<Vec<TypedNode>, Error>>()?;
-        let function = Box::new(self.to_ast(function_expr)?);
+          .collect::<Result<Vec<NodeId>, Error>>()?;
+        let function = self.to_ast(function_expr)?;
         let content = FunctionCall{ function, args };
-        return Ok(node(expr, content));
+        return Ok(self.node(expr, content));
       }
       ("as", [from_value, into_type]) => {
-        let from_value = Box::new(self.to_ast(from_value)?);
-        let into_type = Box::new(self.to_ast(into_type)?);
-        Ok(node(expr, Convert{ from_value, into_type }))
+        let from_value = self.to_ast(from_value)?;
+        let into_type = self.to_ast(into_type)?;
+        Ok(self.node(expr, Convert{ from_value, into_type }))
       }
       ("let", [e]) => {
         if let Some(("=", [name_expr, value_expr])) = e.try_construct() {
           let name = self.cached(name_expr.unwrap_symbol()?);
-          let value = Box::new(self.to_ast(value_expr)?);
+          let value = self.to_ast(value_expr)?;
           let c = VariableInitialise{ name, value };
-          return Ok(node(expr, c));
+          return Ok(self.node(expr, c));
         }
         error(expr, "malformed let expression")
       }
@@ -237,23 +255,23 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         }
         let return_value = if let [e] = exprs {
           let v = self.to_ast(&e)?;
-          Some(Box::new(v))
+          Some(v)
         }
         else {
           None
         };
         let label = *self.labels_in_scope.first().unwrap();
         let c = BreakToLabel{ label, return_value };
-        Ok(node(expr, c))
+        Ok(self.node(expr, c))
       }
       ("while", [condition_expr, body_expr]) => {
         let label = LabelId { id: self.t.uid_generator.next() };
         // Add label to scope in case the loop breaks
         self.labels_in_scope.push(label);
-        let condition = Box::new(self.to_ast(condition_expr)?);
-        let body = Box::new(self.to_ast(body_expr)?);
-        let while_node = node(expr, While{ condition, body });
-        let labelled_while = node(expr, Label{ label, body: Box::new(while_node) });
+        let condition = self.to_ast(condition_expr)?;
+        let body = self.to_ast(body_expr)?;
+        let while_node = self.node(expr, While{ condition, body });
+        let labelled_while = self.node(expr, Label{ label, body: while_node });
         // Remove label
         self.labels_in_scope.pop();
         Ok(labelled_while)
@@ -280,13 +298,13 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       //         let_var(expr, range_var.clone(), range_node),
       //         let_var(expr, end_var.clone(), field_access(expr, range_var.clone(), "end")),
       //         let_var(expr, loop_var.clone(), field_access(expr, range_var.clone(), "start")),
-      //         node(expr, Type::Void, While((
+      //         self.node(expr, Type::Void, While((
       //           intrinsic("<", vec![loop_var, end_var]),
       //           block(expr, vec![
       //             self.to_ast(body_expr)?,
       //             assignment(loop_var, intrinsic("+", vec![loop_var, literal_int(1)])),
       //           ])
-      //         ).into()))
+      //         )))
       //       ]);
       //       return Ok(for_block);
       //     }
@@ -297,26 +315,26 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         if exprs.len() > 3 {
           return error(expr, "malformed if expression");
         }
-        let condition = Box::new(self.to_ast(&exprs[0])?);
-        let then_branch = Box::new(self.to_ast(&exprs[1])?);
+        let condition = self.to_ast(&exprs[0])?;
+        let then_branch = self.to_ast(&exprs[1])?;
         if exprs.len() == 3 {
-          let else_branch = Box::new(self.to_ast(&exprs[2])?);
+          let else_branch = self.to_ast(&exprs[2])?;
           let c = IfThenElse{ condition, then_branch, else_branch };
-          Ok(node(expr, c))
+          Ok(self.node(expr, c))
         }
         else {
-          Ok(node(expr, IfThen{ condition, then_branch }))
+          Ok(self.node(expr, IfThen{ condition, then_branch }))
         }
       }
       ("block", exprs) => {
-        let nodes = exprs.iter().map(|e| self.to_ast(e)).collect::<Result<Vec<TypedNode>, Error>>()?;
-        Ok(node(expr, Block(nodes)))
+        let nodes = exprs.iter().map(|e| self.to_ast(e)).collect::<Result<Vec<NodeId>, Error>>()?;
+        Ok(self.node(expr, Block(nodes)))
       }
       ("cbind", [e]) => {
         if let (":", [name_expr, type_expr]) = e.unwrap_construct()? {
           let name = self.cached(name_expr.unwrap_symbol()?);
-          let type_tag = Box::new(self.to_ast(type_expr)?);
-          return Ok(node(expr, CBind{ name, type_tag }));
+          let type_tag = self.to_ast(type_expr)?;
+          return Ok(self.node(expr, CBind{ name, type_tag }));
         }
         error(expr, "invalid cbind expression")
       }
@@ -328,8 +346,8 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
             .map(|e| self.typed_symbol(e))
             .collect::<Result<Vec<_>, Error>>()?;
           let mut function_checker = FunctionConverter::new(self.t);
-          let body = Box::new(function_checker.to_function_body(function_body)?);
-          return Ok(node(expr, FunctionDefinition{name, args, body}));
+          let body = function_checker.to_function_body(function_body)?;
+          return Ok(self.node(expr, FunctionDefinition{name, args, body}));
         }
         error(expr, "malformed function definition")
       }
@@ -339,7 +357,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
           fields_expr.children().iter()
           .map(|e| self.typed_symbol(e))
           .collect::<Result<Vec<_>, Error>>()?;
-        Ok(node(expr, UnionDefinition{name, fields}))
+        Ok(self.node(expr, UnionDefinition{name, fields}))
       }
       ("struct", [name, fields_expr]) => {
         let name = self.cached(name.unwrap_symbol()?);
@@ -347,27 +365,27 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
           fields_expr.children().iter()
           .map(|e| self.typed_symbol(e))
           .collect::<Result<Vec<_>, Error>>()?;
-        Ok(node(expr, StructDefinition{name, fields}))
+        Ok(self.node(expr, StructDefinition{name, fields}))
       }
       (".", [container_expr, field_expr]) => {
-        let container = Box::new(self.to_ast(container_expr)?);
+        let container = self.to_ast(container_expr)?;
         let field = self.cached(field_expr.unwrap_symbol()?);
         let c = FieldAccess{ container, field };
-        Ok(node(expr, c))
+        Ok(self.node(expr, c))
       }
       ("array", exprs) => {
         let mut elements = vec!();
         for e in exprs {
           elements.push(self.to_ast(e)?);
         }
-        Ok(node(expr, ArrayLiteral(elements)))
+        Ok(self.node(expr, ArrayLiteral(elements)))
       }
       ("index", exprs) => {
         let array_expr = &exprs[0];
         if let [index_expr] = &exprs[1..] {
-          let container = self.to_ast(array_expr)?.into();
-          let index = self.to_ast(index_expr)?.into();
-          return Ok(node(expr, Index{ container, index }));
+          let container = self.to_ast(array_expr)?;
+          let index = self.to_ast(index_expr)?;
+          return Ok(self.node(expr, Index{ container, index }));
         }
         error(expr, "malformed array index expression")
       }
@@ -377,7 +395,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     }
   }
 
-  pub fn to_ast(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
+  pub fn to_ast(&mut self, expr : &Expr) -> Result<NodeId, Error> {
     match &expr.content {
       ExprContent::List(_, _) => {
         return self.construct_to_ast(expr);
@@ -388,92 +406,93 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         if s.as_ref() == "break" {
           let label = *self.labels_in_scope.last().unwrap();
           let c = BreakToLabel{ label , return_value: None };
-          return Ok(node(expr, c));
+          return Ok(self.node(expr, c));
         }
-        return Ok(node(expr, Reference(s)));
+        return Ok(self.node(expr, Reference(s)));
       }
       ExprContent::LiteralString(s) => {
         let v = Val::String(s.as_str().to_string());
-        Ok(node(expr, Literal(v)))
+        Ok(self.node(expr, Literal(v)))
       }
       ExprContent::LiteralFloat(f) => {
         let v = Val::F64(*f as f64);
-        Ok(node(expr, Literal(v)))
+        Ok(self.node(expr, Literal(v)))
       }
       ExprContent::LiteralInt(v) => {
         let v = Val::I64(*v as i64);
-        Ok(node(expr, Literal(v)))
+        Ok(self.node(expr, Literal(v)))
       }
       ExprContent::LiteralBool(b) => {
         let v = Val::Bool(*b);
-        Ok(node(expr, Literal(v)))
+        Ok(self.node(expr, Literal(v)))
       },
       ExprContent::LiteralUnit => {
-        Ok(node(expr, Literal(Val::Void)))
+        Ok(self.node(expr, Literal(Val::Void)))
       },
       // _ => error(expr, "unsupported expression"),
     }
   }
 
-  fn to_function_body(&mut self, expr : &Expr) -> Result<TypedNode, Error> {
+  fn to_function_body(&mut self, expr : &Expr) -> Result<NodeId, Error> {
     if self.labels_in_scope.len() != 0 {
       panic!("labels_in_scope in invalid state");
     }
     let label = LabelId{ id: self.t.uid_generator.next() };
     self.labels_in_scope.push(label);
-    let body = self.to_ast(expr)?.into();
+    let body = self.to_ast(expr)?;
     self.labels_in_scope.pop();
     let c = Label{ label, body };
-    Ok(node(expr, c))
+    Ok(self.node(expr, c))
+  }
+
+  fn loc_struct(&mut self, expr : &Expr, loc_name : RefStr, marker_name : RefStr) -> NodeId {
+    let start = {
+      let col = self.u64_literal(expr, expr.loc.start.col as u64);
+      let line = self.u64_literal(expr, expr.loc.start.line as u64);
+      self.type_constructor(expr, marker_name.clone(), vec![col, line])
+    };
+    let end = {
+      let col = self.u64_literal(expr, expr.loc.end.col as u64);
+      let line = self.u64_literal(expr, expr.loc.end.line as u64);
+      self.type_constructor(expr, marker_name, vec![col, line])
+    };
+    self.type_constructor(expr, loc_name, vec![start, end])
+  }
+
+  fn let_var(&mut self, expr : &Expr, name : RefStr, val : NodeId) -> NodeId {
+    self.node(expr, VariableInitialise{ name, value: val })
+  }
+
+  fn field_access(&mut self, expr : &Expr, container : NodeId, field : RefStr) -> NodeId {
+    self.node(expr, FieldAccess{ container: container, field })
+  }
+
+  fn block(&mut self, expr : &Expr, args : Vec<NodeId>) -> NodeId {
+    self.node(expr, Block(args))
+  }
+
+  fn u64_literal(&mut self, expr : &Expr, i : u64) -> NodeId {
+    self.node(expr, Literal(Val::U64(i)))
+  }
+
+  fn array_literal(&mut self, expr : &Expr, args : Vec<NodeId>) -> NodeId {
+    let args = ArrayLiteral(args);
+    self.node(expr, args)
+  }
+
+  fn reference(&mut self, expr : &Expr, name : RefStr) -> NodeId {
+    self.node(expr, Content::Reference(name))
+  }
+
+  fn function_call(&mut self, expr : &Expr, function : RefStr, args : Vec<NodeId>) -> NodeId {
+    let function = self.node(expr, Reference(function));
+    let function_call = FunctionCall{ function, args };
+    self.node(expr, function_call)
+  }
+
+  fn type_constructor(&mut self, expr : &Expr, name : RefStr, field_values : Vec<NodeId>) -> NodeId {
+    let field_values = field_values.into_iter().map(|a| (None, a)).collect();
+    self.node(expr, TypeConstructor{ name, field_values })
   }
 }
 
-fn loc_struct(expr : &Expr, loc_name : RefStr, marker_name : RefStr) -> TypedNode {
-  let start = {
-    let col = u64_literal(expr, expr.loc.start.col as u64);
-    let line = u64_literal(expr, expr.loc.start.line as u64);
-    type_constructor(expr, marker_name.clone(), vec![col, line])
-  };
-  let end = {
-    let col = u64_literal(expr, expr.loc.end.col as u64);
-    let line = u64_literal(expr, expr.loc.end.line as u64);
-    type_constructor(expr, marker_name, vec![col, line])
-  };
-  type_constructor(expr, loc_name, vec![start, end])
-}
-
-fn let_var(expr : &Expr, name : RefStr, val : TypedNode) -> TypedNode {
-  node(expr, VariableInitialise{ name, value: val.into() })
-}
-
-fn field_access(expr : &Expr, container : TypedNode, field : RefStr) -> TypedNode {
-  node(expr, FieldAccess{ container: container.into(), field })
-}
-
-fn block(expr : &Expr, args : Vec<TypedNode>) -> TypedNode {
-  node(expr, Block(args))
-}
-
-fn u64_literal(expr : &Expr, i : u64) -> TypedNode {
-  node(expr, Literal(Val::U64(i)))
-}
-
-fn array_literal(expr : &Expr, args : Vec<TypedNode>) -> TypedNode {
-  let args = ArrayLiteral(args);
-  node(expr, args)
-}
-
-fn reference(expr : &Expr, name : RefStr) -> TypedNode {
-  node(expr, Content::Reference(name))
-}
-
-fn function_call(expr : &Expr, function : RefStr, args : Vec<TypedNode>) -> TypedNode {
-  let function = node(expr, Reference(function)).into();
-  let function_call = FunctionCall{ function, args };
-  node(expr, function_call)
-}
-
-fn type_constructor(expr : &Expr, name : RefStr, field_values : Vec<TypedNode>) -> TypedNode {
-  let field_values = field_values.into_iter().map(|a| (None, a)).collect();
-  node(expr, TypeConstructor{ name, field_values })
-}
