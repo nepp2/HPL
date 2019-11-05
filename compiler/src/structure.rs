@@ -26,6 +26,11 @@ pub struct LabelId {
   id : u64
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TypeKind {
+  Struct, Union
+}
+
 #[derive(Debug)]
 pub enum Content {
   Literal(Val),
@@ -37,9 +42,8 @@ pub enum Content {
   Quote(Box<Expr>),
   Reference(RefStr),
   FunctionDefinition{ name: RefStr, args: Vec<(RefStr, Option<Box<Expr>>)>, return_tag: Option<Box<Expr>>, body: NodeId },
-  CBind { name: RefStr, type_tag : NodeId },
-  StructDefinition{ name: RefStr, fields: Vec<(RefStr, Option<Box<Expr>>)> },
-  UnionDefinition{ name: RefStr, fields: Vec<(RefStr, Option<Box<Expr>>)> },
+  CBind { name: RefStr, type_tag : Box<Expr> },
+  TypeDefinition{ name: RefStr, kind : TypeKind, fields: Vec<(RefStr, Option<Box<Expr>>)> },
   TypeConstructor{ name: RefStr, field_values: Vec<(Option<RefStr>, NodeId)> },
   FieldAccess{ container: NodeId, field: RefStr },
   Index{ container: NodeId, index: NodeId },
@@ -56,9 +60,9 @@ pub enum Content {
 use Content::*;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct NodeId {
-  id : u64,
-}
+pub struct NodeId(u64);
+
+impl From<u64> for NodeId { fn from(v : u64) -> Self { NodeId(v) } }
 
 #[derive(Debug)]
 pub struct Node {
@@ -92,8 +96,8 @@ pub struct FunctionConverter<'l, 'lt> {
 }
 
 pub struct Nodes {
-  nodes : HashMap<NodeId, Node>,
-  root : NodeId,
+  pub nodes : HashMap<NodeId, Node>,
+  pub root : NodeId,
 }
 
 impl Nodes {
@@ -128,7 +132,7 @@ impl <'l> NodeRef<'l> {
 impl <'l> NodeConverter<'l> {
 
   fn node(&mut self, expr : &Expr, content : Content) -> NodeId {
-    let id = NodeId { id: self.uid_generator.next() };
+    let id = self.uid_generator.next().into();
     let n = Node { id, content, loc: expr.loc };
     self.nodes.insert(id, n);
     id
@@ -366,7 +370,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       ("cbind", [e]) => {
         if let (":", [name_expr, type_expr]) = e.unwrap_construct()? {
           let name = self.cached(name_expr.unwrap_symbol()?);
-          let type_tag = self.to_node(type_expr)?;
+          let type_tag = type_expr.clone().into();
           return Ok(self.node(expr, CBind{ name, type_tag }));
         }
         error(expr, "invalid cbind expression")
@@ -390,7 +394,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
           fields_expr.children().iter()
           .map(|e| self.typed_symbol(e))
           .collect::<Result<Vec<_>, Error>>()?;
-        Ok(self.node(expr, UnionDefinition{name, fields}))
+        Ok(self.node(expr, TypeDefinition{name, kind: TypeKind::Union, fields}))
       }
       ("struct", [name, fields_expr]) => {
         let name = self.cached(name.unwrap_symbol()?);
@@ -398,7 +402,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
           fields_expr.children().iter()
           .map(|e| self.typed_symbol(e))
           .collect::<Result<Vec<_>, Error>>()?;
-        Ok(self.node(expr, StructDefinition{name, fields}))
+        Ok(self.node(expr, TypeDefinition{name, kind: TypeKind::Union, fields}))
       }
       (".", [container_expr, field_expr]) => {
         let container = self.to_node(container_expr)?;
@@ -511,10 +515,6 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
   fn array_literal(&mut self, expr : &Expr, args : Vec<NodeId>) -> NodeId {
     let args = ArrayLiteral(args);
     self.node(expr, args)
-  }
-
-  fn reference(&mut self, expr : &Expr, name : RefStr) -> NodeId {
-    self.node(expr, Content::Reference(name))
   }
 
   fn function_call(&mut self, expr : &Expr, function : RefStr, args : Vec<NodeId>) -> NodeId {
