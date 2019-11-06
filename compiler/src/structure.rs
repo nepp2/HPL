@@ -35,6 +35,7 @@ pub enum TypeKind {
 pub enum Content {
   Literal(Val),
   VariableInitialise{ name: RefStr, type_tag: Option<Box<Expr>>, value: NodeId },
+  GlobalInitialise{ name: RefStr, type_tag: Option<Box<Expr>>, value: NodeId },
   Assignment{ assignee: NodeId , value: NodeId },
   IfThen{ condition: NodeId, then_branch: NodeId },
   IfThenElse{ condition: NodeId, then_branch: NodeId, else_branch: NodeId },
@@ -91,7 +92,8 @@ pub struct NodeConverter<'l> {
 
 pub struct FunctionConverter<'l, 'lt> {
   t : &'l mut NodeConverter<'lt>,
-
+  is_top_level : bool,
+  block_depth : i32,
   labels_in_scope : Vec<LabelId>,
 }
 
@@ -129,37 +131,35 @@ impl <'l> NodeRef<'l> {
   }
 }
 
-impl <'l> NodeConverter<'l> {
+pub fn to_nodes(
+  uid_generator : &mut UIDGenerator,
+  cache : &StringCache,
+  expr : &Expr)
+    -> Result<Nodes, Error>
+{
+  let mut nc = NodeConverter {
+    uid_generator,
+    nodes: HashMap::new(),
+    cache,
+  };
+  let mut fc = FunctionConverter::new(&mut nc, true);
+  let root = fc.to_node(expr)?;
+  Ok(Nodes{ root, nodes: nc.nodes })
+}
 
+impl <'l> NodeConverter<'l> {
   fn node(&mut self, expr : &Expr, content : Content) -> NodeId {
     let id = self.uid_generator.next().into();
     let n = Node { id, content, loc: expr.loc };
     self.nodes.insert(id, n);
     id
   }
-
-  pub fn to_nodes(
-    uid_generator : &'l mut UIDGenerator,
-    cache : &'l StringCache,
-    expr : &Expr)
-      -> Result<Nodes, Error>
-  {
-    let mut nc = NodeConverter {
-      uid_generator,
-      nodes: HashMap::new(),
-      cache,
-    };
-    let mut fc = FunctionConverter::new(&mut nc);
-    let root = fc.to_node(expr)?;
-    Ok(Nodes{ root, nodes: nc.nodes })
-  }
 }
 
 impl <'l, 'lt> FunctionConverter<'l, 'lt> {
 
-  pub fn new(t : &'l mut NodeConverter<'lt>) -> FunctionConverter<'l, 'lt> {
-    FunctionConverter { t, labels_in_scope : vec![],
-    }
+  pub fn new(t : &'l mut NodeConverter<'lt>, is_top_level : bool) -> FunctionConverter<'l, 'lt> {
+    FunctionConverter { t, is_top_level, block_depth: 0, labels_in_scope : vec![] }
   }
 
   fn typed_symbol(&mut self, e : &Expr) -> Result<(RefStr, Option<Box<Expr>>), Error> {
@@ -278,7 +278,12 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         if let Some(("=", [name_expr, value_expr])) = e.try_construct() {
           let name = self.cached(name_expr.unwrap_symbol()?);
           let value = self.to_node(value_expr)?;
-          let c = VariableInitialise{ name, type_tag: None, value };
+          let c = if self.is_top_level && self.block_depth == 1 {
+            GlobalInitialise{ name, type_tag : None, value }
+          }
+          else {
+            VariableInitialise{ name, type_tag: None, value }
+          };
           return Ok(self.node(expr, c));
         }
         error(expr, "malformed let expression")
@@ -313,41 +318,6 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         self.labels_in_scope.pop();
         Ok(labelled_while)
       }
-      // ("for", [var_range_expr, body_expr]) => {
-      //   if let Some(("in", [var, range])) = var_range_expr.try_construct() {
-      //     if let Some(var_name) = var.try_symbol() {
-      //       /*
-      //         {
-      //           let #range = range(0, 10)
-      //           let #end = #range.end
-      //           let i = #range.start
-      //           while i < #end {
-      //             $body_expr
-      //             i = i + 1
-      //           }
-      //         }
-      //       */
-      //       let range_var = self.cached("@range_var");
-      //       let end_var = self.cached("@end_var");
-      //       let loop_var = self.cached("@loop_var");
-      //       let range_node = self.to_node(range)?;
-      //       let for_block = block(expr, vec![
-      //         let_var(expr, range_var.clone(), range_node),
-      //         let_var(expr, end_var.clone(), field_access(expr, range_var.clone(), "end")),
-      //         let_var(expr, loop_var.clone(), field_access(expr, range_var.clone(), "start")),
-      //         self.node(expr, Type::Void, While((
-      //           intrinsic("<", vec![loop_var, end_var]),
-      //           block(expr, vec![
-      //             self.to_node(body_expr)?,
-      //             assignment(loop_var, intrinsic("+", vec![loop_var, literal_int(1)])),
-      //           ])
-      //         )))
-      //       ]);
-      //       return Ok(for_block);
-      //     }
-      //   }
-      //   error(expr, "malformed for expression")
-      // }
       ("if", exprs) => {
         if exprs.len() > 3 {
           return error(expr, "malformed if expression");
@@ -364,7 +334,9 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         }
       }
       ("block", exprs) => {
+        self.block_depth += 1;
         let nodes = exprs.iter().map(|e| self.to_node(e)).collect::<Result<Vec<NodeId>, Error>>()?;
+        self.block_depth -= 1;
         Ok(self.node(expr, Block(nodes)))
       }
       ("cbind", [e]) => {
@@ -382,7 +354,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
             args_expr.children().iter()
             .map(|e| self.typed_symbol(e))
             .collect::<Result<Vec<_>, Error>>()?;
-          let mut function_checker = FunctionConverter::new(self.t);
+          let mut function_checker = FunctionConverter::new(self.t, false);
           let body = function_checker.to_function_body(function_body)?;
           return Ok(self.node(expr, FunctionDefinition{name, args, return_tag: None, body}));
         }
@@ -529,3 +501,40 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
   }
 }
 
+// TODO: maybe implement for loop:
+//
+// ("for", [var_range_expr, body_expr]) => {
+//   if let Some(("in", [var, range])) = var_range_expr.try_construct() {
+//     if let Some(var_name) = var.try_symbol() {
+//       /*
+//         {
+//           let #range = range(0, 10)
+//           let #end = #range.end
+//           let i = #range.start
+//           while i < #end {
+//             $body_expr
+//             i = i + 1
+//           }
+//         }
+//       */
+//       let range_var = self.cached("@range_var");
+//       let end_var = self.cached("@end_var");
+//       let loop_var = self.cached("@loop_var");
+//       let range_node = self.to_node(range)?;
+//       let for_block = block(expr, vec![
+//         let_var(expr, range_var.clone(), range_node),
+//         let_var(expr, end_var.clone(), field_access(expr, range_var.clone(), "end")),
+//         let_var(expr, loop_var.clone(), field_access(expr, range_var.clone(), "start")),
+//         self.node(expr, Type::Void, While((
+//           intrinsic("<", vec![loop_var, end_var]),
+//           block(expr, vec![
+//             self.to_node(body_expr)?,
+//             assignment(loop_var, intrinsic("+", vec![loop_var, literal_int(1)])),
+//           ])
+//         )))
+//       ]);
+//       return Ok(for_block);
+//     }
+//   }
+//   error(expr, "malformed for expression")
+// }

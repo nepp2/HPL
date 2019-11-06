@@ -39,14 +39,32 @@ pub fn print_result(r : Result<Val, Error>) -> String {
   }
 }
 
-fn load_and_run(path : &str) {
+fn load(path : &str) -> String {
   let path = PathBuf::from(path);
   let mut f = File::open(path).expect("file not found");
   let mut code = String::new();
   f.read_to_string(&mut code).unwrap();
+  code
+}
+
+fn load_and_run(path : &str) {
+  let code = load(path);
   let mut i = interpreter();
   let result = i.run(&code);
   println!("{}", print_result(result));
+}
+
+fn test_inference(path : &str) {
+  use expr::{ StringCache, UIDGenerator};
+  let code = load(path);
+  let cache = StringCache::new();
+  let mut gen = UIDGenerator::new();
+  let tokens =
+    lexer::lex(&code, &cache)
+    .map_err(|mut es| es.remove(0)).unwrap();
+  let expr = parser::parse(tokens, &cache).expect("parse errors");
+  let nodes = structure::to_nodes(&mut gen, &cache, &expr).expect("node errors");
+  typecheck2::infer_types(&mut gen, &cache, &nodes).expect("type errors");
 }
 
 fn main(){
@@ -60,6 +78,7 @@ fn main(){
     ["watch"] => watcher::watch("code/scratchpad.code"),
     ["repl"] => repl::run_repl(),
     ["run", f] => load_and_run(f),
+    ["infer"] => test_inference("code/infer.code"),
     _ => watcher::watch("code/scratchpad.code"),
   }
 }
