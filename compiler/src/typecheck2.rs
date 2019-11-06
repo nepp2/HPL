@@ -553,6 +553,7 @@ struct Constraints {
 
 struct GatherConstraints<'l> {
   var_scope : Vec<Vec<(RefStr, TypeSymbol)>>,
+  labels : HashMap<LabelId, TypeSymbol>,
   core : &'l CoreTypes,
   types : &'l mut Types,
   gen : &'l mut UIDGenerator,
@@ -573,6 +574,7 @@ impl <'l> GatherConstraints<'l> {
   ) -> GatherConstraints<'l> {
     GatherConstraints {
       var_scope: vec![],
+      labels: HashMap::new(),
       core, types, gen, cache, c, errors,
     }
   }
@@ -652,6 +654,13 @@ impl <'l> GatherConstraints<'l> {
     self.c.global_def.insert(name, ts);
   }
 
+  fn find_local(&mut self, name : &RefStr) -> Option<TypeSymbol> {
+    for (var_name, var_ts) in self.var_scope.iter().flat_map(|i| i.iter()).rev() {
+      if name == var_name { return Some(*var_ts) }
+    }
+    None
+  }
+
   fn process_node(&mut self, n : &Nodes, id : NodeId)-> TypeSymbol {
     let ts = self.node_id_to_symbol(id);
     match &n.get(id).content {
@@ -708,7 +717,13 @@ impl <'l> GatherConstraints<'l> {
         self.assert(ts, Ptr(t));
       }
       Reference(name) => {
-        let a = (); // TODO: Figure out wtf this is referencing!
+        if let Some(local) = self.find_local(name) {
+          self.equalivalent(ts, local);
+        }
+        else {
+          let gr = GlobalReference{ name: name.clone(), result: ts };
+          self.c.global_reference.push(gr);
+        }
       }
       Content::FunctionDefinition{ name, args, return_tag, body } => {
         self.assert(ts, Type::Void);
@@ -794,19 +809,38 @@ impl <'l> GatherConstraints<'l> {
         self.function_call(fc);
       }
       While{ condition, body } => {
-
+        self.assert(ts, Type::Void);
+        let cond = self.process_node(n, *condition);
+        let body = self.process_node(n, *body);
+        self.assert(cond, Type::Bool);
+        self.assert(body, Type::Void);
       }
       Convert{ from_value, into_type } => {
-
+        let v = self.process_node(n, *from_value);
+        if let Some(t) = self.expr_to_type(into_type) {
+          self.assert(ts, t);
+        }
       }
       SizeOf{ type_tag } => {
-
+        let a = (); // TODO: there is no way of accessing the type during codegen
+        self.expr_to_type(type_tag);
+        self.assert(ts, Type::U64);
       }
       Label{ label, body } => {
-
+        self.labels.insert(*label, ts);
+        let body = self.process_node(n, *body);
+        self.equalivalent(ts, body);
       }
       BreakToLabel{ label, return_value } => {
-
+        self.assert(ts, Type::Void);
+        let label_ts = *self.labels.get(label).unwrap();
+        if let Some(v) = return_value {
+          let v = self.process_node(n, *v);
+          self.equalivalent(label_ts, v);
+        }
+        else {
+          self.assert(label_ts, Type::Void);
+        }
       }
     }
     ts

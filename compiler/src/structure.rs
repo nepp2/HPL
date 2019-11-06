@@ -21,7 +21,7 @@ pub enum Val {
 
 pub static TOP_LEVEL_FUNCTION_NAME : &'static str = "top_level";
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LabelId {
   id : u64
 }
@@ -51,7 +51,7 @@ pub enum Content {
   FunctionCall{ function: NodeId, args: Vec<NodeId> },
   While{ condition: NodeId, body: NodeId },
   Convert{ from_value: NodeId, into_type: Box<Expr> },
-  SizeOf{ type_tag: NodeId },
+  SizeOf{ type_tag: Box<Expr> },
 
   Label{ label: LabelId, body: NodeId },
   BreakToLabel{ label: LabelId, return_value: Option<NodeId> },
@@ -256,7 +256,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
           Some("new") => return self.to_type_constructor(expr, &exprs[1..]),
           Some("sizeof") => {
             if exprs.len() == 2 {
-              let type_tag = self.to_node(&exprs[1])?;
+              let type_tag = exprs[1].clone().into();
               return Ok(self.node(expr, SizeOf{ type_tag }));
             }
           }
