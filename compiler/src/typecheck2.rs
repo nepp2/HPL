@@ -509,6 +509,12 @@ impl <'l> Inference<'l> {
       println!("Resolved after step {}: {}", i, self.resolved.len());
     }
 
+    for (n, ts) in c.node_symbols.iter() {
+      if let Some(t) = self.resolved.get(ts) {
+        println!("\n\ntype {} inferred for {:?}", self.types.display(*t), self.nodes.get(*n));
+      }
+    }
+
     // let type_symbol_count = c.symbols.len();
 
     // loop {

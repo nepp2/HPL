@@ -1,5 +1,5 @@
 
-fun hello(a : i64, b : i64) {
+fun hello(a, b) {
   let c = a
-  a + b
+  a + 1
 }
