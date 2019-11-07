@@ -32,20 +32,26 @@ pub enum TypeKind {
 }
 
 #[derive(Debug)]
+pub struct Symbol {
+  pub name : RefStr,
+  pub loc : TextLocation,
+}
+
+#[derive(Debug)]
 pub enum Content {
   Literal(Val),
-  VariableInitialise{ name: RefStr, type_tag: Option<Box<Expr>>, value: NodeId },
-  GlobalInitialise{ name: RefStr, type_tag: Option<Box<Expr>>, value: NodeId },
+  VariableInitialise{ name: Symbol, type_tag: Option<Box<Expr>>, value: NodeId },
+  GlobalInitialise{ name: Symbol, type_tag: Option<Box<Expr>>, value: NodeId },
   Assignment{ assignee: NodeId , value: NodeId },
   IfThen{ condition: NodeId, then_branch: NodeId },
   IfThenElse{ condition: NodeId, then_branch: NodeId, else_branch: NodeId },
   Block(Vec<NodeId>),
   Quote(Box<Expr>),
   Reference(RefStr),
-  FunctionDefinition{ name: RefStr, args: Vec<(RefStr, Option<Box<Expr>>)>, return_tag: Option<Box<Expr>>, body: NodeId },
+  FunctionDefinition{ name: RefStr, args: Vec<(Symbol, Option<Box<Expr>>)>, return_tag: Option<Box<Expr>>, body: NodeId },
   CBind { name: RefStr, type_tag : Box<Expr> },
-  TypeDefinition{ name: RefStr, kind : TypeKind, fields: Vec<(RefStr, Option<Box<Expr>>)> },
-  TypeConstructor{ name: RefStr, field_values: Vec<(Option<RefStr>, NodeId)> },
+  TypeDefinition{ name: RefStr, kind : TypeKind, fields: Vec<(Symbol, Option<Box<Expr>>)> },
+  TypeConstructor{ name: RefStr, field_values: Vec<(Option<Symbol>, NodeId)> },
   FieldAccess{ container: NodeId, field: RefStr },
   Index{ container: NodeId, index: NodeId },
   ArrayLiteral(Vec<NodeId>),
@@ -162,18 +168,20 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     FunctionConverter { t, is_top_level, block_depth: 0, labels_in_scope : vec![] }
   }
 
-  fn typed_symbol(&mut self, e : &Expr) -> Result<(RefStr, Option<Box<Expr>>), Error> {
+  fn symbol(&self, e : &Expr) -> Result<Symbol, Error> {
+    let name = self.cached(e.unwrap_symbol()?);
+    Ok(Symbol { name, loc: e.loc })
+  }
+
+  fn typed_symbol(&mut self, e : &Expr) -> Result<(Symbol, Option<Box<Expr>>), Error> {
     if let Some((":", [s, t])) = e.try_construct() {
-      let name = self.cached(s.unwrap_symbol()?);
+      let name = self.symbol(s)?;
       let type_tag = t.clone().into();
       Ok((name, Some(type_tag)))
     }
-    else if let Ok(s) = e.unwrap_symbol() {
-      let name = self.cached(s);
-      Ok((name, None))
-    }
     else {
-      error(e, "invalid typed symbol construct")
+      let name = self.symbol(e)?;
+      Ok((name, None))
     }
   }
 
@@ -235,14 +243,14 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     let field_values =
       field_exprs.iter().map(|e| {
         if let Some((":", [name, value])) = e.try_construct() {
-          let name = self.cached(name.unwrap_symbol()?);
+          let name = self.symbol(name)?;
           Ok((Some(name), self.to_node(value)?))
         }
         else {
           Ok((None, self.to_node(e)?))
         }
       })
-      .collect::<Result<Vec<(Option<RefStr>, NodeId)>, Error>>()?;
+      .collect::<Result<Vec<(Option<Symbol>, NodeId)>, Error>>()?;
     let c = TypeConstructor{ name, field_values };
     Ok(self.node(expr, c))
   }
@@ -276,7 +284,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       }
       ("let", [e]) => {
         if let Some(("=", [name_expr, value_expr])) = e.try_construct() {
-          let name = self.cached(name_expr.unwrap_symbol()?);
+          let name = self.symbol(name_expr)?;
           let value = self.to_node(value_expr)?;
           let c = if self.is_top_level && self.block_depth == 1 {
             GlobalInitialise{ name, type_tag : None, value }
@@ -469,6 +477,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
   }
 
   fn let_var(&mut self, expr : &Expr, name : RefStr, val : NodeId) -> NodeId {
+    let name = Symbol { name, loc: expr.loc };
     self.node(expr, VariableInitialise{ name, type_tag: None, value: val })
   }
 

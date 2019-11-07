@@ -1,5 +1,7 @@
 
-fun hello(a, b) {
-  let c = a
-  a + 1
+fun hello(a) {
+  let c = b
+  c + 1
 }
+
+let b = 1

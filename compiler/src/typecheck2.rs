@@ -7,20 +7,20 @@ use std::hash::Hash;
 
 use crate::error::{Error, error, error_raw, TextLocation};
 use crate::expr::{StringCache, RefStr, Expr, ExprContent, UIDGenerator};
-use crate::structure::{Node, NodeId, Nodes, NodeRef, Content, Val, LabelId, TypeKind};
+use crate::structure::{Node, NodeId, Nodes, Symbol, Content, Val, LabelId, TypeKind};
 
 use std::collections::{HashMap, HashSet};
 use bimap::BiMap;
 
-pub fn infer_types(gen : &mut UIDGenerator, cache : &StringCache, nodes : &Nodes) -> Result<Types, Vec<Error>> {
+pub fn infer_types(gen : &mut UIDGenerator, cache : &StringCache, code : &str, nodes : &Nodes) -> Result<Types, Vec<Error>> {
   let mut c = Constraints::new();
   let mut types = Types::new();
   let mut errors = vec![];
   let core = CoreTypes::new(&mut types, gen, cache);
   let mut gather = GatherConstraints::new(&core, &mut types, gen, cache, &mut c, &mut errors);
   gather.process_node(nodes, nodes.root);
-  let mut i = Inference::new(nodes, &mut types, gen, cache, &mut errors);
-  i.infer(c);
+  let mut i = Inference::new(code, nodes, &mut types, &c, gen, cache, &mut errors);
+  i.infer();
   if errors.len() > 0 {
     Err(errors)
   }
@@ -433,8 +433,10 @@ fn literal_to_type(string_def : DefId, v : &Val) -> Type {
 }
 
 struct Inference<'l> {
+  code : &'l str,
   nodes : &'l Nodes,
   types : &'l mut Types,
+  c : &'l Constraints,
   gen : &'l mut UIDGenerator,
   cache : &'l StringCache,
   errors : &'l mut Vec<Error>,
@@ -445,22 +447,39 @@ struct Inference<'l> {
 impl <'l> Inference<'l> {
 
   fn new(
+    code : &'l str,
     nodes : &'l Nodes,
     types : &'l mut Types,
+    c : &'l Constraints,
     gen : &'l mut UIDGenerator,
     cache : &'l StringCache,
     errors : &'l mut Vec<Error>)
       -> Self
   {
     Inference {
-      nodes, types, gen, cache, errors,
+      code, nodes, types, c, gen, cache, errors,
       resolved: HashMap::new(),
+    }
+  }
+
+  fn ts_code_slice(&self, c : &Constraints, ts : TypeSymbol) -> &str {
+    let loc = c.symbols.get(&ts).unwrap();
+    let line = self.code.lines().nth(loc.start.line - 1).unwrap();
+    if loc.start.line == loc.end.line {
+      &line[loc.start.col..loc.end.col]
+    }
+    else {
+      &line[loc.start.col..]
     }
   }
   
   fn set_type_id(&mut self, ts : TypeSymbol, t : TypeId) {
     let a = (); // TODO: unify!
-    self.resolved.insert(ts, t);
+    let code = self.ts_code_slice(&self.c, ts);
+    if !self.resolved.contains_key(&ts) {
+      println!("     Inferred type {} for '{}'", self.types.display(t), code);
+      self.resolved.insert(ts, t);
+    }
   }
 
   fn set_type(&mut self, ts : TypeSymbol, t : Type) {
@@ -475,15 +494,20 @@ impl <'l> Inference<'l> {
   fn process_constraint(&mut self, c : &Constraint) {
     match c  {
       Constraint::Assert(ts, t) => {
+        println!("Asserting type... ");
         self.set_type_id(*ts, *t);
       }
       Constraint::Equalivalent(a, b) => {
+        println!("Equivalence... ");
         if let Some(&t) = self.resolved.get(a) {
           self.set_type_id(*b, t);
         }
         else if let Some(&t) = self.resolved.get(b) {
           self.set_type_id(*a, t);
         }
+      }
+      Constraint::GlobalDef(name, ts) => {
+        
       }
       Constraint::Array{ array, element } => {
         if let Some(array_type) = self.get(*array) {
@@ -499,21 +523,22 @@ impl <'l> Inference<'l> {
     }
   }
 
-  fn infer(&mut self, c : Constraints) {
+  fn infer(&mut self) {
 
-    println!("To resolve: {}", c.symbols.len());
-    for i in 1..10 {
-      for c in c.constraints.iter() {
+    println!("To resolve: {}", self.c.symbols.len());
+    for i in 0..2 {
+      for c in self.c.constraints.iter() {
         self.process_constraint(c);
       }
       println!("Resolved after step {}: {}", i, self.resolved.len());
+      println!();
     }
 
-    for (n, ts) in c.node_symbols.iter() {
-      if let Some(t) = self.resolved.get(ts) {
-        println!("\n\ntype {} inferred for {:?}", self.types.display(*t), self.nodes.get(*n));
-      }
-    }
+    // for (n, ts) in c.node_symbols.iter() {
+    //   if let Some(t) = self.resolved.get(ts) {
+    //     println!("\n\ntype {} inferred for {:?}", self.types.display(*t), self.nodes.get(*n));
+    //   }
+    // }
 
     // let type_symbol_count = c.symbols.len();
 
@@ -624,7 +649,7 @@ impl CoreTypes {
 }
 
 struct Constraints {
-  symbols : Vec<TypeSymbol>,
+  symbols : HashMap<TypeSymbol, TextLocation>,
   node_symbols : HashMap<NodeId, TypeSymbol>,
   constraints : Vec<Constraint>,
 }
@@ -632,7 +657,7 @@ struct Constraints {
 impl Constraints {
   fn new() -> Self {
     Constraints {
-      symbols: vec![], node_symbols: HashMap::new(), constraints: vec![]
+      symbols: HashMap::new(), node_symbols: HashMap::new(), constraints: vec![]
     }
   }
 }
@@ -682,17 +707,17 @@ impl <'l> GatherConstraints<'l> {
     self.log_error(r)
   }
 
-  fn type_symbol(&mut self) -> TypeSymbol {
+  fn type_symbol(&mut self, loc : TextLocation) -> TypeSymbol {
     let ts = TypeSymbol(self.gen.next().into());
-    self.c.symbols.push(ts);
+    self.c.symbols.insert(ts, loc);
     ts
   }
 
-  fn node_id_to_symbol(&mut self, n : NodeId) -> TypeSymbol {
-    if let Some(ts) = self.c.node_symbols.get(&n) { *ts }
+  fn node_to_symbol(&mut self, n : &Node) -> TypeSymbol {
+    if let Some(ts) = self.c.node_symbols.get(&n.id) { *ts }
     else {
-      let ts = self.type_symbol();
-      self.c.node_symbols.insert(n, ts);
+      let ts = self.type_symbol(n.loc);
+      self.c.node_symbols.insert(n.id, ts);
       ts
     }
   }
@@ -718,10 +743,10 @@ impl <'l> GatherConstraints<'l> {
     }
   }
 
-  fn add_var_to_scope(&mut self, name : RefStr) -> TypeSymbol {
-    let ts = self.type_symbol();
+  fn add_var_to_scope(&mut self, name : &Symbol) -> TypeSymbol {
+    let ts = self.type_symbol(name.loc);
     let scope = self.var_scope.last_mut().unwrap();
-    scope.push((name.clone(), ts));
+    scope.push((name.name.clone(), ts));
     ts
   }
 
@@ -733,7 +758,8 @@ impl <'l> GatherConstraints<'l> {
   }
 
   fn process_node(&mut self, n : &Nodes, id : NodeId)-> TypeSymbol {
-    let ts = self.node_id_to_symbol(id);
+    let node = n.get(id);
+    let ts = self.node_to_symbol(node);
     match &n.get(id).content {
       Literal(val) => {
         let t = literal_to_type(self.core.string, val);
@@ -741,19 +767,19 @@ impl <'l> GatherConstraints<'l> {
       }
       VariableInitialise{ name, type_tag, value } => {
         self.assert(ts, Type::Void);
-        let var_type_symbol = self.add_var_to_scope(name.clone());
+        let var_type_symbol = self.add_var_to_scope(&name);
         self.tagged_symbol(var_type_symbol, type_tag);
         let vid = self.process_node(n, *value);
         self.equalivalent(var_type_symbol, vid);
       }
       GlobalInitialise{ name, type_tag, value } => {
         self.assert(ts, Type::Void);
-        let var_type_symbol = self.type_symbol();
+        let var_type_symbol = self.type_symbol(name.loc);
         self.tagged_symbol(var_type_symbol, type_tag);
         let vid = self.process_node(n, *value);
         self.equalivalent(var_type_symbol, vid);
         let a = (); // TODO: check duplicates
-        self.constraint(Constraint::GlobalDef(name.clone(), var_type_symbol));
+        self.constraint(Constraint::GlobalDef(name.name.clone(), var_type_symbol));
       }
       Assignment{ assignee , value } => {
         self.assert(ts, Type::Void);
@@ -781,8 +807,7 @@ impl <'l> GatherConstraints<'l> {
         let len = ns.len();
         if len > 0 {
           for child in &ns[0..(len-1)] {
-            let c = self.process_node(n, *child);
-            self.assert(c, Type::Void);
+            self.process_node(n, *child);
           }
           let c = self.process_node(n, ns[len-1]);
           self.equalivalent(ts, c);
@@ -808,15 +833,13 @@ impl <'l> GatherConstraints<'l> {
       Content::FunctionDefinition{ name, args, return_tag, body } => {
         self.assert(ts, Type::Void);
         let mut ts_args : Vec<(RefStr, TypeSymbol)> = vec![];
-        for (arg_name, type_tag) in args.iter() {
-          let arg_type_symbol = self.add_var_to_scope(arg_name.clone());
+        for (arg, type_tag) in args.iter() {
+          let arg_type_symbol = self.add_var_to_scope(arg);
           self.tagged_symbol(arg_type_symbol, type_tag);
-          ts_args.push((arg_name.clone(), arg_type_symbol));
+          ts_args.push((arg.name.clone(), arg_type_symbol));
         }
-        let return_type = self.type_symbol();
+        let return_type = self.process_node(n, *body);
         self.tagged_symbol(return_type, return_tag);
-        let body_ts = self.process_node(n, *body);
-        self.equalivalent(return_type, body_ts);
         let a = (); // TODO: check duplicates
         let f = Constraint::FunctionDef { name: name.clone(), args: ts_args, return_type, };
         self.constraint(f);
@@ -826,7 +849,7 @@ impl <'l> GatherConstraints<'l> {
       }
       CBind { name, type_tag } => {
         self.assert(ts, Type::Void);
-        let cbind_ts = self.type_symbol();
+        let cbind_ts = self.type_symbol(node.loc);
         if let Some(t) = self.expr_to_type(type_tag) {
           self.assert(cbind_ts, t);
         }
@@ -836,10 +859,10 @@ impl <'l> GatherConstraints<'l> {
       Content::TypeDefinition{ name, kind, fields } => {
         self.assert(ts, Type::Void);
         let mut ts_fields : Vec<(RefStr, TypeSymbol)> = vec![];
-        for (field_name, type_tag) in fields.iter() {
-          let field_type_symbol = self.type_symbol();
+        for (field, type_tag) in fields.iter() {
+          let field_type_symbol = self.type_symbol(field.loc);
           self.tagged_symbol(field_type_symbol, type_tag);
-          ts_fields.push((field_name.clone(), field_type_symbol));
+          ts_fields.push((field.name.clone(), field_type_symbol));
         }
         let a = (); // TODO: check duplicates
         let td = Constraint::TypeDef { name: name.clone(), kind: *kind, fields: ts_fields };
@@ -847,9 +870,10 @@ impl <'l> GatherConstraints<'l> {
       }
       TypeConstructor{ name, field_values } => {
         let mut fields : Vec<(Option<RefStr>, TypeSymbol)> = vec![];
-        for (field_name, value) in field_values.iter() {
+        for (field, value) in field_values.iter() {
           let field_type_symbol = self.process_node(n, *value);
-          fields.push((field_name.clone(), field_type_symbol));
+          let name = field.as_ref().map(|f| f.name.clone());
+          fields.push((name, field_type_symbol));
         }
         let tc = Constraint::Constructor{ type_name: name.clone(), fields, result: ts };
         self.constraint(tc);
@@ -867,7 +891,7 @@ impl <'l> GatherConstraints<'l> {
         // I suppose through the definition of a generic index type, which needs to exist
         // somewhere...
         let a = ();
-        let index_tc = self.type_symbol();
+        let index_tc = self.type_symbol(node.loc);
         let index_reference = Constraint::GlobalReference {
           name : self.cache.get("Index"),
           result: index_tc,
@@ -884,7 +908,7 @@ impl <'l> GatherConstraints<'l> {
         self.constraint(fc);
       }
       ArrayLiteral(ns) => {
-        let element_ts = self.type_symbol();
+        let element_ts = self.type_symbol(node.loc);
         for element in ns.iter() {
           let el = self.process_node(n, *element);
           self.equalivalent(el, element_ts);
@@ -910,7 +934,7 @@ impl <'l> GatherConstraints<'l> {
         let v = self.process_node(n, *from_value);
         if let Some(t) = self.expr_to_type(into_type) {
           self.assert(ts, t);
-          let convert_ts = self.type_symbol();
+          let convert_ts = self.type_symbol(node.loc);
           let convert_reference = Constraint::GlobalReference {
             name : self.cache.get("Convert"),
             result: convert_ts,
