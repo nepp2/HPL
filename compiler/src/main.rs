@@ -13,8 +13,8 @@ pub mod parser;
 pub mod expr;
 pub mod watcher;
 pub mod structure;
-pub mod typecheck2;
 pub mod typecheck;
+pub mod inference;
 pub mod codegen;
 pub mod jit;
 pub mod repl;
@@ -64,7 +64,7 @@ fn test_inference(path : &str) {
     .map_err(|mut es| es.remove(0)).unwrap();
   let expr = parser::parse(tokens, &cache).expect("parse errors");
   let nodes = structure::to_nodes(&mut gen, &cache, &expr).expect("node errors");
-  typecheck2::infer_types(&mut gen, &cache, &code, &nodes).expect("type errors");
+  inference::infer_types(&mut gen, &cache, &code, &nodes).expect("type errors");
 }
 
 fn main(){

@@ -22,17 +22,19 @@ pub enum Val {
 pub static TOP_LEVEL_FUNCTION_NAME : &'static str = "top_level";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct LabelId {
-  id : u64
-}
+pub struct LabelId(u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SymbolId(u64);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TypeKind {
   Struct, Union
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Symbol {
+  pub id : SymbolId,
   pub name : RefStr,
   pub loc : TextLocation,
 }
@@ -40,18 +42,18 @@ pub struct Symbol {
 #[derive(Debug)]
 pub enum Content {
   Literal(Val),
-  VariableInitialise{ name: Symbol, type_tag: Option<Box<Expr>>, value: NodeId },
-  GlobalInitialise{ name: Symbol, type_tag: Option<Box<Expr>>, value: NodeId },
+  LocalInitialise{ name: SymbolId, type_tag: Option<Box<Expr>>, value: NodeId },
+  GlobalInitialise{ name: SymbolId, type_tag: Option<Box<Expr>>, value: NodeId },
   Assignment{ assignee: NodeId , value: NodeId },
   IfThen{ condition: NodeId, then_branch: NodeId },
   IfThenElse{ condition: NodeId, then_branch: NodeId, else_branch: NodeId },
   Block(Vec<NodeId>),
   Quote(Box<Expr>),
-  Reference(RefStr),
-  FunctionDefinition{ name: RefStr, args: Vec<(Symbol, Option<Box<Expr>>)>, return_tag: Option<Box<Expr>>, body: NodeId },
+  Reference { name: RefStr, refers_to: Option<SymbolId> },
+  FunctionDefinition{ name: RefStr, args: Vec<(SymbolId, Option<Box<Expr>>)>, return_tag: Option<Box<Expr>>, body: NodeId },
   CBind { name: RefStr, type_tag : Box<Expr> },
-  TypeDefinition{ name: RefStr, kind : TypeKind, fields: Vec<(Symbol, Option<Box<Expr>>)> },
-  TypeConstructor{ name: RefStr, field_values: Vec<(Option<Symbol>, NodeId)> },
+  TypeDefinition{ name: RefStr, kind : TypeKind, fields: Vec<(SymbolId, Option<Box<Expr>>)> },
+  TypeConstructor{ name: RefStr, field_values: Vec<(Option<SymbolId>, NodeId)> },
   FieldAccess{ container: NodeId, field: RefStr },
   Index{ container: NodeId, index: NodeId },
   ArrayLiteral(Vec<NodeId>),
@@ -78,20 +80,12 @@ pub struct Node {
   pub loc : TextLocation,
 }
 
-pub struct GlobalDefinition {
-  pub name : RefStr,
-  pub c_address : Option<usize>,
-}
-
-struct SymbolReference {
-  symbol_name : RefStr,
-  reference_location : TextLocation,
-}
-
 pub struct NodeConverter<'l> {
   uid_generator : &'l mut UIDGenerator,
 
   nodes : HashMap<NodeId, Node>,
+
+  symbols : HashMap<SymbolId, Symbol>,
 
   cache: &'l StringCache,
 }
@@ -99,18 +93,23 @@ pub struct NodeConverter<'l> {
 pub struct FunctionConverter<'l, 'lt> {
   t : &'l mut NodeConverter<'lt>,
   is_top_level : bool,
-  block_depth : i32,
   labels_in_scope : Vec<LabelId>,
+  block_scope : Vec<Vec<Symbol>>,
 }
 
 pub struct Nodes {
   pub nodes : HashMap<NodeId, Node>,
+  pub symbols : HashMap<SymbolId, Symbol>,
   pub root : NodeId,
 }
 
 impl Nodes {
-  pub fn get(&self, id : NodeId) -> &Node {
+  pub fn node(&self, id : NodeId) -> &Node {
     self.nodes.get(&id).unwrap()
+  }
+
+  pub fn symbol(&self, id : SymbolId) -> &Symbol {
+    self.symbols.get(&id).unwrap()
   }
 
   pub fn node_ref(&self, id : NodeId) -> NodeRef {
@@ -146,11 +145,12 @@ pub fn to_nodes(
   let mut nc = NodeConverter {
     uid_generator,
     nodes: HashMap::new(),
+    symbols: HashMap::new(),
     cache,
   };
   let mut fc = FunctionConverter::new(&mut nc, true);
   let root = fc.to_node(expr)?;
-  Ok(Nodes{ root, nodes: nc.nodes })
+  Ok(Nodes{ root, nodes: nc.nodes, symbols: nc.symbols })
 }
 
 impl <'l> NodeConverter<'l> {
@@ -165,23 +165,41 @@ impl <'l> NodeConverter<'l> {
 impl <'l, 'lt> FunctionConverter<'l, 'lt> {
 
   pub fn new(t : &'l mut NodeConverter<'lt>, is_top_level : bool) -> FunctionConverter<'l, 'lt> {
-    FunctionConverter { t, is_top_level, block_depth: 0, labels_in_scope : vec![] }
+    FunctionConverter { t, is_top_level, labels_in_scope : vec![], block_scope: vec![] }
   }
 
-  fn symbol(&self, e : &Expr) -> Result<Symbol, Error> {
-    let name = self.cached(e.unwrap_symbol()?);
-    Ok(Symbol { name, loc: e.loc })
+  fn add_var_to_scope(&mut self, var : &Symbol) {
+    let scope = self.block_scope.last_mut().unwrap();
+    scope.push(var.clone());
   }
 
-  fn typed_symbol(&mut self, e : &Expr) -> Result<(Symbol, Option<Box<Expr>>), Error> {
+  fn find_var(&mut self, name : &str) -> Option<&Symbol> {
+    for var in self.block_scope.iter().flat_map(|i| i.iter()).rev() {
+      if name == var.name.as_ref() { return Some(var) }
+    }
+    None
+  }
+
+  fn symbol(&mut self, name : &str, loc : TextLocation) -> SymbolId {
+    let name = self.cached(name);
+    let id = SymbolId(self.t.uid_generator.next());
+    self.t.symbols.insert(id, Symbol { id, name, loc });
+    id
+  }
+
+  fn expr_to_symbol(&mut self, e : &Expr) -> Result<SymbolId, Error> {
+    let name = e.unwrap_symbol()?;
+    Ok(self.symbol(name, e.loc))
+  }
+
+  fn typed_symbol(&mut self, e : &Expr) -> Result<(SymbolId, Option<Box<Expr>>), Error> {
     if let Some((":", [s, t])) = e.try_construct() {
-      let name = self.symbol(s)?;
+      let symbol = self.expr_to_symbol(s)?;
       let type_tag = t.clone().into();
-      Ok((name, Some(type_tag)))
+      Ok((symbol, Some(type_tag)))
     }
     else {
-      let name = self.symbol(e)?;
-      Ok((name, None))
+      Ok((self.expr_to_symbol(e)?, None))
     }
   }
 
@@ -243,14 +261,14 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     let field_values =
       field_exprs.iter().map(|e| {
         if let Some((":", [name, value])) = e.try_construct() {
-          let name = self.symbol(name)?;
+          let name = self.expr_to_symbol(name)?;
           Ok((Some(name), self.to_node(value)?))
         }
         else {
           Ok((None, self.to_node(e)?))
         }
       })
-      .collect::<Result<Vec<(Option<Symbol>, NodeId)>, Error>>()?;
+      .collect::<Result<Vec<(Option<SymbolId>, NodeId)>, Error>>()?;
     let c = TypeConstructor{ name, field_values };
     Ok(self.node(expr, c))
   }
@@ -284,13 +302,13 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       }
       ("let", [e]) => {
         if let Some(("=", [name_expr, value_expr])) = e.try_construct() {
-          let name = self.symbol(name_expr)?;
+          let name = self.expr_to_symbol(name_expr)?;
           let value = self.to_node(value_expr)?;
-          let c = if self.is_top_level && self.block_depth == 1 {
+          let c = if self.is_top_level && self.block_scope.len() == 1 {
             GlobalInitialise{ name, type_tag : None, value }
           }
           else {
-            VariableInitialise{ name, type_tag: None, value }
+            LocalInitialise{ name, type_tag: None, value }
           };
           return Ok(self.node(expr, c));
         }
@@ -315,7 +333,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         Ok(self.node(expr, c))
       }
       ("while", [condition_expr, body_expr]) => {
-        let label = LabelId { id: self.t.uid_generator.next() };
+        let label = LabelId(self.t.uid_generator.next());
         // Add label to scope in case the loop breaks
         self.labels_in_scope.push(label);
         let condition = self.to_node(condition_expr)?;
@@ -342,9 +360,9 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         }
       }
       ("block", exprs) => {
-        self.block_depth += 1;
+        self.block_scope.push(vec![]);
         let nodes = exprs.iter().map(|e| self.to_node(e)).collect::<Result<Vec<NodeId>, Error>>()?;
-        self.block_depth -= 1;
+        self.block_scope.pop();
         Ok(self.node(expr, Block(nodes)))
       }
       ("cbind", [e]) => {
@@ -419,13 +437,18 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       }
       ExprContent::Symbol(s) => {
         // this is just a normal symbol
-        let s = self.cached(s.as_str());
-        if s.as_ref() == "break" {
+        let s = s.as_str();
+        if s == "break" {
           let label = *self.labels_in_scope.last().unwrap();
           let c = BreakToLabel{ label , return_value: None };
           return Ok(self.node(expr, c));
         }
-        return Ok(self.node(expr, Reference(s)));
+        let name = self.cached(s);
+        if let Some(var) = self.find_var(&s) {
+          let id = var.id;
+          return Ok(self.node(expr, Reference{ name, refers_to: Some(id) }));
+        }
+        return Ok(self.node(expr, Reference{ name, refers_to: None}));
       }
       ExprContent::LiteralString(s) => {
         let v = Val::String(s.as_str().to_string());
@@ -454,7 +477,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     if self.labels_in_scope.len() != 0 {
       panic!("labels_in_scope in invalid state");
     }
-    let label = LabelId{ id: self.t.uid_generator.next() };
+    let label = LabelId(self.t.uid_generator.next());
     self.labels_in_scope.push(label);
     let body = self.to_node(expr)?;
     self.labels_in_scope.pop();
@@ -477,8 +500,8 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
   }
 
   fn let_var(&mut self, expr : &Expr, name : RefStr, val : NodeId) -> NodeId {
-    let name = Symbol { name, loc: expr.loc };
-    self.node(expr, VariableInitialise{ name, type_tag: None, value: val })
+    let name = self.symbol(&name, expr.loc);
+    self.node(expr, LocalInitialise{ name, type_tag: None, value: val })
   }
 
   fn field_access(&mut self, expr : &Expr, container : NodeId, field : RefStr) -> NodeId {
@@ -499,7 +522,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
   }
 
   fn function_call(&mut self, expr : &Expr, function : RefStr, args : Vec<NodeId>) -> NodeId {
-    let function = self.node(expr, Reference(function));
+    let function = self.node(expr, Reference{ name: function, refers_to: None });
     let function_call = FunctionCall{ function, args };
     self.node(expr, function_call)
   }
