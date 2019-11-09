@@ -7,26 +7,27 @@ use std::hash::Hash;
 
 use crate::error::{Error, error, error_raw, TextLocation};
 use crate::expr::{StringCache, RefStr, Expr, ExprContent, UIDGenerator};
-use crate::structure::{Node, NodeId, Nodes, Symbol, SymbolId, Content, Val, LabelId, TypeKind};
+use crate::structure::{
+  Node, NodeId, Nodes, Symbol, SymbolId, Content, Val, LabelId, TypeKind, FunctionNode
+};
 
 use std::collections::{HashMap, HashSet};
 use bimap::BiMap;
 
-pub fn infer_types(gen : &mut UIDGenerator, cache : &StringCache, code : &str, nodes : &Nodes) -> Result<Types, Vec<Error>> {
+pub fn infer_types(gen : &mut UIDGenerator, cache : &StringCache, code : &str, nodes : &Nodes) -> Result<TypedModule, Vec<Error>> {
   let mut c = Constraints::new();
   let mut module = TypedModule::new(gen.next());
-  let mut types = Types::new();
   let mut errors = vec![];
-  let core = CoreTypes::new(&mut types, gen, cache);
-  let mut gather = GatherConstraints::new(&core, &mut types, gen, cache, &mut c, &mut errors);
+  let core = CoreTypes::new(&mut module.types, gen, cache);
+  let mut gather = GatherConstraints::new(&core, &mut module.types, gen, cache, &mut c, &mut errors);
   gather.process_node(nodes, nodes.root);
-  let mut i = Inference::new(code, nodes, &mut module, &mut types, &c, gen, cache, &mut errors);
+  let mut i = Inference::new(code, nodes, &mut module, &c, gen, cache, &mut errors);
   i.infer();
   if errors.len() > 0 {
     Err(errors)
   }
   else {
-    Ok(types)
+    Ok(module)
   }
 }
 
@@ -352,14 +353,25 @@ pub struct TypedModule {
   pub type_defs : HashMap<RefStr, TypeDefinition>,
   pub functions : Vec<FunctionDefinition>,
   pub globals : HashMap<RefStr, GlobalDefinition>,
+  pub types : Types,
 }
 
 impl TypedModule {
   pub fn new(id : u64) -> TypedModule {
     TypedModule{
       id, type_defs: HashMap::new(),
-      functions: vec![], globals: HashMap::new(),
+      functions: vec![],
+      globals: HashMap::new(),
+      types: Types::new(),
     }
+  }
+
+  pub fn find_function(&self, name : &str, args : &[TypeId]) -> Option<&FunctionDefinition> {
+    self.functions.iter().find(|def| {
+      let sig = self.types.signature(def.signature);
+      def.name_in_code.as_ref() == name &&
+        sig.args.as_slice() == args
+    })
   }
 }
 
@@ -416,7 +428,6 @@ struct Inference<'l> {
   code : &'l str,
   nodes : &'l Nodes,
   module : &'l mut TypedModule,
-  types : &'l mut Types,
   c : &'l Constraints,
   gen : &'l mut UIDGenerator,
   cache : &'l StringCache,
@@ -431,7 +442,6 @@ impl <'l> Inference<'l> {
     code : &'l str,
     nodes : &'l Nodes,
     module : &'l mut TypedModule,
-    types : &'l mut Types,
     c : &'l Constraints,
     gen : &'l mut UIDGenerator,
     cache : &'l StringCache,
@@ -439,33 +449,41 @@ impl <'l> Inference<'l> {
       -> Self
   {
     Inference {
-      code, nodes, module, types, c, gen, cache, errors,
+      code, nodes, module, c, gen, cache, errors,
       resolved: HashMap::new(),
     }
   }
 
   fn ts_code_slice(&self, c : &Constraints, ts : TypeSymbol) -> &str {
     let loc = c.symbols.get(&ts).unwrap();
-    let line = self.code.lines().nth(loc.start.line - 1).unwrap();
-    if loc.start.line == loc.end.line {
-      &line[loc.start.col..loc.end.col]
-    }
-    else {
-      &line[loc.start.col..]
-    }
+    let (start_line, end_line) = (loc.start.line - 1, loc.end.line - 1);
+    let mut it =
+      // Chain the zero offset for the first line
+      [0].iter().cloned().chain(
+        // find the newline positions
+        self.code.char_indices().filter(|&(_, c)| c == '\n')
+        // offset past the \n char
+        .map(|(b, _)| b + 1)
+      )
+      // get the start offsets of the lines we care about
+      .enumerate().filter(|&(i, _)| i == start_line || i == end_line)
+      .map(|(_, b)| b);
+    let l1_start = it.next().unwrap();
+    let l2_start = it.next().unwrap_or(l1_start);
+    &self.code[l1_start + loc.start.col.. l2_start + loc.end.col]
   }
   
   fn set_type_id(&mut self, ts : TypeSymbol, t : TypeId) {
     let a = (); // TODO: unify!
     let code = self.ts_code_slice(&self.c, ts);
     if !self.resolved.contains_key(&ts) {
-      println!("     Inferred type {} for '{}'", self.types.display(t), code);
+      println!("     Inferred type {} for '{}'", self.module.types.display(t), code);
       self.resolved.insert(ts, t);
     }
   }
 
   fn set_type(&mut self, ts : TypeSymbol, t : Type) {
-    let t = self.types.type_id(self.gen, t);
+    let t = self.module.types.type_id(self.gen, t);
     self.set_type_id(ts, t);
   }
 
@@ -490,6 +508,16 @@ impl <'l> Inference<'l> {
       }
       Constraint::FunctionDef{ name, return_type, args, body, loc } => {
         println!("Function def... ");
+        println!("   Args: ");
+        for (_, ts) in args.iter() {
+          let code = self.ts_code_slice(&self.c, *ts);
+          if let Some(t) = self.resolved.get(ts) {
+            println!("      {}, {}", code, self.module.types.display(*t));
+          }
+          else {
+            println!("      {}, unresolved, ", code);
+          }
+        }
         let resolved_args_count = args.iter().flat_map(|(_, ts)| self.resolved.get(ts)).count();
         let return_type = self.resolved.get(return_type);
         if resolved_args_count == args.len() && return_type.is_some() {
@@ -499,34 +527,48 @@ impl <'l> Inference<'l> {
             arg_names.push(self.nodes.symbol(*arg).name.clone());
             arg_types.push(*self.resolved.get(arg_ts).unwrap());
           }
+          if self.module.find_function(&name, arg_types.as_slice()).is_some() {
+            let e = error_raw(loc, "function with that name and signature already defined");
+            self.errors.push(e);
+            return;
+          }
           let signature = FunctionSignature {
             return_type: *return_type.unwrap(),
             args: arg_types,
           };
-          // TODO:
-          // if self.t.find_function(&name, arg_types.as_slice()).is_some() {
-          //   return error(expr, "function with that name already defined");
-          // }
           let f = FunctionDefinition {
             module_id: self.module.id,
             name_in_code: name.clone(),
             name_for_codegen: format!("{}.{}", name, self.gen.next()).into(),
             args: arg_names,
-            signature: self.types.signature_id(self.gen, signature),
+            signature: self.module.types.signature_id(self.gen, signature),
             implementation: FunctionImplementation::Normal(*body),
             definition_location: *loc,
           };
           self.module.functions.push(f);
           println!("Function {} inferred.", name);
         }
+        println!();
       }
       Constraint::FunctionCall{ function, args, result } => {
-        let resolved_args_count : Vec<TypeId> =
+        let arg_types : Vec<TypeId> =
           args.iter().flat_map(|(_, ts)| self.resolved.get(ts).cloned()).collect();
+        match function {
+          Function::Name(sym) => {
+            let sym = self.nodes.symbol(*sym);
+            if let Some(def) = self.module.find_function(&sym.name, arg_types.as_slice()) {
+              let return_type = self.module.types.signature(def.signature).return_type;
+              self.set_type_id(*result, return_type);
+            }
+          }
+          Function::Value(ts) => {
+            panic!();
+          }
+        }
       }
       Constraint::Array{ array, element } => {
         if let Some(array_type) = self.get(*array) {
-          if let Type::Array(element_type) = self.types.get(array_type) {
+          if let Type::Array(element_type) = self.module.types.get(array_type) {
             self.set_type_id(*element, element_type);
           }
         }
@@ -553,7 +595,11 @@ impl <'l> Inference<'l> {
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct TypeSymbol(u64);
 
-#[derive(Debug)]
+pub enum Function {
+  Value(TypeSymbol),
+  Name(SymbolId),
+}
+
 pub enum Constraint {
   Assert(TypeSymbol, TypeId),
   Equalivalent(TypeSymbol, TypeSymbol),
@@ -577,7 +623,7 @@ pub enum Constraint {
     loc : TextLocation,
   },
   FunctionCall {
-    function : TypeSymbol,
+    function : Function,
     args : Vec<(Option<SymbolId>, TypeSymbol)>,
     result : TypeSymbol,
   },
@@ -852,7 +898,7 @@ impl <'l> GatherConstraints<'l> {
           result: index_tc,
         };
         let fc = Constraint::FunctionCall {
-          function: index_tc,
+          function: Function::Value(index_tc),
           args: vec![
             (None, self.process_node(n, *container)),
             (None, self.process_node(n, *index)),
@@ -871,8 +917,15 @@ impl <'l> GatherConstraints<'l> {
         self.constraint(Constraint::Array{ array: ts, element: element_ts });
       }
       FunctionCall{ function, args } => {
+        let function = match function {
+          FunctionNode::Name(name) => Function::Name(*name),
+          FunctionNode::Value(val) => {
+            let val = self.process_node(n, *val);
+            Function::Value(val)
+          }
+        };
         let fc = Constraint::FunctionCall {
-          function: self.process_node(n, *function),
+          function,
           args: args.iter().map(|id| (None, self.process_node(n, *id))).collect(),
           result: ts,
         };
@@ -895,7 +948,7 @@ impl <'l> GatherConstraints<'l> {
             result: convert_ts,
           };
           let fc = Constraint::FunctionCall {
-            function: convert_ts,
+            function: Function::Value(convert_ts),
             args: vec![(None, v)],
             result: ts,
           };

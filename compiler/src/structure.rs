@@ -40,6 +40,12 @@ pub struct Symbol {
 }
 
 #[derive(Debug)]
+pub enum FunctionNode {
+  Value(NodeId),
+  Name(SymbolId),
+}
+
+#[derive(Debug)]
 pub enum Content {
   Literal(Val),
   LocalInitialise{ name: SymbolId, type_tag: Option<Box<Expr>>, value: NodeId },
@@ -57,7 +63,7 @@ pub enum Content {
   FieldAccess{ container: NodeId, field: RefStr },
   Index{ container: NodeId, index: NodeId },
   ArrayLiteral(Vec<NodeId>),
-  FunctionCall{ function: NodeId, args: Vec<NodeId> },
+  FunctionCall{ function: FunctionNode, args: Vec<NodeId> },
   While{ condition: NodeId, body: NodeId },
   Convert{ from_value: NodeId, into_type: Box<Expr> },
   SizeOf{ type_tag: Box<Expr> },
@@ -180,7 +186,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     scope.push(self.t.symbols.get(&var).unwrap().clone());
   }
 
-  fn find_var(&mut self, name : &str) -> Option<&Symbol> {
+  fn find_var(&self, name : &str) -> Option<&Symbol> {
     for var in self.block_scope.iter().flat_map(|i| i.iter()).rev() {
       if name == var.name.as_ref() { return Some(var) }
     }
@@ -291,7 +297,19 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         let args =
           exprs[1..].iter().map(|e| self.to_node(e))
           .collect::<Result<Vec<NodeId>, Error>>()?;
-        let function = self.to_node(function_expr)?;
+        let function = if let Some(name) = function_expr.try_symbol() {
+          if let Some(var) = self.find_var(name) {
+            let name = self.cached(name);
+            let id = var.id;
+            FunctionNode::Value(self.node(function_expr, Reference{ name, refers_to: Some(id) }))
+          }
+          else {
+            FunctionNode::Name(self.expr_to_symbol(function_expr)?)
+          }
+        }
+        else {
+          FunctionNode::Value(self.to_node(function_expr)?)
+        };
         let content = FunctionCall{ function, args };
         return Ok(self.node(expr, content));
       }
@@ -530,7 +548,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
   }
 
   fn function_call(&mut self, expr : &Expr, function : RefStr, args : Vec<NodeId>) -> NodeId {
-    let function = self.node(expr, Reference{ name: function, refers_to: None });
+    let function = FunctionNode::Value(self.node(expr, Reference{ name: function, refers_to: None }));
     let function_call = FunctionCall{ function, args };
     self.node(expr, function_call)
   }
