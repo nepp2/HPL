@@ -1,7 +1,7 @@
 
 fun hello(a) {
-  let c = a
-  c + 1
+  a = 2
+  a
 }
 
 let b = 1

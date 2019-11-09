@@ -148,7 +148,7 @@ pub fn to_nodes(
     symbols: HashMap::new(),
     cache,
   };
-  let mut fc = FunctionConverter::new(&mut nc, true);
+  let mut fc = FunctionConverter::new(&mut nc, true, vec![]);
   let root = fc.to_node(expr)?;
   Ok(Nodes{ root, nodes: nc.nodes, symbols: nc.symbols })
 }
@@ -160,17 +160,24 @@ impl <'l> NodeConverter<'l> {
     self.nodes.insert(id, n);
     id
   }
+
+  fn symbol(&mut self, name : &str, loc : TextLocation) -> SymbolId {
+    let name = self.cache.get(name);
+    let id = SymbolId(self.uid_generator.next());
+    self.symbols.insert(id, Symbol { id, name, loc });
+    id
+  }
 }
 
 impl <'l, 'lt> FunctionConverter<'l, 'lt> {
 
-  pub fn new(t : &'l mut NodeConverter<'lt>, is_top_level : bool) -> FunctionConverter<'l, 'lt> {
-    FunctionConverter { t, is_top_level, labels_in_scope : vec![], block_scope: vec![] }
+  pub fn new(t : &'l mut NodeConverter<'lt>, is_top_level : bool, args : Vec<Symbol>) -> FunctionConverter<'l, 'lt> {
+    FunctionConverter { t, is_top_level, labels_in_scope : vec![], block_scope: vec![args] }
   }
 
-  fn add_var_to_scope(&mut self, var : &Symbol) {
+  fn add_var_to_scope(&mut self, var : SymbolId) {
     let scope = self.block_scope.last_mut().unwrap();
-    scope.push(var.clone());
+    scope.push(self.t.symbols.get(&var).unwrap().clone());
   }
 
   fn find_var(&mut self, name : &str) -> Option<&Symbol> {
@@ -180,16 +187,9 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     None
   }
 
-  fn symbol(&mut self, name : &str, loc : TextLocation) -> SymbolId {
-    let name = self.cached(name);
-    let id = SymbolId(self.t.uid_generator.next());
-    self.t.symbols.insert(id, Symbol { id, name, loc });
-    id
-  }
-
   fn expr_to_symbol(&mut self, e : &Expr) -> Result<SymbolId, Error> {
     let name = e.unwrap_symbol()?;
-    Ok(self.symbol(name, e.loc))
+    Ok(self.t.symbol(name, e.loc))
   }
 
   fn typed_symbol(&mut self, e : &Expr) -> Result<(SymbolId, Option<Box<Expr>>), Error> {
@@ -303,8 +303,9 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       ("let", [e]) => {
         if let Some(("=", [name_expr, value_expr])) = e.try_construct() {
           let name = self.expr_to_symbol(name_expr)?;
+          self.add_var_to_scope(name);
           let value = self.to_node(value_expr)?;
-          let c = if self.is_top_level && self.block_scope.len() == 1 {
+          let c = if self.is_top_level && self.block_scope.len() == 2 {
             GlobalInitialise{ name, type_tag : None, value }
           }
           else {
@@ -316,6 +317,11 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       }
       ("#", [quoted_expr]) => {
         self.quote_to_node(expr, quoted_expr)
+      }
+      ("=", [assign_expr, value_expr]) => {
+        let a = self.to_node(assign_expr)?;
+        let b = self.to_node(value_expr)?;
+        Ok(self.node(expr, Assignment{ assignee: a, value: b }))
       }
       ("return", exprs) => {
         if exprs.len() > 1 {
@@ -380,7 +386,9 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
             args_expr.children().iter()
             .map(|e| self.typed_symbol(e))
             .collect::<Result<Vec<_>, Error>>()?;
-          let mut function_checker = FunctionConverter::new(self.t, false);
+          let arg_symbols =
+            args.iter().map(|(s, _)| self.t.symbols.get(s).unwrap().clone()).collect();
+          let mut function_checker = FunctionConverter::new(self.t, false, arg_symbols);
           let body = function_checker.to_function_body(function_body)?;
           return Ok(self.node(expr, FunctionDefinition{name, args, return_tag: None, body}));
         }
@@ -500,7 +508,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
   }
 
   fn let_var(&mut self, expr : &Expr, name : RefStr, val : NodeId) -> NodeId {
-    let name = self.symbol(&name, expr.loc);
+    let name = self.t.symbol(&name, expr.loc);
     self.node(expr, LocalInitialise{ name, type_tag: None, value: val })
   }
 

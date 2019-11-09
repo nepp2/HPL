@@ -608,13 +608,17 @@ impl CoreTypes {
 struct Constraints {
   symbols : HashMap<TypeSymbol, TextLocation>,
   node_symbols : HashMap<NodeId, TypeSymbol>,
+  variable_symbols : HashMap<SymbolId, TypeSymbol>,
   constraints : Vec<Constraint>,
 }
 
 impl Constraints {
   fn new() -> Self {
     Constraints {
-      symbols: HashMap::new(), node_symbols: HashMap::new(), constraints: vec![]
+      symbols: HashMap::new(),
+      node_symbols: HashMap::new(),
+      variable_symbols: HashMap::new(),
+      constraints: vec![],
     }
   }
 }
@@ -677,6 +681,15 @@ impl <'l> GatherConstraints<'l> {
     }
   }
 
+  fn variable_to_symbol(&mut self, v : &Symbol) -> TypeSymbol {
+    if let Some(ts) = self.c.variable_symbols.get(&v.id) { *ts }
+    else {
+      let ts = self.type_symbol(v.loc);
+      self.c.variable_symbols.insert(v.id, ts);
+      ts
+    }
+  }
+
   fn constraint(&mut self, c : Constraint) {
     self.c.constraints.push(c);
   }
@@ -698,10 +711,6 @@ impl <'l> GatherConstraints<'l> {
     }
   }
 
-  fn variable_type(&mut self, var_symbol : &Symbol) -> TypeSymbol {
-    self.type_symbol(var_symbol.loc)
-  }
-
   fn process_node(&mut self, n : &Nodes, id : NodeId)-> TypeSymbol {
     let node = n.node(id);
     let ts = self.node_to_symbol(node);
@@ -712,7 +721,7 @@ impl <'l> GatherConstraints<'l> {
       }
       LocalInitialise{ name, type_tag, value } => {
         self.assert(ts, Type::Void);
-        let var_type_symbol = self.variable_type(n.symbol(*name));
+        let var_type_symbol = self.variable_to_symbol(n.symbol(*name));
         self.tagged_symbol(var_type_symbol, type_tag);
         let vid = self.process_node(n, *value);
         self.equalivalent(var_type_symbol, vid);
@@ -720,7 +729,7 @@ impl <'l> GatherConstraints<'l> {
       GlobalInitialise{ name, type_tag, value } => {
         self.assert(ts, Type::Void);
         let name = n.symbol(*name);
-        let var_type_symbol = self.variable_type(name);
+        let var_type_symbol = self.variable_to_symbol(name);
         self.tagged_symbol(var_type_symbol, type_tag);
         let vid = self.process_node(n, *value);
         self.equalivalent(var_type_symbol, vid);
@@ -768,7 +777,7 @@ impl <'l> GatherConstraints<'l> {
       }
       Reference{ name, refers_to } => {
         if let Some(refers_to) = refers_to {
-          let var_type = self.variable_type(n.symbol(*refers_to));
+          let var_type = self.variable_to_symbol(n.symbol(*refers_to));
           self.equalivalent(ts, var_type);
         }
         else {
@@ -779,7 +788,7 @@ impl <'l> GatherConstraints<'l> {
         self.assert(ts, Type::Void);
         let mut ts_args : Vec<(SymbolId, TypeSymbol)> = vec![];
         for (arg, type_tag) in args.iter() {
-          let arg_type_symbol = self.variable_type(n.symbol(*arg));
+          let arg_type_symbol = self.variable_to_symbol(n.symbol(*arg));
           self.tagged_symbol(arg_type_symbol, type_tag);
           ts_args.push((*arg, arg_type_symbol));
         }
