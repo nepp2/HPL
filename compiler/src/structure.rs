@@ -60,7 +60,7 @@ pub enum Content {
   CBind { name: RefStr, type_tag : Box<Expr> },
   TypeDefinition{ name: RefStr, kind : TypeKind, fields: Vec<(SymbolId, Option<Box<Expr>>)> },
   TypeConstructor{ name: RefStr, field_values: Vec<(Option<SymbolId>, NodeId)> },
-  FieldAccess{ container: NodeId, field: RefStr },
+  FieldAccess{ container: NodeId, field: SymbolId },
   Index{ container: NodeId, index: NodeId },
   ArrayLiteral(Vec<NodeId>),
   FunctionCall{ function: FunctionNode, args: Vec<NodeId> },
@@ -430,7 +430,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       }
       (".", [container_expr, field_expr]) => {
         let container = self.to_node(container_expr)?;
-        let field = self.cached(field_expr.unwrap_symbol()?);
+        let field = self.expr_to_symbol(field_expr)?;
         let c = FieldAccess{ container, field };
         Ok(self.node(expr, c))
       }
@@ -528,10 +528,6 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
   fn let_var(&mut self, expr : &Expr, name : RefStr, val : NodeId) -> NodeId {
     let name = self.t.symbol(&name, expr.loc);
     self.node(expr, LocalInitialise{ name, type_tag: None, value: val })
-  }
-
-  fn field_access(&mut self, expr : &Expr, container : NodeId, field : RefStr) -> NodeId {
-    self.node(expr, FieldAccess{ container: container, field })
   }
 
   fn block(&mut self, expr : &Expr, args : Vec<NodeId>) -> NodeId {
