@@ -42,25 +42,25 @@ pub struct Symbol {
 #[derive(Debug)]
 pub enum FunctionNode {
   Value(NodeId),
-  Name(SymbolId),
+  Name(Symbol),
 }
 
 #[derive(Debug)]
 pub enum Content {
   Literal(Val),
-  LocalInitialise{ name: SymbolId, type_tag: Option<Box<Expr>>, value: NodeId },
-  GlobalInitialise{ name: SymbolId, type_tag: Option<Box<Expr>>, value: NodeId },
+  LocalInitialise{ name: Symbol, type_tag: Option<Box<Expr>>, value: NodeId },
+  GlobalInitialise{ name: Symbol, type_tag: Option<Box<Expr>>, value: NodeId },
   Assignment{ assignee: NodeId , value: NodeId },
   IfThen{ condition: NodeId, then_branch: NodeId },
   IfThenElse{ condition: NodeId, then_branch: NodeId, else_branch: NodeId },
   Block(Vec<NodeId>),
   Quote(Box<Expr>),
   Reference { name: RefStr, refers_to: Option<SymbolId> },
-  FunctionDefinition{ name: RefStr, args: Vec<(SymbolId, Option<Box<Expr>>)>, return_tag: Option<Box<Expr>>, body: NodeId },
+  FunctionDefinition{ name: RefStr, args: Vec<(Symbol, Option<Box<Expr>>)>, return_tag: Option<Box<Expr>>, body: NodeId },
   CBind { name: RefStr, type_tag : Box<Expr> },
-  TypeDefinition{ name: RefStr, kind : TypeKind, fields: Vec<(SymbolId, Option<Box<Expr>>)> },
-  TypeConstructor{ name: RefStr, field_values: Vec<(Option<SymbolId>, NodeId)> },
-  FieldAccess{ container: NodeId, field: SymbolId },
+  TypeDefinition{ name: RefStr, kind : TypeKind, fields: Vec<(Symbol, Option<Box<Expr>>)> },
+  TypeConstructor{ name: RefStr, field_values: Vec<(Option<Symbol>, NodeId)> },
+  FieldAccess{ container: NodeId, field: Symbol },
   Index{ container: NodeId, index: NodeId },
   ArrayLiteral(Vec<NodeId>),
   FunctionCall{ function: FunctionNode, args: Vec<NodeId> },
@@ -167,11 +167,12 @@ impl <'l> NodeConverter<'l> {
     id
   }
 
-  fn symbol(&mut self, name : &str, loc : TextLocation) -> SymbolId {
+  fn symbol(&mut self, name : &str, loc : TextLocation) -> Symbol {
     let name = self.cache.get(name);
     let id = SymbolId(self.uid_generator.next());
-    self.symbols.insert(id, Symbol { id, name, loc });
-    id
+    let s = Symbol { id, name, loc };
+    self.symbols.insert(id, s.clone());
+    s
   }
 }
 
@@ -181,9 +182,9 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     FunctionConverter { t, is_top_level, labels_in_scope : vec![], block_scope: vec![args] }
   }
 
-  fn add_var_to_scope(&mut self, var : SymbolId) {
+  fn add_var_to_scope(&mut self, var : Symbol) {
     let scope = self.block_scope.last_mut().unwrap();
-    scope.push(self.t.symbols.get(&var).unwrap().clone());
+    scope.push(var);
   }
 
   fn find_var(&self, name : &str) -> Option<&Symbol> {
@@ -193,12 +194,12 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     None
   }
 
-  fn expr_to_symbol(&mut self, e : &Expr) -> Result<SymbolId, Error> {
+  fn expr_to_symbol(&mut self, e : &Expr) -> Result<Symbol, Error> {
     let name = e.unwrap_symbol()?;
     Ok(self.t.symbol(name, e.loc))
   }
 
-  fn typed_symbol(&mut self, e : &Expr) -> Result<(SymbolId, Option<Box<Expr>>), Error> {
+  fn typed_symbol(&mut self, e : &Expr) -> Result<(Symbol, Option<Box<Expr>>), Error> {
     if let Some((":", [s, t])) = e.try_construct() {
       let symbol = self.expr_to_symbol(s)?;
       let type_tag = t.clone().into();
@@ -274,7 +275,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
           Ok((None, self.to_node(e)?))
         }
       })
-      .collect::<Result<Vec<(Option<SymbolId>, NodeId)>, Error>>()?;
+      .collect::<Result<Vec<(Option<Symbol>, NodeId)>, Error>>()?;
     let c = TypeConstructor{ name, field_values };
     Ok(self.node(expr, c))
   }
@@ -321,7 +322,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       ("let", [e]) => {
         if let Some(("=", [name_expr, value_expr])) = e.try_construct() {
           let name = self.expr_to_symbol(name_expr)?;
-          self.add_var_to_scope(name);
+          self.add_var_to_scope(name.clone());
           let value = self.to_node(value_expr)?;
           let c = if self.is_top_level && self.block_scope.len() == 2 {
             GlobalInitialise{ name, type_tag : None, value }
@@ -405,7 +406,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
             .map(|e| self.typed_symbol(e))
             .collect::<Result<Vec<_>, Error>>()?;
           let arg_symbols =
-            args.iter().map(|(s, _)| self.t.symbols.get(s).unwrap().clone()).collect();
+            args.iter().map(|(s, _)| s.clone()).collect();
           let mut function_checker = FunctionConverter::new(self.t, false, arg_symbols);
           let body = function_checker.to_function_body(function_body)?;
           return Ok(self.node(expr, FunctionDefinition{name, args, return_tag: None, body}));

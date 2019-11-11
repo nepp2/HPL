@@ -49,9 +49,7 @@ pub struct Types {
 
   signatures : BiMap<SigId, FunctionSignature>,
 
-  type_definition_ids : HashMap<RefStr, DefId>,
-
-  type_definitions : HashMap<DefId, TypeDefinition>,
+  type_definition_names : BiMap<DefId, RefStr>,
 }
 
 fn get_id<Id, V>(map : &mut BiMap<Id, V>, gen : &mut UIDGenerator, v : V) -> Id
@@ -73,8 +71,7 @@ impl Types {
     Types { 
       types: BiMap::new(),
       signatures: BiMap::new(),
-      type_definition_ids: HashMap::new(),
-      type_definitions: HashMap::new(),
+      type_definition_names: BiMap::new(),
     }
   }
 
@@ -84,7 +81,7 @@ impl Types {
 
   pub fn type_definition_id(&mut self, gen : &mut UIDGenerator, name : RefStr) -> DefId {
     let a = (); // TODO: lookup types from other modules
-    *self.type_definition_ids.entry(name).or_insert_with(||gen.next().into())
+    get_id(&mut self.type_definition_names, gen, name)
   }
 
   pub fn signature_id(&mut self, gen : &mut UIDGenerator, sig : FunctionSignature) -> SigId {
@@ -97,12 +94,12 @@ impl Types {
     get_id(&mut self.types, gen, t)
   }
 
-  pub fn type_definition(&self, id : DefId) -> Option<&TypeDefinition> {
-    self.type_definitions.get(&id)
-  }
-
   pub fn signature(&self, id : SigId) -> &FunctionSignature {
     self.signatures.get_by_left(&id).unwrap()
+  }
+
+  pub fn type_definition_name(&self, id : DefId) -> &RefStr {
+    self.type_definition_names.get_by_left(&id).unwrap()
   }
 
   pub fn display(&self, id : TypeId) -> TypeDisplay {
@@ -202,8 +199,7 @@ impl <'l> fmt::Display for TypeDisplay<'l> {
       }
       Type::Def(s) => {
         let name =
-          self.types.type_definition(s)
-          .map(|td| td.name.as_ref()).unwrap_or("@unresolved");
+          self.types.type_definition_name(s);
         write!(f, "{}", name)
       }
       Type::Array(t) => write!(f, "array({})", types.display(t)),
@@ -248,6 +244,10 @@ impl Type {
     self.signed_int() || self.unsigned_int()
   }
 
+  pub fn number(&self) -> bool {
+    self.int() || self.float()
+  }
+
   pub fn pointer(&self) -> bool {
     match self { Type::Ptr(_) | Type::Fun(_) => true, _ => false }
   }
@@ -256,7 +256,7 @@ impl Type {
 #[derive(Clone, Debug)]
 pub struct TypeDefinition {
   pub name : RefStr,
-  pub fields : Vec<(SymbolId, TypeId)>,
+  pub fields : Vec<(Symbol, TypeId)>,
   pub kind : TypeKind,
   pub drop_function : Option<FunctionReference>,
   pub clone_function : Option<FunctionReference>,
@@ -343,7 +343,7 @@ pub enum NodeValueType {
 
 pub struct GlobalDefinition {
   pub name : RefStr,
-  pub type_tag : Type,
+  pub type_tag : TypeId,
   pub c_address : Option<usize>,
 }
 
@@ -364,6 +364,14 @@ impl TypedModule {
       globals: HashMap::new(),
       types: Types::new(),
     }
+  }
+
+  pub fn find_global(&self, name : &str) -> Option<&GlobalDefinition> {
+    self.globals.get(name)
+  }
+
+  pub fn find_type_def(&self, name : &str) -> Option<&TypeDefinition> {
+    self.type_defs.get(name)
   }
 
   pub fn find_function(&self, name : &str, args : &[TypeId]) -> Option<&FunctionDefinition> {
@@ -435,7 +443,6 @@ struct Inference<'l> {
   resolved : HashMap<TypeSymbol, TypeId>,
 }
 
-
 impl <'l> Inference<'l> {
 
   fn new(
@@ -472,7 +479,7 @@ impl <'l> Inference<'l> {
     let l2_start = it.next().unwrap_or(l1_start);
     &self.code[l1_start + loc.start.col.. l2_start + loc.end.col]
   }
-  
+
   fn set_type_id(&mut self, ts : TypeSymbol, t : TypeId) {
     let a = (); // TODO: unify!
     let code = self.ts_code_slice(&self.c, ts);
@@ -491,19 +498,24 @@ impl <'l> Inference<'l> {
     self.resolved.get(&ts).cloned()
   }
 
-  fn process_constraint(&mut self, c : &Constraint) {
+  fn process_constraint(&mut self, c : &Constraint) -> bool {
     match c  {
       Constraint::Assert(ts, t) => {
         println!("Asserting type... ");
         self.set_type_id(*ts, *t);
+        return true;
       }
       Constraint::Equalivalent(a, b) => {
-        println!("Equivalence... ");
+        println!("Equivalence between '{}' and '{}' ... ",
+          self.ts_code_slice(&self.c, *a).lines().next().unwrap(),
+          self.ts_code_slice(&self.c, *b).lines().next().unwrap());
         if let Some(&t) = self.resolved.get(a) {
           self.set_type_id(*b, t);
+          return true;
         }
-        else if let Some(&t) = self.resolved.get(b) {
+        if let Some(&t) = self.resolved.get(b) {
           self.set_type_id(*a, t);
+          return true;
         }
       }
       Constraint::FunctionDef{ name, return_type, args, body, loc } => {
@@ -524,64 +536,136 @@ impl <'l> Inference<'l> {
           let mut arg_names = vec!();
           let mut arg_types = vec!();
           for (arg, arg_ts) in args.iter() {
-            arg_names.push(self.nodes.symbol(*arg).name.clone());
+            arg_names.push(arg.name.clone());
             arg_types.push(*self.resolved.get(arg_ts).unwrap());
           }
           if self.m.find_function(&name, arg_types.as_slice()).is_some() {
             let e = error_raw(loc, "function with that name and signature already defined");
             self.errors.push(e);
-            return;
           }
-          let signature = FunctionSignature {
-            return_type: *return_type.unwrap(),
-            args: arg_types,
-          };
-          let f = FunctionDefinition {
-            module_id: self.m.id,
-            name_in_code: name.clone(),
-            name_for_codegen: format!("{}.{}", name, self.gen.next()).into(),
-            args: arg_names,
-            signature: self.m.types.signature_id(self.gen, signature),
-            implementation: FunctionImplementation::Normal(*body),
-            definition_location: *loc,
-          };
-          self.m.functions.push(f);
-          println!("Function {} inferred.", name);
+          else {
+            let signature = FunctionSignature {
+              return_type: *return_type.unwrap(),
+              args: arg_types,
+            };
+            let f = FunctionDefinition {
+              module_id: self.m.id,
+              name_in_code: name.clone(),
+              name_for_codegen: format!("{}.{}", name, self.gen.next()).into(),
+              args: arg_names,
+              signature: self.m.types.signature_id(self.gen, signature),
+              implementation: FunctionImplementation::Normal(*body),
+              definition_location: *loc,
+            };
+            self.m.functions.push(f);
+            println!("Function {} inferred.", name);
+            return true;
+          }
         }
         println!();
       }
       Constraint::FunctionCall{ function, args, result } => {
-        let arg_types : Vec<TypeId> =
+        println!("Function call... ");
+        let arg_types : Vec<_> =
           args.iter().flat_map(|(_, ts)| self.resolved.get(ts).cloned()).collect();
-        match function {
-          Function::Name(sym) => {
-            let sym = self.nodes.symbol(*sym);
-            if let Some(def) = self.m.find_function(&sym.name, arg_types.as_slice()) {
-              let return_type = self.m.types.signature(def.signature).return_type;
-              self.set_type_id(*result, return_type);
+        if arg_types.len() == args.len() {
+          match function {
+            Function::Name(sym) => {
+              if let Some(def) = self.m.find_function(&sym.name, arg_types.as_slice()) {
+                // TODO: check the arg names!
+                let return_type = self.m.types.signature(def.signature).return_type;
+                self.set_type_id(*result, return_type);
+                return true;
+              }
             }
-          }
-          Function::Value(ts) => {
-            panic!();
+            Function::Value(ts) => {
+              panic!();
+            }
           }
         }
       }
+      Constraint::Constructor { type_name, fields, result } => {
+        println!("Constructor... ");
+        if let Some(def) = self.m.find_type_def(type_name) {
+          if def.fields.len() == fields.len() {
+            let it = fields.iter().zip(def.fields.iter());
+            let mut arg_types = vec![];
+            for ((field_name, _), (expected_name, expected_type)) in it {
+              if let Some(field_name) = field_name {
+                if field_name.name != expected_name.name {
+                  self.errors.push(error_raw(field_name.loc, "incorrect field name"));
+                }
+              }
+              arg_types.push(*expected_type);
+            }
+            for((_, ts), t) in fields.iter().zip(arg_types.iter()) {
+              self.set_type_id(*ts, *t);
+            }
+          }
+          else {
+            self.errors.push(
+              error_raw(self.c.symbols.get(result).unwrap(), "incorrect number of arguments"));
+          }
+          let def_id = self.m.types.type_definition_id(self.gen, type_name.clone());
+          self.set_type(*result, Type::Def(def_id));
+          return true;
+        }
+      }
+      Constraint::Convert { val, into_type } => {
+        if let Some(&t) = self.resolved.get(val) {
+          let t = self.m.types.get(t);
+          if t.pointer() && into_type.pointer() {}
+          else if t.number() && into_type.number() {}
+          else if t.pointer() && into_type.unsigned_int() {}
+          else if t.unsigned_int() && into_type.pointer() {}
+          else {
+            let e = error_raw(*self.c.symbols.get(val).unwrap(), "type conversion not supported");
+            self.errors.push(e);
+          }
+          return true;
+        }
+      }
+      Constraint::GlobalDef(name, ts, loc) => {
+        if let Some(&t) = self.resolved.get(ts) {
+          if self.m.find_global(&name).is_some() {
+            let e = error_raw(loc, "function with that name and signature already defined");
+            self.errors.push(e);
+          }
+          let g = GlobalDefinition {
+            name : name.clone(),
+            type_tag : t,
+            c_address : None,
+          };
+          self.m.globals.insert(name.clone(), g);
+          return true;
+        }
+      }
+      Constraint::GlobalReference { name, result } => {
+        if let Some(def) = self.m.find_global(&name) {
+          let t = def.type_tag;
+          self.set_type_id(*result, t);
+        }
+      }
       Constraint::FieldAccess{ container, field, result } => {
-        let def =
-          self.resolved.get(container)
-          .map(|&id| self.m.types.get(id))
-          .and_then(|t| match t { 
-            Type::Def(d) => self.m.types.type_definition(d),
-            _ => None,
-          });
-        if let Some(def) = def {
-          let field = self.nodes.symbol(*field);
-          // TODO: I should probably make SymbolId a MEMBER of Symbol, and
-          // get rid of the symbol map on the Types struct. It's just a lot of
-          // faff for no reason. I only need symbol ids for mapping to type symbols.
-          let f = def.fields.iter().find(|(n, _)| n == &field.name);
-          if let Some((_, t)) = f.cloned() {
-            self.set_type_id(*result, t);
+        println!("Field access '{}'... ", field.name);
+        let t = self.resolved.get(container).map(|&id| self.m.types.get(id));
+        if let Some(t) = t {
+          if let Type::Def(id) = t { 
+            let n = self.m.types.type_definition_name(id);
+            if let Some(def) = self.m.find_type_def(n) {
+              let f = def.fields.iter().find(|(n, _)| n.name == field.name);
+              if let Some((_, t)) = f.cloned() {
+                self.set_type_id(*result, t);
+              }
+              else {
+                self.errors.push(error_raw(field.loc, "type has no field with this name"));
+              }
+              return true;
+            }
+          }
+          else {
+            self.errors.push(error_raw(field.loc, "type has no field with this name"));
+            return true;
           }
         }
       }
@@ -595,17 +679,31 @@ impl <'l> Inference<'l> {
           self.set_type(*array, Type::Array(element_type));
         }
       }
-      _ => (),
     }
+    false
   }
 
   fn infer(&mut self) {
     println!("To resolve: {}", self.c.symbols.len());
-    for i in 0..2 {
-      for c in self.c.constraints.iter() {
-        self.process_constraint(c);
+    let mut unused_constraints = vec![];
+    for c in self.c.constraints.iter() {
+      if !self.process_constraint(c) {
+        unused_constraints.push(c);
       }
-      println!("Resolved after step {}: {}", i, self.resolved.len());
+    }
+    println!("\n####### Step 1 complete #######\n");
+    for i in 0..2 {
+      unused_constraints.retain(|c| !self.process_constraint(c));
+      println!("\n####### Step {} complete #######\n", i + 2);
+    }
+    println!();
+    println!("Total type symbols: {}. Unresolved symbols: {}.", self.c.symbols.len(), self.c.symbols.len() - self.resolved.len());
+    println!();
+    if self.errors.len() > 0 {
+      println!("Errors:");
+      for e in self.errors.iter() {
+        println!("         {}", e);
+      }
       println!();
     }
   }
@@ -616,28 +714,28 @@ pub struct TypeSymbol(u64);
 
 pub enum Function {
   Value(TypeSymbol),
-  Name(SymbolId),
+  Name(Symbol),
 }
 
 pub enum Constraint {
   Assert(TypeSymbol, TypeId),
   Equalivalent(TypeSymbol, TypeSymbol),
   Array{ array : TypeSymbol, element : TypeSymbol },
-  Convert{ val : TypeSymbol, into_type : TypeSymbol },
+  Convert{ val : TypeSymbol, into_type : Type },
   FieldAccess {
     container : TypeSymbol,
-    field : SymbolId,
+    field : Symbol,
     result : TypeSymbol,
   },
   Constructor {
     type_name : RefStr,
-    fields : Vec<(Option<SymbolId>, TypeSymbol)>,
+    fields : Vec<(Option<Symbol>, TypeSymbol)>,
     result : TypeSymbol,
   },
   FunctionDef {
     name : RefStr,
     return_type : TypeSymbol,
-    args : Vec<(SymbolId, TypeSymbol)>,
+    args : Vec<(Symbol, TypeSymbol)>,
     body : NodeId,
     loc : TextLocation,
   },
@@ -646,7 +744,7 @@ pub enum Constraint {
     args : Vec<(Option<SymbolId>, TypeSymbol)>,
     result : TypeSymbol,
   },
-  GlobalDef(RefStr, TypeSymbol),
+  GlobalDef(RefStr, TypeSymbol, TextLocation),
   GlobalReference {
     name : RefStr,
     result : TypeSymbol,
@@ -741,7 +839,7 @@ impl <'l> GatherConstraints<'l> {
     }
   }
 
-  fn variable_to_symbol(&mut self, v : &Symbol) -> TypeSymbol {
+  fn variable_to_type_symbol(&mut self, v : &Symbol) -> TypeSymbol {
     if let Some(ts) = self.c.variable_symbols.get(&v.id) { *ts }
     else {
       let ts = self.type_symbol(v.loc);
@@ -781,20 +879,19 @@ impl <'l> GatherConstraints<'l> {
       }
       LocalInitialise{ name, type_tag, value } => {
         self.assert(ts, Type::Void);
-        let var_type_symbol = self.variable_to_symbol(n.symbol(*name));
+        let var_type_symbol = self.variable_to_type_symbol(name);
         self.tagged_symbol(var_type_symbol, type_tag);
         let vid = self.process_node(n, *value);
         self.equalivalent(var_type_symbol, vid);
       }
       GlobalInitialise{ name, type_tag, value } => {
         self.assert(ts, Type::Void);
-        let name = n.symbol(*name);
-        let var_type_symbol = self.variable_to_symbol(name);
+        let var_type_symbol = self.variable_to_type_symbol(name);
         self.tagged_symbol(var_type_symbol, type_tag);
         let vid = self.process_node(n, *value);
         self.equalivalent(var_type_symbol, vid);
         let a = (); // TODO: check duplicates
-        self.constraint(Constraint::GlobalDef(name.name.clone(), var_type_symbol));
+        self.constraint(Constraint::GlobalDef(name.name.clone(), var_type_symbol, node.loc));
       }
       Assignment{ assignee , value } => {
         self.assert(ts, Type::Void);
@@ -837,7 +934,7 @@ impl <'l> GatherConstraints<'l> {
       }
       Reference{ name, refers_to } => {
         if let Some(refers_to) = refers_to {
-          let var_type = self.variable_to_symbol(n.symbol(*refers_to));
+          let var_type = self.variable_to_type_symbol(n.symbol(*refers_to));
           self.equalivalent(ts, var_type);
         }
         else {
@@ -846,22 +943,21 @@ impl <'l> GatherConstraints<'l> {
       }
       Content::FunctionDefinition{ name, args, return_tag, body } => {
         self.assert(ts, Type::Void);
-        let mut ts_args : Vec<(SymbolId, TypeSymbol)> = vec![];
+        let mut ts_args : Vec<(Symbol, TypeSymbol)> = vec![];
         for (arg, type_tag) in args.iter() {
-          let arg_type_symbol = self.variable_to_symbol(n.symbol(*arg));
+          let arg_type_symbol = self.variable_to_type_symbol(arg);
           self.tagged_symbol(arg_type_symbol, type_tag);
-          ts_args.push((*arg, arg_type_symbol));
+          ts_args.push((arg.clone(), arg_type_symbol));
         }
-        let return_type = self.process_node(n, *body);
-        self.tagged_symbol(return_type, return_tag);
+        let body_ts = self.process_node(n, *body);
+        self.tagged_symbol(body_ts, return_tag);
         let a = (); // TODO: check duplicates
         let f = Constraint::FunctionDef { 
           name: name.clone(), args: ts_args,
-          return_type, body: *body, loc: node.loc };
+          return_type: body_ts, body: *body, loc: node.loc };
         self.constraint(f);
         // Need new scope stack for new function
         let mut gc = GatherConstraints::new(self.core, self.m, self.gen, self.cache, self.c, self.errors);
-        gc.process_node(n, *body);
       }
       CBind { name, type_tag } => {
         self.assert(ts, Type::Void);
@@ -870,7 +966,7 @@ impl <'l> GatherConstraints<'l> {
           self.assert(cbind_ts, t);
         }
         let a = (); // TODO: check duplicates
-        self.constraint(Constraint::GlobalDef(name.clone(), cbind_ts));
+        self.constraint(Constraint::GlobalDef(name.clone(), cbind_ts, node.loc));
       }
       Content::TypeDefinition{ name, kind, fields } => {
         self.assert(ts, Type::Void);
@@ -882,8 +978,8 @@ impl <'l> GatherConstraints<'l> {
           // TODO: check for duplicates?
           let mut typed_fields = vec![];
           for (field, type_tag) in fields.iter() {
-            if let Some(t) = self.expr_to_type_id(&type_tag.unwrap()) {
-              typed_fields.push((*field, t));
+            if let Some(t) = self.expr_to_type_id(type_tag.as_ref().unwrap()) {
+              typed_fields.push((field.clone(), t));
             }
           }
           // TODO: Generics?
@@ -898,10 +994,10 @@ impl <'l> GatherConstraints<'l> {
         }
       }
       TypeConstructor{ name, field_values } => {
-        let mut fields : Vec<(Option<SymbolId>, TypeSymbol)> = vec![];
+        let mut fields = vec![];
         for (field, value) in field_values.iter() {
           let field_type_symbol = self.process_node(n, *value);
-          fields.push((*field, field_type_symbol));
+          fields.push((field.clone(), field_type_symbol));
         }
         let tc = Constraint::Constructor{ type_name: name.clone(), fields, result: ts };
         self.constraint(tc);
@@ -945,7 +1041,7 @@ impl <'l> GatherConstraints<'l> {
       }
       FunctionCall{ function, args } => {
         let function = match function {
-          FunctionNode::Name(name) => Function::Name(*name),
+          FunctionNode::Name(name) => Function::Name(name.clone()),
           FunctionNode::Value(val) => {
             let val = self.process_node(n, *val);
             Function::Value(val)
@@ -969,18 +1065,8 @@ impl <'l> GatherConstraints<'l> {
         let v = self.process_node(n, *from_value);
         if let Some(t) = self.expr_to_type(into_type) {
           self.assert(ts, t);
-          let convert_ts = self.type_symbol(node.loc);
-          let convert_reference = Constraint::GlobalReference {
-            name : self.cache.get("Convert"),
-            result: convert_ts,
-          };
-          let fc = Constraint::FunctionCall {
-            function: Function::Value(convert_ts),
-            args: vec![(None, v)],
-            result: ts,
-          };
-          self.constraint(convert_reference);
-          self.constraint(fc);
+          let c = Constraint::Convert { val: v, into_type: t };
+          self.constraint(c);
         }
       }
       SizeOf{ type_tag } => {

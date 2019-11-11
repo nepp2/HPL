@@ -1,9 +1,13 @@
 
-fun hello(a) {
-  a = 2
-  a
+struct blah {
+  i : i64
 }
 
-let b = 1
+fun hello(a : blah) {
+  a.i = 2
+  a.i
+}
+
+let b = blah.new(1)
 
 hello(b)
