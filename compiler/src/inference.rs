@@ -949,15 +949,17 @@ impl <'l> GatherConstraints<'l> {
           self.tagged_symbol(arg_type_symbol, type_tag);
           ts_args.push((arg.clone(), arg_type_symbol));
         }
-        let body_ts = self.process_node(n, *body);
+        let body_ts = {
+          // Need new scope stack for new function
+          let mut gc = GatherConstraints::new(self.core, self.m, self.gen, self.cache, self.c, self.errors);
+          gc.process_node(n, *body)
+        };
         self.tagged_symbol(body_ts, return_tag);
         let a = (); // TODO: check duplicates
         let f = Constraint::FunctionDef { 
           name: name.clone(), args: ts_args,
           return_type: body_ts, body: *body, loc: node.loc };
         self.constraint(f);
-        // Need new scope stack for new function
-        let mut gc = GatherConstraints::new(self.core, self.m, self.gen, self.cache, self.c, self.errors);
       }
       CBind { name, type_tag } => {
         self.assert(ts, Type::Void);
