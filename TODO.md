@@ -1,3 +1,11 @@
+# THOUGHTS - 12/11/2019
+
+I went on a big type inference detour. It's close to done, but it is still limited in power due to the unfriendliness of overloading. That is a problem for another day.
+
+Problems for right now are that the codegen doesn't yet use the new node and type structure. In fact it can't yet, because I need to decide how to handle things like arithmetic and indexing. I am trying to code-generate these to functions, but that might be a bit premature. I would need a generics system first, really.
+
+Secondly, I need to decide how to pass information about where to find functions, type defs and globals. This might involve swapping to immutable maps inside the modules.
+
 # THOUGHTS - 31/10/2019
 
 Close to finishing a crude Drop and Clone system.

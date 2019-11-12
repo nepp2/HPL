@@ -242,7 +242,7 @@ impl CSymbols {
     }
   }
 
-  pub fn populate(&mut self, i : *mut InterpreterInner) {
+  pub fn populate(&mut self) {
     let sym = &mut self.local_symbol_table;
     sym.insert("load_library".into(), (load_library_c as *const()) as usize);
     sym.insert("load_symbol".into(), (load_symbol as *const()) as usize);
@@ -267,11 +267,14 @@ impl CSymbols {
 
     sym.insert("test_add".into(), (test_add as *const()) as usize);
     sym.insert("test_global".into(), (&TEST_GLOBAL as *const i64) as usize);
+  }
 
+  pub fn add_symbol<T>(&mut self, name : &str, p : *mut T) {
     // This is a bit confusing. When we link to a global we do it by passing a
     // pointer. Since this global *is* a pointer, we have to pass a pointer to
     // a pointer, which requires another permanent heap allocation for indirection.
-    let i = Box::into_raw(Box::new(i));
-    sym.insert("compiler".into(), i as usize);
+    // TODO: can this be improved?
+    let p = Box::into_raw(Box::new(p));
+    self.local_symbol_table.insert(name.into(), p as usize);
   }
 }

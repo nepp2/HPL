@@ -16,6 +16,7 @@ pub mod structure;
 pub mod typecheck;
 pub mod inference;
 pub mod codegen;
+//pub mod codegen2;
 pub mod jit;
 pub mod repl;
 pub mod c_interface;
@@ -59,11 +60,13 @@ fn test_inference(path : &str) {
   let code = load(path);
   let cache = StringCache::new();
   let mut gen = UIDGenerator::new();
+  let mut c_symbols = c_interface::CSymbols::new();
+  c_symbols.populate();
   let tokens =
     lexer::lex(&code, &cache)
     .map_err(|mut es| es.remove(0)).unwrap();
   let expr = parser::parse(tokens, &cache).expect("parse errors");
-  let nodes = structure::to_nodes(&mut gen, &cache, &expr).expect("node errors");
+  let nodes = structure::to_nodes(&mut gen, &c_symbols.local_symbol_table, &cache, &expr).expect("node errors");
   inference::infer_types(&mut gen, &cache, &code, &nodes).expect("type errors");
 }
 

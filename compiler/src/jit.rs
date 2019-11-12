@@ -72,13 +72,12 @@ pub fn interpreter() -> Interpreter {
   let cache = StringCache::new();
   let context = Context::create();
   let modules = vec!();
-  let c_symbols = CSymbols::new();
+  let mut c_symbols = CSymbols::new();
+  c_symbols.populate();
   
   let mut i = Box::new(InterpreterInner { cache, context, modules, c_symbols, uid_generator: UIDGenerator::new() });
-
   let i_raw = (&mut *i) as *mut InterpreterInner;
-
-  i.c_symbols.populate(i_raw);
+  i.c_symbols.add_symbol("compiler", i_raw);
   
   // load prelude
   if let Err(e) = i.load_prelude() {

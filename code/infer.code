@@ -8,6 +8,10 @@ fun hello(a : blah) {
   a.i
 }
 
+fun doob(f : fake) {
+  50.0
+}
+
 let b = blah.new(1)
 
 hello(b)

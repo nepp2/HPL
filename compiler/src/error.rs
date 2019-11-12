@@ -23,6 +23,15 @@ pub struct TextMarker {
   pub col : usize,
 }
 
+impl TextMarker {
+  fn order(a : Self, b : Self) -> (Self, Self) {
+    if a.line < b.line { (a, b) }
+    else if b.line < a.line { (b, a) }
+    else if a.col < b.col { (a, b) }
+    else { (b, a) }
+  }
+}
+
 impl fmt::Display for TextMarker {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     write!(f, "line: {}, column: {}", self.line, self.col)
@@ -55,16 +64,23 @@ impl fmt::Display for TextLocation {
 }
 
 impl TextLocation {
+  
   pub fn new<T : Into<TextMarker>>(start : T, end : T) -> TextLocation {
     TextLocation {
       start: start.into(),
       end: end.into(),
     }
   }
-
+  
   pub fn zero() -> TextLocation {
     let z = TextMarker{ line: 0, col: 0 };
     TextLocation::new(z, z)
+  }
+
+  pub fn merge(self, x : Self) -> Self {
+    let (start, _) = TextMarker::order(self.start, x.start);
+    let (_, end) = TextMarker::order(self.end, x.end);
+    TextLocation { start, end }
   }
 }
 
