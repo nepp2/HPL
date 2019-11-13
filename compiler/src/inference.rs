@@ -34,6 +34,44 @@ pub fn infer_types(
   }
 }
 
+//#[derive(Clone)]
+pub struct ModuleInfo {
+  pub id : u64,
+  pub type_defs : HashMap<RefStr, TypeDefinition>,
+  pub functions : Vec<FunctionDefinition>,
+  pub globals : HashMap<RefStr, GlobalDefinition>,
+  pub types : Types,
+  pub sizeof_info : HashMap<NodeId, TypeId>,
+}
+
+impl ModuleInfo {
+  pub fn new(id : u64) -> ModuleInfo {
+    ModuleInfo{
+      id, type_defs: HashMap::new(),
+      functions: vec![],
+      globals: HashMap::new(),
+      types: Types::new(),
+      sizeof_info: HashMap::new(),
+    }
+  }
+
+  pub fn find_global(&self, name : &str) -> Option<&GlobalDefinition> {
+    self.globals.get(name)
+  }
+
+  pub fn find_type_def(&self, name : &str) -> Option<&TypeDefinition> {
+    self.type_defs.get(name)
+  }
+
+  pub fn find_function(&self, name : &str, args : &[TypeId]) -> Option<&FunctionDefinition> {
+    self.functions.iter().find(|def| {
+      let sig = self.types.signature(def.signature);
+      def.name_in_code.as_ref() == name &&
+        sig.args.as_slice() == args
+    })
+  }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct TypeId(u64);
 
@@ -296,76 +334,8 @@ pub struct GlobalDefinition {
   pub c_address : Option<usize>,
 }
 
-//#[derive(Clone)]
-pub struct ModuleInfo {
-  pub id : u64,
-  pub type_defs : HashMap<RefStr, TypeDefinition>,
-  pub functions : Vec<FunctionDefinition>,
-  pub globals : HashMap<RefStr, GlobalDefinition>,
-  pub types : Types,
-  pub sizeof_info : HashMap<NodeId, TypeId>,
-}
-
-impl ModuleInfo {
-  pub fn new(id : u64) -> ModuleInfo {
-    ModuleInfo{
-      id, type_defs: HashMap::new(),
-      functions: vec![],
-      globals: HashMap::new(),
-      types: Types::new(),
-      sizeof_info: HashMap::new(),
-    }
-  }
-
-  pub fn find_global(&self, name : &str) -> Option<&GlobalDefinition> {
-    self.globals.get(name)
-  }
-
-  pub fn find_type_def(&self, name : &str) -> Option<&TypeDefinition> {
-    self.type_defs.get(name)
-  }
-
-  pub fn find_function(&self, name : &str, args : &[TypeId]) -> Option<&FunctionDefinition> {
-    self.functions.iter().find(|def| {
-      let sig = self.types.signature(def.signature);
-      def.name_in_code.as_ref() == name &&
-        sig.args.as_slice() == args
-    })
-  }
-}
-
-struct SymbolReference {
-  symbol_name : RefStr,
-  reference_location : TextLocation,
-}
-
-pub struct TypeChecker<'l> {
-  uid_generator : &'l mut UIDGenerator,
-  module : &'l mut ModuleInfo,
-  modules : &'l [&'l ModuleInfo],
-  local_symbol_table : &'l HashMap<RefStr, usize>,
-
-  type_definition_references : Vec<SymbolReference>,
-
-  cache: &'l StringCache,
-}
-
-pub struct FunctionChecker<'l, 'lt> {
-  t : &'l mut TypeChecker<'lt>,
-
-  is_top_level : bool,
-  variables: HashMap<RefStr, Type>,
-
-  labels_in_scope : Vec<LabelId>,
-
-  /// Tracks which variables are available, when.
-  /// Used to rename variables with clashing names.
-  scope_map: Vec<HashMap<RefStr, TypeId>>,
-}
-
-use Type::*;
-
 fn literal_to_type(string_def : DefId, v : &Val) -> Type {
+  use Type::*;
   match v {
     Val::F64(_) => F64,
     Val::F32(_) => F32,
@@ -921,7 +891,7 @@ impl <'l> GatherConstraints<'l> {
       Quote(_e) => {
         let expr_def = self.type_definition_id(node.loc, self.cache.get("expr"));
         let t = self.m.types.type_id(self.gen, Type::Def(expr_def));
-        self.assert(ts, Ptr(t));
+        self.assert(ts, Type::Ptr(t));
       }
       Reference{ name, refers_to } => {
         if let Some(refers_to) = refers_to {
