@@ -67,7 +67,8 @@ fn test_inference(path : &str) {
     .map_err(|mut es| es.remove(0)).unwrap();
   let expr = parser::parse(tokens, &cache).expect("parse errors");
   let nodes = structure::to_nodes(&mut gen, &c_symbols.local_symbol_table, &cache, &expr).expect("node errors");
-  inference::infer_types(&mut gen, &cache, &code, &nodes).expect("type errors");
+  let m = inference::base_module(&mut gen, &cache);
+  inference::infer_types(&m, &mut gen, &cache, &code, &nodes).expect("type errors");
 }
 
 fn main(){

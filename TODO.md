@@ -1,3 +1,7 @@
+# THOUGHTS - 13/11/2019
+
+I don't need generics to support stuff like arithmetic and indexing. I just needed to special-case indexing for pointer types. For everything else, overloaded functions work.
+
 # THOUGHTS - 12/11/2019
 
 I went on a big type inference detour. It's close to done, but it is still limited in power due to the unfriendliness of overloading. That is a problem for another day.

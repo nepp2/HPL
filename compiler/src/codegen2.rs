@@ -8,8 +8,8 @@ use crate::structure::{
   Node, Nodes, NodeId, Content, Val, TypeKind, LabelId };
 
 use crate::inference::{
-  Type, TypeId, Types, TypeDefinition,
-  FunctionReference, FunctionDefinition, VarScope, ModuleInfo,
+  Type, TypeId, Types, TypeDefinition, FunctionId,
+  FunctionDefinition, VarScope, ModuleInfo, CodegenInfo,
   FunctionImplementation, GlobalDefinition, NodeValueType };
 
 use std::collections::HashMap;
@@ -171,10 +171,10 @@ pub struct Gen<'l> {
   info : CompileInfo<'l>,
 
   /// Globals that need linking when the execution engine is created
-  globals_to_link: &'l mut Vec<(GlobalValue, usize)>,
+  globals_to_link: &'l mut Vec<(GlobalValue, RefStr)>,
 
   /// Functions that need linking when the execution engine is created
-  functions_to_link: &'l mut Vec<(FunctionValue, usize)>,
+  functions_to_link: &'l mut Vec<(FunctionValue, RefStr)>,
 
   struct_types: HashMap<RefStr, StructType>,
 
@@ -223,33 +223,35 @@ pub struct GenFunction<'l, 'lg> {
 
 struct CompileInfo<'l> {
   external_modules : &'l [CompiledModule],
-  type_info : &'l ModuleInfo,
+  m : &'l ModuleInfo,
+  cg : &'l CodegenInfo,
 }
 
-impl <'l> CompileInfo<'l> {
+// impl <'l> CompileInfo<'l> {
 
-  fn find_type_def(&self, name : &str) -> Option<&'l TypeDefinition> {
-    self.type_info.types.get(name).or_else(||
-      self.external_modules.iter().flat_map(|i| i.info.types.get(name)).next())
-  }
+//   fn find_type_def(&self, name : &str) -> Option<&'l TypeDefinition> {
+//     self.m.find_type_def(name)
+//   }
 
-  fn find_external_function_def(&self, function_ref : &FunctionReference) -> Option<(&'l CompiledModule, &'l FunctionDefinition)> {
-    self.external_modules.iter().find(|m| m.info.id == function_ref.module_id)
-      .and_then(|m|
-        m.info.functions.iter().find(|def|
-          def.name_in_code == function_ref.name_in_code &&
-          def.name_for_codegen == function_ref.name_for_codegen)
-        .map(|def| (m, def))
-      )
-  }
+//   fn find_function_def(&self, id : FunctionId) -> Option<(&'l CompiledModule, &'l FunctionDefinition)> {
+//     self.find_function_def(name).and_then(|def| if def.id == module { Some(def) } else None)
 
-  fn find_external_global_def(&self, name : &str) -> Option<(&'l CompiledModule, &'l GlobalDefinition)> {
-    self.external_modules.iter().flat_map(|m|
-      m.info.globals.get(name)
-      .map(|g| (m, g))
-    ).next()
-  }
-}
+//     self.external_modules.iter().find(|m| m.info.id == function_ref.module_id)
+//       .and_then(|m|
+//         m.info.functions.iter().find(|def|
+//           def.name_in_code == function_ref.name_in_code &&
+//           def.name_for_codegen == function_ref.name_for_codegen)
+//         .map(|def| (m, def))
+//       )
+//   }
+
+//   fn find_external_global_def(&self, name : &str) -> Option<(&'l CompiledModule, &'l GlobalDefinition)> {
+//     self.external_modules.iter().flat_map(|m|
+//       m.info.globals.get(name)
+//       .map(|g| (m, g))
+//     ).next()
+//   }
+// }
 
 impl <'l> Gen<'l> {
 
@@ -258,9 +260,9 @@ impl <'l> Gen<'l> {
     module : &'l mut Module,
     target_data : &'l TargetData,
     external_modules : &'l [CompiledModule],
-    type_info : &'l ModuleInfo,
-    globals_to_link: &'l mut Vec<(GlobalValue, usize)>,
-    functions_to_link: &'l mut Vec<(FunctionValue, usize)>,
+    info : CompileInfo<'l>,
+    globals_to_link: &'l mut Vec<(GlobalValue, RefStr)>,
+    functions_to_link: &'l mut Vec<(FunctionValue, RefStr)>,
     pm : &'l PassManager<FunctionValue>,
   )
       -> Gen<'l>
@@ -268,7 +270,7 @@ impl <'l> Gen<'l> {
     Gen {
       context, module,
       target_data,
-      info: CompileInfo { external_modules, type_info },
+      info,
       globals_to_link,
       functions_to_link,
       struct_types: HashMap::new(),
@@ -280,13 +282,12 @@ impl <'l> Gen<'l> {
   pub fn codegen_module(mut self, module : &ModuleInfo) -> Result<(), Error> {
     // declare the local globals
     for (name, def) in module.globals.iter() {
-      if let Some(address) = def.c_address {
-        let t = self.to_basic_type(&def.type_tag).unwrap();
+      let t = self.to_basic_type(def.type_tag).unwrap();
+      if def.c_bind {
         let gv = self.module.add_global(t, Some(AddressSpace::Generic), &name);
-        self.globals_to_link.push((gv, address));
+        self.globals_to_link.push((gv, def.name.clone()));
       }
       else {
-        let t = self.to_basic_type(&def.type_tag).unwrap();
         self.add_global(const_zero(t), false, &name);
       }
     }
@@ -295,12 +296,12 @@ impl <'l> Gen<'l> {
     let mut functions_to_codegen = vec!();
     for def in module.functions.iter() {
       match &def.implementation {
-        FunctionImplementation::Normal(body) => {
-          let f = self.codegen_prototype(def.name_for_codegen.as_ref(), &body.type_tag, def.args.as_slice(), def.signature.args.as_slice());
+        FunctionImplementation::Normal{ body, name_for_codegen } => {
+          let f = self.codegen_prototype(name_for_codegen.as_ref(), &body.type_tag, def.args.as_slice(), def.signature.args.as_slice());
           functions_to_codegen.push((f, def, body));
         }
         FunctionImplementation::CFunction(Some(address)) => {
-          let f = self.codegen_prototype(def.name_for_codegen.as_ref(), &def.signature.return_type, &def.args, &def.signature.args);
+          let f = self.codegen_prototype(def.name_in_code.as_ref(), &def.signature.return_type, &def.args, &def.signature.args);
           self.functions_to_link.push((f, *address));
         }
         _ => (),
@@ -356,7 +357,7 @@ impl <'l> Gen<'l> {
     }
   }
 
-  fn to_basic_type(&mut self, t : &Type) -> Option<BasicTypeEnum> {
+  fn to_basic_type(&mut self, t : TypeId) -> Option<BasicTypeEnum> {
     match t {
       Type::Void => None,
       Type::F64 => Some(self.context.f64_type().into()),

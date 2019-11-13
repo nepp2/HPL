@@ -4,12 +4,7 @@ struct blah {
 }
 
 fun hello(a : blah) {
-  a.i = 2
-  a.i
-}
-
-fun doob(f : fake) {
-  50.0
+  a.i + 2
 }
 
 let b = blah.new(1)
