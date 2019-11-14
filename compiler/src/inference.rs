@@ -6,7 +6,8 @@ use std::hash::Hash;
 use crate::error::{Error, error, error_raw, TextLocation};
 use crate::expr::{StringCache, RefStr, Expr, UIDGenerator};
 use crate::structure::{
-  Node, NodeId, Nodes, Symbol, SymbolId, Content, Val, LabelId, TypeKind, FunctionNode
+  Node, NodeId, Nodes, Symbol, SymbolId, Content,
+  Val, LabelId, TypeKind, FunctionNode, VarScope
 };
 
 use std::collections::HashMap;
@@ -69,18 +70,19 @@ fn add_intrinsic(
     implementation: FunctionImplementation::Intrinsic,
     definition_location: TextLocation::zero(),
   };
-  m.functions.push(f);
+  m.functions.insert(f.id, f);
 }
 
 pub struct ModuleInfo {
   pub id : ModuleId,
   pub type_defs : HashMap<RefStr, TypeDefinition>,
-  pub functions : Vec<FunctionDefinition>,
+  pub functions : HashMap<FunctionId, FunctionDefinition>,
   pub globals : HashMap<RefStr, GlobalDefinition>,
   pub types : Types,
 }
 
 pub struct CodegenInfo {
+  pub node_type : HashMap<NodeId, Type>,
   pub sizeof_info : HashMap<NodeId, Type>,
   pub function_references : HashMap<NodeId, FunctionId>,
 }
@@ -88,6 +90,7 @@ pub struct CodegenInfo {
 impl CodegenInfo {
   fn new() -> Self {
     CodegenInfo {
+      node_type: HashMap::new(),
       sizeof_info: HashMap::new(),
       function_references: HashMap::new(),
     }
@@ -99,7 +102,7 @@ impl ModuleInfo {
     ModuleInfo{
       id: ModuleId(gen.next()),
       type_defs: HashMap::new(),
-      functions: vec![],
+      functions: HashMap::new(),
       globals: HashMap::new(),
       types: Types::new(),
     }
@@ -127,7 +130,7 @@ impl ModuleInfo {
   }
 
   pub fn find_function(&self, name : &str, args : &[Type]) -> Option<&FunctionDefinition> {
-    self.functions.iter().find(|def| {
+    self.functions.values().find(|def| {
       let sig = self.types.signature(def.signature);
       def.name_in_code.as_ref() == name &&
         sig.args.as_slice() == args
@@ -213,12 +216,12 @@ impl Types {
     self.type_definition_names.get_by_left(&id).unwrap()
   }
 
-  pub fn display(&self, t : Type) -> TypeDisplay {
-    TypeDisplay{ t, types: self }
+  pub fn type_ref(&self, t : Type) -> TypeRef {
+    TypeRef{ t, types: self }
   }
 
-  pub fn display_id(&self, id : TypeId) -> TypeDisplay {
-    TypeDisplay{ t: self.get(id), types: self }
+  pub fn type_ref_id(&self, id : TypeId) -> TypeRef {
+    TypeRef{ t: self.get(id), types: self }
   }
 }
 
@@ -241,12 +244,12 @@ pub enum Type {
   Ptr(TypeId),
 }
 
-pub struct TypeDisplay<'l>{
+pub struct TypeRef<'l>{
   t : Type,
   types: &'l Types,
 }
 
-impl <'l> fmt::Display for TypeDisplay<'l> {
+impl <'l> fmt::Display for TypeRef<'l> {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let types = self.types;
     match self.t {
@@ -254,17 +257,17 @@ impl <'l> fmt::Display for TypeDisplay<'l> {
         let sig = self.types.signature(sig);
         write!(f, "fun({}) => {}", 
           sig.args.iter()
-            .map(|a| types.display(*a))
+            .map(|a| types.type_ref(*a))
             .join(", "),
-          types.display(sig.return_type))
+          types.type_ref(sig.return_type))
       }
       Type::Def(s) => {
         let name =
           self.types.type_definition_name(s);
         write!(f, "{}", name)
       }
-      Type::Array(t) => write!(f, "array({})", types.display_id(t)),
-      Type::Ptr(t) => write!(f, "ptr({})", types.display_id(t)),
+      Type::Array(t) => write!(f, "array({})", types.type_ref_id(t)),
+      Type::Ptr(t) => write!(f, "ptr({})", types.type_ref_id(t)),
       t => write!(f, "{:?}", t),
     }
   }
@@ -356,33 +359,7 @@ impl PartialEq for TypeDefinition {
 
 pub static TOP_LEVEL_FUNCTION_NAME : &'static str = "top_level";
 
-#[derive(Debug, Clone, Copy)]
-pub enum VarScope { Local, Global }
-
 use Content::*;
-
-/// This indicates whether the type is a full value, or just a reference to one.
-/// When an expression is evaluated to a full value, it may need to be dropped later.
-/// When a reference turns into a value, it may need to be cloned.
-#[derive(Debug, PartialEq)]
-pub enum NodeValueType {
-  Owned,
-  Ref,
-  Mut,
-  Nil,
-}
-
-// pub fn node_value_type(&self) -> NodeValueType {
-//   match &self.content {
-//     FieldAccess{..} | Reference{..} |
-//     Index{..} | Literal(_) | Quote(_)
-//       => NodeValueType::Ref,
-//     Block(_) | FunctionCall{..} |
-//     IfThenElse{..} | TypeConstructor{..}
-//       => NodeValueType::Owned,
-//     _ => NodeValueType::Nil,
-//   }
-// }
 
 #[derive(Clone)]
 pub struct GlobalDefinition {
@@ -471,7 +448,7 @@ impl <'l> Inference<'l> {
     let aaa = (); // TODO: unify!
     let code = self.ts_code_slice(&self.c, ts);
     if !self.resolved.contains_key(&ts) {
-      println!("     Inferred type {} for '{}'", self.m.types.display(t), code);
+      println!("     Inferred type {} for '{}'", self.m.types.type_ref(t), code);
       self.resolved.insert(ts, t);
     }
   }
@@ -525,7 +502,7 @@ impl <'l> Inference<'l> {
         for (_, ts) in args.iter() {
           let code = self.ts_code_slice(&self.c, *ts);
           if let Some(t) = self.resolved.get(ts) {
-            println!("      {}, {}", code, self.m.types.display(*t));
+            println!("      {}, {}", code, self.m.types.type_ref(*t));
           }
           else {
             println!("      {}, unresolved, ", code);
@@ -562,7 +539,7 @@ impl <'l> Inference<'l> {
               implementation,
               definition_location: *loc,
             };
-            self.m.functions.push(f);
+            self.m.functions.insert(f.id, f);
             println!("Function {} inferred.", name);
             return true;
           }
@@ -754,6 +731,12 @@ impl <'l> Inference<'l> {
         println!("         {}", e);
       }
       println!();
+    }
+    else {
+      for (n, ts) in self.c.node_symbols.iter() {
+        let t = self.resolved.get(ts).unwrap();
+        self.cg.node_type.insert(*n, *t);
+      }
     }
   }
 }
@@ -947,25 +930,23 @@ impl <'l> GatherConstraints<'l> {
         let t = literal_to_type(self.core.string, val);
         self.assert(ts, t);
       }
-      LocalInitialise{ name, type_tag, value } => {
+      VariableInitialise{ name, type_tag, value, var_scope } => {
         self.assert(ts, Type::Void);
         let var_type_symbol = self.variable_to_type_symbol(name);
         self.tagged_symbol(var_type_symbol, type_tag);
         let vid = self.process_node(n, *value);
         self.equalivalent(var_type_symbol, vid);
-      }
-      GlobalInitialise{ name, type_tag, value } => {
-        self.assert(ts, Type::Void);
-        let var_type_symbol = self.variable_to_type_symbol(name);
-        self.tagged_symbol(var_type_symbol, type_tag);
-        let vid = self.process_node(n, *value);
-        self.equalivalent(var_type_symbol, vid);
-        self.constraint(Constraint::GlobalDef{
-          name: name.name.clone(),
-          type_symbol: var_type_symbol,
-          loc: node.loc,
-          c_bind: false,
-        });
+        match var_scope {
+          VarScope::Local => (),
+          VarScope::Global => {
+            self.constraint(Constraint::GlobalDef{
+              name: name.name.clone(),
+              type_symbol: var_type_symbol,
+              loc: node.loc,
+              c_bind: false,
+            });
+          }
+        }
       }
       Assignment{ assignee , value } => {
         self.assert(ts, Type::Void);

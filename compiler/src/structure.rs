@@ -45,11 +45,13 @@ pub enum FunctionNode {
   Name(Symbol),
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum VarScope { Local, Global }
+
 #[derive(Debug)]
 pub enum Content {
   Literal(Val),
-  LocalInitialise{ name: Symbol, type_tag: Option<Box<Expr>>, value: NodeId },
-  GlobalInitialise{ name: Symbol, type_tag: Option<Box<Expr>>, value: NodeId },
+  VariableInitialise{ name: Symbol, type_tag: Option<Box<Expr>>, value: NodeId, var_scope : VarScope },
   Assignment{ assignee: NodeId , value: NodeId },
   IfThen{ condition: NodeId, then_branch: NodeId },
   IfThenElse{ condition: NodeId, then_branch: NodeId, else_branch: NodeId },
@@ -72,7 +74,32 @@ pub enum Content {
   BreakToLabel{ label: LabelId, return_value: Option<NodeId> },
 }
 
+impl Content {
+  pub fn node_value_type(&self) -> NodeValueType {
+    match self {
+      FieldAccess{..} | Reference{..} |
+      Index{..} | Literal(_) | Quote(_)
+        => NodeValueType::Ref,
+      Block(_) | FunctionCall{..} |
+      IfThenElse{..} | TypeConstructor{..}
+        => NodeValueType::Owned,
+      _ => NodeValueType::Nil,
+    }
+  }
+}
+
 use Content::*;
+
+/// This indicates whether the type is a full value, or just a reference to one.
+/// When an expression is evaluated to a full value, it may need to be dropped later.
+/// When a reference turns into a value, it may need to be cloned.
+#[derive(Debug, PartialEq)]
+pub enum NodeValueType {
+  Owned,
+  Ref,
+  Mut,
+  Nil,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct NodeId(u64);
@@ -125,6 +152,7 @@ impl Nodes {
   }
 }
 
+#[derive(Copy, Clone)]
 pub struct NodeRef<'l> {
   pub n : &'l Node,
   pub nodes : &'l Nodes,
@@ -329,10 +357,10 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
           self.add_var_to_scope(name.clone());
           let value = self.to_node(value_expr)?;
           let c = if self.is_top_level && self.block_scope.len() == 2 {
-            GlobalInitialise{ name, type_tag : None, value }
+            VariableInitialise { name, type_tag : None, value, var_scope: VarScope::Global }
           }
           else {
-            LocalInitialise{ name, type_tag: None, value }
+            VariableInitialise{ name, type_tag: None, value, var_scope: VarScope::Local }
           };
           return Ok(self.node(expr, c));
         }
@@ -538,7 +566,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
 
   fn let_var(&mut self, expr : &Expr, name : RefStr, val : NodeId) -> NodeId {
     let name = self.t.symbol(&name, expr.loc);
-    self.node(expr, LocalInitialise{ name, type_tag: None, value: val })
+    self.node(expr, VariableInitialise{ name, type_tag: None, value: val, var_scope : VarScope::Local })
   }
 
   fn block(&mut self, expr : &Expr, args : Vec<NodeId>) -> NodeId {

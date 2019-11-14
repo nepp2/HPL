@@ -1,16 +1,17 @@
 
 // TODO: Carlos says I should have more comments than the occasional TODO
 
-use crate::error::{Error, error, error_raw, ErrorContent};
+use crate::error::{Error, error, error_raw, ErrorContent, TextLocation};
 use crate::expr::RefStr;
 
 use crate::structure::{
-  Node, Nodes, NodeId, Content, Val, TypeKind, LabelId };
+  Node, Nodes, NodeId, Content, Val, TypeKind,
+  LabelId, NodeValueType, FunctionNode, VarScope };
 
 use crate::inference::{
-  Type, TypeId, Types, TypeDefinition, FunctionId,
-  FunctionDefinition, VarScope, ModuleInfo, CodegenInfo,
-  FunctionImplementation, GlobalDefinition, NodeValueType };
+  Type, TypeId, Types, TypeDefinition, FunctionId, DefId,
+  FunctionDefinition, ModuleInfo, CodegenInfo,
+  FunctionImplementation, GlobalDefinition };
 
 use std::collections::HashMap;
 
@@ -40,55 +41,6 @@ pub fn dump_module(module : &Module) {
 //     if let $enum_name::$variant_name(x) = $v { x } else { panic!() }
 //   };
 // }
-
-macro_rules! codegen_type {
-  (PointerValue, $e:ident, $gen:ident) => { $gen.codegen_pointer($e) };
-  (FloatValue, $e:ident, $gen:ident) => { $gen.codegen_float($e) };
-  (IntValue, $e:ident, $gen:ident) => { $gen.codegen_int($e) };
-}
-
-macro_rules! binary_op {
-  ($op_name:ident, $type_name:ident, $a:ident, $b:ident, $gen:ident) => {
-    {
-      let a = codegen_type!($type_name, $a, $gen)?;
-      let b = codegen_type!($type_name, $b, $gen)?;
-      let fv = ($gen).builder.$op_name(a, b, "op_result");
-      reg(fv.into())
-    }
-  }
-}
-
-macro_rules! unary_op {
-  ($op_name:ident, $type_name:ident, $a:ident, $gen:ident) => {
-    {
-      let a = codegen_type!($type_name, $a, $gen)?;
-      let v = ($gen).builder.$op_name(a, "op_result");
-      reg(v.into())
-    }
-  }
-}
-
-macro_rules! convert_op {
-  ($op_name:ident, $type_name:ident, $type_width:expr, $a:ident, $gen:ident) => {
-    {
-      let a = codegen_type!($type_name, $a, $gen)?;
-      let t = $type_width;
-      let v = ($gen).builder.$op_name(a, t, "conversion_result");
-      reg(v.into())
-    }
-  }
-}
-
-macro_rules! compare_op {
-  ($op_name:ident, $pred:expr, $type_name:ident, $a:ident, $b:ident, $gen:ident) => {
-    {
-      let a = codegen_type!($type_name, $a, $gen)?;
-      let b = codegen_type!($type_name, $b, $gen)?;
-      let fv = ($gen).builder.$op_name($pred, a, b, "cpm_result");
-      reg(fv.into())
-    }
-  }
-}
 
 /// Indicates whether a value is a pointer to the stack,
 /// or stored directly in a register.
@@ -174,7 +126,7 @@ pub struct Gen<'l> {
   globals_to_link: &'l mut Vec<(GlobalValue, RefStr)>,
 
   /// Functions that need linking when the execution engine is created
-  functions_to_link: &'l mut Vec<(FunctionValue, RefStr)>,
+  functions_to_link: &'l mut Vec<(FunctionValue, FunctionId)>,
 
   struct_types: HashMap<RefStr, StructType>,
 
@@ -221,37 +173,101 @@ pub struct GenFunction<'l, 'lg> {
   labels_in_scope: Vec<(LabelId, LabelState)>,
 }
 
-struct CompileInfo<'l> {
+pub struct CompileInfo<'l> {
   external_modules : &'l [CompiledModule],
   m : &'l ModuleInfo,
   cg : &'l CodegenInfo,
+  nodes : &'l Nodes,
 }
 
-// impl <'l> CompileInfo<'l> {
+impl <'l> CompileInfo<'l> {
 
-//   fn find_type_def(&self, name : &str) -> Option<&'l TypeDefinition> {
-//     self.m.find_type_def(name)
-//   }
+  fn new(
+    external_modules : &'l [CompiledModule],
+    m : &'l ModuleInfo,
+    cg : &'l CodegenInfo,
+    nodes : &'l Nodes)
+      -> Self 
+  {
+    CompileInfo { external_modules, m, cg, nodes }
+  }
 
-//   fn find_function_def(&self, id : FunctionId) -> Option<(&'l CompiledModule, &'l FunctionDefinition)> {
-//     self.find_function_def(name).and_then(|def| if def.id == module { Some(def) } else None)
+  fn typed_node(&self, nid : NodeId) -> TypedNode {
+    let node = self.nodes.node(nid);
+    TypedNode { info: self, node }
+  }
+  
+  fn find_type_def(&self, name : &str) -> Option<&TypeDefinition> {
+    self.m.find_type_def(name)
+  }
 
-//     self.external_modules.iter().find(|m| m.info.id == function_ref.module_id)
-//       .and_then(|m|
-//         m.info.functions.iter().find(|def|
-//           def.name_in_code == function_ref.name_in_code &&
-//           def.name_for_codegen == function_ref.name_for_codegen)
-//         .map(|def| (m, def))
-//       )
-//   }
+  fn to_type(&self, id : TypeId) -> Type {
+    self.m.types.get(id)
+  }
 
-//   fn find_external_global_def(&self, name : &str) -> Option<(&'l CompiledModule, &'l GlobalDefinition)> {
-//     self.external_modules.iter().flat_map(|m|
-//       m.info.globals.get(name)
-//       .map(|g| (m, g))
-//     ).next()
-//   }
-// }
+  fn def_name(&self, id : DefId) -> &str {
+    self.m.types.type_definition_name(id)
+  }
+
+  fn find_function_def(&self, id : FunctionId) -> &FunctionDefinition {
+    self.m.functions.get(&id).unwrap()
+  }
+
+  // fn find_function_def(&self, id : FunctionId) -> Option<(&'l CompiledModule, &'l FunctionDefinition)> {
+  //   self.external_modules.iter().find(|m| m.info.id == function_ref.module_id)
+  //     .and_then(|m|
+  //       m.info.functions.iter().find(|def|
+  //         def.name_in_code == function_ref.name_in_code &&
+  //         def.name_for_codegen == function_ref.name_for_codegen)
+  //       .map(|def| (m, def))
+  //     )
+  // }
+
+  // fn find_external_global_def(&self, name : &str) -> Option<(&'l CompiledModule, &'l GlobalDefinition)> {
+  //   self.external_modules.iter().flat_map(|m|
+  //     m.info.globals.get(name)
+  //     .map(|g| (m, g))
+  //   ).next()
+  // }
+}
+
+#[derive(Clone, Copy)]
+struct TypedNode<'l> {
+  info : &'l CompileInfo<'l>,
+  node : &'l Node,
+}
+
+impl <'l> Into<TextLocation> for TypedNode<'l> {
+  fn into(self) -> TextLocation {
+    self.node.loc
+  }
+}
+
+impl <'l> TypedNode<'l> {
+  fn type_tag(&self) -> Type {
+    *self.info.cg.node_type.get(&self.node.id).unwrap()
+  }
+
+  fn get(&self, nid : NodeId) -> TypedNode {
+    self.info.typed_node(nid.into())
+  }
+
+  fn node_value_type(&self) -> NodeValueType {
+    self.node.content.node_value_type()
+  }
+
+  fn content(&self) -> &'l Content {
+    &self.node.content
+  }
+
+  fn sizeof_type(&self) -> Option<Type> {
+    self.info.cg.sizeof_info.get(&self.node.id).cloned()
+  }
+
+  fn node_function_reference(&self) -> Option<FunctionId> {
+    self.info.cg.function_references.get(&self.node.id).cloned()
+  }
+}
 
 impl <'l> Gen<'l> {
 
@@ -262,7 +278,7 @@ impl <'l> Gen<'l> {
     external_modules : &'l [CompiledModule],
     info : CompileInfo<'l>,
     globals_to_link: &'l mut Vec<(GlobalValue, RefStr)>,
-    functions_to_link: &'l mut Vec<(FunctionValue, RefStr)>,
+    functions_to_link: &'l mut Vec<(FunctionValue, FunctionId)>,
     pm : &'l PassManager<FunctionValue>,
   )
       -> Gen<'l>
@@ -279,9 +295,9 @@ impl <'l> Gen<'l> {
   }
 
   /// Code-generates a module, returning a reference to the top-level function in the module
-  pub fn codegen_module(mut self, module : &ModuleInfo) -> Result<(), Error> {
+  pub fn codegen_module(mut self, info : &CompileInfo) -> Result<(), Error> {
     // declare the local globals
-    for (name, def) in module.globals.iter() {
+    for (name, def) in info.m.globals.iter() {
       let t = self.to_basic_type(def.type_tag).unwrap();
       if def.c_bind {
         let gv = self.module.add_global(t, Some(AddressSpace::Generic), &name);
@@ -294,18 +310,18 @@ impl <'l> Gen<'l> {
 
     // generate the prototypes first (so the functions find each other)
     let mut functions_to_codegen = vec!();
-    for def in module.functions.iter() {
-      let sig = module.types.signature(def.signature);
+    for def in info.m.functions.values() {
+      let sig = info.m.types.signature(def.signature);
       match &def.implementation {
         FunctionImplementation::Normal{ body, name_for_codegen } => {
           let f = self.codegen_prototype(
             name_for_codegen.as_ref(), sig.return_type,
             def.args.as_slice(), sig.args.as_slice());
-          functions_to_codegen.push((f, def, body));
+          functions_to_codegen.push((f, def, *body));
         }
         FunctionImplementation::CFunction => {
           let f = self.codegen_prototype(def.name_in_code.as_ref(), sig.return_type, &def.args, &sig.args);
-          self.functions_to_link.push((f, def.name_in_code.clone()));
+          self.functions_to_link.push((f, def.id));
         }
         _ => (),
       }
@@ -313,7 +329,7 @@ impl <'l> Gen<'l> {
 
     // codegen the functions
     for (p, def, body) in functions_to_codegen {
-      GenFunction::codegen_function(&mut self, p, body, def.args.as_slice())?;
+      GenFunction::codegen_function(&mut self, p, info.typed_node(body), def.args.as_slice())?;
     }
 
     Ok(())
@@ -380,7 +396,8 @@ impl <'l> Gen<'l> {
       Type::Dynamic => {
         panic!()
       }
-      Type::Def(name) => {
+      Type::Def(id) => {
+        let name = self.info.def_name(id);
         if let Some(def) = self.info.find_type_def(name) {
           Some(self.composite_type(def).as_basic_type_enum())
         }
@@ -389,19 +406,13 @@ impl <'l> Gen<'l> {
         }
       }
       Type::Array(t) => {
+        let t = self.info.to_type(t);
         Some(self.bounded_array_type(t).into())
       }
       Type::Ptr(t) => {
+        let t = self.info.to_type(t);
         let bt = self.to_basic_type(t);
         Some(self.pointer_to_type(bt).into())
-      }
-      Type::Tuple(ts) => {
-        let types =
-          ts.iter().map(|t| {
-            self.to_basic_type_no_cycle(t).unwrap()
-          })
-          .collect::<Vec<BasicTypeEnum>>();
-        Some(self.context.struct_type(&types, false).into())
       }
     }
   }
@@ -413,7 +424,7 @@ impl <'l> Gen<'l> {
   ///   length : u64
   /// }
   /// 
-  fn bounded_array_type(&mut self, t : &Type) -> StructType {
+  fn bounded_array_type(&mut self, t : Type) -> StructType {
     let bt = self.to_basic_type(t);
     let t = self.pointer_to_type(bt).into();
     let i64_type = self.context.i64_type();
@@ -422,7 +433,7 @@ impl <'l> Gen<'l> {
 
   fn to_function_type(&mut self, arg_types : &[Type], return_type : Type) -> FunctionType {
     let arg_types =
-      arg_types.iter().map(|t| self.to_basic_type(t).unwrap())
+      arg_types.iter().map(|&t| self.to_basic_type(t).unwrap())
       .collect::<Vec<BasicTypeEnum>>();
     let arg_types = arg_types.as_slice();
 
@@ -503,7 +514,7 @@ impl <'l> Gen<'l> {
       TypeKind::Struct => {
         let types =
           def.fields.iter().map(|(_, t)| {
-            self.to_basic_type_no_cycle(t).unwrap()
+            self.to_basic_type_no_cycle(*t).unwrap()
           })
           .collect::<Vec<BasicTypeEnum>>();
         self.context.struct_type(&types, false)
@@ -513,7 +524,7 @@ impl <'l> Gen<'l> {
         let mut bt : Option<BasicTypeEnum> = None;
         let mut widest_alignment = 0;
         for (_, t) in def.fields.iter() {
-          if let Some(t) = self.to_basic_type_no_cycle(t) {
+          if let Some(t) = self.to_basic_type_no_cycle(*t) {
             let alignment = self.target_data.get_preferred_alignment(&t);
             if alignment > widest_alignment {
               widest_alignment = alignment;
@@ -551,6 +562,105 @@ impl <'l> Gen<'l> {
     //gv.set_alignment(8); // TODO: is this needed?
     gv.as_pointer_value()
   }
+}
+
+macro_rules! codegen_type {
+  (PointerValue, $e:ident, $gen:ident) => { $gen.codegen_pointer($e) };
+  (FloatValue, $e:ident, $gen:ident) => { $gen.codegen_float($e) };
+  (IntValue, $e:ident, $gen:ident) => { $gen.codegen_int($e) };
+}
+
+macro_rules! convert_op {
+  ($op_name:ident, $type_name:ident, $type_width:expr, $a:ident, $gen:ident) => {
+    {
+      let a = codegen_type!($type_name, $a, $gen)?;
+      let t = $type_width;
+      let v = ($gen).builder.$op_name(a, t, "conversion_result");
+      reg(v.into())
+    }
+  }
+}
+
+macro_rules! binary_op {
+  ($op_name:ident, $type_name:ident, $a:ident, $b:ident, $gen:ident) => {
+    {
+      let a = codegen_type!($type_name, $a, $gen)?;
+      let b = codegen_type!($type_name, $b, $gen)?;
+      let fv = ($gen).builder.$op_name(a, b, "op_result");
+      reg(fv.into())
+    }
+  }
+}
+
+macro_rules! unary_op {
+  ($op_name:ident, $type_name:ident, $a:ident, $gen:ident) => {
+    {
+      let a = codegen_type!($type_name, $a, $gen)?;
+      let v = ($gen).builder.$op_name(a, "op_result");
+      reg(v.into())
+    }
+  }
+}
+
+macro_rules! compare_op {
+  ($op_name:ident, $pred:expr, $type_name:ident, $a:ident, $b:ident, $gen:ident) => {
+    {
+      let a = codegen_type!($type_name, $a, $gen)?;
+      let b = codegen_type!($type_name, $b, $gen)?;
+      let fv = ($gen).builder.$op_name($pred, a, b, "cpm_result");
+      reg(fv.into())
+    }
+  }
+}
+
+fn codegen_intrinsic_call(gf : &mut GenFunction, node : TypedNode, name : &str, args : &[TypedNode])
+-> Result<Option<GenVal>, Error>
+{
+  let gv = if let [a, b] = args {
+    let (a, b) = (*a, *b);
+    match (a.type_tag(), name) {
+    (Type::F64, "+") => binary_op!(build_float_add, FloatValue, a, b, gf),
+      (Type::F64, "-") => binary_op!(build_float_sub, FloatValue, a, b, gf),
+      (Type::F64, "*") => binary_op!(build_float_mul, FloatValue, a, b, gf),
+      (Type::F64, "/") => binary_op!(build_float_div, FloatValue, a, b, gf),
+      (Type::F64, ">") => compare_op!(build_float_compare, FloatPredicate::OGT, FloatValue, a, b, gf),
+      (Type::F64, ">=") => compare_op!(build_float_compare, FloatPredicate::OGE, FloatValue, a, b, gf),
+      (Type::F64, "<") => compare_op!(build_float_compare, FloatPredicate::OLT, FloatValue, a, b, gf),
+      (Type::F64, "<=") => compare_op!(build_float_compare, FloatPredicate::OLE, FloatValue, a, b, gf),
+      (Type::F64, "==") => compare_op!(build_float_compare, FloatPredicate::OEQ, FloatValue, a, b, gf),
+      (Type::I64, "+") => binary_op!(build_int_add, IntValue, a, b, gf),
+      (Type::I64, "-") => binary_op!(build_int_sub, IntValue, a, b, gf),
+      (Type::I64, "*") => binary_op!(build_int_mul, IntValue, a, b, gf),
+      // TODO: why is this commented out?
+      // (Type::I64, "/") => binary_op!(build_int_div, IntValue, a, b, gf),
+      (Type::I64, ">") => compare_op!(build_int_compare, IntPredicate::SGT, IntValue, a, b, gf),
+      (Type::I64, ">=") => compare_op!(build_int_compare, IntPredicate::SGE, IntValue, a, b, gf),
+      (Type::I64, "<") => compare_op!(build_int_compare, IntPredicate::SLT, IntValue, a, b, gf),
+      (Type::I64, "<=") => compare_op!(build_int_compare, IntPredicate::SLE, IntValue, a, b, gf),
+      (Type::I64, "==") => compare_op!(build_int_compare, IntPredicate::EQ, IntValue, a, b, gf),
+      (Type::Bool, "&&") => gf.codegen_short_circuit_op(a, b, ShortCircuitOp::And)?,
+      (Type::Bool, "||") => gf.codegen_short_circuit_op(a, b, ShortCircuitOp::Or)?,
+      _ => return error(node, "encountered unrecognised intrinsic"),
+    }        
+  }
+  else if let [a] = args {
+    let a = *a;
+    match (a.type_tag(), name) {
+      (Type::F64, "-") => unary_op!(build_float_neg, FloatValue, a, gf),
+      (Type::I64, "-") => unary_op!(build_int_neg, IntValue, a, gf),
+      (Type::Bool, "!") => unary_op!(build_not, IntValue, a, gf),
+      (Type::Ptr(_), "*") => {
+        let ptr = gf.codegen_pointer(a)?;
+        pointer(ptr)
+      }
+      (_, "&") => gf.codegen_address_of_expression(a)?,
+      _ => return error(node, "encountered unrecognised intrinsic"),
+    }
+  }
+  else {
+    return error(node, "encountered unrecognised intrinsic");
+  };
+  Ok(Some(gv))
 }
 
 impl <'l, 'lg> GenFunction<'l, 'lg> {
@@ -593,43 +703,43 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
     Ok(())
   }
 
-  fn codegen_value(&mut self, n : &TypedNode) -> Result<BasicValueEnum, Error> {
+  fn codegen_value(&mut self, n : TypedNode) -> Result<BasicValueEnum, Error> {
     Ok(self.codegen_expression_to_register(n)?.unwrap())
   }
 
-  fn codegen_float(&mut self, n : &TypedNode) -> Result<FloatValue, Error> {
+  fn codegen_float(&mut self, n : TypedNode) -> Result<FloatValue, Error> {
     let v = self.codegen_value(n)?;
     match v {
       BasicValueEnum::FloatValue(f) => Ok(f),
-      t => error(n.loc, format!("Expected float, found {:?}", t)),
+      t => error(n, format!("Expected float, found {:?}", t)),
     }
   }
 
-  fn codegen_struct(&mut self, n : &TypedNode) -> Result<StructValue, Error> {
+  fn codegen_struct(&mut self, n : TypedNode) -> Result<StructValue, Error> {
     let v = self.codegen_value(n)?;
     match v {
       BasicValueEnum::StructValue(sv) => Ok(sv),
-      t => error(n.loc, format!("Expected struct, found {:?}", t)),
+      t => error(n, format!("Expected struct, found {:?}", t)),
     }
   }
 
-  fn codegen_int(&mut self, n : &TypedNode) -> Result<IntValue, Error> {
+  fn codegen_int(&mut self, n : TypedNode) -> Result<IntValue, Error> {
     let v = self.codegen_value(n)?;
     match v {
       BasicValueEnum::IntValue(i) => Ok(i),
-      t => error(n.loc, format!("Expected int, found {:?}", t)),
+      t => error(n, format!("Expected int, found {:?}", t)),
     }
   }
 
-  fn codegen_pointer(&mut self, n : &TypedNode) -> Result<PointerValue, Error> {
+  fn codegen_pointer(&mut self, n : TypedNode) -> Result<PointerValue, Error> {
     let v = self.codegen_value(n)?;
     match v {
       BasicValueEnum::PointerValue(p) => Ok(p),
-      t => error(n.loc, format!("Expected pointer, found {:?}", t)),
+      t => error(n, format!("Expected pointer, found {:?}", t)),
     }
   }
 
-  fn codegen_expression_to_register(&mut self, n : &TypedNode) -> Result<Option<BasicValueEnum>, Error> {
+  fn codegen_expression_to_register(&mut self, n : TypedNode) -> Result<Option<BasicValueEnum>, Error> {
     let v = self.codegen_expression(n)?;
     Ok(self.genval_to_register(v))
   }
@@ -652,7 +762,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
     }
   }
 
-  fn codegen_convert(&mut self, convert_node : &TypedNode, value_to_convert : &TypedNode) -> Result<GenVal, Error> {
+  fn codegen_convert(&mut self, convert_node : TypedNode, value_to_convert : TypedNode) -> Result<GenVal, Error> {
     fn int_type(gen : &Gen, width : u64) -> IntType {
       match width {
         1 => gen.context.bool_type(),
@@ -674,10 +784,10 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
       }
     }
 
-    let from_type = &value_to_convert.type_tag;
-    let to_type = &convert_node.type_tag;
-    let from_llvm_type = self.gen.to_basic_type(from_type).ok_or_else(|| error_raw(value_to_convert.loc, "can't cast from void"))?;
-    let to_llvm_type = self.gen.to_basic_type(to_type).ok_or_else(|| error_raw(convert_node.loc, "can't cast to void"))?;
+    let from_type = value_to_convert.type_tag();
+    let to_type = convert_node.type_tag();
+    let from_llvm_type = self.gen.to_basic_type(from_type).ok_or_else(|| error_raw(value_to_convert, "can't cast from void"))?;
+    let to_llvm_type = self.gen.to_basic_type(to_type).ok_or_else(|| error_raw(convert_node, "can't cast to void"))?;
     let n = value_to_convert;
     
     let from_float = from_type.float();
@@ -756,10 +866,10 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
       let t = int_type(&self.gen, to_width);
       return Ok(convert_op!(build_float_to_unsigned_int, FloatValue, t, n, self));
     }
-    return error(convert_node.loc, "type cast not supported");
+    return error(convert_node, "type cast not supported");
   }
 
-  fn codegen_short_circuit_op(&mut self, a : &TypedNode, b : &TypedNode, op : ShortCircuitOp)
+  fn codegen_short_circuit_op(&mut self, a : TypedNode, b : TypedNode, op : ShortCircuitOp)
     -> Result<GenVal, Error>
   {
     use ShortCircuitOp::*;
@@ -832,32 +942,39 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
     }
   }
 
-  fn codegen_address_of_expression(&mut self, value : &TypedNode) -> Result<GenVal, Error> {
+  fn codegen_address_of_expression(&mut self, value : TypedNode) -> Result<GenVal, Error> {
     let v = self.codegen_expression(value)?.unwrap();
     Ok(reg(self.codegen_address_of_genval(v)?.into()))
   }
 
   /// ensure necessary definitions are inserted and linking operations performed when a function is referenced
-  fn get_linked_function_reference(&mut self, fr : &FunctionReference) -> FunctionValue {
-    if let Some(local_f) = self.gen.module.get_function(&fr.name_for_codegen) {
-      local_f
-    }
-    else {
-      if let Some((compiled_module, def)) = self.gen.info.find_external_function_def(fr) {
-        let f = self.gen.codegen_prototype(&def.name_for_codegen, &def.signature.return_type, &def.args, &def.signature.args);
-        match def.implementation {
-          FunctionImplementation::CFunction(Some(address)) => {
-            self.gen.functions_to_link.push((f, address));
-          }
-          _ => {
-            let address = unsafe { compiled_module.ee.get_function_address(def.name_for_codegen.as_ref()).unwrap() };
-            self.gen.functions_to_link.push((f, address as usize));
-          }
+  fn get_linked_function_reference(&mut self, fid : FunctionId) -> FunctionValue {
+    let def = self.gen.info.find_function_def(fid);
+    let sig = self.gen.info.m.types.signature(def.signature);
+    match &def.implementation {
+      FunctionImplementation::Normal { name_for_codegen, .. } => {
+        if def.module_id == self.gen.info.m.id {
+          self.gen.module.get_function(name_for_codegen)
+            .expect("expected local function!")
         }
-        f
+        else {
+          let f = self.gen.codegen_prototype(name_for_codegen, sig.return_type, &def.args, &sig.args);
+          self.gen.functions_to_link.push((f, def.id));
+          f
+        }
       }
-      else {
-        panic!("code generator cannot find {:?}", fr);
+      FunctionImplementation::CFunction => {
+        if let Some(local_f) = self.gen.module.get_function(&def.name_in_code) {
+          local_f
+        }
+        else {
+          let f = self.gen.codegen_prototype(&def.name_in_code, sig.return_type, &def.args, &sig.args);
+          self.gen.functions_to_link.push((f, def.id));
+          f
+        }
+      }
+      FunctionImplementation::Intrinsic => {
+        panic!("cannot get reference to intrinsic");
       }
     }
   }
@@ -868,32 +985,43 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
     return r.map(reg);
   }
 
-  fn codegen_function_call(&mut self, function_value : &TypedNode, args : &[TypedNode])
+  fn codegen_function_call(&mut self, node : TypedNode, function : &FunctionNode, args : &[NodeId])
     -> Result<Option<GenVal>, Error>
   {
+    let function_pointer = match function {
+      FunctionNode::Value(nid) => {
+        self.codegen_pointer(node.get(*nid))?
+      },
+      FunctionNode::Name(_) => {
+        let fid = node.node_function_reference().expect("missing function reference!");
+        self.get_linked_function_reference(fid).as_global_value().as_pointer_value()
+      }
+    };
     let mut arg_vals = vec!();
-    let function_pointer = self.codegen_pointer(function_value)?;
-    for a in args.iter() {
+    for &a in args.iter() {
+      let a = node.get(a);
       let v = self.codegen_value(a)?;
       arg_vals.push(v);
     }
     Ok(self.build_function_call(function_pointer, arg_vals.as_slice(), "return_val"))
   }
 
-  fn get_linked_drop_reference(&mut self, t : &Type) -> Option<FunctionValue> {
-    if let Type::Def(name) = t {
+  fn get_linked_drop_reference(&mut self, t : Type) -> Option<FunctionValue> {
+    if let Type::Def(id) = t {
+      let name = self.gen.info.def_name(id);
       let def = self.gen.info.find_type_def(name).unwrap();
-      if let Some(drop) = &def.drop_function {
+      if let Some(drop) = def.drop_function {
         return Some(self.get_linked_function_reference(drop));
       }
     }
     None
   }
 
-  fn get_linked_clone_reference(&mut self, t : &Type) -> Option<FunctionValue> {
-    if let Type::Def(name) = t {
+  fn get_linked_clone_reference(&mut self, t : Type) -> Option<FunctionValue> {
+    if let Type::Def(id) = t {
+      let name = self.gen.info.def_name(id);
       let def = self.gen.info.find_type_def(name).unwrap();
-      if let Some(clone) = &def.clone_function {
+      if let Some(clone) = def.clone_function {
         return Some(self.get_linked_function_reference(clone));
       }
     }
@@ -902,9 +1030,9 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
 
   /// Makes sure newly created values that need to be dropped are registered with the block that they
   /// were created in. This means they must have an address on the stack.
-  fn codegen_drop_value_registration(&mut self, node : &TypedNode, v : Option<GenVal>) -> Result<Option<GenVal>, Error> {
+  fn codegen_drop_value_registration(&mut self, node : TypedNode, v : Option<GenVal>) -> Result<Option<GenVal>, Error> {
     if node.node_value_type() == NodeValueType::Owned {
-      if let Some(drop_reference) = self.get_linked_drop_reference(&node.type_tag) {
+      if let Some(drop_reference) = self.get_linked_drop_reference(node.type_tag()) {
         if drop_reference != self.fn_val {
           // do not auto-drop recursively
           let p = self.codegen_address_of_genval(v.unwrap())?;
@@ -917,7 +1045,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
     return Ok(v);
   }
 
-  fn codegen_cloned_expression(&mut self, t : &Type, val : Option<GenVal>) -> Result<Option<GenVal>, Error> {
+  fn codegen_cloned_expression(&mut self, t : Type, val : Option<GenVal>) -> Result<Option<GenVal>, Error> {
     if let Some(clone) = self.get_linked_clone_reference(t) {
       // do not auto-clone recursively
       if clone != self.fn_val {
@@ -929,13 +1057,13 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
     Ok(val)
   }
 
-  fn codegen_owned_expression(&mut self, node : &TypedNode) -> Result<Option<GenVal>, Error> {
+  fn codegen_owned_expression(&mut self, node : TypedNode) -> Result<Option<GenVal>, Error> {
     let val = self.codegen_without_drop_value_registration(node)?;
     if node.node_value_type() == NodeValueType::Owned {
       Ok(val)
     }
     else {
-      self.codegen_cloned_expression(&node.type_tag, val)
+      self.codegen_cloned_expression(node.type_tag(), val)
     }
   }
 
@@ -945,69 +1073,50 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
   }
 
 
-  fn codegen_expression(&mut self, node : &TypedNode) -> Result<Option<GenVal>, Error> {
+  fn codegen_expression(&mut self, node : TypedNode) -> Result<Option<GenVal>, Error> {
     let v = self.codegen_without_drop_value_registration(node)?;
-    return self.codegen_drop_value_registration(&node, v);
+    return self.codegen_drop_value_registration(node, v);
   }
 
-  fn codegen_without_drop_value_registration(&mut self, node : &TypedNode) -> Result<Option<GenVal>, Error> {
-    let v : GenVal = match &node.content {
-      Content::FunctionCall(function_value, args) => {
-        return self.codegen_function_call(function_value, args);
+  // Literal(Val),
+  // LocalInitialise{ name: Symbol, type_tag: Option<Box<Expr>>, value: NodeId },
+  // GlobalInitialise{ name: Symbol, type_tag: Option<Box<Expr>>, value: NodeId },
+  // Assignment{ assignee: NodeId , value: NodeId },
+  // IfThen{ condition: NodeId, then_branch: NodeId },
+  // IfThenElse{ condition: NodeId, then_branch: NodeId, else_branch: NodeId },
+  // Block(Vec<NodeId>),
+  // Quote(Box<Expr>),
+  // Reference { name: RefStr, refers_to: Option<SymbolId> },
+  // FunctionDefinition{ name: RefStr, args: Vec<(Symbol, Option<Box<Expr>>)>, return_tag: Option<Box<Expr>>, body: NodeId },
+  // CBind { name: RefStr, type_tag : Box<Expr> },
+  // TypeDefinition{ name: RefStr, kind : TypeKind, fields: Vec<(Symbol, Option<Box<Expr>>)> },
+  // TypeConstructor{ name: RefStr, field_values: Vec<(Option<Symbol>, NodeId)> },
+  // FieldAccess{ container: NodeId, field: Symbol },
+  // Index{ container: NodeId, index: NodeId },
+  // ArrayLiteral(Vec<NodeId>),
+  // FunctionCall{ function: FunctionNode, args: Vec<NodeId> },
+  // While{ condition: NodeId, body: NodeId },
+  // Convert{ from_value: NodeId, into_type: Box<Expr> },
+  // SizeOf{ type_tag: Box<Expr> },
+
+  // Label{ label: LabelId, body: NodeId },
+  // BreakToLabel{ label: LabelId, return_value: Option<NodeId> },
+
+  fn codegen_without_drop_value_registration(&mut self, node : TypedNode) -> Result<Option<GenVal>, Error> {
+    let v : GenVal = match node.content() {
+      Content::FunctionCall{ function, args } => {
+        return self.codegen_function_call(node, function, args);
       }
-      Content::IntrinsicCall(name, args) => {
-        if let [a, b] = args.as_slice() {
-          match (&a.type_tag, name.as_ref()) {
-          (Type::F64, "+") => binary_op!(build_float_add, FloatValue, a, b, self),
-            (Type::F64, "-") => binary_op!(build_float_sub, FloatValue, a, b, self),
-            (Type::F64, "*") => binary_op!(build_float_mul, FloatValue, a, b, self),
-            (Type::F64, "/") => binary_op!(build_float_div, FloatValue, a, b, self),
-            (Type::F64, ">") => compare_op!(build_float_compare, FloatPredicate::OGT, FloatValue, a, b, self),
-            (Type::F64, ">=") => compare_op!(build_float_compare, FloatPredicate::OGE, FloatValue, a, b, self),
-            (Type::F64, "<") => compare_op!(build_float_compare, FloatPredicate::OLT, FloatValue, a, b, self),
-            (Type::F64, "<=") => compare_op!(build_float_compare, FloatPredicate::OLE, FloatValue, a, b, self),
-            (Type::F64, "==") => compare_op!(build_float_compare, FloatPredicate::OEQ, FloatValue, a, b, self),
-            (Type::I64, "+") => binary_op!(build_int_add, IntValue, a, b, self),
-            (Type::I64, "-") => binary_op!(build_int_sub, IntValue, a, b, self),
-            (Type::I64, "*") => binary_op!(build_int_mul, IntValue, a, b, self),
-            // TODO: why is this commented out?
-            // (Type::I64, "/") => binary_op!(build_int_div, IntValue, a, b, self),
-            (Type::I64, ">") => compare_op!(build_int_compare, IntPredicate::SGT, IntValue, a, b, self),
-            (Type::I64, ">=") => compare_op!(build_int_compare, IntPredicate::SGE, IntValue, a, b, self),
-            (Type::I64, "<") => compare_op!(build_int_compare, IntPredicate::SLT, IntValue, a, b, self),
-            (Type::I64, "<=") => compare_op!(build_int_compare, IntPredicate::SLE, IntValue, a, b, self),
-            (Type::I64, "==") => compare_op!(build_int_compare, IntPredicate::EQ, IntValue, a, b, self),
-            (Type::Bool, "&&") => self.codegen_short_circuit_op(a, b, ShortCircuitOp::And)?,
-            (Type::Bool, "||") => self.codegen_short_circuit_op(a, b, ShortCircuitOp::Or)?,
-            _ => return error(node.loc, "encountered unrecognised intrinsic"),
-          }        
-        }
-        else if let [a] = args.as_slice() {
-          match (&a.type_tag, name.as_ref()) {
-            (Type::F64, "-") => unary_op!(build_float_neg, FloatValue, a, self),
-            (Type::I64, "-") => unary_op!(build_int_neg, IntValue, a, self),
-            (Type::Bool, "!") => unary_op!(build_not, IntValue, a, self),
-            (Type::Ptr(_), "*") => {
-              let ptr = self.codegen_pointer(a)?;
-              pointer(ptr)
-            }
-            (_, "&") => self.codegen_address_of_expression(a)?,
-            _ => return error(node.loc, "encountered unrecognised intrinsic"),
-          }
-        }
-        else {
-          return error(node.loc, "encountered unrecognised intrinsic");
-        }
-      }
-      Content::SizeOf(t) => {
-        let t = self.gen.to_basic_type(&t);
+      Content::SizeOf{ .. } => {
+        let sizeof_type = node.sizeof_type().expect("sizeof node has no type associated with it");
+        let t = self.gen.to_basic_type(sizeof_type);
         reg(self.gen.size_of_type(t).into())
       }
-      Content::Convert(n) => {
-        self.codegen_convert(node, n)?
+      Content::Convert{ from_value, .. } => {
+        self.codegen_convert(node, node.get(*from_value))?
       }
-      Content::While(ns) => {
-        let (cond_node, body_node) = (&ns.0, &ns.1);
+      Content::While{ condition, body } => {
+        let (cond_node, body_node) = (node.get(*condition), node.get(*body));
         let f = self.fn_val;
         let cond_block = self.gen.context.append_basic_block(&f, "cond");
         let body_block = self.gen.context.append_basic_block(&f, "loop_body");
@@ -1028,8 +1137,8 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         self.builder.position_at_end(&exit_block);
         return Ok(None);
       }
-      Content::IfThen(ns) => {
-        let (cond_node, then_node) = (&ns.0, &ns.1);
+      Content::IfThen { condition, then_branch } => {
+        let (cond_node, then_node) = (node.get(*condition), node.get(*then_branch));
         let f = self.fn_val;
         let then_block = self.gen.context.append_basic_block(&f, "then");
         let end_block = self.gen.context.append_basic_block(&f, "endif");
@@ -1044,13 +1153,14 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         self.builder.position_at_end(&end_block);
         return Ok(None);
       }
-      Content::Label(inner_node, label) => {
+      Content::Label{ label, body } => {
+        let body = node.get(*body);
         let f = self.fn_val;
         let exit_block = self.gen.context.append_basic_block(&f, "exit_label");
         let block_depth = self.blocks.len();
         let label_state = LabelState { block_depth, exit_block, phi_values: vec![] };
         self.labels_in_scope.push((*label, label_state));
-        let value = self.codegen_expression_to_register(inner_node)?;
+        let value = self.codegen_expression_to_register(body)?;
         let block = self.builder.get_insert_block().unwrap();
         let (_, label_state) = self.labels_in_scope.pop().unwrap();
         self.builder.build_unconditional_branch(&label_state.exit_block);
@@ -1067,25 +1177,27 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
           return Ok(None);
         }
       }
-      Content::IfThenElse(ns) => {
-        let (cond_node, then_node, else_node) = (&ns.0, &ns.1, &ns.2);
+      Content::IfThenElse{ condition, then_branch, else_branch } => {
+        let condition = node.get(*condition);
+        let then_branch = node.get(*then_branch);
+        let else_branch = node.get(*else_branch);
         // create basic blocks
         let f = self.fn_val;
         let then_start_block = self.gen.context.append_basic_block(&f, "then");
         let else_start_block = self.gen.context.append_basic_block(&f, "else");
         let end_block = self.gen.context.append_basic_block(&f, "endif");
         // conditional branch
-        let cond_value = self.codegen_int(cond_node)?;
+        let cond_value = self.codegen_int(condition)?;
         self.builder.build_conditional_branch(
           cond_value, &then_start_block, &else_start_block);
         // then block
         self.builder.position_at_end(&then_start_block);
-        let then_value = self.codegen_expression_to_register(then_node)?;
+        let then_value = self.codegen_expression_to_register(then_branch)?;
         let then_end_block = self.builder.get_insert_block().unwrap();
         self.builder.build_unconditional_branch(&end_block);
         // else block
         self.builder.position_at_end(&else_start_block);
-        let else_value = self.codegen_expression_to_register(else_node)?;
+        let else_value = self.codegen_expression_to_register(else_branch)?;
         let else_end_block = self.builder.get_insert_block().unwrap();
         self.builder.build_unconditional_branch(&end_block);
         // end block
@@ -1110,10 +1222,10 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         self.blocks.push(Block::new());
         let block_value = if node_count > 0 {
           for i in 0..(node_count-1) {
-            self.codegen_expression(&nodes[i])?;
+            self.codegen_expression(node.get(nodes[i]))?;
           }
           // Make sure the last value is owned
-          self.codegen_owned_expression(&nodes[node_count-1])
+          self.codegen_owned_expression(node.get(nodes[node_count-1]))
         }
         else {
           Ok(None)
@@ -1135,56 +1247,61 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         let t = self.gen.pointer_to_type(Some(bt));
         reg(self.builder.build_int_to_ptr(v, t, "quote_expr").into())
       }
-      Content::CBind(_def) => {
+      Content::CBind{ .. } => {
         return Ok(None);
       }
-      Content::FunctionDefinition(_name) => {
+      Content::FunctionDefinition{ .. } => {
         return Ok(None);
       }
-      Content::TypeDefinition(_def) => {
+      Content::TypeDefinition{ .. } => {
         // TODO: is nothing required here?
         return Ok(None);
       }
-      Content::StructInstantiate(struct_name, args) => {
+      Content::TypeConstructor{ name, field_values } => {
         // TODO: log values that need to be dropped
         let a : Result<Vec<BasicValueEnum>, Error> =
-          args.iter().map(|a| self.codegen_value(a)).collect();
+          field_values.iter().map(|(_, a)| self.codegen_value(node.get(*a))).collect();
         //let def = self.find_type_def(&self.gen.type_info, struct_name).unwrap();
-        let def = self.gen.info.find_type_def(struct_name).unwrap();
-        self.codegen_struct_initialise(def, a?.as_slice())
+        let def = self.gen.info.find_type_def(name).unwrap();
+        match def.kind {
+          TypeKind::Struct => {
+            self.codegen_struct_initialise(def, a?.as_slice())
+          }
+          TypeKind::Union => {
+            self.codegen_union_initialise(def, a?[0])
+          }
+        }
       }
-      Content::UnionInstantiate(union_name, arg) => {
-        let val = self.codegen_value(&arg.1)?;
-        let def = self.gen.info.find_type_def(union_name).unwrap();
-        self.codegen_union_initialise(def, val)
-      }
-      Content::FieldAccess(x) => {
-        let (type_val_node, field_name) = (&x.0, &x.1);
-        let v = self.codegen_expression(type_val_node)?.unwrap();
-        let def = match &type_val_node.type_tag {
-          Type::Def(name) => self.gen.info.find_type_def(name).unwrap(),
+      Content::FieldAccess{ container, field } => {
+        let container = node.get(*container);
+        let v = self.codegen_expression(container)?.unwrap();
+        let def = match container.type_tag() {
+          Type::Def(id) => {
+            let name = node.info.def_name(id);
+            self.gen.info.find_type_def(name).unwrap()
+          }
           _ => panic!(),
         };
         match def.kind {
           TypeKind::Struct => {
             let (field_index, _) =
               def.fields.iter().enumerate()
-              .find(|(_, (n, _))| n==field_name).unwrap();
+              .find(|(_, (n, _))| n.name == field.name).unwrap();
             match v.storage {
               Storage::Register => {
                 // if the struct is in a register, dereference the field into a register
                 let reg_val =
                   self.builder.build_extract_value(
-                    *v.value.as_struct_value(), field_index as u32, field_name).unwrap();
+                    *v.value.as_struct_value(), field_index as u32, &field.name).unwrap();
                 reg(reg_val)
               }
               Storage::Pointer => {
                 // if this is a pointer to the struct, get a pointer to the field
                 let ptr = *v.value.as_pointer_value();
                 let field_ptr_untyped = unsafe {
-                  self.builder.build_struct_gep(ptr, field_index as u32, field_name)
+                  self.builder.build_struct_gep(ptr, field_index as u32, &field.name)
                 };
-                let t = self.gen.to_basic_type(&node.type_tag);
+                let t = self.gen.to_basic_type(node.type_tag());
                 // this cast is necessary because all pointer fields are tagged as void pointers
                 // in the IR, due to an issue with generating cyclic references
                 let field_ptr =
@@ -1195,7 +1312,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
             }
           }
           TypeKind::Union => {
-            let t = self.gen.to_basic_type(&node.type_tag);
+            let t = self.gen.to_basic_type(node.type_tag());
             match v.storage {
               Storage::Register => {
                 // if the struct is in a register, dereference the field into a register
@@ -1214,12 +1331,13 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         }
       }
       Content::ArrayLiteral(elements) => {
-        if let Type::Array(inner_type) = &node.type_tag {
+        if let Type::Array(inner_type) = node.type_tag() {
+          let inner_type = node.info.to_type(inner_type);
           let element_type = self.gen.to_basic_type(inner_type).unwrap();
           let length = self.gen.context.i32_type().const_int(elements.len() as u64, false).into();
           let array_ptr = self.builder.build_array_malloc(element_type, length, "array_malloc");
           for (i, e) in elements.iter().enumerate() {
-            let v = self.codegen_value(e)?;
+            let v = self.codegen_value(node.get(*e))?;
             let index = self.gen.context.i32_type().const_int(i as u64, false).into();
             let element_ptr = unsafe { self.builder.build_gep(array_ptr, &[index], "element_ptr") };
             self.builder.build_store(element_ptr, v);
@@ -1235,38 +1353,38 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
           panic!();
         }
       }
-      Content::Index(ns) => {
-        let (array_node, index_node) = (&ns.0, &ns.1);
+      Content::Index{ container, index } => {
+        let (container, index) = (node.get(*container), node.get(*index));
         // TODO: add bounds checks
-        let array_ptr = match array_node.type_tag {
+        let array_ptr = match container.type_tag() {
           Type::Array(_) => {
-            let array = self.codegen_struct(array_node)?;
+            let array = self.codegen_struct(container)?;
             // TODO: is this right?
             self.builder.build_extract_value(array, 0, "array_pointer").unwrap().into_pointer_value()
           }
-          Type::Ptr(_) => self.codegen_pointer(array_node)?,
+          Type::Ptr(_) => self.codegen_pointer(container)?,
           _ => panic!("unsupported index type"),
         };
-        let index = self.codegen_int(index_node)?;
+        let index = self.codegen_int(index)?;
         let element_ptr = unsafe { self.builder.build_gep(array_ptr, &[index], "element_ptr") };
         pointer(element_ptr)
       }
-      Content::Assignment(ns) => {
+      Content::Assignment{ assignee, value } => {
         // TODO: WHAT IS BEING ASSIGNED TO? Should only work for FIELDS and ARRAYS
-        let (assign_node, value_node) = (&ns.0, &ns.1);
-        let assign_location = self.codegen_expression(assign_node)?.unwrap();
+        let (assignee, value) = (node.get(*assignee), node.get(*value));
+        let assign_location = self.codegen_expression(assignee)?.unwrap();
         let assign_ptr = match assign_location.storage {
           Storage::Pointer => {
             *assign_location.value.as_pointer_value()
           }
           Storage::Register => {
-            return error(assign_node.loc, "cannot assign to this construct");
+            return error(assignee, "cannot assign to this construct");
           }
         };
         // Make sure the value being assigned is fully owned
-        let val = self.codegen_owned_expression(value_node)?;
+        let val = self.codegen_owned_expression(value)?;
         // Drop the value being overwritten
-        if let Some(drop_reference) = self.get_linked_drop_reference(&assign_node.type_tag) {
+        if let Some(drop_reference) = self.get_linked_drop_reference(assignee.type_tag()) {
           let d = Destructible { drop_reference, value: assign_ptr };
           self.codegen_drop_value(d);
         }
@@ -1276,11 +1394,12 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         self.builder.build_store(assign_ptr, reg_val);
         return Ok(None);
       }
-      Content::VariableInitialise(name, value_node, var_scope) => {
-        let v = self.codegen_expression_to_register(value_node)?
-          .ok_or_else(|| error_raw(value_node.loc, "expected value for initialiser, found void"))?;
-        self.init_variable(name.clone(), *var_scope, v)
-          .map_err(|c| error_raw(node.loc, c))?; 
+      Content::VariableInitialise{ name, type_tag, value, var_scope } => {
+        let value = node.get(*value);
+        let v = self.codegen_expression_to_register(value)?
+          .ok_or_else(|| error_raw(value, "expected value for initialiser, found void"))?;
+        self.init_variable(name.name.clone(), *var_scope, v)
+          .map_err(|c| error_raw(node, c))?; 
         return Ok(None);
       }
       Content::VariableReference(name) => {
@@ -1303,7 +1422,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
           pointer(gv.as_pointer_value())
         }
         else {
-          return error(node.loc, format!("unknown variable name '{}'.", name));
+          return error(node, format!("unknown variable name '{}'.", name));
         }
       }
       Content::FunctionReference(fr) => {
@@ -1339,7 +1458,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
           self.builder.position_at_end(&dummy_block);
           return Ok(None);
         }
-        return error(node.loc, "label not found");
+        return error(node, "label not found");
       }
       Content::Literal(v) => {
         match v {
@@ -1375,7 +1494,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
     Ok(Some(v))
   }
 
-  fn codegen_return(&mut self, value_node : Option<&TypedNode>) -> Result<(), Error> {
+  fn codegen_return(&mut self, value_node : Option<TypedNode>) -> Result<(), Error> {
     // TODO: Call the necessary Drop and Clone functions
     if let Some(value_node) = value_node {
       let v = self.codegen_expression_to_register(value_node)?;
@@ -1390,12 +1509,12 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
   fn codegen_function(
     gen : &mut Gen,
     prototype_handle : FunctionValue,
-    body : &TypedNode,
+    body : TypedNode,
     args : &[RefStr])
       -> Result<FunctionValue, Error>
   {
     // this function is here because Rust doesn't have a proper try/catch yet
-    fn generate(body : &TypedNode, args : &[RefStr], genf : &mut GenFunction)
+    fn generate(body : TypedNode, args : &[RefStr], genf : &mut GenFunction)
       -> Result<(), Error>
     {
       let function = genf.fn_val;
@@ -1406,7 +1525,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
       // set function parameters
       for (arg_value, arg_name) in function.get_param_iter().zip(args) {
         genf.init_variable(arg_name.clone(), VarScope::Local, arg_value)
-          .map_err(|c| error_raw(body.loc, c))?;
+          .map_err(|c| error_raw(body, c))?;
       }
 
       // compile body and emit return
@@ -1418,7 +1537,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         Ok(())
       }
       else {
-        error(body.loc, "invalid generated function.")
+        error(body, "invalid generated function.")
       }
     }
 
