@@ -16,7 +16,7 @@ pub mod structure;
 pub mod typecheck;
 pub mod inference;
 pub mod codegen;
-//pub mod codegen2;
+pub mod codegen2;
 pub mod jit;
 pub mod repl;
 pub mod c_interface;

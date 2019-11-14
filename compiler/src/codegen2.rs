@@ -295,14 +295,17 @@ impl <'l> Gen<'l> {
     // generate the prototypes first (so the functions find each other)
     let mut functions_to_codegen = vec!();
     for def in module.functions.iter() {
+      let sig = module.types.signature(def.signature);
       match &def.implementation {
         FunctionImplementation::Normal{ body, name_for_codegen } => {
-          let f = self.codegen_prototype(name_for_codegen.as_ref(), &body.type_tag, def.args.as_slice(), def.signature.args.as_slice());
+          let f = self.codegen_prototype(
+            name_for_codegen.as_ref(), sig.return_type,
+            def.args.as_slice(), sig.args.as_slice());
           functions_to_codegen.push((f, def, body));
         }
-        FunctionImplementation::CFunction(Some(address)) => {
-          let f = self.codegen_prototype(def.name_in_code.as_ref(), &def.signature.return_type, &def.args, &def.signature.args);
-          self.functions_to_link.push((f, *address));
+        FunctionImplementation::CFunction => {
+          let f = self.codegen_prototype(def.name_in_code.as_ref(), sig.return_type, &def.args, &sig.args);
+          self.functions_to_link.push((f, def.name_in_code.clone()));
         }
         _ => (),
       }
@@ -318,7 +321,7 @@ impl <'l> Gen<'l> {
 
   fn codegen_prototype(
     &mut self, name : &str,
-    return_type : &Type,
+    return_type : Type,
     args : &[RefStr],
     arg_types : &[Type])
       -> FunctionValue
@@ -345,7 +348,7 @@ impl <'l> Gen<'l> {
   }
 
   // special case for handling struct/union fields to prevent infinite recursion
-  fn to_basic_type_no_cycle(&mut self, t : &Type) -> Option<BasicTypeEnum> {
+  fn to_basic_type_no_cycle(&mut self, t : Type) -> Option<BasicTypeEnum> {
     match t {
       Type::Ptr(_t) => {
         let t = self.context.i8_type().ptr_type(AddressSpace::Generic);
@@ -357,7 +360,7 @@ impl <'l> Gen<'l> {
     }
   }
 
-  fn to_basic_type(&mut self, t : TypeId) -> Option<BasicTypeEnum> {
+  fn to_basic_type(&mut self, t : Type) -> Option<BasicTypeEnum> {
     match t {
       Type::Void => None,
       Type::F64 => Some(self.context.f64_type().into()),
@@ -370,7 +373,8 @@ impl <'l> Gen<'l> {
       Type::U8 => Some(self.context.i8_type().into()),
       Type::Bool => Some(self.context.bool_type().into()),
       Type::Fun(sig) => {
-        let t = self.to_function_type(sig.args.as_slice(), &sig.return_type);
+        let sig = self.info.m.types.signature(sig);
+        let t = self.to_function_type(sig.args.as_slice(), sig.return_type);
         Some(t.ptr_type(AddressSpace::Generic).into())
       }
       Type::Dynamic => {
@@ -416,7 +420,7 @@ impl <'l> Gen<'l> {
     self.context.struct_type(&[t, i64_type.into()], false)
   }
 
-  fn to_function_type(&mut self, arg_types : &[Type], return_type : &Type) -> FunctionType {
+  fn to_function_type(&mut self, arg_types : &[Type], return_type : Type) -> FunctionType {
     let arg_types =
       arg_types.iter().map(|t| self.to_basic_type(t).unwrap())
       .collect::<Vec<BasicTypeEnum>>();
