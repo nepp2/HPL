@@ -85,6 +85,7 @@ pub struct CodegenInfo {
   pub node_type : HashMap<NodeId, Type>,
   pub sizeof_info : HashMap<NodeId, Type>,
   pub function_references : HashMap<NodeId, FunctionId>,
+  pub global_references : HashMap<NodeId, RefStr>,
 }
 
 impl CodegenInfo {
@@ -93,6 +94,7 @@ impl CodegenInfo {
       node_type: HashMap::new(),
       sizeof_info: HashMap::new(),
       function_references: HashMap::new(),
+      global_references: HashMap::new(),
     }
   }
 }
@@ -339,7 +341,7 @@ pub struct FunctionDefinition {
   pub id : FunctionId,
   pub module_id : ModuleId,
   pub name_in_code : RefStr,
-  pub args : Vec<RefStr>,
+  pub args : Vec<Symbol>,
   pub signature : SigId,
   pub implementation : FunctionImplementation,
   pub definition_location : TextLocation,
@@ -514,7 +516,7 @@ impl <'l> Inference<'l> {
           let mut arg_names = vec!();
           let mut arg_types = vec!();
           for (arg, arg_ts) in args.iter() {
-            arg_names.push(arg.name.clone());
+            arg_names.push(arg.clone());
             arg_types.push(*self.resolved.get(arg_ts).unwrap());
           }
           if self.m.find_function(&name, arg_types.as_slice()).is_some() {
@@ -619,10 +621,21 @@ impl <'l> Inference<'l> {
           return true;
         }
       }
-      Constraint::GlobalReference { name, result } => {
+      Constraint::GlobalReference { node, name, result } => {
         if let Some(def) = self.m.find_global(&name) {
-          let t = def.type_tag;
-          self.set_type(*result, t);
+          if def.module_id != self.m.id {
+            let t = def.type_tag;
+            self.set_type(*result, t);
+            self.cg.global_references.insert(*node, name.clone());
+            return true;
+          }
+        }
+        if let Some(Type::Fun(sig)) = self.resolved.get(result).cloned() {
+          let sig = self.m.types.signature(sig);
+          if let Some(def) = self.m.find_function(&name, sig.args.as_slice()) {
+            self.cg.function_references.insert(*node, def.id);
+            return true;
+          }
         }
       }
       Constraint::Index{ node, container, index, result } => {
@@ -790,6 +803,7 @@ pub enum Constraint {
     c_bind : bool,
   },
   GlobalReference {
+    node : NodeId,
     name : RefStr,
     result : TypeSymbol,
   },
@@ -993,7 +1007,7 @@ impl <'l> GatherConstraints<'l> {
           self.equalivalent(ts, var_type);
         }
         else {
-          self.constraint(Constraint::GlobalReference{ name: name.clone(), result: ts });
+          self.constraint(Constraint::GlobalReference{ node: id, name: name.clone(), result: ts });
         }
       }
       Content::FunctionDefinition{ name, args, return_tag, body } => {

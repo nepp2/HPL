@@ -5,8 +5,8 @@ use crate::error::{Error, error, error_raw, ErrorContent, TextLocation};
 use crate::expr::RefStr;
 
 use crate::structure::{
-  Node, Nodes, NodeId, Content, Val, TypeKind,
-  LabelId, NodeValueType, FunctionNode, VarScope };
+  Node, Nodes, NodeId, Content, Val, TypeKind, SymbolId,
+  Symbol, LabelId, NodeValueType, FunctionNode, VarScope };
 
 use crate::inference::{
   Type, TypeId, Types, TypeDefinition, FunctionId, DefId,
@@ -165,7 +165,7 @@ pub struct GenFunction<'l, 'lg> {
   // the llvm function being populated
   fn_val : FunctionValue,
 
-  variables: HashMap<RefStr, PointerValue>,
+  variables: HashMap<SymbolId, PointerValue>,
 
   blocks: Vec<Block>,
 
@@ -211,6 +211,10 @@ impl <'l> CompileInfo<'l> {
 
   fn find_function_def(&self, id : FunctionId) -> &FunctionDefinition {
     self.m.functions.get(&id).unwrap()
+  }
+
+  fn find_global(&self, name : &str) -> &GlobalDefinition {
+    self.m.globals.get(name).unwrap()
   }
 
   // fn find_function_def(&self, id : FunctionId) -> Option<(&'l CompiledModule, &'l FunctionDefinition)> {
@@ -266,6 +270,10 @@ impl <'l> TypedNode<'l> {
 
   fn node_function_reference(&self) -> Option<FunctionId> {
     self.info.cg.function_references.get(&self.node.id).cloned()
+  }
+
+  fn node_global_reference(&self) -> Option<&RefStr> {
+    self.info.cg.global_references.get(&self.node.id)
   }
 }
 
@@ -338,7 +346,7 @@ impl <'l> Gen<'l> {
   fn codegen_prototype(
     &mut self, name : &str,
     return_type : Type,
-    args : &[RefStr],
+    args : &[Symbol],
     arg_types : &[Type])
       -> FunctionValue
   {
@@ -358,7 +366,7 @@ impl <'l> Gen<'l> {
 
     // set arguments names
     for (i, arg) in function.get_param_iter().enumerate() {
-      name_basic_type(&arg, args[i].as_ref());
+      name_basic_type(&arg, args[i].name.as_ref());
     }
     function
   }
@@ -683,24 +691,21 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
     pointer
   }
 
-  fn init_variable(&mut self, name : RefStr, var_scope : VarScope, value : BasicValueEnum)
-    -> Result<(), ErrorContent>
-  {
-    if self.variables.contains_key(&name) {
-      return Err(format!("variable with name '{}' already defined", name).into());
+  fn init_variable(&mut self, var : &Symbol, var_scope : VarScope, value : BasicValueEnum) {
+    if self.variables.contains_key(&var.id) { 
+      panic!("variable initialised twice!");
     }
     let pointer = match var_scope {
       VarScope::Global => {
-        let gv = self.gen.module.get_global(&name).unwrap();
+        let gv = self.gen.module.get_global(&var.name).unwrap();
         gv.as_pointer_value()
       }
       VarScope::Local => {
-        self.create_entry_block_alloca(value.get_type(), &name)
+        self.create_entry_block_alloca(value.get_type(), &var.name)
       }
     };
     self.builder.build_store(pointer, value);
-    self.variables.insert(name, pointer);
-    Ok(())
+    self.variables.insert(var.id, pointer);
   }
 
   fn codegen_value(&mut self, n : TypedNode) -> Result<BasicValueEnum, Error> {
@@ -947,6 +952,26 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
     Ok(reg(self.codegen_address_of_genval(v)?.into()))
   }
 
+  /// ensure necessary definitions are inserted and linking operations performed when a global is referenced
+  fn get_linked_global_reference(&mut self, info: &CompileInfo, name : &RefStr) -> GlobalValue {
+    let def = info.find_global(name);
+    if def.module_id == info.m.id {
+      self.gen.module.get_global(name)
+        .expect("expected local global!")
+    }
+    else {
+      if let Some(gv) = self.gen.module.get_global(name) {
+        gv
+      }
+      else {
+        let t = self.gen.to_basic_type(def.type_tag).unwrap();
+        let gv = self.gen.module.add_global(t, Some(AddressSpace::Generic), &name);
+        self.gen.globals_to_link.push((gv, name.clone()));
+        gv
+      }
+    }
+  }
+
   /// ensure necessary definitions are inserted and linking operations performed when a function is referenced
   fn get_linked_function_reference(&mut self, fid : FunctionId) -> FunctionValue {
     let def = self.gen.info.find_function_def(fid);
@@ -1077,30 +1102,6 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
     let v = self.codegen_without_drop_value_registration(node)?;
     return self.codegen_drop_value_registration(node, v);
   }
-
-  // Literal(Val),
-  // LocalInitialise{ name: Symbol, type_tag: Option<Box<Expr>>, value: NodeId },
-  // GlobalInitialise{ name: Symbol, type_tag: Option<Box<Expr>>, value: NodeId },
-  // Assignment{ assignee: NodeId , value: NodeId },
-  // IfThen{ condition: NodeId, then_branch: NodeId },
-  // IfThenElse{ condition: NodeId, then_branch: NodeId, else_branch: NodeId },
-  // Block(Vec<NodeId>),
-  // Quote(Box<Expr>),
-  // Reference { name: RefStr, refers_to: Option<SymbolId> },
-  // FunctionDefinition{ name: RefStr, args: Vec<(Symbol, Option<Box<Expr>>)>, return_tag: Option<Box<Expr>>, body: NodeId },
-  // CBind { name: RefStr, type_tag : Box<Expr> },
-  // TypeDefinition{ name: RefStr, kind : TypeKind, fields: Vec<(Symbol, Option<Box<Expr>>)> },
-  // TypeConstructor{ name: RefStr, field_values: Vec<(Option<Symbol>, NodeId)> },
-  // FieldAccess{ container: NodeId, field: Symbol },
-  // Index{ container: NodeId, index: NodeId },
-  // ArrayLiteral(Vec<NodeId>),
-  // FunctionCall{ function: FunctionNode, args: Vec<NodeId> },
-  // While{ condition: NodeId, body: NodeId },
-  // Convert{ from_value: NodeId, into_type: Box<Expr> },
-  // SizeOf{ type_tag: Box<Expr> },
-
-  // Label{ label: LabelId, body: NodeId },
-  // BreakToLabel{ label: LabelId, return_value: Option<NodeId> },
 
   fn codegen_without_drop_value_registration(&mut self, node : TypedNode) -> Result<Option<GenVal>, Error> {
     let v : GenVal = match node.content() {
@@ -1398,40 +1399,29 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         let value = node.get(*value);
         let v = self.codegen_expression_to_register(value)?
           .ok_or_else(|| error_raw(value, "expected value for initialiser, found void"))?;
-        self.init_variable(name.name.clone(), *var_scope, v)
-          .map_err(|c| error_raw(node, c))?; 
+        self.init_variable(name, *var_scope, v);
         return Ok(None);
       }
-      Content::VariableReference(name) => {
-        if let Some(ptr) = self.variables.get(name) {
+      Content::Reference { name, refers_to } => {
+        if let Some(ptr) = refers_to.as_ref().and_then(|sid| self.variables.get(sid)) {
           pointer(*ptr)
         }
-        else if let Some(gv) = self.gen.module.get_global(name) {
-          pointer(gv.as_pointer_value())
+        else if let Some(fid) = node.node_function_reference() {
+          let f = self.get_linked_function_reference(fid);
+          pointer(f.as_global_value().as_pointer_value())
         }
-        else if let Some((compiled_module, def)) = self.gen.info.find_external_global_def(name) {
-          let t = self.gen.to_basic_type(&def.type_tag).unwrap();
-          let gv = self.gen.module.add_global(t, Some(AddressSpace::Generic), &name);
-          if let Some(address) = def.c_address {
-            self.gen.globals_to_link.push((gv, address));
-          }
-          else {
-            let address = unsafe { compiled_module.ee.get_global_address(def.name.as_ref()).unwrap() };
-            self.gen.globals_to_link.push((gv, address as usize));
-          }
+        else if let Some(global) = node.node_global_reference() {
+          let gv = self.get_linked_global_reference(node.info, global);
           pointer(gv.as_pointer_value())
         }
         else {
-          return error(node, format!("unknown variable name '{}'.", name));
+          panic!("no value found for reference!");
         }
       }
-      Content::FunctionReference(fr) => {
-        let f = self.get_linked_function_reference(fr);
-        reg(f.as_global_value().as_pointer_value().into())
-      }
-      Content::BreakToLabel(label, inner_node) => {
+      Content::BreakToLabel{ label, return_value } => {
         // Generate fully owned value
-        let v = inner_node.as_ref().map(|n| {
+        let v = return_value.as_ref().map(|n| {
+          let n = node.get(*n);
           let v = self.codegen_owned_expression(n)?;
           Ok(self.genval_to_register(v))
         }).unwrap_or(Ok(None))?;
@@ -1510,11 +1500,11 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
     gen : &mut Gen,
     prototype_handle : FunctionValue,
     body : TypedNode,
-    args : &[RefStr])
+    args : &[Symbol])
       -> Result<FunctionValue, Error>
   {
     // this function is here because Rust doesn't have a proper try/catch yet
-    fn generate(body : TypedNode, args : &[RefStr], genf : &mut GenFunction)
+    fn generate(body : TypedNode, args : &[Symbol], genf : &mut GenFunction)
       -> Result<(), Error>
     {
       let function = genf.fn_val;
@@ -1524,8 +1514,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
 
       // set function parameters
       for (arg_value, arg_name) in function.get_param_iter().zip(args) {
-        genf.init_variable(arg_name.clone(), VarScope::Local, arg_value)
-          .map_err(|c| error_raw(body, c))?;
+        genf.init_variable(arg_name, VarScope::Local, arg_value);
       }
 
       // compile body and emit return
