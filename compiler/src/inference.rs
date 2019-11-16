@@ -39,7 +39,6 @@ pub fn infer_types(
 
 pub fn base_module(gen : &mut UIDGenerator, cache : &StringCache) -> ModuleInfo {
   let mut m = ModuleInfo::new(gen);
-  let bool_tag = m.types.type_id(gen, Type::Bool);
   for &t in &[Type::I64, Type::I32] {
     for &n in &["+", "-", "*", "/"] {
       add_intrinsic(gen, cache, &mut m, n, &[t, t], t);
@@ -60,13 +59,11 @@ fn add_intrinsic(
     return_type,
     args: args.iter().cloned().collect(),
   });
-  let args = args.iter().enumerate().map(
-    |(i, _)| format!("a{}", i).into()).collect();
   let f = FunctionDefinition {
     id: FunctionId(gen.next()),
     module_id: m.id,
     name_in_code: cache.get(name),
-    args, signature,
+    signature,
     implementation: FunctionImplementation::Intrinsic,
     definition_location: TextLocation::zero(),
   };
@@ -196,17 +193,14 @@ impl Types {
   }
 
   pub fn type_definition_id(&mut self, gen : &mut UIDGenerator, name : RefStr) -> DefId {
-    let aaa = (); // TODO: lookup types from other modules
     get_id(&mut self.type_definition_names, gen, name)
   }
 
   pub fn signature_id(&mut self, gen : &mut UIDGenerator, sig : FunctionSignature) -> SigId {
-    let aaa = (); // TODO: lookup types from other modules
     get_id(&mut self.signatures, gen, sig)
   }
 
   pub fn type_id(&mut self, gen : &mut UIDGenerator, t : Type) -> TypeId {
-    let aaa = (); // TODO: lookup types from other modules
     get_id(&mut self.types, gen, t)
   }
 
@@ -331,7 +325,7 @@ pub struct TypeDefinition {
 
 #[derive(Debug, Clone)]
 pub enum FunctionImplementation {
-  Normal{body: NodeId, name_for_codegen: RefStr },
+  Normal{body: NodeId, name_for_codegen: RefStr, args : Vec<Symbol> },
   CFunction,
   Intrinsic,
 }
@@ -341,7 +335,6 @@ pub struct FunctionDefinition {
   pub id : FunctionId,
   pub module_id : ModuleId,
   pub name_in_code : RefStr,
-  pub args : Vec<Symbol>,
   pub signature : SigId,
   pub implementation : FunctionImplementation,
   pub definition_location : TextLocation,
@@ -531,12 +524,12 @@ impl <'l> Inference<'l> {
             let implementation = FunctionImplementation::Normal {
               body: *body,
               name_for_codegen: format!("{}.{}", name, self.gen.next()).into(),
+              args: arg_names,
             };
             let f = FunctionDefinition {
               id: FunctionId(self.gen.next()),
               module_id: self.m.id,
               name_in_code: name.clone(),
-              args: arg_names,
               signature: self.m.types.signature_id(self.gen, signature),
               implementation,
               definition_location: *loc,
@@ -563,8 +556,18 @@ impl <'l> Inference<'l> {
               }
             }
             Function::Value(ts) => {
-              let aaa = (); // TODO: support first class functions
-              panic!();
+              if let Some(t) = self.resolved.get(ts) {
+                if let Type::Fun(sig_id) = *t {
+                  let rt = self.m.types.signature(sig_id).return_type;
+                  self.set_type(*result, rt);
+                }
+                else {
+                  let loc = *self.c.symbols.get(ts).unwrap();
+                  let e = error_raw(loc, "cannot call value of this type as function");
+                  self.errors.push(e);
+                }
+                return true;
+              }
             }
           }
         }
@@ -611,13 +614,34 @@ impl <'l> Inference<'l> {
       }
       Constraint::GlobalDef{ name, type_symbol, loc, c_bind } => {
         if let Some(&t) = self.resolved.get(type_symbol) {
-          let g = GlobalDefinition {
-            module_id: self.m.id,
-            name: name.clone(),
-            type_tag: t,
-            c_bind: *c_bind,
-          };
-          self.globals.push((g, *loc));
+          if let Type::Fun(sig_id) = t {
+            let sig = self.m.types.signature(sig_id);
+            if self.m.find_function(&name, sig.args.as_slice()).is_some() {
+              let e = error_raw(loc, "function with that name and signature already defined");
+              self.errors.push(e);
+            }
+            else {
+              let f = FunctionDefinition {
+                id: FunctionId(self.gen.next()),
+                module_id: self.m.id,
+                name_in_code: name.clone(),
+                signature: sig_id,
+                implementation: FunctionImplementation::CFunction,
+                definition_location: *loc,
+              };
+              self.m.functions.insert(f.id, f);
+              return true;
+            }
+          }
+          else {
+            let g = GlobalDefinition {
+              module_id: self.m.id,
+              name: name.clone(),
+              type_tag: t,
+              c_bind: *c_bind,
+            };
+            self.globals.push((g, *loc));
+          }
           return true;
         }
       }
