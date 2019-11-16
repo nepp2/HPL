@@ -465,7 +465,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
           fields_expr.children().iter()
           .map(|e| self.typed_symbol(e))
           .collect::<Result<Vec<_>, Error>>()?;
-        Ok(self.node(expr, TypeDefinition{name, kind: TypeKind::Union, fields}))
+        Ok(self.node(expr, TypeDefinition{name, kind: TypeKind::Struct, fields}))
       }
       (".", [container_expr, field_expr]) => {
         let container = self.to_node(container_expr)?;

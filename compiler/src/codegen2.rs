@@ -400,7 +400,7 @@ impl <'l> Gen<'l> {
         let t = self.to_function_type(info, sig.args.as_slice(), sig.return_type);
         Some(t.ptr_type(AddressSpace::Generic).into())
       }
-      Type::Dynamic => {
+      Type::Generic(_) => {
         panic!()
       }
       Type::Def(id) => {

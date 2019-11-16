@@ -39,13 +39,37 @@ pub fn infer_types(
 
 pub fn base_module(gen : &mut UIDGenerator, cache : &StringCache) -> ModuleInfo {
   let mut m = ModuleInfo::new(gen);
-  for &t in &[Type::I64, Type::I32] {
+  let prim_number_types =
+    &[Type::I64, Type::I32, Type::F32, Type::F64,
+      Type::U64, Type::U32, Type::U16, Type::U8 ];
+  for &t in prim_number_types {
+    for &n in &["-"] {
+      add_intrinsic(gen, cache, &mut m, n, &[t], t);
+    }
     for &n in &["+", "-", "*", "/"] {
       add_intrinsic(gen, cache, &mut m, n, &[t, t], t);
     }
     for &n in &["==", ">", "<", ">=", "<=", "!="] {
       add_intrinsic(gen, cache, &mut m, n, &[t, t], Type::Bool);
     }
+  }
+  {
+    let gid = GenericId(gen.next());
+    let gt = Type::Generic(gid);
+    let gptr = m.types.ptr_to_type(gen, gt);
+    add_generic_intrinsic(gen, cache, &mut m, "Index", &[gptr], gt, vec![gid]);
+  }
+  {
+    let gid = GenericId(gen.next());
+    let gt = Type::Generic(gid);
+    let gptr = m.types.ptr_to_type(gen, gt);
+    add_generic_intrinsic(gen, cache, &mut m, "*", &[gptr], gt, vec![gid]);
+  }
+  {
+    let gid = GenericId(gen.next());
+    let gt = Type::Generic(gid);
+    let gptr = m.types.ptr_to_type(gen, gt);
+    add_generic_intrinsic(gen, cache, &mut m, "&", &[gt], gptr, vec![gid]);
   }
   m
 }
@@ -54,6 +78,15 @@ fn add_intrinsic(
   gen : &mut UIDGenerator, cache : &StringCache,
   m : &mut ModuleInfo, name : &str,
   args : &[Type], return_type : Type)
+{
+  add_generic_intrinsic(gen, cache, m, name, args, return_type, vec![])
+}
+
+fn add_generic_intrinsic(
+  gen : &mut UIDGenerator, cache : &StringCache,
+  m : &mut ModuleInfo, name : &str,
+  args : &[Type], return_type : Type,
+  generics : Vec<GenericId>)
 {
   let signature = m.types.signature_id(gen, FunctionSignature{
     return_type,
@@ -64,6 +97,7 @@ fn add_intrinsic(
     module_id: m.id,
     name_in_code: cache.get(name),
     signature,
+    generics,
     implementation: FunctionImplementation::Intrinsic,
     definition_location: TextLocation::zero(),
   };
@@ -128,13 +162,117 @@ impl ModuleInfo {
     self.type_defs.get(name)
   }
 
-  pub fn find_function(&self, name : &str, args : &[Type]) -> Option<&FunctionDefinition> {
-    self.functions.values().find(|def| {
-      let sig = self.types.signature(def.signature);
-      def.name_in_code.as_ref() == name &&
-        sig.args.as_slice() == args
-    })
+  pub fn get_function(&self, fid : FunctionId) -> &FunctionDefinition {
+    self.functions.get(&fid).unwrap()
   }
+
+  pub fn find_function(&self, name : &str, args : &[Type]) -> Option<FindFunctionResult> {
+    let r = self.functions.values().find(|def| {
+      def.generics.is_empty() && def.name_in_code.as_ref() == name && {
+        let sig = self.types.signature(def.signature);
+        args == sig.args.as_slice()
+      }
+    });
+    if let Some(def) = r {
+      return Some(FindFunctionResult::ConcreteFunction(def.id));
+    }
+    let mut generics = HashMap::new();
+    let r = self.functions.values().find(|def| {
+      (!def.generics.is_empty()) && def.name_in_code.as_ref() == name && {
+        let sig = self.types.signature(def.signature);
+        let matched = generic_match_sig(&mut generics, &self.types, args, def, sig);
+        if !matched {
+          generics.clear();
+        }
+        matched
+      }
+    });
+    if let Some(def) = r {
+      Some(FindFunctionResult::GenericInstance(def.id, generics))
+    }
+    else {
+      None
+    }
+  }
+
+  pub fn concrete_function(&mut self, gen : &mut UIDGenerator, r : FindFunctionResult) -> FunctionId {
+    match r {
+      FindFunctionResult::ConcreteFunction(fid) => fid,
+      FindFunctionResult::GenericInstance(fid, generics) => {
+        let mut sig = self.types.signature(self.get_function(fid).signature).clone();
+        for t in sig.args.iter_mut() {
+          *t = generic_replace(&generics, gen, &mut self.types, *t);
+        }
+        sig.return_type = generic_replace(&generics, gen, &mut self.types, sig.return_type);
+        let signature = self.types.signature_id(gen, sig);
+        let def = self.get_function(fid);
+        let def = FunctionDefinition {
+          id: FunctionId(gen.next()),
+          module_id: self.id,
+          name_in_code: def.name_in_code.clone(),
+          signature,
+          generics: vec![],
+          implementation: def.implementation.clone(),
+          definition_location: def.definition_location,
+        };
+        let fid = def.id;
+        self.functions.insert(fid, def);
+        fid
+      },
+    }
+  }
+}
+
+pub enum FindFunctionResult {
+  ConcreteFunction(FunctionId),
+  GenericInstance(FunctionId, HashMap<GenericId, Type>),
+}
+
+fn generic_replace(generics : &HashMap<GenericId, Type>, gen : &mut UIDGenerator, types : &mut Types, t : Type) -> Type {
+  fn generic_replace_id(generics : &HashMap<GenericId, Type>, gen : &mut UIDGenerator, types : &mut Types, t : TypeId) -> TypeId {
+    let t = types.get(t);
+    let t = generic_replace(generics, gen, types, t);
+    types.type_id(gen, t)
+  }
+  match t {
+    Type::Ptr(t) => Type::Ptr(generic_replace_id(generics, gen, types, t)),
+    Type::Array(t) => Type::Array(generic_replace_id(generics, gen, types, t)),
+    Type::Generic(gid) => *generics.get(&gid).unwrap(),
+    _ => return t,
+  }
+}
+
+fn generic_match_sig(
+  generics : &mut HashMap<GenericId, Type>, types : &Types,
+  args : &[Type], def : &FunctionDefinition, sig : &FunctionSignature)
+    -> bool
+{
+  args.len() == sig.args.len() && {
+    for (t, gt) in args.iter().zip(sig.args.iter()) {
+      if !generic_match(generics, types, *t, *gt) {
+        return false;
+      }
+    }
+    generics.len() == def.generics.len()
+  }
+}
+
+fn generic_match(generics : &mut HashMap<GenericId, Type>, types : &Types, t : Type, gt : Type) -> bool {
+  let (t, gt) = match (t, gt) {
+    (Type::Ptr(t), Type::Ptr(gt)) => (t, gt),
+    (Type::Array(t), Type::Array(gt)) => (t, gt),
+    (t, Type::Generic(gid)) => {
+      if let Some(bound_type) = generics.get(&gid) {
+        return t == *bound_type;
+      }
+      else {
+        generics.insert(gid, t);
+        return true;
+      }
+    }
+    _ => return t == gt,
+  };
+  generic_match(generics, types, types.get(t), types.get(gt))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
@@ -142,6 +280,9 @@ pub struct ModuleId(u64);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct FunctionId(u64);
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub struct GenericId(u64);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct TypeId(u64);
@@ -204,6 +345,10 @@ impl Types {
     get_id(&mut self.types, gen, t)
   }
 
+  pub fn ptr_to_type(&mut self, gen : &mut UIDGenerator, t : Type) -> Type {
+    Type::Ptr(self.type_id(gen, t))
+  }
+
   pub fn signature(&self, id : SigId) -> &FunctionSignature {
     self.signatures.get_by_left(&id).unwrap()
   }
@@ -233,7 +378,7 @@ pub enum Type {
   U16,
   U8,
   Bool,
-  Dynamic,
+  Generic(GenericId),
   Fun(SigId),
   Def(DefId),
   Array(TypeId),
@@ -281,9 +426,9 @@ impl Type {
       "u32" => Some(Type::U32),
       "u16" => Some(Type::U16),
       "u8" => Some(Type::U8),
-      "any" => Some(Type::Dynamic),
+      // "any" => Some(Type::Dynamic),
       "()" => Some(Type::Void),
-      "" => Some(Type::Dynamic),
+      // "" => Some(Type::Dynamic),
       _ => None,
     }
   }
@@ -336,6 +481,7 @@ pub struct FunctionDefinition {
   pub module_id : ModuleId,
   pub name_in_code : RefStr,
   pub signature : SigId,
+  pub generics : Vec<GenericId>,
   pub implementation : FunctionImplementation,
   pub definition_location : TextLocation,
 }
@@ -440,9 +586,17 @@ impl <'l> Inference<'l> {
   }
 
   fn set_type(&mut self, ts : TypeSymbol, t : Type) {
-    let aaa = (); // TODO: unify!
-    let code = self.ts_code_slice(&self.c, ts);
+    if let Some(prev_t) = self.resolved.get(&ts) {
+      if *prev_t != t {
+        let e = error_raw(self.loc(ts), "conflicting types inferred");
+        self.errors.push(e);
+      }
+    }
+    else {
+      self.resolved.insert(ts, t);
+    }
     if !self.resolved.contains_key(&ts) {
+      let code = self.ts_code_slice(&self.c, ts);
       println!("     Inferred type {} for '{}'", self.m.types.type_ref(t), code);
       self.resolved.insert(ts, t);
     }
@@ -452,24 +606,84 @@ impl <'l> Inference<'l> {
     self.resolved.get(&ts).cloned()
   }
 
-  // fn unresolved_constraint(&mut self, c : &Constraint) -> Error {
-  //   match c  {
-  //     Constraint::Assert(ts, t) => panic!(),
-  //     Constraint::Equalivalent(a, b) => {
-  //       let loc = self.c.loc(*a).merge(self.c.loc(*b));
-  //       error_raw(loc, "equivalence could not be resolved")
+  fn loc(&self, ts : TypeSymbol) -> TextLocation {
+    *self.c.symbols.get(&ts).unwrap()
+  }
+  
+  // impl fmt::Debug for Constraint {
+  //   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+  //     use Constraint::*;
+  //     match self {
+  //       Assert(_, _) => write!(f, "Assert"),
+  //       Equalivalent(_, _) => write!(f, "Equalivalent"),
+  //       Convert{ .. } => write!(f, "Convert"),
+  //       Array{ .. } => write!(f, "Array"),
+  //       FieldAccess { field, .. } => write!(f, "FieldAccess {}", field.name),
+  //       Constructor { type_name, .. } => write!(f, "Constructor {}", type_name),
+  //       FunctionDef { name, .. } => write!(f, "FunctionDef {}", name),
+  //       FunctionCall { function, .. } => write!(f, "FunctionCall {:?}", function),
+  //       Index { .. } => write!(f, "Index"),
+  //       GlobalDef { .. } => write!(f, "GlobalDef"),
+  //       GlobalReference { name, .. } => write!(f, "GlobalReference {}", name),
   //     }
-  //     Constraint::FunctionDef{ loc, .. } =>
-  //       error_raw(loc, "function definition not resolved"),
-  //     Constraint::FunctionCall{ function, args, result } => (),
-  //     Constraint::Constructor { type_name, fields, result } => (),
-  //     Constraint::Convert { val, into_type } => (),
-  //     Constraint::GlobalDef(name, ts, loc) => (),
-  //     Constraint::GlobalReference { name, result } => (),
-  //     Constraint::FieldAccess{ container, field, result } => (),
-  //     Constraint::Array{ array, element } => (),
   //   }
   // }
+
+  fn unresolved_constraint_error(&mut self, c : &Constraint) {
+    let e = match c  {
+      Constraint::Assert(ts, t) => panic!(),
+      Constraint::Equalivalent(a, b) => {
+        let loc = self.loc(*a).merge(self.loc(*b));
+        error_raw(loc, "equivalence could not be resolved")
+      }
+      Constraint::FunctionDef{ name, loc, args, .. } => {
+        error_raw(loc,
+          format!("function definition '{}({})' not resolved", name,
+            args.iter().map(|(s, ts)| {
+              let t = self.resolved.get(ts)
+                .map(|t| format!("{}", self.m.types.type_ref(*t)))
+                .unwrap_or_else(|| "???".into());
+              format!("{} : {}", s.name, t)
+            }).join(", ")))
+      }
+      Constraint::FunctionCall{ node, function, args, result } => {
+        let loc = self.nodes.node(*node).loc;
+        if let Function::Name(sym) = function {
+          error_raw(loc, format!("function call {} not resolved", sym.name))
+        }
+        else {
+          error_raw(loc, "function call not resolved")
+        }
+      }
+      Constraint::Constructor { type_name, fields, result } => {
+        error_raw(self.loc(*result),
+          format!("constructor for '{}' not resolved", type_name))
+      }
+      Constraint::Convert { val, into_type } => {
+        error_raw(self.loc(*val), "convert not resolved")
+      }
+      Constraint::GlobalDef { name, type_symbol, loc, c_bind } => {
+        error_raw(loc,
+          format!("global definition '{}' not resolved", name))
+      }
+      Constraint::GlobalReference { node, name, result } => {
+        error_raw(self.loc(*result),
+          format!("global reference '{}' not resolved", name))
+      }
+      Constraint::FieldAccess{ container, field, result } => {
+        error_raw(field.loc,
+          format!("field access '{}' not resolved", field.name))
+      }
+      Constraint::Array{ array, element } => {
+        error_raw(self.loc(*array), "array literal not resolved")
+      }
+      Constraint::Index{ node, container, index, result } => {
+        let loc = self.nodes.node(*node).loc;
+        error_raw(loc, "array access not resolved")
+      }
+    };
+    self.errors.push(e);
+  }
 
   fn process_constraint(&mut self, c : &Constraint) -> bool {
     match c  {
@@ -531,6 +745,7 @@ impl <'l> Inference<'l> {
               module_id: self.m.id,
               name_in_code: name.clone(),
               signature: self.m.types.signature_id(self.gen, signature),
+              generics: vec![],
               implementation,
               definition_location: *loc,
             };
@@ -548,8 +763,10 @@ impl <'l> Inference<'l> {
         if arg_types.len() == args.len() {
           match function {
             Function::Name(sym) => {
-              if let Some(def) = self.m.find_function(&sym.name, arg_types.as_slice()) {
-                self.cg.function_references.insert(*node, def.id);
+              if let Some(r) = self.m.find_function(&sym.name, arg_types.as_slice()) {
+                let fid = self.m.concrete_function(self.gen, r);
+                let def = self.m.get_function(fid);
+                self.cg.function_references.insert(*node, fid);
                 let return_type = self.m.types.signature(def.signature).return_type;
                 self.set_type(*result, return_type);
                 return true;
@@ -562,8 +779,7 @@ impl <'l> Inference<'l> {
                   self.set_type(*result, rt);
                 }
                 else {
-                  let loc = *self.c.symbols.get(ts).unwrap();
-                  let e = error_raw(loc, "cannot call value of this type as function");
+                  let e = error_raw(self.loc(*ts), "cannot call value of this type as function");
                   self.errors.push(e);
                 }
                 return true;
@@ -575,24 +791,43 @@ impl <'l> Inference<'l> {
       Constraint::Constructor { type_name, fields, result } => {
         println!("Constructor... ");
         if let Some(def) = self.m.find_type_def(type_name) {
-          if def.fields.len() == fields.len() {
-            let it = fields.iter().zip(def.fields.iter());
-            let mut arg_types = vec![];
-            for ((field_name, _), (expected_name, expected_type)) in it {
-              if let Some(field_name) = field_name {
-                if field_name.name != expected_name.name {
-                  self.errors.push(error_raw(field_name.loc, "incorrect field name"));
+          match def.kind {
+            TypeKind::Struct => {
+              if fields.len() == def.fields.len() {
+                let it = fields.iter().zip(def.fields.iter());
+                let mut arg_types = vec![];
+                for ((field_name, _), (expected_name, expected_type)) in it {
+                  if let Some(field_name) = field_name {
+                    if field_name.name != expected_name.name {
+                      self.errors.push(error_raw(field_name.loc, "incorrect field name"));
+                    }
+                  }
+                  arg_types.push(*expected_type);
+                }
+                for((_, ts), t) in fields.iter().zip(arg_types.iter()) {
+                  self.set_type(*ts, *t);
                 }
               }
-              arg_types.push(*expected_type);
+              else{
+                let e = error_raw(self.loc(*result), "incorrect number of field arguments for struct");
+                self.errors.push(e);
+              }
             }
-            for((_, ts), t) in fields.iter().zip(arg_types.iter()) {
-              self.set_type(*ts, *t);
+            TypeKind::Union => {
+              if let [(Some(sym), ts)] = fields.as_slice() {
+                if let Some((_, t)) = def.fields.iter().find(|(n, _)| n.name == sym.name) {
+                  let t = *t;
+                  self.set_type(*ts, t);
+                }
+                else {
+                  self.errors.push(error_raw(sym.loc, "field does not exist in this union"));
+                }
+              }
+              else {
+                let e = error_raw(self.loc(*result), format!("incorrect number of field arguments for union '{}'", type_name));
+                self.errors.push(e);
+              }
             }
-          }
-          else {
-            self.errors.push(
-              error_raw(self.c.symbols.get(result).unwrap(), "incorrect number of arguments"));
           }
           let def_id = self.m.types.type_definition_id(self.gen, type_name.clone());
           self.set_type(*result, Type::Def(def_id));
@@ -606,7 +841,7 @@ impl <'l> Inference<'l> {
           else if t.pointer() && into_type.unsigned_int() {}
           else if t.unsigned_int() && into_type.pointer() {}
           else {
-            let e = error_raw(*self.c.symbols.get(val).unwrap(), "type conversion not supported");
+            let e = error_raw(self.loc(*val), "type conversion not supported");
             self.errors.push(e);
           }
           return true;
@@ -626,6 +861,7 @@ impl <'l> Inference<'l> {
                 module_id: self.m.id,
                 name_in_code: name.clone(),
                 signature: sig_id,
+                generics: vec![],
                 implementation: FunctionImplementation::CFunction,
                 definition_location: *loc,
               };
@@ -656,8 +892,9 @@ impl <'l> Inference<'l> {
         }
         if let Some(Type::Fun(sig)) = self.resolved.get(result).cloned() {
           let sig = self.m.types.signature(sig);
-          if let Some(def) = self.m.find_function(&name, sig.args.as_slice()) {
-            self.cg.function_references.insert(*node, def.id);
+          if let Some(r) = self.m.find_function(&name, sig.args.as_slice()) {
+            let fid = self.m.concrete_function(self.gen, r);
+            self.cg.function_references.insert(*node, fid);
             return true;
           }
         }
@@ -675,8 +912,10 @@ impl <'l> Inference<'l> {
               _ => (),
             }
           }
-          if let Some(def) = self.m.find_function("Index", &[c, i]) {
-            self.cg.function_references.insert(*node, def.id);
+          if let Some(r) = self.m.find_function("Index", &[c, i]) {
+            let fid = self.m.concrete_function(self.gen, r);
+            self.cg.function_references.insert(*node, fid);
+            let def = self.m.get_function(fid);
             let return_type = self.m.types.signature(def.signature).return_type;
             self.set_type(*result, return_type);
             return true;
@@ -749,19 +988,18 @@ impl <'l> Inference<'l> {
         self.m.globals.insert(g.name.clone(), g);
       }
     }
-    // Generate errors for unresolved types
-    if self.c.symbols.len() > self.resolved.len() {
-      for ts in self.c.symbols.keys() {
-        if !self.resolved.contains_key(ts) {
-          let e = error_raw(self.c.loc(*ts), "type could not be resolved");
-          self.errors.push(e);
-        }
-      }
+    
+    // Generate errors for unresolved constraints
+    for c in unused_constraints.iter() {
+      self.unresolved_constraint_error(c);
     }
-    // Sanity check to make sure that programs with unresolved constraints contain errors
-    if unused_constraints.len() > 0 && self.errors.len() == 0 {
-      panic!("Constraint unused! Some kind of error should be generated!");
+
+    // Sanity check to make sure that programs with unresolved symbols contain errors
+    let unresolved_symbol_count = self.c.symbols.len() - self.resolved.len();
+    if unresolved_symbol_count > 0 && self.errors.len() == 0 {
+      panic!("Symbol unresolved! Some kind of error should be generated!");
     }
+
     if self.errors.len() > 0 {
       println!("\nErrors:");
       for e in self.errors.iter() {

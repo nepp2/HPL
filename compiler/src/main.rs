@@ -68,7 +68,10 @@ fn test_inference(path : &str) {
   let expr = parser::parse(tokens, &cache).expect("parse errors");
   let nodes = structure::to_nodes(&mut gen, &c_symbols.local_symbol_table, &cache, &expr).expect("node errors");
   let m = inference::base_module(&mut gen, &cache);
-  inference::infer_types(&m, &mut gen, &cache, &code, &nodes).expect("type errors");
+  let r = inference::infer_types(&m, &mut gen, &cache, &code, &nodes);
+  if r.is_err() {
+    println!("\nProgram has errors.");
+  }
 }
 
 fn main(){
@@ -82,7 +85,7 @@ fn main(){
     ["watch"] => watcher::watch("code/scratchpad.code"),
     ["repl"] => repl::run_repl(),
     ["run", f] => load_and_run(f),
-    ["infer"] => test_inference("code/infer.code"),
+    ["infer"] => test_inference("code/prelude.code"),
     _ => watcher::watch("code/scratchpad.code"),
   }
 }

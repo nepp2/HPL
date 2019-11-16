@@ -32,12 +32,6 @@ impl TextMarker {
   }
 }
 
-impl fmt::Display for TextMarker {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "line: {}, column: {}", self.line, self.col)
-  }
-}
-
 impl From<(usize, usize)> for TextMarker {
   fn from(v : (usize, usize)) -> TextMarker {
     TextMarker { line : v.0, col: v.1 }
@@ -55,12 +49,6 @@ impl <'l> Into<TextLocation> for &'l TextLocation {
 pub struct TextLocation {
   pub start : TextMarker,
   pub end : TextMarker,
-}
-
-impl fmt::Display for TextLocation {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "start: ({}), end: ({})", self.start, self.end)
-  }
 }
 
 impl TextLocation {
@@ -103,16 +91,34 @@ pub struct Error {
   pub location : TextLocation,
 }
 
+
+impl fmt::Display for TextMarker {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "line: {}, column: {}", self.line, self.col)
+  }
+}
+
+impl fmt::Display for TextLocation {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    if self.start.line == self.end.line {
+      write!(f, "(line: {}, column: {} to {})",
+        self.start.line, self.start.col, self.end.col)
+    }
+    else {
+      write!(f, "({}) to ({})", self.start, self.end)
+    }
+  }
+}
+
 impl fmt::Display for Error {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "{}", self.location)?;
     match &self.message {
       ErrorContent::Message(m) => {
-        write!(f, "line: {}, column: {}, message: {}",
-          self.location.start.line, self.location.start.col, m)
+        write!(f, ", message: {}", m)
       },
       ErrorContent::InnerError(m, e) => {
-        writeln!(f, "line: {}, column: {}, message: {}",
-          self.location.start.line, self.location.start.col, m)?;
+        writeln!(f, ", message: {}", m)?;
         writeln!(f, "  inner error:")?;
         write!(f, "    {}", e)
       },
