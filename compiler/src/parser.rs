@@ -507,6 +507,11 @@ fn try_parse_keyword_term(ps : &mut ParseState) -> Result<Option<Expr>, Error> {
       }
       ps.add_list("fun", es, start)
     }
+    "global" => {
+      ps.pop_type(TokenType::Symbol)?;
+      let definition = pratt_parse(ps, kp)?;
+      ps.add_list("global", vec![definition], start)
+    }
     "let" => {
       ps.pop_type(TokenType::Symbol)?;
       let definition = pratt_parse(ps, kp)?;

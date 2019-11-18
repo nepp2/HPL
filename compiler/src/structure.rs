@@ -351,6 +351,16 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         let into_type = into_type.clone().into();
         Ok(self.node(expr, Convert{ from_value, into_type }))
       }
+      ("global", [e]) => {
+        if let Some(("=", [name_expr, value_expr])) = e.try_construct() {
+          let name = self.expr_to_symbol(name_expr)?;
+          self.add_var_to_scope(name.clone());
+          let value = self.to_node(value_expr)?;
+          let c = VariableInitialise { name, type_tag : None, value, var_scope: VarScope::Global };
+          return Ok(self.node(expr, c));
+        }
+        error(expr, "malformed let expression")
+      }
       ("let", [e]) => {
         if let Some(("=", [name_expr, value_expr])) = e.try_construct() {
           let name = self.expr_to_symbol(name_expr)?;

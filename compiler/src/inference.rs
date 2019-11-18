@@ -609,25 +609,6 @@ impl <'l> Inference<'l> {
   fn loc(&self, ts : TypeSymbol) -> TextLocation {
     *self.c.symbols.get(&ts).unwrap()
   }
-  
-  // impl fmt::Debug for Constraint {
-  //   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-  //     use Constraint::*;
-  //     match self {
-  //       Assert(_, _) => write!(f, "Assert"),
-  //       Equalivalent(_, _) => write!(f, "Equalivalent"),
-  //       Convert{ .. } => write!(f, "Convert"),
-  //       Array{ .. } => write!(f, "Array"),
-  //       FieldAccess { field, .. } => write!(f, "FieldAccess {}", field.name),
-  //       Constructor { type_name, .. } => write!(f, "Constructor {}", type_name),
-  //       FunctionDef { name, .. } => write!(f, "FunctionDef {}", name),
-  //       FunctionCall { function, .. } => write!(f, "FunctionCall {:?}", function),
-  //       Index { .. } => write!(f, "Index"),
-  //       GlobalDef { .. } => write!(f, "GlobalDef"),
-  //       GlobalReference { name, .. } => write!(f, "GlobalReference {}", name),
-  //     }
-  //   }
-  // }
 
   fn unresolved_constraint_error(&mut self, c : &Constraint) {
     let e = match c  {
@@ -688,14 +669,10 @@ impl <'l> Inference<'l> {
   fn process_constraint(&mut self, c : &Constraint) -> bool {
     match c  {
       Constraint::Assert(ts, t) => {
-        println!("Asserting type... ");
         self.set_type_id(*ts, *t);
         return true;
       }
       Constraint::Equalivalent(a, b) => {
-        println!("Equivalence between '{}' and '{}' ... ",
-          self.ts_code_slice(&self.c, *a).lines().next().unwrap(),
-          self.ts_code_slice(&self.c, *b).lines().next().unwrap());
         if let Some(&t) = self.resolved.get(a) {
           self.set_type(*b, t);
           return true;
@@ -706,17 +683,6 @@ impl <'l> Inference<'l> {
         }
       }
       Constraint::FunctionDef{ name, return_type, args, body, loc } => {
-        println!("Function def... ");
-        println!("   Args: ");
-        for (_, ts) in args.iter() {
-          let code = self.ts_code_slice(&self.c, *ts);
-          if let Some(t) = self.resolved.get(ts) {
-            println!("      {}, {}", code, self.m.types.type_ref(*t));
-          }
-          else {
-            println!("      {}, unresolved, ", code);
-          }
-        }
         let resolved_args_count = args.iter().flat_map(|(_, ts)| self.resolved.get(ts)).count();
         let return_type = self.resolved.get(return_type);
         if resolved_args_count == args.len() && return_type.is_some() {
@@ -750,14 +716,12 @@ impl <'l> Inference<'l> {
               definition_location: *loc,
             };
             self.m.functions.insert(f.id, f);
-            println!("Function {} inferred.", name);
             return true;
           }
         }
         println!();
       }
       Constraint::FunctionCall{ node, function, args, result } => {
-        println!("Function call... ");
         let arg_types : Vec<_> =
           args.iter().flat_map(|(_, ts)| self.resolved.get(ts).cloned()).collect();
         if arg_types.len() == args.len() {
@@ -789,7 +753,6 @@ impl <'l> Inference<'l> {
         }
       }
       Constraint::Constructor { type_name, fields, result } => {
-        println!("Constructor... ");
         if let Some(def) = self.m.find_type_def(type_name) {
           match def.kind {
             TypeKind::Struct => {
@@ -923,7 +886,6 @@ impl <'l> Inference<'l> {
         }
       }
       Constraint::FieldAccess{ container, field, result } => {
-        println!("Field access '{}'... ", field.name);
         let t = self.resolved.get(container);
         if let Some(t) = t {
           if let Type::Def(id) = *t { 
@@ -968,16 +930,17 @@ impl <'l> Inference<'l> {
         unused_constraints.push(c);
       }
     }
-    println!("\n####### Inference pass complete #######\n");
+    let mut total_passes = 1;
     while unused_constraints.len() > 0 {
+      total_passes += 1;
       let remaining_before_pass = unused_constraints.len();
       unused_constraints.retain(|c| !self.process_constraint(c));
-      println!("\n####### Inference pass complete #######\n");
       // Exit if no constraints were resolved in the last pass
       if remaining_before_pass == unused_constraints.len() {
         break;
       }
     }
+    println!("\nPasses taken: {}\n", total_passes);
     // Add the globals (this must be delayed because globals follow lexical scoping rules within modules)
     for (g, loc) in self.globals.drain(..) {
       if self.m.find_global(&g.name).is_some() {
