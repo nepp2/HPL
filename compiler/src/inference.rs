@@ -631,7 +631,7 @@ impl <'l> Inference<'l> {
 
   fn unresolved_constraint_error(&mut self, c : &Constraint) {
     let e = match c  {
-      Constraint::Assert(ts, t) => panic!(),
+      Constraint::Assert(_ts, _t) => panic!(),
       Constraint::Equalivalent(a, b) => {
         let loc = self.loc(*a).merge(self.loc(*b));
         error_raw(loc, "equivalence could not be resolved")
@@ -646,7 +646,7 @@ impl <'l> Inference<'l> {
               format!("{} : {}", s.name, t)
             }).join(", ")))
       }
-      Constraint::FunctionCall{ node, function, args, result } => {
+      Constraint::FunctionCall{ node, function, args:_, result:_ } => {
         let loc = self.nodes.node(*node).loc;
         if let Function::Name(sym) = function {
           error_raw(loc, format!("function call {} not resolved", sym.name))
@@ -655,29 +655,29 @@ impl <'l> Inference<'l> {
           error_raw(loc, "function call not resolved")
         }
       }
-      Constraint::Constructor { type_name, fields, result } => {
+      Constraint::Constructor { type_name, fields:_, result } => {
         error_raw(self.loc(*result),
           format!("constructor for '{}' not resolved", type_name))
       }
-      Constraint::Convert { val, into_type } => {
+      Constraint::Convert { val, into_type:_ } => {
         error_raw(self.loc(*val), "convert not resolved")
       }
-      Constraint::GlobalDef { name, type_symbol, loc, c_bind } => {
+      Constraint::GlobalDef { name, type_symbol:_, loc, c_bind:_ } => {
         error_raw(loc,
           format!("global definition '{}' not resolved", name))
       }
-      Constraint::GlobalReference { node, name, result } => {
+      Constraint::GlobalReference { node:_, name, result } => {
         error_raw(self.loc(*result),
           format!("global reference '{}' not resolved", name))
       }
-      Constraint::FieldAccess{ container, field, result } => {
+      Constraint::FieldAccess{ container:_, field, result:_ } => {
         error_raw(field.loc,
           format!("field access '{}' not resolved", field.name))
       }
-      Constraint::Array{ array, element } => {
+      Constraint::Array{ array, element:_ } => {
         error_raw(self.loc(*array), "array literal not resolved")
       }
-      Constraint::Index{ node, container, index, result } => {
+      Constraint::Index{ node, container:_, index:_, result:_ } => {
         let loc = self.nodes.node(*node).loc;
         error_raw(loc, "array access not resolved")
       }

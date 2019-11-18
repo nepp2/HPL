@@ -214,23 +214,6 @@ impl <'l> CompileInfo<'l> {
   fn find_global(&self, name : &str) -> &GlobalDefinition {
     self.m.globals.get(name).unwrap()
   }
-
-  // fn find_function_def(&self, id : FunctionId) -> Option<(&'l CompiledModule, &'l FunctionDefinition)> {
-  //   self.external_modules.iter().find(|m| m.info.id == function_ref.module_id)
-  //     .and_then(|m|
-  //       m.info.functions.iter().find(|def|
-  //         def.name_in_code == function_ref.name_in_code &&
-  //         def.name_for_codegen == function_ref.name_for_codegen)
-  //       .map(|def| (m, def))
-  //     )
-  // }
-
-  // fn find_external_global_def(&self, name : &str) -> Option<(&'l CompiledModule, &'l GlobalDefinition)> {
-  //   self.external_modules.iter().flat_map(|m|
-  //     m.info.globals.get(name)
-  //     .map(|g| (m, g))
-  //   ).next()
-  // }
 }
 
 #[derive(Clone, Copy)]
