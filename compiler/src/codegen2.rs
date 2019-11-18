@@ -6,12 +6,13 @@ use crate::expr::RefStr;
 
 use crate::structure::{
   Node, Nodes, NodeId, Content, Val, TypeKind, SymbolId,
-  Symbol, LabelId, NodeValueType, FunctionNode, VarScope };
+  Symbol, LabelId, NodeValueType, FunctionNode, VarScope,
+  GlobalType };
 
 use crate::inference::{
   Type, TypeId, TypeDefinition, FunctionId, DefId,
   FunctionDefinition, ModuleInfo, CodegenInfo,
-  FunctionImplementation, GlobalDefinition };
+  FunctionImplementation, GlobalDefinition, ModuleId };
 
 use std::collections::HashMap;
 
@@ -108,10 +109,10 @@ fn name_basic_type(t : &BasicValueEnum, s : &str) {
 #[derive(Copy, Clone)]
 enum ShortCircuitOp { And, Or }
 
-pub struct CompiledModule {
+pub struct CompiledUnit {
+  pub module_id : ModuleId,
   pub ee : ExecutionEngine,
   pub llvm_module : Module,
-  pub info : ModuleInfo,
 }
 
 /// Code generates a module
@@ -119,12 +120,13 @@ pub struct Gen<'l> {
   context: &'l mut Context,
   module : &'l mut Module,
   target_data : &'l TargetData,
+  c_symbol_table : &'l HashMap<RefStr, usize>,
 
   /// Globals that need linking when the execution engine is created
-  globals_to_link: &'l mut Vec<(GlobalValue, RefStr)>,
+  globals_to_link: &'l mut Vec<(GlobalValue, usize)>,
 
   /// Functions that need linking when the execution engine is created
-  functions_to_link: &'l mut Vec<(FunctionValue, FunctionId)>,
+  functions_to_link: &'l mut Vec<(FunctionValue, usize)>,
 
   struct_types: HashMap<RefStr, StructType>,
 
@@ -172,7 +174,7 @@ pub struct GenFunction<'l, 'lg> {
 }
 
 pub struct CompileInfo<'l> {
-  external_modules : &'l [CompiledModule],
+  compiled_units : &'l [CompiledUnit],
   m : &'l ModuleInfo,
   cg : &'l CodegenInfo,
   nodes : &'l Nodes,
@@ -180,14 +182,14 @@ pub struct CompileInfo<'l> {
 
 impl <'l> CompileInfo<'l> {
 
-  fn new(
-    external_modules : &'l [CompiledModule],
+  pub fn new(
+    compiled_units : &'l [CompiledUnit],
     m : &'l ModuleInfo,
     cg : &'l CodegenInfo,
     nodes : &'l Nodes)
       -> Self 
   {
-    CompileInfo { external_modules, m, cg, nodes }
+    CompileInfo { compiled_units, m, cg, nodes }
   }
 
   fn typed_node(&self, nid : NodeId) -> TypedNode {
@@ -213,6 +215,24 @@ impl <'l> CompileInfo<'l> {
 
   fn find_global(&self, name : &str) -> &GlobalDefinition {
     self.m.globals.get(name).unwrap()
+  }
+
+  fn find_function_address(&self, module_id : ModuleId, name_for_codegen : &str) -> usize {
+    self.compiled_units.iter()
+      .filter(|cu| cu.module_id == module_id)
+      .map(|cu|
+        unsafe { cu.ee.get_function_address(name_for_codegen) }
+        .expect("function pointer was null"))
+      .next().expect("function address not found") as usize
+  }
+
+  fn find_global_address(&self, module_id : ModuleId, name : &str) -> usize {
+    self.compiled_units.iter()
+      .filter(|cu| cu.module_id == module_id)
+      .map(|cu|
+        unsafe { cu.ee.get_global_address(name) }
+        .expect("global pointer was null"))
+      .next().expect("global address not found") as usize
   }
 }
 
@@ -264,8 +284,9 @@ impl <'l> Gen<'l> {
     context: &'l mut Context,
     module : &'l mut Module,
     target_data : &'l TargetData,
-    globals_to_link: &'l mut Vec<(GlobalValue, RefStr)>,
-    functions_to_link: &'l mut Vec<(FunctionValue, FunctionId)>,
+    c_symbol_table : &'l HashMap<RefStr, usize>,
+    globals_to_link: &'l mut Vec<(GlobalValue, usize)>,
+    functions_to_link: &'l mut Vec<(FunctionValue, usize)>,
     pm : &'l PassManager<FunctionValue>,
   )
       -> Gen<'l>
@@ -273,10 +294,20 @@ impl <'l> Gen<'l> {
     Gen {
       context, module,
       target_data,
+      c_symbol_table,
       globals_to_link,
       functions_to_link,
       struct_types: HashMap::new(),
       pm,
+    }
+  }
+
+  fn get_c_symbol_address(&self, loc : TextLocation, name : &str) -> Result<usize, Error> {
+    if let Some(address) = self.c_symbol_table.get(name) {
+      Ok(*address)
+    }
+    else {
+      error(loc, "c symbol could not be found.")
     }
   }
 
@@ -285,12 +316,19 @@ impl <'l> Gen<'l> {
     // declare the local globals
     for (name, def) in info.m.globals.iter() {
       let t = self.to_basic_type(info, def.type_tag).unwrap();
-      if def.c_bind {
-        let gv = self.module.add_global(t, Some(AddressSpace::Generic), &name);
-        self.globals_to_link.push((gv, def.name.clone()));
-      }
-      else {
-        self.add_global(const_zero(t), false, &name);
+      match def.global_type {
+        GlobalType::CBind => {
+          let gv = self.module.add_global(t, Some(AddressSpace::Generic), &name);
+          let address = self.get_c_symbol_address(def.loc, name)?;
+          self.globals_to_link.push((gv, address));
+        }
+        GlobalType::Repl => {
+          self.add_global(const_zero(t), false, &name);
+        }
+        GlobalType::Static(node_id) => {
+          let v = self.codegen_static(info.typed_node(node_id))?;
+          self.add_global(v, false, &name);
+        }
       }
     }
 
@@ -307,7 +345,8 @@ impl <'l> Gen<'l> {
         }
         FunctionImplementation::CFunction => {
           let f = self.codegen_prototype(info, def.name_in_code.as_ref(), sig.return_type, None, &sig.args);
-          self.functions_to_link.push((f, def.id));
+          let address = self.get_c_symbol_address(def.loc, &def.name_in_code)?;
+          self.functions_to_link.push((f, address));
         }
         _ => (),
       }
@@ -351,6 +390,35 @@ impl <'l> Gen<'l> {
       }
     }
     function
+  }
+
+  fn codegen_static(&mut self, node : TypedNode) -> Result<BasicValueEnum, Error> {
+    let v = match node.content() {
+      Content::Literal(v) => {
+        match v {
+          Val::F64(f) => self.context.f64_type().const_float(*f).into(),
+          Val::F32(f) => self.context.f32_type().const_float(*f as f64).into(),
+          Val::I64(i) => self.context.i64_type().const_int(*i as u64, false).into(), // TODO the signed values should maybe pass "true" here?
+          Val::I32(i) => self.context.i32_type().const_int(*i as u64, false).into(),
+          Val::U64(i) => self.context.i64_type().const_int(*i as u64, false).into(),
+          Val::U32(i) => self.context.i32_type().const_int(*i as u64, false).into(),
+          Val::U16(i) => self.context.i16_type().const_int(*i as u64, false).into(),
+          Val::U8(i) => self.context.i8_type().const_int(*i as u64, false).into(),
+          Val::Bool(b) =>
+            self.context.bool_type().const_int(if *b { 1 } else { 0 }, false).into(),
+          Val::Void => {
+            return error(node, "static variables cannot be void");
+          },
+          Val::String(_s) => {
+            return error(node, "static strings not supported");
+          }
+        }
+      }
+      _ => {
+        return error(node, "unsupported construct in static initialiser");
+      }
+    };
+    Ok(v)
   }
 
   // special case for handling struct/union fields to prevent infinite recursion
@@ -673,20 +741,23 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
     pointer
   }
 
-  fn init_variable(&mut self, var : &Symbol, var_scope : VarScope, value : BasicValueEnum) {
+  fn init_local_var(&mut self, var : &Symbol, value : BasicValueEnum) {
+    let pointer = self.create_entry_block_alloca(value.get_type(), &var.name);
+    self.builder.build_store(pointer, value);
+    self.add_var_pointer_to_scope(var, pointer);
+  }
+
+  fn init_repl_var(&mut self, var : &Symbol, value : BasicValueEnum) {
+    let gv = self.gen.module.get_global(&var.name).unwrap();
+    let pointer = gv.as_pointer_value();
+    self.builder.build_store(pointer, value);
+    self.add_var_pointer_to_scope(var, pointer);
+  }
+
+  fn add_var_pointer_to_scope(&mut self, var : &Symbol, pointer : PointerValue) {
     if self.variables.contains_key(&var.id) { 
       panic!("variable initialised twice!");
     }
-    let pointer = match var_scope {
-      VarScope::Global => {
-        let gv = self.gen.module.get_global(&var.name).unwrap();
-        gv.as_pointer_value()
-      }
-      VarScope::Local => {
-        self.create_entry_block_alloca(value.get_type(), &var.name)
-      }
-    };
-    self.builder.build_store(pointer, value);
     self.variables.insert(var.id, pointer);
   }
 
@@ -948,7 +1019,8 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
       else {
         let t = self.gen.to_basic_type(info, def.type_tag).unwrap();
         let gv = self.gen.module.add_global(t, Some(AddressSpace::Generic), &name);
-        self.gen.globals_to_link.push((gv, name.clone()));
+        let address = info.find_global_address(def.module_id, name);
+        self.gen.globals_to_link.push((gv, address));
         gv
       }
     }
@@ -966,7 +1038,8 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         }
         else {
           let f = self.gen.codegen_prototype(info, name_for_codegen, sig.return_type, Some(args), &sig.args);
-          self.gen.functions_to_link.push((f, def.id));
+          let address = info.find_function_address(def.module_id, name_for_codegen);
+          self.gen.functions_to_link.push((f, address));
           f
         }
       }
@@ -976,7 +1049,8 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
         }
         else {
           let f = self.gen.codegen_prototype(info, &def.name_in_code, sig.return_type, None, &sig.args);
-          self.gen.functions_to_link.push((f, def.id));
+          let address = self.gen.get_c_symbol_address(def.loc, &def.name_in_code).unwrap();
+          self.gen.functions_to_link.push((f, address));
           f
         }
       }
@@ -1380,9 +1454,17 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
       }
       Content::VariableInitialise{ name, type_tag: _, value, var_scope } => {
         let value = node.get(*value);
-        let v = self.codegen_expression_to_register(value)?
-          .ok_or_else(|| error_raw(value, "expected value for initialiser, found void"))?;
-        self.init_variable(name, *var_scope, v);
+        match var_scope {
+          VarScope::Local => {
+            let v = self.codegen_value(value)?;
+            self.init_local_var(name, v);
+          }
+          VarScope::Global(GlobalType::Repl) => {
+            let v = self.codegen_value(value)?;
+            self.init_repl_var(name, v);
+          }
+          _ => (),
+        }
         return Ok(None);
       }
       Content::Reference { name: _, refers_to } => {
@@ -1435,16 +1517,6 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
       }
       Content::Literal(v) => {
         match v {
-          Val::F64(f) => reg(self.gen.context.f64_type().const_float(*f).into()),
-          Val::F32(f) => reg(self.gen.context.f32_type().const_float(*f as f64).into()),
-          Val::I64(i) => reg(self.gen.context.i64_type().const_int(*i as u64, false).into()), // TODO the signed values should maybe pass "true" here?
-          Val::I32(i) => reg(self.gen.context.i32_type().const_int(*i as u64, false).into()),
-          Val::U64(i) => reg(self.gen.context.i64_type().const_int(*i as u64, false).into()),
-          Val::U32(i) => reg(self.gen.context.i32_type().const_int(*i as u64, false).into()),
-          Val::U16(i) => reg(self.gen.context.i16_type().const_int(*i as u64, false).into()),
-          Val::U8(i) => reg(self.gen.context.i8_type().const_int(*i as u64, false).into()),
-          Val::Bool(b) =>
-            reg(self.gen.context.bool_type().const_int(if *b { 1 } else { 0 }, false).into()),
           Val::Void => return Ok(None),
           Val::String(s) => {
             let vs : &[u8] = s.as_ref();
@@ -1461,6 +1533,7 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
             let def = info.find_type_def("string").unwrap();
             self.codegen_struct_initialise(info, def, &[string_pointer.into(), string_length.into()])
           }
+          _ => reg(self.gen.codegen_static(node)?),
         }
       }
     };
@@ -1496,8 +1569,8 @@ impl <'l, 'lg> GenFunction<'l, 'lg> {
       genf.builder.position_at_end(&entry);
 
       // set function parameters
-      for (arg_value, arg_name) in function.get_param_iter().zip(args) {
-        genf.init_variable(arg_name, VarScope::Local, arg_value);
+      for (arg_value, arg_symbol) in function.get_param_iter().zip(args) {
+        genf.init_local_var(arg_symbol, arg_value);
       }
 
       // compile body and emit return

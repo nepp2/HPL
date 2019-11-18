@@ -80,13 +80,13 @@ union expr_list {
   array : expr_array
 }
 
-let list_tag = 0 as u64
-let symbol_tag = 1 as u64
-let literal_string_tag = 2 as u64
-let literal_float_tag = 3 as u64
-let literal_int_tag = 4 as u64
-let literal_bool_tag = 5 as u64
-let literal_unit_tag = 6 as u64
+static list_tag : u64 = 0
+static symbol_tag : u64 = 1
+static literal_string_tag : u64 = 2
+static literal_float_tag : u64 = 3
+static literal_int_tag : u64 = 4
+static literal_bool_tag : u64 = 5
+static literal_unit_tag : u64 = 6
 
 fun sym(s : string, loc : text_location) {
   let data = expr_data.new(symbol: s)

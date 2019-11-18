@@ -18,6 +18,7 @@ pub mod inference;
 pub mod codegen;
 pub mod codegen2;
 pub mod jit;
+pub mod compile;
 pub mod repl;
 pub mod c_interface;
 
@@ -55,25 +56,6 @@ fn load_and_run(path : &str) {
   println!("{}", print_result(result));
 }
 
-fn test_inference(path : &str) {
-  use expr::{ StringCache, UIDGenerator};
-  let code = load(path);
-  let cache = StringCache::new();
-  let mut gen = UIDGenerator::new();
-  let mut c_symbols = c_interface::CSymbols::new();
-  c_symbols.populate();
-  let tokens =
-    lexer::lex(&code, &cache)
-    .map_err(|mut es| es.remove(0)).unwrap();
-  let expr = parser::parse(tokens, &cache).expect("parse errors");
-  let nodes = structure::to_nodes(&mut gen, &c_symbols.local_symbol_table, &cache, &expr).expect("node errors");
-  let m = inference::base_module(&mut gen, &cache);
-  let r = inference::infer_types(&m, &mut gen, &cache, &code, &nodes);
-  if r.is_err() {
-    println!("\nProgram has errors.");
-  }
-}
-
 fn main(){
   let args: Vec<String> = env::args().collect();
   let args: Vec<&str> = args.iter().map(|s| s.as_ref()).collect();
@@ -85,7 +67,10 @@ fn main(){
     ["watch"] => watcher::watch("code/scratchpad.code"),
     ["repl"] => repl::run_repl(),
     ["run", f] => load_and_run(f),
-    ["infer"] => test_inference("code/prelude.code"),
+    ["infer"] => {
+      let code = load("code/prelude.code");
+      compile::test_inference(&code);
+    }
     _ => watcher::watch("code/scratchpad.code"),
   }
 }

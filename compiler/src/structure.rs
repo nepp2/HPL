@@ -45,8 +45,12 @@ pub enum FunctionNode {
   Name(Symbol),
 }
 
+/// TODO: This is a messy way of supporting REPL functionality.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GlobalType { Static(NodeId), Repl, CBind }
+
 #[derive(Debug, Clone, Copy)]
-pub enum VarScope { Local, Global }
+pub enum VarScope { Local, Global(GlobalType) }
 
 #[derive(Debug)]
 pub enum Content {
@@ -116,8 +120,6 @@ pub struct Node {
 pub struct NodeConverter<'l> {
   uid_generator : &'l mut UIDGenerator,
 
-  local_symbol_table : &'l HashMap<RefStr, usize>,
-
   nodes : HashMap<NodeId, Node>,
 
   symbols : HashMap<SymbolId, Symbol>,
@@ -174,14 +176,12 @@ impl <'l> NodeRef<'l> {
 
 pub fn to_nodes(
   uid_generator : &mut UIDGenerator,
-  local_symbol_table : &HashMap<RefStr, usize>,
   cache : &StringCache,
   expr : &Expr)
     -> Result<Nodes, Error>
 {
   let mut nc = NodeConverter {
     uid_generator,
-    local_symbol_table,
     nodes: HashMap::new(),
     symbols: HashMap::new(),
     cache,
@@ -351,23 +351,23 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         let into_type = into_type.clone().into();
         Ok(self.node(expr, Convert{ from_value, into_type }))
       }
-      ("global", [e]) => {
+      ("static", [e]) => {
         if let Some(("=", [name_expr, value_expr])) = e.try_construct() {
-          let name = self.expr_to_symbol(name_expr)?;
-          self.add_var_to_scope(name.clone());
+          let (name, type_tag) = self.typed_symbol(name_expr)?;
           let value = self.to_node(value_expr)?;
-          let c = VariableInitialise { name, type_tag : None, value, var_scope: VarScope::Global };
+          let var_scope = VarScope::Global(GlobalType::Static(value));
+          let c = VariableInitialise { name, type_tag, value, var_scope };
           return Ok(self.node(expr, c));
         }
         error(expr, "malformed let expression")
       }
       ("let", [e]) => {
         if let Some(("=", [name_expr, value_expr])) = e.try_construct() {
-          let name = self.expr_to_symbol(name_expr)?;
+          let (name, type_tag) = self.typed_symbol(name_expr)?;
           self.add_var_to_scope(name.clone());
           let value = self.to_node(value_expr)?;
           let c = if self.is_top_level && self.block_scope.len() == 2 {
-            VariableInitialise { name, type_tag : None, value, var_scope: VarScope::Global }
+            VariableInitialise { name, type_tag, value, var_scope: VarScope::Global(GlobalType::Repl) }
           }
           else {
             VariableInitialise{ name, type_tag: None, value, var_scope: VarScope::Local }
@@ -435,12 +435,6 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       ("cbind", [e]) => {
         if let (":", [name_expr, type_expr]) = e.unwrap_construct()? {
           let name = self.cached(name_expr.unwrap_symbol()?);
-          let address = self.t.local_symbol_table.get(&name).map(|v| *v);
-          if address.is_none() {
-            // TODO: check the signature of the function too
-            println!("Warning: C binding '{}' not linked. LLVM linker may link it instead.", name);
-            // return error(expr, "tried to bind non-existing C function")
-          }
           let type_tag = type_expr.clone().into();
           return Ok(self.node(expr, CBind{ name, type_tag }));
         }
