@@ -9,10 +9,11 @@ use crate::structure::{
   Symbol, LabelId, NodeValueType, FunctionNode, VarScope,
   GlobalType };
 
-use crate::inference::{
+use crate::inference::CodegenInfo;
+use crate::types::{
   Type, TypeId, TypeRef, TypeDefinition, FunctionId,
-  DefId, FunctionDefinition, ModuleInfo, CodegenInfo,
-  FunctionImplementation, GlobalDefinition, ModuleId };
+  DefId, FunctionDefinition, ModuleInfo, ModuleId,
+  FunctionImplementation, GlobalDefinition };
 
 use std::collections::HashMap;
 

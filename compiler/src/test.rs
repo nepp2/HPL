@@ -1,7 +1,7 @@
 
 use crate::error::{Error, ErrorContent};
-use crate::jit::{Interpreter, interpreter};
-use crate::typecheck::{Val, TOP_LEVEL_FUNCTION_NAME};
+use crate::interpret::{Interpreter, interpreter};
+use crate::structure::{Val, TOP_LEVEL_FUNCTION_NAME};
 use crate::c_interface::SStr;
 
 fn result_string(r : Result<Val, Error>) -> String {

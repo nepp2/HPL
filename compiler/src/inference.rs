@@ -10,9 +10,14 @@ use crate::structure::{
   Val, LabelId, TypeKind, FunctionNode, VarScope,
   GlobalType,
 };
+use crate::types::{
+  Type, Types, ModuleInfo, TypeId, DefId,
+  FunctionId, FunctionDefinition, FunctionSignature,
+  GenericId, FunctionImplementation, GlobalDefinition,
+  TypeDefinition
+};
 
 use std::collections::HashMap;
-use bimap::BiMap;
 
 pub fn infer_types(
   parent_module : &ModuleInfo,
@@ -55,19 +60,19 @@ pub fn base_module(gen : &mut UIDGenerator, cache : &StringCache) -> ModuleInfo 
     }
   }
   {
-    let gid = GenericId(gen.next());
+    let gid = gen.next().into();
     let gt = Type::Generic(gid);
     let gptr = m.types.ptr_to_type(gen, gt);
     add_generic_intrinsic(gen, cache, &mut m, "Index", &[gptr], gt, vec![gid]);
   }
   {
-    let gid = GenericId(gen.next());
+    let gid = gen.next().into();
     let gt = Type::Generic(gid);
     let gptr = m.types.ptr_to_type(gen, gt);
     add_generic_intrinsic(gen, cache, &mut m, "*", &[gptr], gt, vec![gid]);
   }
   {
-    let gid = GenericId(gen.next());
+    let gid = gen.next().into();
     let gt = Type::Generic(gid);
     let gptr = m.types.ptr_to_type(gen, gt);
     add_generic_intrinsic(gen, cache, &mut m, "&", &[gt], gptr, vec![gid]);
@@ -94,7 +99,7 @@ fn add_generic_intrinsic(
     args: args.iter().cloned().collect(),
   });
   let f = FunctionDefinition {
-    id: FunctionId(gen.next()),
+    id: gen.next().into(),
     module_id: m.id,
     name_in_code: cache.get(name),
     signature,
@@ -103,14 +108,6 @@ fn add_generic_intrinsic(
     loc: TextLocation::zero(),
   };
   m.functions.insert(f.id, f);
-}
-
-pub struct ModuleInfo {
-  pub id : ModuleId,
-  pub type_defs : HashMap<RefStr, TypeDefinition>,
-  pub functions : HashMap<FunctionId, FunctionDefinition>,
-  pub globals : HashMap<RefStr, GlobalDefinition>,
-  pub types : Types,
 }
 
 pub struct CodegenInfo {
@@ -129,385 +126,6 @@ impl CodegenInfo {
       global_references: HashMap::new(),
     }
   }
-}
-
-impl ModuleInfo {
-  fn new(gen : &mut UIDGenerator) -> ModuleInfo {
-    ModuleInfo{
-      id: ModuleId(gen.next()),
-      type_defs: HashMap::new(),
-      functions: HashMap::new(),
-      globals: HashMap::new(),
-      types: Types::new(),
-    }
-  }
-
-  // TODO: This is really inefficient. Can maybe be improved using immutable collections:
-  // use im_rc::hashmap::HashMap as ImMap;
-  // use im_rc::vector::Vector as ImVec;
-  pub fn child(&self, gen : &mut UIDGenerator) -> ModuleInfo {
-    ModuleInfo {
-      id: ModuleId(gen.next()),
-      type_defs: self.type_defs.clone(),
-      functions: self.functions.clone(),
-      globals: self.globals.clone(),
-      types: self.types.clone(),
-    }
-  }
-
-  pub fn find_global(&self, name : &str) -> Option<&GlobalDefinition> {
-    self.globals.get(name)
-  }
-
-  pub fn find_type_def(&self, name : &str) -> Option<&TypeDefinition> {
-    self.type_defs.get(name)
-  }
-
-  pub fn get_function(&self, fid : FunctionId) -> &FunctionDefinition {
-    self.functions.get(&fid).unwrap()
-  }
-
-  pub fn find_function(&self, name : &str, args : &[Type]) -> Option<FindFunctionResult> {
-    let r = self.functions.values().find(|def| {
-      def.generics.is_empty() && def.name_in_code.as_ref() == name && {
-        let sig = self.types.signature(def.signature);
-        args == sig.args.as_slice()
-      }
-    });
-    if let Some(def) = r {
-      return Some(FindFunctionResult::ConcreteFunction(def.id));
-    }
-    let mut generics = HashMap::new();
-    let r = self.functions.values().find(|def| {
-      (!def.generics.is_empty()) && def.name_in_code.as_ref() == name && {
-        let sig = self.types.signature(def.signature);
-        let matched = generic_match_sig(&mut generics, &self.types, args, def, sig);
-        if !matched {
-          generics.clear();
-        }
-        matched
-      }
-    });
-    if let Some(def) = r {
-      Some(FindFunctionResult::GenericInstance(def.id, generics))
-    }
-    else {
-      None
-    }
-  }
-
-  pub fn concrete_function(&mut self, gen : &mut UIDGenerator, r : FindFunctionResult) -> FunctionId {
-    match r {
-      FindFunctionResult::ConcreteFunction(fid) => fid,
-      FindFunctionResult::GenericInstance(fid, generics) => {
-        let mut sig = self.types.signature(self.get_function(fid).signature).clone();
-        for t in sig.args.iter_mut() {
-          *t = generic_replace(&generics, gen, &mut self.types, *t);
-        }
-        sig.return_type = generic_replace(&generics, gen, &mut self.types, sig.return_type);
-        let signature = self.types.signature_id(gen, sig);
-        let def = self.get_function(fid);
-        let def = FunctionDefinition {
-          id: FunctionId(gen.next()),
-          module_id: self.id,
-          name_in_code: def.name_in_code.clone(),
-          signature,
-          generics: vec![],
-          implementation: def.implementation.clone(),
-          loc: def.loc,
-        };
-        let fid = def.id;
-        self.functions.insert(fid, def);
-        fid
-      },
-    }
-  }
-}
-
-pub enum FindFunctionResult {
-  ConcreteFunction(FunctionId),
-  GenericInstance(FunctionId, HashMap<GenericId, Type>),
-}
-
-fn generic_replace(generics : &HashMap<GenericId, Type>, gen : &mut UIDGenerator, types : &mut Types, t : Type) -> Type {
-  fn generic_replace_id(generics : &HashMap<GenericId, Type>, gen : &mut UIDGenerator, types : &mut Types, t : TypeId) -> TypeId {
-    let t = types.get(t);
-    let t = generic_replace(generics, gen, types, t);
-    types.type_id(gen, t)
-  }
-  match t {
-    Type::Ptr(t) => Type::Ptr(generic_replace_id(generics, gen, types, t)),
-    Type::Array(t) => Type::Array(generic_replace_id(generics, gen, types, t)),
-    Type::Generic(gid) => *generics.get(&gid).unwrap(),
-    _ => return t,
-  }
-}
-
-fn generic_match_sig(
-  generics : &mut HashMap<GenericId, Type>, types : &Types,
-  args : &[Type], def : &FunctionDefinition, sig : &FunctionSignature)
-    -> bool
-{
-  args.len() == sig.args.len() && {
-    for (t, gt) in args.iter().zip(sig.args.iter()) {
-      if !generic_match(generics, types, *t, *gt) {
-        return false;
-      }
-    }
-    generics.len() == def.generics.len()
-  }
-}
-
-fn generic_match(generics : &mut HashMap<GenericId, Type>, types : &Types, t : Type, gt : Type) -> bool {
-  let (t, gt) = match (t, gt) {
-    (Type::Ptr(t), Type::Ptr(gt)) => (t, gt),
-    (Type::Array(t), Type::Array(gt)) => (t, gt),
-    (t, Type::Generic(gid)) => {
-      if let Some(bound_type) = generics.get(&gid) {
-        return t == *bound_type;
-      }
-      else {
-        generics.insert(gid, t);
-        return true;
-      }
-    }
-    _ => return t == gt,
-  };
-  generic_match(generics, types, types.get(t), types.get(gt))
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct ModuleId(u64);
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct FunctionId(u64);
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct GenericId(u64);
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct TypeId(u64);
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct SigId(u64);
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct DefId(u64);
-
-impl From<u64> for TypeId { fn from(v : u64) -> Self { TypeId(v) } }
-impl From<u64> for SigId { fn from(v : u64) -> Self { SigId(v) } }
-impl From<u64> for DefId { fn from(v : u64) -> Self { DefId(v) } }
-
-#[derive(Clone)]
-pub struct Types {
-  types : BiMap<TypeId, Type>,
-
-  signatures : BiMap<SigId, FunctionSignature>,
-
-  type_definition_names : BiMap<DefId, RefStr>,
-}
-
-fn get_id<Id, V>(map : &mut BiMap<Id, V>, gen : &mut UIDGenerator, v : V) -> Id
-  where Id: Eq + Hash + Copy + From<u64>, V: Eq + Hash
-{
-  if let Some(id) = map.get_by_right(&v) {
-    *id
-  }
-  else {
-    let id = gen.next().into();
-    map.insert(id, v);
-    id
-  }
-}
-
-impl Types {
-
-  pub fn new() -> Self {
-    Types { 
-      types: BiMap::new(),
-      signatures: BiMap::new(),
-      type_definition_names: BiMap::new(),
-    }
-  }
-
-  pub fn get(&self, id : TypeId) -> Type {
-    *self.types.get_by_left(&id).unwrap()
-  }
-
-  pub fn type_definition_id(&mut self, gen : &mut UIDGenerator, name : RefStr) -> DefId {
-    get_id(&mut self.type_definition_names, gen, name)
-  }
-
-  pub fn signature_id(&mut self, gen : &mut UIDGenerator, sig : FunctionSignature) -> SigId {
-    get_id(&mut self.signatures, gen, sig)
-  }
-
-  pub fn type_id(&mut self, gen : &mut UIDGenerator, t : Type) -> TypeId {
-    get_id(&mut self.types, gen, t)
-  }
-
-  pub fn ptr_to_type(&mut self, gen : &mut UIDGenerator, t : Type) -> Type {
-    Type::Ptr(self.type_id(gen, t))
-  }
-
-  pub fn signature(&self, id : SigId) -> &FunctionSignature {
-    self.signatures.get_by_left(&id).unwrap()
-  }
-
-  pub fn type_definition_name(&self, id : DefId) -> &RefStr {
-    self.type_definition_names.get_by_left(&id).unwrap()
-  }
-
-  pub fn type_ref(&self, t : Type) -> TypeRef {
-    TypeRef{ t, types: self }
-  }
-
-  pub fn type_ref_id(&self, id : TypeId) -> TypeRef {
-    TypeRef{ t: self.get(id), types: self }
-  }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub enum Type {
-  Void,
-  F64,
-  F32,
-  I64,
-  U64,
-  I32,
-  U32,
-  U16,
-  U8,
-  Bool,
-  Generic(GenericId),
-  Fun(SigId),
-  Def(DefId),
-  Array(TypeId),
-  Ptr(TypeId),
-}
-
-pub struct TypeRef<'l>{
-  t : Type,
-  types: &'l Types,
-}
-
-impl <'l> fmt::Display for TypeRef<'l> {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let types = self.types;
-    match self.t {
-      Type::Fun(sig) => {
-        let sig = self.types.signature(sig);
-        write!(f, "fun({}) => {}", 
-          sig.args.iter()
-            .map(|a| types.type_ref(*a))
-            .join(", "),
-          types.type_ref(sig.return_type))
-      }
-      Type::Def(s) => {
-        let name =
-          self.types.type_definition_name(s);
-        write!(f, "{}", name)
-      }
-      Type::Array(t) => write!(f, "array({})", types.type_ref_id(t)),
-      Type::Ptr(t) => write!(f, "ptr({})", types.type_ref_id(t)),
-      t => write!(f, "{:?}", t),
-    }
-  }
-}
-
-impl Type {
-  pub fn from_string(s : &str) -> Option<Type> {
-    match s {
-      "f64" => Some(Type::F64),
-      "f32" => Some(Type::F32),
-      "bool" => Some(Type::Bool),
-      "i64" => Some(Type::I64),
-      "u64" => Some(Type::U64),
-      "i32" => Some(Type::I32),
-      "u32" => Some(Type::U32),
-      "u16" => Some(Type::U16),
-      "u8" => Some(Type::U8),
-      // "any" => Some(Type::Dynamic),
-      "()" => Some(Type::Void),
-      // "" => Some(Type::Dynamic),
-      _ => None,
-    }
-  }
-
-  pub fn float(&self) -> bool {
-    match self { Type::F32 | Type::F64 => true, _ => false }
-  }
-
-  pub fn unsigned_int(&self) -> bool {
-    match self { Type::U64 | Type::U32 | Type::U16 | Type::U8 => true, _ => false }
-  }
-
-  pub fn signed_int(&self) -> bool {
-    match self { Type::I64 | Type::I32 => true, _ => false }
-  }
-
-  pub fn int(&self) -> bool {
-    self.signed_int() || self.unsigned_int()
-  }
-
-  pub fn number(&self) -> bool {
-    self.int() || self.float()
-  }
-
-  pub fn pointer(&self) -> bool {
-    match self { Type::Ptr(_) | Type::Fun(_) => true, _ => false }
-  }
-}
-
-#[derive(Clone, Debug)]
-pub struct TypeDefinition {
-  pub name : RefStr,
-  pub fields : Vec<(Symbol, Type)>,
-  pub kind : TypeKind,
-  pub drop_function : Option<FunctionId>,
-  pub clone_function : Option<FunctionId>,
-  pub definition_location : TextLocation,
-}
-
-#[derive(Debug, Clone)]
-pub enum FunctionImplementation {
-  Normal{body: NodeId, name_for_codegen: RefStr, args : Vec<Symbol> },
-  CFunction,
-  Intrinsic,
-}
-
-#[derive(Debug, Clone)]
-pub struct FunctionDefinition {
-  pub id : FunctionId,
-  pub module_id : ModuleId,
-  pub name_in_code : RefStr,
-  pub signature : SigId,
-  pub generics : Vec<GenericId>,
-  pub implementation : FunctionImplementation,
-  pub loc : TextLocation,
-}
-
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub struct FunctionSignature {
-  pub return_type : Type,
-  pub args : Vec<Type>,
-}
-
-impl PartialEq for TypeDefinition {
-  fn eq(&self, rhs : &Self) -> bool {
-    self.name == rhs.name
-  }
-}
-
-use Content::*;
-
-#[derive(Clone)]
-pub struct GlobalDefinition {
-  pub module_id : ModuleId,
-  pub name : RefStr,
-  pub type_tag : Type,
-  pub global_type : GlobalType,
-  pub loc : TextLocation,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -759,7 +377,7 @@ impl <'l> Inference<'l> {
               args: arg_names,
             };
             let f = FunctionDefinition {
-              id: FunctionId(self.gen.next()),
+              id: self.gen.next().into(),
               module_id: self.m.id,
               name_in_code: name.clone(),
               signature: self.m.types.signature_id(self.gen, signature),
@@ -871,7 +489,7 @@ impl <'l> Inference<'l> {
             }
             else {
               let f = FunctionDefinition {
-                id: FunctionId(self.gen.next()),
+                id: self.gen.next().into(),
                 module_id: self.m.id,
                 name_in_code: name.clone(),
                 signature: sig_id,
@@ -1221,7 +839,7 @@ impl <'l> GatherConstraints<'l> {
     let node = n.node(id);
     let ts = self.node_to_symbol(node);
     match &node.content {
-      Literal(val) => {
+      Content::Literal(val) => {
         use Val::*;
         let tc = match val {
           F64(_) | F32(_) => {
@@ -1238,7 +856,7 @@ impl <'l> GatherConstraints<'l> {
         };
         self.assert_type_constraint(ts, tc);
       }
-      VariableInitialise{ name, type_tag, value, var_scope } => {
+      Content::VariableInitialise{ name, type_tag, value, var_scope } => {
         self.assert(ts, Type::Void);
         let var_type_symbol = match var_scope {
           VarScope::Local | VarScope::Global(GlobalType::Repl) =>
@@ -1257,20 +875,20 @@ impl <'l> GatherConstraints<'l> {
           });          
         }
       }
-      Assignment{ assignee , value } => {
+      Content::Assignment{ assignee , value } => {
         self.assert(ts, Type::Void);
         let a = self.process_node(n, *assignee);
         let b = self.process_node(n, *value);
         self.equalivalent(a, b);
       }
-      IfThen{ condition, then_branch } => {
+      Content::IfThen{ condition, then_branch } => {
         self.assert(ts, Type::Void);
         let cond = self.process_node(n, *condition);
         let then_br = self.process_node(n, *then_branch);
         self.assert(cond, Type::Bool);
         self.assert(then_br, Type::Void);
       }
-      IfThenElse{ condition, then_branch, else_branch } => {
+      Content::IfThenElse{ condition, then_branch, else_branch } => {
         let cond = self.process_node(n, *condition);
         let then_br = self.process_node(n, *then_branch);
         let else_br = self.process_node(n, *else_branch);
@@ -1278,7 +896,7 @@ impl <'l> GatherConstraints<'l> {
         self.assert(cond, Type::Bool);
         self.equalivalent(then_br, else_br);
       }
-      Block(ns) => {
+      Content::Block(ns) => {
         let len = ns.len();
         if len > 0 {
           for child in &ns[0..(len-1)] {
@@ -1291,12 +909,12 @@ impl <'l> GatherConstraints<'l> {
           self.assert(ts, Type::Void);
         }
       }
-      Quote(_e) => {
+      Content::Quote(_e) => {
         let expr_def = self.type_definition_id(node.loc, self.cache.get("expr"));
         let t = self.m.types.type_id(self.gen, Type::Def(expr_def));
         self.assert(ts, Type::Ptr(t));
       }
-      Reference{ name, refers_to } => {
+      Content::Reference{ name, refers_to } => {
         if let Some(refers_to) = refers_to {
           let var_type = self.variable_to_type_symbol(n.symbol(*refers_to));
           self.equalivalent(ts, var_type);
@@ -1325,7 +943,7 @@ impl <'l> GatherConstraints<'l> {
           return_type: body_ts, body: *body, loc: node.loc };
         self.constraint(f);
       }
-      CBind { name, type_tag } => {
+      Content::CBind { name, type_tag } => {
         self.assert(ts, Type::Void);
         let cbind_ts = self.type_symbol(node.loc);
         if let Some(t) = self.try_expr_to_type(type_tag) {
@@ -1363,7 +981,7 @@ impl <'l> GatherConstraints<'l> {
           self.m.type_defs.insert(name.clone(), def);
         }
       }
-      TypeConstructor{ name, field_values } => {
+      Content::TypeConstructor{ name, field_values } => {
         let mut fields = vec![];
         for (field, value) in field_values.iter() {
           let field_type_symbol = self.process_node(n, *value);
@@ -1372,7 +990,7 @@ impl <'l> GatherConstraints<'l> {
         let tc = Constraint::Constructor{ type_name: name.clone(), fields, result: ts };
         self.constraint(tc);
       }
-      FieldAccess{ container, field } => {
+      Content::FieldAccess{ container, field } => {
         let fa = Constraint::FieldAccess {
           container: self.process_node(n, *container),
           field: field.clone(),
@@ -1380,7 +998,7 @@ impl <'l> GatherConstraints<'l> {
         };
         self.constraint(fa);
       }
-      Index{ container, index } => {
+      Content::Index{ container, index } => {
         // TODO: How do we link the index type here to the index type in the array?
         // I suppose through the definition of a generic index function, which needs to exist
         // somewhere...
@@ -1391,7 +1009,7 @@ impl <'l> GatherConstraints<'l> {
         };
         self.constraint(i);
       }
-      ArrayLiteral(ns) => {
+      Content::ArrayLiteral(ns) => {
         let element_ts = self.type_symbol(node.loc);
         for element in ns.iter() {
           let el = self.process_node(n, *element);
@@ -1399,7 +1017,7 @@ impl <'l> GatherConstraints<'l> {
         }
         self.constraint(Constraint::Array{ array: ts, element: element_ts });
       }
-      FunctionCall{ function, args } => {
+      Content::FunctionCall{ function, args } => {
         let function = match function {
           FunctionNode::Name(name) => Function::Name(name.clone()),
           FunctionNode::Value(val) => {
@@ -1415,14 +1033,14 @@ impl <'l> GatherConstraints<'l> {
         };
         self.constraint(fc);
       }
-      While{ condition, body } => {
+      Content::While{ condition, body } => {
         self.assert(ts, Type::Void);
         let cond = self.process_node(n, *condition);
         let body = self.process_node(n, *body);
         self.assert(cond, Type::Bool);
         self.assert(body, Type::Void);
       }
-      Convert{ from_value, into_type } => {
+      Content::Convert{ from_value, into_type } => {
         let v = self.process_node(n, *from_value);
         if let Some(t) = self.try_expr_to_type(into_type) {
           self.assert(ts, t);
@@ -1430,18 +1048,18 @@ impl <'l> GatherConstraints<'l> {
           self.constraint(c);
         }
       }
-      SizeOf{ type_tag } => {
+      Content::SizeOf{ type_tag } => {
         if let Some(tid) = self.try_expr_to_type(type_tag) {
           self.cg.sizeof_info.insert(node.id, tid);
         }
         self.assert(ts, Type::U64);
       }
-      Label{ label, body } => {
+      Content::Label{ label, body } => {
         self.labels.insert(*label, ts);
         let body = self.process_node(n, *body);
         self.equalivalent(ts, body);
       }
-      BreakToLabel{ label, return_value } => {
+      Content::BreakToLabel{ label, return_value } => {
         self.assert(ts, Type::Void);
         let label_ts = *self.labels.get(label).unwrap();
         if let Some(v) = return_value {

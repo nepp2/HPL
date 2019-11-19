@@ -1,6 +1,6 @@
 // external C interface for the compiler (so that the language can use it)
 
-use crate::jit::{InterpreterInner};
+use crate::compile::Compiler;
 use crate::expr::{RefStr, Expr, ExprContent};
 
 use std::fs::File;
@@ -89,33 +89,35 @@ extern {
 }
 
 #[no_mangle]
-pub extern "C" fn load_quote(i : *mut InterpreterInner, s : SStr) -> *mut u8 {
+pub extern "C" fn load_quote(c : *mut Compiler, s : SStr) -> *mut u8 {
   let code_path = format!("{}code/{}.code", ROOT, s.as_str());
   let mut f = File::open(code_path).expect("file not found");
   let mut code = String::new();
   f.read_to_string(&mut code).unwrap();
-  let i = unsafe { &mut *i };
-  let expr = Box::new(i.parse_string(&code).unwrap());
+  let c = unsafe { &mut *c };
+  let expr = Box::new(c.parse(&code).unwrap());
   Box::into_raw(expr) as *mut u8
 }
 
 #[no_mangle]
-pub extern "C" fn build_module(i : *mut InterpreterInner, e : &Expr) -> SModuleHandle {
-  let i = unsafe { &mut *i };
-  let cm = i.build_module(e).expect("failed to build the module");
-  SModuleHandle { id: cm.info.id }
+pub extern "C" fn build_module(c : *mut Compiler, e : &Expr) -> SModuleHandle {
+  // let c = unsafe { &mut *c };
+  // let cm = c.load_module(e).expect("failed to build the module");
+  // SModuleHandle { id: cm.info.id }
+  loop {}
 }
 
 #[no_mangle]
 pub extern "C" fn get_function(
-  i : *mut InterpreterInner, h : SModuleHandle, name : SStr)
+  c : *mut Compiler, h : SModuleHandle, name : SStr)
     -> *mut u8
 {
-  let i = unsafe { &mut *i };
-  let address =
-    i.get_function_address(h.id, name.as_str())
-    .expect("no matching function found");
-  address as *mut u8
+  // let c = unsafe { &mut *c };
+  // let address =
+  //   c.get_function_address(h.id, name.as_str())
+  //   .expect("no matching function found");
+  // address as *mut u8
+  loop {}
 }
 
 #[no_mangle]

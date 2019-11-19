@@ -2,7 +2,7 @@
 use crate::lexer;
 use crate::parser;
 use crate::parser::ReplParseResult::{Complete, Incomplete};
-use crate::jit::interpreter;
+use crate::interpret::interpreter;
 
 use rustyline::Editor;
 
@@ -15,7 +15,7 @@ pub fn run_repl() {
 
     loop {
       let lex_result =
-        lexer::lex(input_line.as_str(), &mut i.cache)
+        lexer::lex(input_line.as_str(), &mut i.c.cache)
         .map_err(|mut es| es.remove(0));
       let tokens = match lex_result {
         Ok(tokens) => tokens,
@@ -24,7 +24,7 @@ pub fn run_repl() {
           break;
         }
       };
-      let parsing_result = parser::repl_parse(tokens, &mut i.cache);
+      let parsing_result = parser::repl_parse(tokens, &mut i.c.cache);
       match parsing_result {
         Ok(Complete(e)) => {
           // we have parsed a full expression

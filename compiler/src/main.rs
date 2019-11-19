@@ -13,12 +13,11 @@ pub mod parser;
 pub mod expr;
 pub mod watcher;
 pub mod structure;
-pub mod typecheck;
+pub mod types;
 pub mod inference;
-pub mod codegen;
 pub mod codegen2;
-pub mod jit;
 pub mod compile;
+pub mod interpret;
 pub mod repl;
 pub mod c_interface;
 
@@ -30,8 +29,8 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::env;
 
-use crate::jit::interpreter;
-use crate::typecheck::Val;
+use crate::interpret::interpreter;
+use crate::structure::Val;
 use crate::error::Error;
 
 pub fn print_result(r : Result<Val, Error>) -> String {
