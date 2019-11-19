@@ -2,7 +2,24 @@
 
 Currently types and modules are stored together in one big blob. They have to be because otherwise a Type could end up with two different TypeIds, and that would break Type comparisons.
 
+```Rust
+  #[derive(Clone)]
+  pub struct Types {
+    types : BiMap<TypeId, Type>,
 
+    signatures : BiMap<SigId, FunctionSignature>,
+
+    type_definition_names : BiMap<DefId, RefStr>,
+  }
+```
+
+It is critical that the mapping `TypeId -> Type` should be one-to-one. However, when obtaining fresh TypeIds there's no way to avoid the possibility of creating a many-to-one mapping by accident, except by keeping a global store of all existing TypeIds.
+
+Module A: ptr(u32) -> id x
+Module B: ptr(u32) -> id y
+Module C depends on A and B: if ptr(u32) uses x, it will not match signatures containing y (for example).
+
+One solution is to use an arena and replace all the ids with pointers.
 
 # TODO - 18/11/2019
 
