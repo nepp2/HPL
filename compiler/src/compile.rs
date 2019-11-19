@@ -5,13 +5,10 @@ use crate::lexer;
 use crate::parser;
 use crate::c_interface::CSymbols;
 use crate::structure;
-use crate::structure::Val;
+use crate::structure::{Val, TOP_LEVEL_FUNCTION_NAME};
 use crate::inference;
-use crate::inference::{ Type, ModuleInfo, TOP_LEVEL_FUNCTION_NAME };
+use crate::inference::{ Type, ModuleInfo, FunctionImplementation };
 use crate::codegen2::{Gen, CompiledUnit, dump_module, CompileInfo};
-
-use std::fs::File;
-use std::io::Read;
 
 use inkwell::context::{Context};
 // use inkwell::module::{Module, Linkage};
@@ -232,15 +229,7 @@ pub struct Compiler {
   c_symbols : CSymbols,
 }
 
-fn load(path : &str) -> String {
-  let path = PathBuf::from(path);
-  let mut f = File::open(path).expect("file not found");
-  let mut code = String::new();
-  f.read_to_string(&mut code).unwrap();
-  code
-}
-
-fn run_program(path : &str) {
+pub fn run_program(code : &str) {
   unsafe {
     if !LOADED_SYMBOLS {
       // TODO: delete?
@@ -261,36 +250,33 @@ fn run_program(path : &str) {
   let mut c_symbols = CSymbols::new();
   c_symbols.populate();
 
-  let compiler = Box::new(Compiler { context, gen, cache, c_symbols });
-  compiler.c_symbols.add_symbol("compiler", (&mut *compiler) as *mut Compiler);
-
-  let code = load(path);
+  let mut c = Box::new(Compiler { context, gen, cache, c_symbols });
+  let cptr = (&mut *c) as *mut Compiler;
+  c.c_symbols.add_symbol("compiler", cptr);
 
   let tokens =
-    lexer::lex(&code, &cache)
+    lexer::lex(&code, &c.cache)
     .map_err(|mut es| es.remove(0)).unwrap();
 
-  let expr = parser::parse(tokens, &cache).expect("parse errors");
+  let expr = parser::parse(tokens, &c.cache).expect("parse errors");
 
-  let cu = compile_module(&mut *compiler, &[], &expr).expect("codegen errors");
-  // load prelude
-  // if let Err(e) = i.load_prelude() {
-  //   println!("error loading prelude, {}", e);
-  // }
+  let m = inference::base_module(&mut c.gen, &c.cache);
+
+  let (cu, m) = compile_module(&mut *c, &m, &[], &expr).expect("codegen errors");
+  run_top_level(&m, &cu).unwrap();
 }
 
-pub fn compile_module(c : &mut Compiler, compiled_units : &[CompiledUnit], expr : &Expr)
-  -> Result<CompiledUnit, Error>
+pub fn compile_module(c : &mut Compiler, m : &ModuleInfo, compiled_units : &[CompiledUnit], expr : &Expr)
+  -> Result<(CompiledUnit, ModuleInfo), Error>
 {
   if DEBUG_PRINTING_EXPRS {
     println!("{}", expr);
   }
 
   let nodes = structure::to_nodes(&mut c.gen, &c.cache, &expr)?;
-  let m = inference::base_module(&mut c.gen, &c.cache);
-  let (module_info, cg) = inference::infer_types(&m, &mut c.gen, &c.cache, &nodes).unwrap();
+  let (m, cg) = inference::infer_types(&m, &mut c.gen, &c.cache, &nodes).unwrap();
 
-  let module_name = format!("{:?}", module_info.id);
+  let module_name = format!("{:?}", m.id);
   let mut llvm_module = c.context.create_module(&module_name);
 
   let ee =
@@ -316,21 +302,13 @@ pub fn compile_module(c : &mut Compiler, compiled_units : &[CompiledUnit], expr 
     let gen = Gen::new(
         &mut c.context, &mut llvm_module, &mut ee.get_target_data(),
         &c.c_symbols.local_symbol_table, &mut globals_to_link, &mut functions_to_link, &pm);
-    let info = CompileInfo::new(compiled_units, &module_info, &cg, &nodes);
+    let info = CompileInfo::new(compiled_units, &m, &cg, &nodes);
     gen.codegen_module(&info)?
   };
 
   if DEBUG_PRINTING_IR {
     dump_module(&llvm_module);
   }
-
-  // TODO
-  // let address = self.t.local_symbol_table.get(&name).map(|v| *v);
-  // if address.is_none() {
-  //   // TODO: check the signature of the function too
-  //   println!("Warning: C binding '{}' not linked. LLVM linker may link it instead.", name);
-  //   // return error(expr, "tried to bind non-existing C function")
-  // }
 
   // Link c globals
   for (global_value, address) in globals_to_link.iter() {
@@ -347,12 +325,19 @@ pub fn compile_module(c : &mut Compiler, compiled_units : &[CompiledUnit], expr 
   // TODO: is this needed?
   ee.run_static_constructors();
 
-  Ok(CompiledUnit { module_id: module_info.id, ee, llvm_module })
+  let cu = CompiledUnit { module_id: m.id, ee, llvm_module };
+  Ok((cu, m))
 }
 
-fn run_top_level(c : &mut Compiler, m : &ModuleInfo, cu : CompiledUnit) -> Result<Val, Error> {
+fn run_top_level(m : &ModuleInfo, cu : &CompiledUnit) -> Result<Val, Error> {
   let f = TOP_LEVEL_FUNCTION_NAME;
   let def = m.functions.values().find(|def| def.name_in_code.as_ref() == f).unwrap();
+  let f = if let FunctionImplementation::Normal{ name_for_codegen, .. } = &def.implementation {
+    name_for_codegen.as_ref()
+  }
+  else {
+    f
+  };
   let sig = m.types.signature(def.signature);
   let value = match sig.return_type {
     Type::Bool => Val::Bool(execute::<bool>(f, &cu.ee)),

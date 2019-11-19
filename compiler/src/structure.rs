@@ -4,6 +4,8 @@ use crate::expr::{StringCache, RefStr, Expr, ExprContent, UIDGenerator};
 
 use std::collections::HashMap;
 
+pub static TOP_LEVEL_FUNCTION_NAME : &'static str = "__top_level";
+
 #[derive(Clone, PartialEq, Debug)]
 pub enum Val {
   Void,
@@ -18,8 +20,6 @@ pub enum Val {
   String(String),
   Bool(bool),
 }
-
-pub static TOP_LEVEL_FUNCTION_NAME : &'static str = "top_level";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LabelId(u64);
@@ -187,8 +187,8 @@ pub fn to_nodes(
     cache,
   };
   let mut fc = FunctionConverter::new(&mut nc, true, vec![]);
-  let root = fc.to_node(expr)?;
-  Ok(Nodes{ root, nodes: nc.nodes, symbols: nc.symbols })
+  let top_level = fc.top_level_expression(expr)?;
+  Ok(Nodes{ root: top_level, nodes: nc.nodes, symbols: nc.symbols })
 }
 
 impl <'l> NodeConverter<'l> {
@@ -540,6 +540,17 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       },
       // _ => error(expr, "unsupported expression"),
     }
+  }
+
+  fn top_level_expression(&mut self, expr : &Expr) -> Result<NodeId, Error> {
+    let c = Content::FunctionDefinition{
+      name: self.cached(TOP_LEVEL_FUNCTION_NAME),
+      body: self.to_function_body(expr)?,
+      args: vec![],
+      return_tag: None,
+    };
+    let f = self.node(expr, c);
+    Ok(f)
   }
 
   fn to_function_body(&mut self, expr : &Expr) -> Result<NodeId, Error> {

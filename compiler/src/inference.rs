@@ -3,7 +3,7 @@ use std::fmt;
 use itertools::Itertools;
 use std::hash::Hash;
 
-use crate::error::{Error, error, error_raw, TextLocation, ErrorContent};
+use crate::error::{Error, error, error_raw, TextLocation};
 use crate::expr::{StringCache, RefStr, Expr, UIDGenerator};
 use crate::structure::{
   Node, NodeId, Nodes, Symbol, SymbolId, Content,
@@ -498,8 +498,6 @@ impl PartialEq for TypeDefinition {
     self.name == rhs.name
   }
 }
-
-pub static TOP_LEVEL_FUNCTION_NAME : &'static str = "top_level";
 
 use Content::*;
 

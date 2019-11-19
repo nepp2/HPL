@@ -69,7 +69,7 @@ fn main(){
     ["run", f] => load_and_run(f),
     ["infer"] => {
       let code = load("code/prelude.code");
-      compile::test_inference(&code);
+      compile::run_program(&code);
     }
     _ => watcher::watch("code/scratchpad.code"),
   }

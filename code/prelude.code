@@ -75,6 +75,9 @@ union expr_data {
   literal_bool : bool
 }
 
+print("Hello Andy"); println()
+
+
 union expr_list {
   s : string
   array : expr_array

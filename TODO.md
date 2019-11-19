@@ -1,3 +1,10 @@
+# TODO - 18/11/2019
+
+- Remove overloaded functions (for now). Namespacing is a better idea.
+- Consider removing destructors. Replace with memory regions. Consider defer.
+- Add syntactic macros. Implement for loops.
+- Support generics.
+
 # THOUGHTS - 13/11/2019
 
 I don't need generics to support stuff like arithmetic and indexing. I just needed to special-case indexing for pointer types. For everything else, overloaded functions work.
