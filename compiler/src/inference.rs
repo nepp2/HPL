@@ -213,26 +213,6 @@ impl <'l> Inference<'l> {
     })
   }
 
-  // TODO: move this somewhere else?
-  // fn ts_code_slice(&self, c : &Constraints, ts : TypeSymbol) -> &str {
-  //   let loc = c.symbols.get(&ts).unwrap();
-  //   let (start_line, end_line) = (loc.start.line - 1, loc.end.line - 1);
-  //   let mut it =
-  //     // Chain the zero offset for the first line
-  //     [0].iter().cloned().chain(
-  //       // find the newline positions
-  //       self.code.char_indices().filter(|&(_, c)| c == '\n')
-  //       // offset past the \n char
-  //       .map(|(b, _)| b + 1)
-  //     )
-  //     // get the start offsets of the lines we care about
-  //     .enumerate().filter(|&(i, _)| i == start_line || i == end_line)
-  //     .map(|(_, b)| b);
-  //   let l1_start = it.next().unwrap();
-  //   let l2_start = it.next().unwrap_or(l1_start);
-  //   &self.code[l1_start + loc.start.col.. l2_start + loc.end.col]
-  // }
-
   fn unify(&self, a : TypeConstraint, b : TypeConstraint) -> Option<TypeConstraint> {
     use TypeConstraint::*;
     match (a, b) {
@@ -963,7 +943,7 @@ impl <'l> GatherConstraints<'l> {
           self.errors.push(e)
         }
         else {
-          // TODO: check for duplicates?
+          // TODO: check for duplicate fields?
           let mut typed_fields = vec![];
           for (field, type_tag) in fields.iter() {
             if let Some(t) = self.try_expr_to_type(type_tag.as_ref().unwrap()) {
@@ -999,9 +979,6 @@ impl <'l> GatherConstraints<'l> {
         self.constraint(fa);
       }
       Content::Index{ container, index } => {
-        // TODO: How do we link the index type here to the index type in the array?
-        // I suppose through the definition of a generic index function, which needs to exist
-        // somewhere...
         let container = self.process_node(n, *container);
         let index = self.process_node(n, *index);
         let i = Constraint::Index {

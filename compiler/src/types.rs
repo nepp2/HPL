@@ -109,14 +109,9 @@ impl Types {
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum Type {
   Void,
-  F64,
-  F32,
-  I64,
-  U64,
-  I32,
-  U32,
-  U16,
-  U8,
+  F64, F32,
+  I64, I32,
+  U64, U32, U16, U8,
   Bool,
   Generic(GenericId),
   Fun(SigId),

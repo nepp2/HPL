@@ -1,3 +1,9 @@
+# TODO - 19/11/2019
+
+Currently types and modules are stored together in one big blob. They have to be because otherwise a Type could end up with two different TypeIds, and that would break Type comparisons.
+
+
+
 # TODO - 18/11/2019
 
 - Remove overloaded functions (for now). Namespacing is a better idea.

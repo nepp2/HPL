@@ -70,6 +70,26 @@ impl TextLocation {
     let (_, end) = TextMarker::order(self.end, x.end);
     TextLocation { start, end }
   }
+
+  /// TODO: move this somewhere else?
+  pub fn slice_text(self, code : &str) -> &str {
+    let loc = self;
+    let (start_line, end_line) = (loc.start.line - 1, loc.end.line - 1);
+    let mut it =
+      // Chain the zero offset for the first line
+      [0].iter().cloned().chain(
+        // find the newline positions
+        code.char_indices().filter(|&(_, c)| c == '\n')
+        // offset past the \n char
+        .map(|(b, _)| b + 1)
+      )
+      // get the start offsets of the lines we care about
+      .enumerate().filter(|&(i, _)| i == start_line || i == end_line)
+      .map(|(_, b)| b);
+    let l1_start = it.next().unwrap();
+    let l2_start = it.next().unwrap_or(l1_start);
+    &code[l1_start + loc.start.col.. l2_start + loc.end.col]
+  }
 }
 
 impl <S : Into<String>> From<S> for ErrorContent {
