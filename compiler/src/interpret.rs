@@ -2,7 +2,7 @@
 use crate::error::Error;
 use crate::structure::Val;
 use crate::inference;
-use crate::types::ModuleInfo;
+use crate::types::TypeInfo;
 use crate::codegen2::CompiledUnit;
 use crate::compile::Compiler;
 use crate::expr::Expr;
@@ -16,18 +16,18 @@ static PRELUDE_PATH : &'static str = "code/prelude.code";
 #[cfg(test)]
 static PRELUDE_PATH : &'static str = "../code/prelude.code";
 
-pub struct IModule { cu: CompiledUnit, info : ModuleInfo }
+pub struct IModule { cu: CompiledUnit, info : TypeInfo }
 
 pub struct Interpreter {
   pub c : Box<Compiler>,
   pub compiled_units : Vec<CompiledUnit>,
-  pub module_info : ModuleInfo,
+  pub type_info : TypeInfo,
 }
 
 pub fn interpreter() -> Interpreter {
   let mut c = Compiler::new();
-  let module_info = inference::base_module(&mut c.gen, &c.cache);
-  let mut i = Interpreter { c, module_info, compiled_units: vec![] };
+  let type_info = inference::base_module(&mut c.gen);
+  let mut i = Interpreter { c, type_info, compiled_units: vec![] };
   
   // load prelude
   if let Err(e) = i.load_prelude() {
@@ -40,9 +40,9 @@ pub fn interpreter() -> Interpreter {
 impl Interpreter {
 
   pub fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
-    let (cu, module_info, val) = self.c.load_module(&self.module_info, self.compiled_units.as_slice(), expr)?;
+    let (cu, module_info, val) = self.c.load_module(&self.type_info, self.compiled_units.as_slice(), expr)?;
     self.compiled_units.push(cu);
-    self.module_info = module_info;
+    self.type_info = module_info;
     Ok(val)
   }
 
@@ -80,7 +80,7 @@ impl Interpreter {
   {
     self.load_module(code)?;
     let r =
-      self.module_info.functions.values()
+      self.type_info.functions.values()
       .find(|def| def.name_in_code.as_ref() == function_name)
       .and_then(|def| def.codegen_name().map(|n| (n, def)));
     if let Some((function_name, def)) = r {

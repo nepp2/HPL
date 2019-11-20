@@ -1,7 +1,6 @@
 
 use std::fmt;
 use itertools::Itertools;
-use std::hash::Hash;
 
 use crate::error::{Error, error, error_raw, TextLocation};
 use crate::expr::{RefStr, Expr, UIDGenerator};
@@ -15,13 +14,12 @@ use crate::types::{
   FunctionId, FunctionDefinition, FunctionSignature,
   GenericId, FunctionImplementation, GlobalDefinition,
 };
-
-use bumpalo::Bump;
+use crate::arena::Arena;
 
 use std::collections::HashMap;
 
 pub fn infer_types<'a>(
-  arena : &'a Bump,
+  arena : &'a Arena,
   parent_module : &'a TypeInfo<'a>,
   new_module : &'a mut TypeInfo<'a>,
   gen : &'a mut UIDGenerator,
@@ -47,7 +45,7 @@ pub fn infer_types<'a>(
 use Type::*;
 use PType::*;
 
-pub fn base_module<'a>(arena : &'a Bump, gen : &mut UIDGenerator) -> TypeInfo<'a> {
+pub fn base_module<'a>(arena : &'a Arena, gen : &mut UIDGenerator) -> TypeInfo<'a> {
   let mut ti : TypeInfo<'a> = TypeInfo::new(gen.next().into());
   let prim_number_types =
     &[Prim(I64), Prim(I32), Prim(F32), Prim(F64),
@@ -85,7 +83,7 @@ pub fn base_module<'a>(arena : &'a Bump, gen : &mut UIDGenerator) -> TypeInfo<'a
 }
 
 fn add_intrinsic<'a>(
-  arena : &'a Bump, gen : &mut UIDGenerator,
+  arena : &'a Arena, gen : &mut UIDGenerator,
   t : &mut TypeInfo<'a>, name : &'a str,
   args : &[Type<'a>], return_type : Type<'a>)
 {
@@ -93,7 +91,7 @@ fn add_intrinsic<'a>(
 }
 
 fn add_generic_intrinsic<'a>(
-  arena : &'a Bump, gen : &mut UIDGenerator,
+  arena : &'a Arena, gen : &mut UIDGenerator,
   t : &mut TypeInfo<'a>, name : &'a str,
   args : &[Type<'a>], return_type : Type<'a>,
   generics : Vec<GenericId>)
@@ -180,7 +178,7 @@ impl <'a> fmt::Display for TypeConstraint<'a> {
 
 
 struct Inference<'a> {
-  arena : &'a Bump,
+  arena : &'a Arena,
   nodes : &'a Nodes,
   t : &'a mut TypeInfo<'a>,
   cg : &'a mut CodegenInfo<'a>,
@@ -193,7 +191,7 @@ struct Inference<'a> {
 impl <'a> Inference<'a> {
 
   fn new(
-    arena : &'a Bump,
+    arena : &'a Arena,
     nodes : &'a Nodes,
     t : &'a mut TypeInfo<'a>,
     cg : &'a mut CodegenInfo<'a>,
@@ -311,7 +309,7 @@ impl <'a> Inference<'a> {
     self.errors.push(e);
   }
 
-  fn process_constraint(&mut self, c : &Constraint) -> bool {
+  fn process_constraint(&mut self, c : &Constraint<'a>) -> bool {
     match c  {
       Constraint::Assert(ts, tc) => {
         self.set_type_constraint(*ts, *tc);
@@ -346,15 +344,17 @@ impl <'a> Inference<'a> {
               return_type: return_type.unwrap(),
               args: arg_types,
             };
+            let name_for_codegen =
+              self.arena.alloc_str(format!("{}.{}", name, self.gen.next()).as_str());
             let implementation = FunctionImplementation::Normal {
               body: *body,
-              name_for_codegen: format!("{}.{}", name, self.gen.next()),
+              name_for_codegen,
               args: arg_names,
             };
             let f = FunctionDefinition {
               id: self.gen.next().into(),
               module_id: self.t.id,
-              name_in_code: name.to_string(),
+              name_in_code: self.arena.alloc_str(name),
               signature: self.arena.alloc(sig),
               generics: vec![],
               implementation,
@@ -436,8 +436,8 @@ impl <'a> Inference<'a> {
               }
             }
           }
-          let def_id = self.t.types.type_definition_id(self.gen, type_name.clone());
-          self.set_type(*result, Type::Def(def_id));
+          let def_name = self.arena.alloc_str(type_name);
+          self.set_type(*result, Type::Def(def_name));
           return true;
         }
       }
@@ -465,7 +465,7 @@ impl <'a> Inference<'a> {
               let f = FunctionDefinition {
                 id: self.gen.next().into(),
                 module_id: self.t.id,
-                name_in_code: name.to_string(),
+                name_in_code: self.arena.alloc_str(name),
                 signature: sig,
                 generics: vec![],
                 implementation: FunctionImplementation::CFunction,
@@ -481,14 +481,15 @@ impl <'a> Inference<'a> {
               self.errors.push(e);
             }
             else {
+              let name = self.arena.alloc_str(name);
               let g = GlobalDefinition {
                 module_id: self.t.id,
-                name: name.to_string(),
+                name,
                 global_type: *global_type,
                 type_tag: t,
                 loc: *loc,
               };
-              self.t.globals.insert(g.name.clone(), self.arena.alloc(g));
+              self.t.globals.insert(name, self.arena.alloc(g));
             }
           }
           return true;
@@ -700,9 +701,9 @@ impl <'a> Constraints<'a> {
 }
 
 struct GatherConstraints<'a> {
-  arena : &'a Bump,
+  arena : &'a Arena,
   labels : HashMap<LabelId, TypeSymbol>,
-  type_def_refs : Vec<(RefStr, TextLocation)>,
+  type_def_refs : Vec<(&'a str, TextLocation)>,
   t : &'a mut TypeInfo<'a>,
   cg : &'a mut CodegenInfo<'a>,
   gen : &'a mut UIDGenerator,
@@ -712,14 +713,15 @@ struct GatherConstraints<'a> {
 
 impl <'a> GatherConstraints<'a> {
 
-  fn new(
-    arena : &'a Bump,
-    t : &'a mut TypeInfo<'a>,
-    cg : &'a mut CodegenInfo,
-    gen : &'a mut UIDGenerator,
-    c : &'a mut Constraints,
-    errors : &'a mut Vec<Error>,
-  ) -> GatherConstraints<'a>
+  fn new<'b>(
+    arena : &'b Arena,
+    t : &'b mut TypeInfo<'b>,
+    cg : &'b mut CodegenInfo<'b>,
+    gen : &'b mut UIDGenerator,
+    c : &'b mut Constraints<'b>,
+    errors : &'b mut Vec<Error>,
+  ) -> GatherConstraints<'b>
+    where 'a: 'b
   {
     GatherConstraints {
       labels: HashMap::new(),
@@ -769,7 +771,7 @@ impl <'a> GatherConstraints<'a> {
     }
   }
 
-  fn constraint(&mut self, c : Constraint) {
+  fn constraint(&mut self, c : Constraint<'a>) {
     self.c.constraints.push(c);
   }
 
@@ -781,18 +783,18 @@ impl <'a> GatherConstraints<'a> {
     self.constraint(Constraint::Assert(ts, TypeConstraint::Concrete(Type::Prim(t))));
   }
 
-  fn assert_type(&mut self, ts : TypeSymbol, t : Type) {
+  fn assert_type(&mut self, ts : TypeSymbol, t : Type<'a>) {
     self.constraint(Constraint::Assert(ts, TypeConstraint::Concrete(t)));
   }
 
-  fn assert_type_constraint(&mut self, ts : TypeSymbol, tc : TypeConstraint) {
+  fn assert_type_constraint(&mut self, ts : TypeSymbol, tc : TypeConstraint<'a>) {
     self.constraint(Constraint::Assert(ts, tc));
   }
 
   fn tagged_symbol(&mut self, ts : TypeSymbol, type_expr : &Option<Box<Expr>>) {
     if let Some(type_expr) = type_expr {
       if let Some(t) = self.try_expr_to_type(type_expr) {
-        self.assert(ts, t);
+        self.assert_type(ts, t);
       }
     }
   }
@@ -813,7 +815,8 @@ impl <'a> GatherConstraints<'a> {
           Bool(_) => TypeConstraint::Concrete(PType::Bool.into()),
           Void => TypeConstraint::Concrete(PType::Void.into()),
           String(_) => {
-            TypeConstraint::Concrete(Type::Def("string"))
+            let string = self.type_def(node.loc, "string");
+            TypeConstraint::Concrete(string)
           }
         };
         self.assert_type_constraint(ts, tc);
@@ -872,7 +875,7 @@ impl <'a> GatherConstraints<'a> {
         }
       }
       Content::Quote(_e) => {
-        let t = self.arena.alloc(Type::Def("expr"));
+        let t = self.arena.alloc(self.type_def(node.loc, "expr"));
         self.assert_type(ts, Type::Ptr(t));
       }
       Content::Reference{ name, refers_to } => {
@@ -895,7 +898,7 @@ impl <'a> GatherConstraints<'a> {
         let body_ts = {
           // Need new scope stack for new function
           let mut gc = GatherConstraints::new(
-            self.arena, self.t, self.cg, self.gen, self.cache, self.c, self.errors);
+            self.arena, self.t, self.cg, self.gen, self.c, self.errors);
           gc.process_node(n, *body)
         };
         self.tagged_symbol(body_ts, return_tag);
@@ -908,7 +911,7 @@ impl <'a> GatherConstraints<'a> {
         self.assert(ts, PType::Void);
         let cbind_ts = self.type_symbol(node.loc);
         if let Some(t) = self.try_expr_to_type(type_tag) {
-          self.assert(cbind_ts, t);
+          self.assert_type(cbind_ts, t);
         }
         self.constraint(Constraint::GlobalDef{
           name: name.clone(),
@@ -919,7 +922,7 @@ impl <'a> GatherConstraints<'a> {
       }
       Content::TypeDefinition{ name, kind, fields } => {
         self.assert(ts, PType::Void);
-        if self.t.type_defs.get(name).is_some() {
+        if self.t.type_defs.get(name.as_ref()).is_some() {
           let e = error_raw(node.loc, "type with this name already defined");
           self.errors.push(e)
         }
@@ -932,14 +935,15 @@ impl <'a> GatherConstraints<'a> {
             }
           }
           // TODO: Generics?
+          let name = self.arena.alloc_str(name);
           let def = TypeDefinition {
-            name: name.clone(),
+            name,
             fields: typed_fields,
             kind: *kind,
             drop_function: None, clone_function: None,
             definition_location: node.loc,
           };
-          self.t.type_defs.insert(name.clone(), def);
+          self.t.type_defs.insert(name, self.arena.alloc(def));
         }
       }
       Content::TypeConstructor{ name, field_values } => {
@@ -1001,7 +1005,7 @@ impl <'a> GatherConstraints<'a> {
       Content::Convert{ from_value, into_type } => {
         let v = self.process_node(n, *from_value);
         if let Some(t) = self.try_expr_to_type(into_type) {
-          self.assert(ts, t);
+          self.assert_type(ts, t);
           let c = Constraint::Convert { val: v, into_type: t };
           self.constraint(c);
         }
@@ -1037,9 +1041,9 @@ impl <'a> GatherConstraints<'a> {
     self.log_error(r)
   }
 
-  fn type_definition_id(&mut self, loc : TextLocation, name : RefStr) -> DefId {
-    self.type_def_refs.push((name.clone(), loc));
-    self.t.types.type_definition_id(self.gen, name)
+  fn type_def(&mut self, loc : TextLocation, name : &'a str) -> Type<'a> {
+    self.type_def_refs.push((name, loc));
+    Type::Def(name)
   }
 
   /// Converts expression into type. Logs symbol error if definition references a type that hasn't been defined yet
@@ -1049,9 +1053,8 @@ impl <'a> GatherConstraints<'a> {
       if let Some(t) = Type::from_string(name) {
         return Ok(t);
       }
-      let name = self.cache.get(name);
-      let id = self.type_definition_id(expr.loc, name);
-      return Ok(Type::Def(id));
+      let name = self.arena.alloc_str(name);
+      return Ok(self.type_def(expr.loc, name));
     }
     match expr.try_construct() {
       Some(("fun", es)) => {
@@ -1076,11 +1079,11 @@ impl <'a> GatherConstraints<'a> {
       Some(("call", [name, t])) => {
         match name.unwrap_symbol()? {
           "ptr" => {
-            let t = self.expr_to_type_id(t)?;
+            let t = self.arena.alloc(self.expr_to_type(t)?);
             return Ok(Type::Ptr(t))
           }
           "array" => {
-            let t = self.expr_to_type_id(t)?;
+            let t = self.arena.alloc(self.expr_to_type(t)?);
             return Ok(Type::Array(t))
           }
           _ => (),

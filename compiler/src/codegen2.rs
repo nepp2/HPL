@@ -631,7 +631,7 @@ impl <'l> Gen<'l> {
   }
 
   fn composite_type(&mut self, info : &'l CompileInfo, def : &'l TypeDefinition) -> StructType {
-    if let Some(t) = self.struct_types.get(def.name.as_str()) {
+    if let Some(t) = self.struct_types.get(def.name) {
       return *t;
     }
     let t = match def.kind {

@@ -1,16 +1,15 @@
 
 use std::fmt;
 use itertools::Itertools;
-use std::hash::Hash;
 
 use crate::error::TextLocation;
 use crate::expr::UIDGenerator;
 use crate::structure::{
   NodeId, Symbol, TypeKind, GlobalType,
 };
+use crate::arena::Arena;
 
 use std::collections::HashMap;
-use bumpalo::Bump;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct ModuleId(u64);
@@ -63,7 +62,7 @@ pub enum Type<'a> {
 
 #[derive(Clone, Debug)]
 pub struct TypeDefinition<'a> {
-  pub name : String,
+  pub name : &'a str,
   pub fields : Vec<(Symbol, Type<'a>)>,
   pub kind : TypeKind,
   pub drop_function : Option<FunctionId>,
@@ -72,8 +71,8 @@ pub struct TypeDefinition<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub enum FunctionImplementation {
-  Normal{body: NodeId, name_for_codegen: String, args : Vec<Symbol> },
+pub enum FunctionImplementation<'a> {
+  Normal{body: NodeId, name_for_codegen: &'a str, args : Vec<Symbol> },
   CFunction,
   Intrinsic,
 }
@@ -82,10 +81,10 @@ pub enum FunctionImplementation {
 pub struct FunctionDefinition<'a> {
   pub id : FunctionId,
   pub module_id : ModuleId,
-  pub name_in_code : String,
+  pub name_in_code : &'a str,
   pub signature : &'a FunctionSignature<'a>,
   pub generics : Vec<GenericId>,
-  pub implementation : FunctionImplementation,
+  pub implementation : FunctionImplementation<'a>,
   pub loc : TextLocation,
 }
 
@@ -108,7 +107,7 @@ pub struct FunctionSignature<'a> {
 #[derive(Clone)]
 pub struct GlobalDefinition<'a> {
   pub module_id : ModuleId,
-  pub name : String,
+  pub name : &'a str,
   pub type_tag : Type<'a>,
   pub global_type : GlobalType,
   pub loc : TextLocation,
@@ -149,7 +148,7 @@ impl <'a> fmt::Display for Type<'a> {
 }
 
 impl <'a> Type<'a> {
-  pub fn from_string(s : &str) -> Option<Type> {
+  pub fn from_string(s : &str) -> Option<Type<'a>> {
     let pt = match s {
       "f64" => F64,
       "f32" => F32,
@@ -208,15 +207,15 @@ impl <'a> TypeInfo<'a> {
     }
   }
 
-  pub fn find_global(&self, name : &str) -> Option<&GlobalDefinition> {
+  pub fn find_global(&self, name : &str) -> Option<&GlobalDefinition<'a>> {
     self.globals.get(name).cloned()
   }
 
-  pub fn find_type_def(&self, name : &str) -> Option<&TypeDefinition> {
+  pub fn find_type_def(&self, name : &str) -> Option<&TypeDefinition<'a>> {
     self.type_defs.get(name).cloned()
   }
 
-  pub fn get_function(&self, fid : FunctionId) -> &FunctionDefinition {
+  pub fn get_function(&self, fid : FunctionId) -> &FunctionDefinition<'a> {
     self.functions.get(&fid).unwrap()
   }
 
@@ -247,7 +246,7 @@ impl <'a> TypeInfo<'a> {
     }
   }
 
-  pub fn concrete_function(&'a self, arena : &'a Bump, gen : &mut UIDGenerator, r : FindFunctionResult<'a>) -> FunctionId {
+  pub fn concrete_function(&'a self, arena : &'a Arena, gen : &mut UIDGenerator, r : FindFunctionResult<'a>) -> FunctionId {
     match r {
       FindFunctionResult::ConcreteFunction(fid) => fid,
       FindFunctionResult::GenericInstance(fid, generics) => {
@@ -273,7 +272,7 @@ impl <'a> TypeInfo<'a> {
     }
   }
   
-  fn generic_replace(&mut self, arena : &'a Bump, generics : &HashMap<GenericId, Type<'a>>, gen : &mut UIDGenerator, t : Type<'a>)
+  fn generic_replace(&mut self, arena : &'a Arena, generics : &HashMap<GenericId, Type<'a>>, gen : &mut UIDGenerator, t : Type<'a>)
     -> Type
   {
     match t {

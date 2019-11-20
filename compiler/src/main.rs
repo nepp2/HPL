@@ -7,6 +7,7 @@
 // #[macro_use] extern crate lazy_static;
 // #[macro_use] extern crate maplit;
 
+pub mod arena;
 pub mod error;
 pub mod lexer;
 pub mod parser;
