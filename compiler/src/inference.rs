@@ -18,13 +18,13 @@ use crate::arena::Arena;
 
 use std::collections::HashMap;
 
-pub fn infer_types<'a>(
-  arena : &'a Arena,
-  parent_module : &'a TypeInfo<'a>,
-  new_module : &'a mut TypeInfo<'a>,
-  gen : &'a mut UIDGenerator,
-  nodes : &'a Nodes)
-    -> Result<CodegenInfo<'a>, Vec<Error>>
+pub fn infer_types(
+  arena : &Arena,
+  parent_module : &TypeInfo,
+  new_module : &mut TypeInfo,
+  gen : &mut UIDGenerator,
+  nodes : &Nodes)
+    -> Result<CodegenInfo, Vec<Error>>
 {
   let mut c = Constraints::new();
   let mut cg = CodegenInfo::new();
@@ -112,9 +112,9 @@ fn add_generic_intrinsic<'a>(
   t.functions.insert(f.id, arena.alloc(f));
 }
 
-pub struct CodegenInfo<'a> {
-  pub node_type : HashMap<NodeId, Type<'a>>,
-  pub sizeof_info : HashMap<NodeId, Type<'a>>,
+pub struct CodegenInfo {
+  pub node_type : HashMap<NodeId, Type>,
+  pub sizeof_info : HashMap<NodeId, Type>,
   pub function_references : HashMap<NodeId, FunctionId>,
   pub global_references : HashMap<NodeId, RefStr>,
 }
@@ -713,21 +713,29 @@ struct GatherConstraints<'a> {
 
 impl <'a> GatherConstraints<'a> {
 
-  fn new<'b>(
-    arena : &'b Arena,
-    t : &'b mut TypeInfo<'b>,
-    cg : &'b mut CodegenInfo<'b>,
-    gen : &'b mut UIDGenerator,
-    c : &'b mut Constraints<'b>,
-    errors : &'b mut Vec<Error>,
-  ) -> GatherConstraints<'b>
-    where 'a: 'b
+  fn new(
+    arena : &'a Arena,
+    t : &'a mut TypeInfo<'a>,
+    cg : &'a mut CodegenInfo<'a>,
+    gen : &'a mut UIDGenerator,
+    c : &'a mut Constraints<'a>,
+    errors : &'a mut Vec<Error>,
+  ) -> Self
   {
     GatherConstraints {
       labels: HashMap::new(),
       type_def_refs: vec![],
       arena, t, cg, gen, c, errors,
     }
+  }
+
+  fn new2(
+    arena : &'a Arena,
+    gen : &'a mut UIDGenerator,
+    errors : &'a mut Vec<Error>,
+  ) -> Self
+  {
+    loop {}
   }
 
   fn gather_constraints(&mut self, n : &Nodes) {
@@ -897,8 +905,9 @@ impl <'a> GatherConstraints<'a> {
         }
         let body_ts = {
           // Need new scope stack for new function
-          let mut gc = GatherConstraints::new(
-            self.arena, self.t, self.cg, self.gen, self.c, self.errors);
+          let mut gc =
+            GatherConstraints::new(self.arena, self.t, self.cg, self.gen, self.c, self.errors);
+            //GatherConstraints::new2(self.arena, self.gen, self.errors);
           gc.process_node(n, *body)
         };
         self.tagged_symbol(body_ts, return_tag);

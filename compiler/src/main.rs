@@ -16,6 +16,7 @@ pub mod watcher;
 pub mod structure;
 pub mod types;
 pub mod inference;
+pub mod modules;
 pub mod codegen2;
 pub mod compile;
 pub mod interpret;

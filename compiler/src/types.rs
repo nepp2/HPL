@@ -7,7 +7,7 @@ use crate::expr::UIDGenerator;
 use crate::structure::{
   NodeId, Symbol, TypeKind, GlobalType,
 };
-use crate::arena::Arena;
+use crate::arena::{ Arena, Ap };
 
 use std::collections::HashMap;
 
@@ -24,11 +24,11 @@ impl From<u64> for ModuleId { fn from(v : u64) -> Self { ModuleId(v) } }
 impl From<u64> for FunctionId { fn from(v : u64) -> Self { FunctionId(v) } }
 impl From<u64> for GenericId { fn from(v : u64) -> Self { GenericId(v) } }
 
-pub struct TypeInfo<'a> {
+pub struct TypeInfo {
   pub id : ModuleId,
-  pub type_defs : HashMap<&'a str, &'a TypeDefinition<'a>>,
-  pub functions : HashMap<FunctionId, &'a FunctionDefinition<'a>>,
-  pub globals : HashMap<&'a str, &'a GlobalDefinition<'a>>,
+  pub type_defs : HashMap<Ap<str>, Ap<TypeDefinition>>,
+  pub functions : HashMap<FunctionId, Ap<FunctionDefinition>>,
+  pub globals : HashMap<Ap<str>, Ap<GlobalDefinition>>,
 }
 
 /// Primitive type
@@ -41,8 +41,8 @@ pub enum PType {
   Bool,
 }
 
-impl <'a> Into<Type<'a>> for PType {
-  fn into(self) -> Type<'a> {
+impl  Into<Type> for PType {
+  fn into(self) -> Type {
     Type::Prim(self)
   }
 }
@@ -50,20 +50,20 @@ impl <'a> Into<Type<'a>> for PType {
 use PType::*;
 
 #[derive(Clone, Copy, Debug)]
-pub enum Type<'a> {
+pub enum Type {
   /// Primitive type (e.g. int, float, bool, etc)
   Prim(PType),
   Generic(GenericId),
-  Fun(&'a FunctionSignature<'a>),
-  Def(&'a str),
-  Array(&'a Type<'a>),
-  Ptr(&'a Type<'a>),
+  Fun(Ap<FunctionSignature>),
+  Def(Ap<str>),
+  Array(Ap<Type>),
+  Ptr(Ap<Type>),
 }
 
 #[derive(Clone, Debug)]
-pub struct TypeDefinition<'a> {
-  pub name : &'a str,
-  pub fields : Vec<(Symbol, Type<'a>)>,
+pub struct TypeDefinition {
+  pub name : Ap<str>,
+  pub fields : Vec<(Symbol, Type)>,
   pub kind : TypeKind,
   pub drop_function : Option<FunctionId>,
   pub clone_function : Option<FunctionId>,
@@ -71,24 +71,24 @@ pub struct TypeDefinition<'a> {
 }
 
 #[derive(Debug, Clone)]
-pub enum FunctionImplementation<'a> {
-  Normal{body: NodeId, name_for_codegen: &'a str, args : Vec<Symbol> },
+pub enum FunctionImplementation {
+  Normal{body: NodeId, name_for_codegen: Ap<str>, args : Vec<Symbol> },
   CFunction,
   Intrinsic,
 }
 
 #[derive(Debug, Clone)]
-pub struct FunctionDefinition<'a> {
+pub struct FunctionDefinition {
   pub id : FunctionId,
   pub module_id : ModuleId,
-  pub name_in_code : &'a str,
-  pub signature : &'a FunctionSignature<'a>,
+  pub name_in_code : Ap<str>,
+  pub signature : Ap<FunctionSignature>,
   pub generics : Vec<GenericId>,
-  pub implementation : FunctionImplementation<'a>,
+  pub implementation : FunctionImplementation,
   pub loc : TextLocation,
 }
 
-impl <'a> FunctionDefinition<'a> {
+impl  FunctionDefinition {
   pub fn codegen_name(&self) -> Option<&str> {
     match &self.implementation {
       FunctionImplementation::Normal{ name_for_codegen, .. } => Some(name_for_codegen),
@@ -99,21 +99,21 @@ impl <'a> FunctionDefinition<'a> {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct FunctionSignature<'a> {
-  pub return_type : Type<'a>,
-  pub args : Vec<Type<'a>>,
+pub struct FunctionSignature {
+  pub return_type : Type,
+  pub args : Vec<Type>,
 }
 
 #[derive(Clone)]
-pub struct GlobalDefinition<'a> {
+pub struct GlobalDefinition {
   pub module_id : ModuleId,
-  pub name : &'a str,
-  pub type_tag : Type<'a>,
+  pub name : Ap<str>,
+  pub type_tag : Type,
   pub global_type : GlobalType,
   pub loc : TextLocation,
 }
 
-impl <'a> PartialEq for Type<'a> {
+impl  PartialEq for Type {
   fn eq(&self, other: &Self) -> bool {
     use Type::*;
     match (*self, *other) {
@@ -128,7 +128,7 @@ impl <'a> PartialEq for Type<'a> {
   }
 }
 
-impl <'a> fmt::Display for Type<'a> {
+impl  fmt::Display for Type {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
       Type::Fun(sig) => {
@@ -147,8 +147,8 @@ impl <'a> fmt::Display for Type<'a> {
   }
 }
 
-impl <'a> Type<'a> {
-  pub fn from_string(s : &str) -> Option<Type<'a>> {
+impl  Type {
+  pub fn from_string(s : &str) -> Option<Type> {
     let pt = match s {
       "f64" => F64,
       "f32" => F32,
@@ -192,13 +192,13 @@ impl <'a> Type<'a> {
   }
 }
 
-pub enum FindFunctionResult<'a> {
+pub enum FindFunctionResult {
   ConcreteFunction(FunctionId),
-  GenericInstance(FunctionId, HashMap<GenericId, Type<'a>>),
+  GenericInstance(FunctionId, HashMap<GenericId, Type>),
 }
 
-impl <'a> TypeInfo<'a> {
-  pub fn new(module_id : ModuleId) -> TypeInfo<'a> {
+impl  TypeInfo {
+  pub fn new(module_id : ModuleId) -> TypeInfo {
     TypeInfo{
       id: module_id,
       type_defs: HashMap::new(),
@@ -207,19 +207,19 @@ impl <'a> TypeInfo<'a> {
     }
   }
 
-  pub fn find_global(&self, name : &str) -> Option<&GlobalDefinition<'a>> {
-    self.globals.get(name).cloned()
+  pub fn find_global(&self, name : &str) -> Option<&GlobalDefinition> {
+    self.globals.get(name).map(|def| &**def)
   }
 
-  pub fn find_type_def(&self, name : &str) -> Option<&TypeDefinition<'a>> {
-    self.type_defs.get(name).cloned()
+  pub fn find_type_def(&self, name : &str) -> Option<&TypeDefinition> {
+    self.type_defs.get(name).map(|def| &**def)
   }
 
-  pub fn get_function(&self, fid : FunctionId) -> &FunctionDefinition<'a> {
+  pub fn get_function(&self, fid : FunctionId) -> &FunctionDefinition {
     self.functions.get(&fid).unwrap()
   }
 
-  pub fn find_function(&self, name : &str, args : &[Type<'a>]) -> Option<FindFunctionResult<'a>> {
+  pub fn find_function(&self, name : &str, args : &[Type]) -> Option<FindFunctionResult> {
     let r = self.functions.values().find(|def| {
       def.generics.is_empty() && def.name_in_code.as_ref() == name && {
         args == def.signature.args.as_slice()
@@ -231,7 +231,7 @@ impl <'a> TypeInfo<'a> {
     let mut generics = HashMap::new();
     let r = self.functions.values().find(|def| {
       (!def.generics.is_empty()) && def.name_in_code.as_ref() == name && {
-        let matched = generic_match_sig(&mut generics, args, def, def.signature);
+        let matched = generic_match_sig(&mut generics, args, def, &def.signature);
         if !matched {
           generics.clear();
         }
@@ -246,7 +246,7 @@ impl <'a> TypeInfo<'a> {
     }
   }
 
-  pub fn concrete_function(&'a self, arena : &'a Arena, gen : &mut UIDGenerator, r : FindFunctionResult<'a>) -> FunctionId {
+  pub fn concrete_function(&self, arena : Ap<Arena>, gen : &mut UIDGenerator, r : FindFunctionResult) -> FunctionId {
     match r {
       FindFunctionResult::ConcreteFunction(fid) => fid,
       FindFunctionResult::GenericInstance(fid, generics) => {
@@ -260,7 +260,7 @@ impl <'a> TypeInfo<'a> {
           id: FunctionId(gen.next()),
           module_id: self.id,
           name_in_code: def.name_in_code.clone(),
-          signature: arena.alloc(sig),
+          signature: sig,
           generics: vec![],
           implementation: def.implementation.clone(),
           loc: def.loc,
@@ -272,7 +272,7 @@ impl <'a> TypeInfo<'a> {
     }
   }
   
-  fn generic_replace(&mut self, arena : &'a Arena, generics : &HashMap<GenericId, Type<'a>>, gen : &mut UIDGenerator, t : Type<'a>)
+  fn generic_replace(&mut self, arena : Ap<Arena>, generics : &HashMap<GenericId, Type>, gen : &mut UIDGenerator, t : Type)
     -> Type
   {
     match t {
@@ -292,9 +292,9 @@ impl <'a> TypeInfo<'a> {
   }
 }
 
-fn generic_match_sig<'a>(
-  generics : &mut HashMap<GenericId, Type<'a>>, args : &[Type<'a>],
-  def : &FunctionDefinition, sig : &FunctionSignature<'a>)
+fn generic_match_sig(
+  generics : &mut HashMap<GenericId, Type>, args : &[Type],
+  def : &FunctionDefinition, sig : &FunctionSignature)
     -> bool
 {
   args.len() == sig.args.len() && {
@@ -307,7 +307,7 @@ fn generic_match_sig<'a>(
   }
 }
 
-fn generic_match<'a>(generics : &mut HashMap<GenericId, Type<'a>>, t : Type<'a>, gt : Type<'a>) -> bool {
+fn generic_match(generics : &mut HashMap<GenericId, Type>, t : Type, gt : Type) -> bool {
   let (t, gt) = match (t, gt) {
     (Type::Ptr(t), Type::Ptr(gt)) => (t, gt),
     (Type::Array(t), Type::Array(gt)) => (t, gt),

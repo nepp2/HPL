@@ -7,6 +7,7 @@ use crate::codegen2::CompiledUnit;
 use crate::compile::Compiler;
 use crate::expr::Expr;
 
+use owning_ref::BoxRef;
 use std::fs::File;
 use std::io::Read;
 

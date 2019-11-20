@@ -8,8 +8,9 @@ use crate::structure;
 use crate::structure::{Val, TOP_LEVEL_FUNCTION_NAME};
 use crate::inference;
 use crate::types::{ Type, PType, TypeInfo, FunctionImplementation };
-use crate::codegen2::{Gen, CompiledUnit, dump_module, CompileInfo};
-use crate::arena::Arena;
+use crate::codegen2::{Gen, LlvmUnit, dump_module, CompileInfo};
+use crate::modules::{CompiledModule, TypedModule };
+use crate::arena::{ Arena, Ap };
 
 use inkwell::context::{Context};
 // use inkwell::module::{Module, Linkage};
@@ -47,8 +48,8 @@ pub fn run_program(code : &str) -> Result<Val, Error> {
 
   let t = inference::base_module(&arena, &mut c.gen);
 
-  let (cu, t) = c.compile_module(&t, &[], &expr)?;
-  run_top_level(&t, &cu)
+  let m = c.compile_module(&t, &[], &expr)?;
+  run_top_level(m.borrow())
 }
 
 pub struct Compiler {
@@ -86,12 +87,12 @@ impl Compiler {
     c
   }
 
-  pub fn load_module(&mut self, t : &TypeInfo, compiled_units : &[CompiledUnit], expr : &Expr)
-    -> Result<(CompiledUnit, TypeInfo, Val), Error>
+  pub fn load_module<'a>(&mut self, t : &TypeInfo, code_modules : &[&CodeModuleRef], expr : &Expr)
+    -> Result<(CodeModule, Val), Error>
   {
-    let (cu, t) = self.compile_module(&t, compiled_units, &expr)?;
-    let val = run_top_level(&t, &cu)?;
-    Ok((cu, t, val))
+    let m = self.compile_module(&t, code_modules, &expr)?;
+    let val = run_top_level(m.borrow())?;
+    Ok((m, val))
   }
 
   pub fn parse(&mut self, code : &str) -> Result<Expr, Error> {
@@ -102,8 +103,8 @@ impl Compiler {
     parser::parse(tokens, &self.cache)
   }
 
-  pub fn compile_module(&mut self, parent_modules : &TypeInfo, compiled_units : &[CompiledUnit], expr : &Expr)
-    -> Result<(CompiledUnit, TypeInfo), Error>
+  pub fn compile_module(&mut self, compiled_module : &[CompiledModule], expr : &Expr)
+    -> Result<CompiledModule, Error>
   {
     if DEBUG_PRINTING_EXPRS {
       println!("{}", expr);
@@ -114,7 +115,7 @@ impl Compiler {
     let arena = Arena::new();
     let new_module = TypeInfo::new(self.gen.next().into());
     let cg = inference::infer_types(
-      &arena, &parent_modules, &mut new_module, &mut self.gen, &nodes).unwrap();
+      &arena, &mut new_module, &mut self.gen, &nodes).unwrap();
 
     let module_name = format!("{:?}", new_module.id);
     let mut llvm_module = self.context.create_module(&module_name);
@@ -142,7 +143,7 @@ impl Compiler {
       let gen = Gen::new(
           &mut self.context, &mut llvm_module, &mut ee.get_target_data(),
           &self.c_symbols.local_symbol_table, &mut globals_to_link, &mut functions_to_link, &pm);
-      let info = CompileInfo::new(compiled_units, &new_module, &cg, &nodes);
+      let info = CompileInfo::new(code_modules, &new_module, &cg, &nodes);
       gen.codegen_module(&info)?
     };
 
@@ -170,9 +171,9 @@ impl Compiler {
   }
 }
 
-fn run_top_level(t : &TypeInfo, cu : &CompiledUnit) -> Result<Val, Error> {
+fn run_top_level(m : &CodeModuleRef) -> Result<Val, Error> {
   let f = TOP_LEVEL_FUNCTION_NAME;
-  let def = t.functions.values().find(|def| def.name_in_code.as_ref() == f).unwrap();
+  let def = m.t.functions.values().find(|def| def.name_in_code.as_ref() == f).unwrap();
   let f = if let FunctionImplementation::Normal{ name_for_codegen, .. } = &def.implementation {
     name_for_codegen.as_ref()
   }
@@ -182,18 +183,19 @@ fn run_top_level(t : &TypeInfo, cu : &CompiledUnit) -> Result<Val, Error> {
   use Type::*;
   use PType::*;
   let sig = def.signature;
+  let lu = &m.llvm_unit;
   let value = match sig.return_type {
-    Prim(Bool) => Val::Bool(execute::<bool>(f, &cu.ee)),
-    Prim(F64) => Val::F64(execute::<f64>(f, &cu.ee)),
-    Prim(F32) => Val::F32(execute::<f32>(f, &cu.ee)),
-    Prim(I64) => Val::I64(execute::<i64>(f, &cu.ee)),
-    Prim(I32) => Val::I32(execute::<i32>(f, &cu.ee)),
-    Prim(U64) => Val::U64(execute::<u64>(f, &cu.ee)),
-    Prim(U32) => Val::U32(execute::<u32>(f, &cu.ee)),
-    Prim(U16) => Val::U16(execute::<u16>(f, &cu.ee)),
-    Prim(U8) => Val::U8(execute::<u8>(f, &cu.ee)),
+    Prim(Bool) => Val::Bool(execute::<bool>(f, &lu.ee)),
+    Prim(F64) => Val::F64(execute::<f64>(f, &lu.ee)),
+    Prim(F32) => Val::F32(execute::<f32>(f, &lu.ee)),
+    Prim(I64) => Val::I64(execute::<i64>(f, &lu.ee)),
+    Prim(I32) => Val::I32(execute::<i32>(f, &lu.ee)),
+    Prim(U64) => Val::U64(execute::<u64>(f, &lu.ee)),
+    Prim(U32) => Val::U32(execute::<u32>(f, &lu.ee)),
+    Prim(U16) => Val::U16(execute::<u16>(f, &lu.ee)),
+    Prim(U8) => Val::U8(execute::<u8>(f, &lu.ee)),
     Prim(Void) => {
-      execute::<()>(f, &cu.ee);
+      execute::<()>(f, &lu.ee);
       Val::Void
     }
     t => {
