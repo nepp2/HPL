@@ -10,111 +10,49 @@ use crate::structure::{
   GlobalType,
 };
 use crate::types::{
-  Type, PType, TypeInfo, TypeDefinition,
-  FunctionId, FunctionDefinition, FunctionSignature,
+  Type, PType, TypeInfo, TypeDefinition, FindFunctionResult,
+  FunctionId, FunctionDefinition, FunctionSignature, ModuleId,
   GenericId, FunctionImplementation, GlobalDefinition,
 };
-use crate::modules::TypedModule;
+use crate::modules::{ TypedModule, CompiledModule };
 use crate::arena::{ Arena, Ap };
 
 use std::collections::HashMap;
 
 pub fn infer_types(
   nodes : Nodes,
-  imports : &[&TypeInfo],
+  intrinsics : &TypedModule,
+  imports : &[&CompiledModule],
   gen : &mut UIDGenerator,
 )
   -> Result<TypedModule, Vec<Error>>
 {
   let arena = Arena::new();
-  let intrinsics = get_intrinsics(&arena, gen);
+  let mut fixed_imports = vec![&intrinsics.t];
+  fixed_imports.extend(imports.iter().map(|m| &m.t));
   let mut c = Constraints::new();
   let mut cg = CodegenInfo::new();
   let mut errors = vec![];
+  let mut new_module = TypeInfo::new();
   let module_id = gen.next().into();
-  let aaa = (); // TODO: not using intrisics or imports yet
-  let mut t = TypeInfo::new(module_id);
-  let mut gather = GatherConstraints::new(
-    &arena, &mut t, &mut cg, gen, &mut c, &mut errors);
+  let mut type_directory =
+  TypeDirectory::new(module_id, fixed_imports.as_slice(), &mut new_module);
+  let mut gather =
+    GatherConstraints::new(
+      &arena, &mut type_directory,
+      &mut cg, gen, &mut c, &mut errors);
   gather.gather_constraints(&nodes);
-  let mut i = Inference::new(&arena, &nodes, &mut t, &mut cg, &c, gen, &mut errors);
+  let mut i = 
+    Inference::new(
+      &arena, &nodes, &mut type_directory,
+      &mut cg, &c, gen, &mut errors);
   i.infer();
   if errors.len() > 0 {
     Err(errors)
   }
   else {
-    Ok(TypedModule::new(arena, module_id, nodes, t, cg))
+    Ok(TypedModule::new(arena, module_id, nodes, new_module, cg))
   }
-}
-
-use Type::*;
-use PType::*;
-
-pub fn get_intrinsics(arena : &Arena, gen : &mut UIDGenerator) -> TypeInfo {
-  let mut ti = TypeInfo::new(gen.next().into());
-  let prim_number_types =
-    &[Prim(I64), Prim(I32), Prim(F32), Prim(F64),
-      Prim(U64), Prim(U32), Prim(U16), Prim(U8) ];
-  for &t in prim_number_types {
-    for &n in &["-"] {
-      add_intrinsic(arena, gen, &mut ti, n, &[t], t);
-    }
-    for &n in &["+", "-", "*", "/"] {
-      add_intrinsic(arena, gen, &mut ti, n, &[t, t], t);
-    }
-    for &n in &["==", ">", "<", ">=", "<=", "!="] {
-      add_intrinsic(arena, gen, &mut ti, n, &[t, t], Prim(Bool));
-    }
-  }
-  {
-    let gid = gen.next().into();
-    let gt = Type::Generic(gid);
-    let gptr = Type::Ptr(arena.alloc(gt));
-    add_generic_intrinsic(arena, gen, &mut ti, "Index", &[gptr], gt, vec![gid]);
-  }
-  {
-    let gid = gen.next().into();
-    let gt = Type::Generic(gid);
-    let gptr = Type::Ptr(arena.alloc(gt));
-    add_generic_intrinsic(arena, gen, &mut ti, "*", &[gptr], gt, vec![gid]);
-  }
-  {
-    let gid = gen.next().into();
-    let gt = Type::Generic(gid);
-    let gptr = Type::Ptr(arena.alloc(gt));
-    add_generic_intrinsic(arena, gen, &mut ti, "&", &[gt], gptr, vec![gid]);
-  }
-  ti
-}
-
-fn add_intrinsic(
-  arena : &Arena, gen : &mut UIDGenerator,
-  t : &mut TypeInfo, name : &str,
-  args : &[Type], return_type : Type)
-{
-  add_generic_intrinsic(arena, gen, t, name, args, return_type, vec![])
-}
-
-fn add_generic_intrinsic(
-  arena : &Arena, gen : &mut UIDGenerator,
-  t : &mut TypeInfo, name : &str,
-  args : &[Type], return_type : Type,
-  generics : Vec<GenericId>)
-{
-  let sig = FunctionSignature{
-    return_type,
-    args: args.iter().cloned().collect(),
-  };
-  let f = FunctionDefinition {
-    id: gen.next().into(),
-    module_id: t.id,
-    name_in_code: arena.alloc_str(name),
-    signature: arena.alloc(sig),
-    generics,
-    implementation: FunctionImplementation::Intrinsic,
-    loc: TextLocation::zero(),
-  };
-  t.functions.insert(f.id, arena.alloc(f));
 }
 
 pub struct CodegenInfo {
@@ -125,7 +63,7 @@ pub struct CodegenInfo {
 }
 
 impl CodegenInfo {
-  fn new() -> Self {
+  pub fn new() -> Self {
     CodegenInfo {
       node_type: HashMap::new(),
       sizeof_info: HashMap::new(),
@@ -185,7 +123,7 @@ impl fmt::Display for TypeConstraint {
 struct Inference<'a> {
   arena : &'a Arena,
   nodes : &'a Nodes,
-  t : &'a mut TypeInfo,
+  t : &'a mut TypeDirectory<'a>,
   cg : &'a mut CodegenInfo,
   c : &'a Constraints,
   gen : &'a mut UIDGenerator,
@@ -198,7 +136,7 @@ impl <'a> Inference<'a> {
   fn new(
     arena : &'a Arena,
     nodes : &'a Nodes,
-    t : &'a mut TypeInfo,
+    t : &'a mut TypeDirectory<'a>,
     cg : &'a mut CodegenInfo,
     c : &'a Constraints,
     gen : &'a mut UIDGenerator,
@@ -347,7 +285,7 @@ impl <'a> Inference<'a> {
           else {
             let sig = FunctionSignature {
               return_type: return_type.unwrap(),
-              args: arg_types,
+              args: self.arena.alloc_slice(arg_types.as_slice()),
             };
             let name_for_codegen =
               self.arena.alloc_str(format!("{}.{}", name, self.gen.next()).as_str());
@@ -358,14 +296,14 @@ impl <'a> Inference<'a> {
             };
             let f = FunctionDefinition {
               id: self.gen.next().into(),
-              module_id: self.t.id,
+              module_id: self.t.new_module_id,
               name_in_code: self.arena.alloc_str(name),
               signature: self.arena.alloc(sig),
               generics: vec![],
               implementation,
               loc: *loc,
             };
-            self.t.functions.insert(f.id, self.arena.alloc(f));
+            self.t.create_function(self.arena.alloc(f));
             return true;
           }
         }
@@ -462,21 +400,21 @@ impl <'a> Inference<'a> {
       Constraint::GlobalDef{ name, type_symbol, global_type, loc } => {
         if let Some(t) = self.get_type(*type_symbol) {
           if let Type::Fun(sig) = t {
-            if self.t.find_function(&name, sig.args.as_slice()).is_some() {
+            if self.t.find_function(&name, sig.args.as_ref()).is_some() {
               let e = error_raw(loc, "function with that name and signature already defined");
               self.errors.push(e);
             }
             else {
               let f = FunctionDefinition {
                 id: self.gen.next().into(),
-                module_id: self.t.id,
+                module_id: self.t.new_module_id,
                 name_in_code: self.arena.alloc_str(name),
                 signature: sig,
                 generics: vec![],
                 implementation: FunctionImplementation::CFunction,
                 loc: *loc,
               };
-              self.t.functions.insert(f.id, self.arena.alloc(f));
+              self.t.create_function(self.arena.alloc(f));
               return true;
             }
           }
@@ -488,13 +426,13 @@ impl <'a> Inference<'a> {
             else {
               let name = self.arena.alloc_str(name);
               let g = GlobalDefinition {
-                module_id: self.t.id,
+                module_id: self.t.new_module_id,
                 name,
                 global_type: *global_type,
                 type_tag: t,
                 loc: *loc,
               };
-              self.t.globals.insert(name, self.arena.alloc(g));
+              self.t.create_global(self.arena.alloc(g));
             }
           }
           return true;
@@ -505,7 +443,7 @@ impl <'a> Inference<'a> {
           // This is a bit confusing. Basically "Repl" globals use lexical scope,
           // because they are initialised by the top-level functions. It isn't
           // safe to reference them until they are in scope.
-          if !(def.module_id == self.t.id && def.global_type == GlobalType::Repl) {
+          if !(def.module_id == self.t.new_module_id && def.global_type == GlobalType::Repl) {
             let t = def.type_tag;
             self.set_type(*result, t);
             self.cg.global_references.insert(*node, name.clone());
@@ -513,7 +451,7 @@ impl <'a> Inference<'a> {
           }
         }
         if let Some(Type::Fun(sig)) = self.get_type(*result) {
-          if let Some(r) = self.t.find_function(&name, sig.args.as_slice()) {
+          if let Some(r) = self.t.find_function(&name, sig.args.as_ref()) {
             let fid = self.t.concrete_function(self.arena, self.gen, r);
             self.cg.function_references.insert(*node, fid);
             return true;
@@ -705,26 +643,26 @@ impl Constraints {
   }
 }
 
-struct GatherConstraints<'a> {
-  arena : &'a Arena,
+struct GatherConstraints<'l, 't> {
+  arena : &'l Arena,
   labels : HashMap<LabelId, TypeSymbol>,
   type_def_refs : Vec<(Ap<str>, TextLocation)>,
-  t : &'a mut TypeInfo,
-  cg : &'a mut CodegenInfo,
-  gen : &'a mut UIDGenerator,
-  c : &'a mut Constraints,
-  errors : &'a mut Vec<Error>,
+  t : &'l mut TypeDirectory<'t>,
+  cg : &'l mut CodegenInfo,
+  gen : &'l mut UIDGenerator,
+  c : &'l mut Constraints,
+  errors : &'l mut Vec<Error>,
 }
 
-impl <'a> GatherConstraints<'a> {
+impl <'l, 't> GatherConstraints<'l, 't> {
 
   fn new(
-    arena : &'a Arena,
-    t : &'a mut TypeInfo,
-    cg : &'a mut CodegenInfo,
-    gen : &'a mut UIDGenerator,
-    c : &'a mut Constraints,
-    errors : &'a mut Vec<Error>,
+    arena : &'l Arena,
+    t : &'l mut TypeDirectory<'t>,
+    cg : &'l mut CodegenInfo,
+    gen : &'l mut UIDGenerator,
+    c : &'l mut Constraints,
+    errors : &'l mut Vec<Error>,
   ) -> Self
   {
     GatherConstraints {
@@ -927,7 +865,7 @@ impl <'a> GatherConstraints<'a> {
       }
       Content::TypeDefinition{ name, kind, fields } => {
         self.assert(ts, PType::Void);
-        if self.t.type_defs.get(name.as_ref()).is_some() {
+        if self.t.find_type_def(name.as_ref()).is_some() {
           let e = error_raw(node.loc, "type with this name already defined");
           self.errors.push(e)
         }
@@ -948,7 +886,7 @@ impl <'a> GatherConstraints<'a> {
             drop_function: None, clone_function: None,
             definition_location: node.loc,
           };
-          self.t.type_defs.insert(name, self.arena.alloc(def));
+          self.t.create_type_def(self.arena.alloc(def));
         }
       }
       Content::TypeConstructor{ name, field_values } => {
@@ -1077,6 +1015,7 @@ impl <'a> GatherConstraints<'a> {
           else {
             PType::Void.into()
           };
+          let args = self.arena.alloc_slice(args.as_slice());
           let sig = self.arena.alloc(FunctionSignature{ args, return_type});
           return Ok(Type::Fun(sig));
         }
@@ -1098,5 +1037,52 @@ impl <'a> GatherConstraints<'a> {
     }
     error(expr, "invalid type expression")
   }
+}
 
+struct TypeDirectory<'a> {
+  new_module_id : ModuleId,
+  fixed_imports : &'a [&'a TypeInfo],
+  new_module : &'a mut TypeInfo,
+}
+
+impl <'a> TypeDirectory<'a> {
+  pub fn new(
+    new_module_id : ModuleId,
+    fixed_imports : &'a [&'a TypeInfo],
+    new_module : &'a mut TypeInfo) -> Self
+  {
+    TypeDirectory{ new_module_id, fixed_imports, new_module }
+  }
+
+  pub fn create_type_def(&mut self, def : Ap<TypeDefinition>) {
+    self.new_module.type_defs.insert(def.name, def);
+  }
+
+  pub fn create_global(&mut self, def : Ap<GlobalDefinition>) {
+    self.new_module.globals.insert(def.name, def);
+  }
+
+  pub fn create_function(&mut self, def : Ap<FunctionDefinition>) {
+    self.new_module.functions.insert(def.id, def);
+  }
+
+  pub fn find_global(&self, name : &str) -> Option<&GlobalDefinition> {
+    loop {}
+  }
+
+  pub fn find_type_def(&self, name : &str) -> Option<&TypeDefinition> {
+    loop {}
+  }
+
+  pub fn get_function(&self, fid : FunctionId) -> &FunctionDefinition {
+    loop {}
+  }
+
+  pub fn find_function(&self, name : &str, args : &[Type]) -> Option<FindFunctionResult> {
+    loop {}
+  }
+
+  pub fn concrete_function(&mut self, arena : &Arena, gen : &mut UIDGenerator, r : FindFunctionResult) -> FunctionId {
+    loop {}
+  }
 }

@@ -69,7 +69,7 @@ impl Arena {
     self.alloc_ap(self.bump.alloc(val))
   }
 
-  pub fn alloc_slice_copy<T : Copy>(&self, vs : &[T]) -> Ap<[T]> {
+  pub fn alloc_slice<T : Copy>(&self, vs : &[T]) -> Ap<[T]> {
     self.alloc_ap(self.bump.alloc_slice_copy(vs))
   }
 
@@ -77,6 +77,18 @@ impl Arena {
     let bytes = self.bump.alloc_slice_copy(s.as_bytes());
     let s = unsafe { std::str::from_utf8_unchecked_mut(bytes) };
     self.alloc_ap(s)
+  }
+
+  fn alloc_ap_mut<T : ?Sized>(&self, ap : Ap<T>) -> ApMut<T> {
+    ApMut { ap }
+  }
+
+  pub fn alloc_mut<T>(&self, val : T) -> ApMut<T> {
+    self.alloc_ap_mut(self.alloc(val))
+  }
+
+  pub fn alloc_slice_mut<T : Copy>(&self, vs : &[T]) -> ApMut<[T]> {
+    self.alloc_ap_mut(self.alloc_slice(vs))
   }
 }
 
@@ -123,12 +135,12 @@ impl<T : ?Sized> Deref for Ap<T> {
   }
 }
 
-impl<T : ?Sized> DerefMut for Ap<T> {
-  fn deref_mut(&mut self) -> &mut Self::Target {
-    self.check_validity();
-    unsafe { &mut *self.ptr }
-  }
-}
+// impl<T : ?Sized> DerefMut for Ap<T> {
+//   fn deref_mut(&mut self) -> &mut Self::Target {
+//     self.check_validity();
+//     unsafe { &mut *self.ptr }
+//   }
+// }
 
 impl<T: ?Sized + Hash> Hash for Ap<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -158,4 +170,31 @@ impl<T: ?Sized> AsRef<T> for Ap<T> {
     fn as_ref(&self) -> &T {
         &**self
     }
+}
+
+pub struct ApMut<T : ?Sized>
+{
+  ap : Ap<T>
+}
+
+impl <T : ?Sized> ApMut<T> {
+  pub fn into_ap(self) -> Ap<T> {
+    self.ap
+  }
+}
+
+impl<T : ?Sized> Deref for ApMut<T> {
+  type Target = T;
+
+  fn deref(&self) -> &Self::Target {
+    self.ap.check_validity();
+    unsafe { &*self.ap.ptr }
+  }
+}
+
+impl<T : ?Sized> DerefMut for ApMut<T> {
+  fn deref_mut(&mut self) -> &mut Self::Target {
+    self.ap.check_validity();
+    unsafe { &mut *self.ap.ptr }
+  }
 }

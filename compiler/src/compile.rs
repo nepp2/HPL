@@ -1,15 +1,20 @@
 
-use crate::error::{Error, ErrorContent, error, error_raw};
+use crate::error::{
+  Error, ErrorContent, error, error_raw, TextLocation};
 use crate::expr::{StringCache, Expr, UIDGenerator};
 use crate::lexer;
 use crate::parser;
 use crate::c_interface::CSymbols;
 use crate::structure;
-use crate::structure::{Val, TOP_LEVEL_FUNCTION_NAME};
+use crate::structure::{Nodes, Val, TOP_LEVEL_FUNCTION_NAME};
 use crate::inference;
-use crate::types::{ Type, PType, FunctionImplementation };
+use crate::inference::CodegenInfo;
+use crate::types::{
+  Type, PType, TypeInfo, FunctionImplementation, ModuleId,
+  FunctionSignature, FunctionDefinition, GenericId };
 use crate::codegen2::{Gen, LlvmUnit, dump_module, CompileInfo};
-use crate::modules::CompiledModule;
+use crate::modules::{ CompiledModule, TypedModule };
+use crate::arena::{ Arena, Ap };
 
 use inkwell::context::{Context};
 // use inkwell::module::{Module, Linkage};
@@ -50,6 +55,7 @@ pub struct Compiler {
   pub gen : UIDGenerator,
   pub cache : StringCache,
   pub c_symbols : CSymbols,
+  pub intrinsics : TypedModule,
 }
 
 impl Compiler {
@@ -69,15 +75,21 @@ impl Compiler {
     }
   
     let context = Context::create();
-    let gen = UIDGenerator::new();
+    let mut gen = UIDGenerator::new();
     let cache = StringCache::new();
     let mut c_symbols = CSymbols::new();
     c_symbols.populate();
+
+    let intrinsics = get_intrinsics(&mut gen, &cache);
   
-    let mut c = Box::new(Compiler { context, gen, cache, c_symbols });
+    let mut c = Box::new(Compiler { context, gen, cache, c_symbols, intrinsics });
     let cptr = (&mut *c) as *mut Compiler;
     c.c_symbols.add_symbol("compiler", cptr);
     c
+  }
+
+  pub fn parse(&self, code : &str) -> Result<Expr, Error> {
+    parse(&self.cache, code)
   }
 
   pub fn load_module<'a>(&mut self, imports : &[&CompiledModule], expr : &Expr)
@@ -88,27 +100,15 @@ impl Compiler {
     Ok((m, val))
   }
 
-  pub fn parse(&mut self, code : &str) -> Result<Expr, Error> {
-    let tokens =
-      lexer::lex(&code, &self.cache)
-      .map_err(|mut es| es.remove(0))?;
-  
-    parser::parse(tokens, &self.cache)
-  }
-
   pub fn compile_module(&mut self, imports : &[&CompiledModule], expr : &Expr)
     -> Result<CompiledModule, Error>
   {
     if DEBUG_PRINTING_EXPRS {
       println!("{}", expr);
     }
-
     let nodes = structure::to_nodes(&mut self.gen, &self.cache, &expr)?;
-    let imported_types : Vec<_> =
-      imports.iter().map(|m| &m.t).collect();
-
     let typed_module =
-      inference::infer_types(nodes, imported_types.as_slice(), &mut self.gen)
+      inference::infer_types(nodes, &self.intrinsics, imports, &mut self.gen)
       .map_err(|es| error_raw(expr,
         ErrorContent::InnerErrors("type errors".into(), es)))?;
 
@@ -164,6 +164,89 @@ impl Compiler {
     let lu = LlvmUnit { module_id: typed_module.id, ee, llvm_module };
     Ok(typed_module.to_compiled(lu))
   }
+}
+
+fn parse(cache : &StringCache, code : &str) -> Result<Expr, Error> {
+  let tokens =
+    lexer::lex(&code, &cache)
+    .map_err(|mut es| es.remove(0))?;
+
+  parser::parse(tokens, &cache)
+}
+
+fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule {
+  use Type::*;
+  use PType::*;
+
+  fn add_intrinsic(
+    arena : &Arena, gen : &mut UIDGenerator,
+    id : ModuleId, t : &mut TypeInfo, name : &str,
+    args : &[Type], return_type : Type)
+  {
+    add_generic_intrinsic(arena, gen, id, t, name, args, return_type, vec![])
+  }
+  
+  fn add_generic_intrinsic(
+    arena : &Arena, gen : &mut UIDGenerator,
+    id : ModuleId, t : &mut TypeInfo, name : &str,
+    args : &[Type], return_type : Type,
+    generics : Vec<GenericId>)
+  {
+    let sig = FunctionSignature{
+      return_type,
+      args: arena.alloc_slice(args),
+    };
+    let f = FunctionDefinition {
+      id: gen.next().into(),
+      module_id: id,
+      name_in_code: arena.alloc_str(name),
+      signature: arena.alloc(sig),
+      generics,
+      implementation: FunctionImplementation::Intrinsic,
+      loc: TextLocation::zero(),
+    };
+    t.functions.insert(f.id, arena.alloc(f));
+  }
+
+  let expr = parse(cache, "").unwrap();
+  let nodes = structure::to_nodes(gen, cache, &expr).unwrap();
+
+  let arena = Arena::new();
+  let id = gen.next().into();
+  let mut ti = TypeInfo::new();
+  let prim_number_types =
+    &[Prim(I64), Prim(I32), Prim(F32), Prim(F64),
+      Prim(U64), Prim(U32), Prim(U16), Prim(U8) ];
+  for &t in prim_number_types {
+    for &n in &["-"] {
+      add_intrinsic(&arena, gen, id, &mut ti, n, &[t], t);
+    }
+    for &n in &["+", "-", "*", "/"] {
+      add_intrinsic(&arena, gen, id, &mut ti, n, &[t, t], t);
+    }
+    for &n in &["==", ">", "<", ">=", "<=", "!="] {
+      add_intrinsic(&arena, gen, id, &mut ti, n, &[t, t], Prim(Bool));
+    }
+  }
+  {
+    let gid = gen.next().into();
+    let gt = Type::Generic(gid);
+    let gptr = Type::Ptr(arena.alloc(gt));
+    add_generic_intrinsic(&arena, gen, id, &mut ti, "Index", &[gptr], gt, vec![gid]);
+  }
+  {
+    let gid = gen.next().into();
+    let gt = Type::Generic(gid);
+    let gptr = Type::Ptr(arena.alloc(gt));
+    add_generic_intrinsic(&arena, gen, id, &mut ti, "*", &[gptr], gt, vec![gid]);
+  }
+  {
+    let gid = gen.next().into();
+    let gt = Type::Generic(gid);
+    let gptr = Type::Ptr(arena.alloc(gt));
+    add_generic_intrinsic(&arena, gen, id, &mut ti, "&", &[gt], gptr, vec![gid]);
+  }
+  TypedModule::new(arena, id, nodes, ti, CodegenInfo::new())
 }
 
 fn run_top_level(m : &CompiledModule) -> Result<Val, Error> {

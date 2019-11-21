@@ -350,8 +350,8 @@ impl <'l> Gen<'l> {
         FunctionImplementation::Normal{ body, name_for_codegen, args } => {
           let f = self.codegen_prototype(
             info, name_for_codegen.as_ref(), sig.return_type,
-            Some(args.as_slice()), sig.args.as_slice());
-          functions_to_codegen.push((f, args.as_slice(), *body));
+            Some(args.as_slice()), sig.args.as_ref());
+          functions_to_codegen.push((f, args.as_ref(), *body));
         }
         FunctionImplementation::CFunction => {
           let f = self.codegen_prototype(info, def.name_in_code.as_ref(), sig.return_type, None, &sig.args);
@@ -514,7 +514,7 @@ impl <'l> Gen<'l> {
         }
       }
       Type::Fun(sig) => {
-        let t = self.to_function_type(info, sig.args.as_slice(), sig.return_type);
+        let t = self.to_function_type(info, sig.args.as_ref(), sig.return_type);
         Some(t.ptr_type(AddressSpace::Generic).into())
       }
       Type::Generic(_) => {
@@ -1113,7 +1113,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
   /// ensure necessary definitions are inserted and linking operations performed when a global is referenced
   fn get_linked_global_reference(&mut self, info: &CompileInfo, name : &RefStr) -> GlobalValue {
     let def = info.find_global(name);
-    if def.module_id == info.m.t.id {
+    if def.module_id == info.m.id {
       self.gen.module.get_global(name)
         .expect("expected local global!")
     }
@@ -1137,7 +1137,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     let sig = def.signature;
     match &def.implementation {
       FunctionImplementation::Normal { name_for_codegen, args, .. } => {
-        if def.module_id == info.m.t.id {
+        if def.module_id == info.m.id {
           self.gen.module.get_function(name_for_codegen)
             .expect("expected local function!")
         }

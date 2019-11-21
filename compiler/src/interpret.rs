@@ -20,7 +20,7 @@ pub struct Interpreter {
 }
 
 pub fn interpreter() -> Interpreter {
-  let mut c = Compiler::new();
+  let c = Compiler::new();
   let mut i = Interpreter { c, compiled_modules: vec![] };
   
   // load prelude

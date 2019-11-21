@@ -25,7 +25,6 @@ impl From<u64> for FunctionId { fn from(v : u64) -> Self { FunctionId(v) } }
 impl From<u64> for GenericId { fn from(v : u64) -> Self { GenericId(v) } }
 
 pub struct TypeInfo {
-  pub id : ModuleId,
   pub type_defs : HashMap<Ap<str>, Ap<TypeDefinition>>,
   pub functions : HashMap<FunctionId, Ap<FunctionDefinition>>,
   pub globals : HashMap<Ap<str>, Ap<GlobalDefinition>>,
@@ -101,7 +100,7 @@ impl  FunctionDefinition {
 #[derive(Debug, PartialEq, Clone)]
 pub struct FunctionSignature {
   pub return_type : Type,
-  pub args : Vec<Type>,
+  pub args : Ap<[Type]>,
 }
 
 #[derive(Clone)]
@@ -192,15 +191,14 @@ impl  Type {
   }
 }
 
-pub enum FindFunctionResult {
-  ConcreteFunction(FunctionId),
-  GenericInstance(FunctionId, HashMap<GenericId, Type>),
+pub struct FindFunctionResult {
+  pub fid : FunctionId,
+  pub generic_map : Option<HashMap<GenericId, Type>>,
 }
 
 impl  TypeInfo {
-  pub fn new(module_id : ModuleId) -> TypeInfo {
+  pub fn new() -> TypeInfo {
     TypeInfo{
-      id: module_id,
       type_defs: HashMap::new(),
       functions: HashMap::new(),
       globals: HashMap::new(),
@@ -222,11 +220,12 @@ impl  TypeInfo {
   pub fn find_function(&self, name : &str, args : &[Type]) -> Option<FindFunctionResult> {
     let r = self.functions.values().find(|def| {
       def.generics.is_empty() && def.name_in_code.as_ref() == name && {
-        args == def.signature.args.as_slice()
+        args == def.signature.args.as_ref()
       }
     });
     if let Some(def) = r {
-      return Some(FindFunctionResult::ConcreteFunction(def.id));
+      let r = FindFunctionResult { fid: def.id, generic_map: None };
+      return Some(r);
     }
     let mut generics = HashMap::new();
     let r = self.functions.values().find(|def| {
@@ -238,37 +237,23 @@ impl  TypeInfo {
         matched
       }
     });
-    if let Some(def) = r {
-      Some(FindFunctionResult::GenericInstance(def.id, generics))
-    }
-    else {
-      None
-    }
+    r.map(|def| FindFunctionResult { fid: def.id, generic_map: Some(generics) })
   }
 
-  pub fn concrete_function(&mut self, arena : &Arena, gen : &mut UIDGenerator, r : FindFunctionResult) -> FunctionId {
-    match r {
-      FindFunctionResult::ConcreteFunction(fid) => fid,
-      FindFunctionResult::GenericInstance(fid, generics) => {
-        let mut sig = self.get_function(fid).signature.clone();
-        for t in sig.args.iter_mut() {
-          *t = self.generic_replace(arena, &generics, gen, *t);
-        }
-        sig.return_type = self.generic_replace(arena, &generics, gen, sig.return_type);
-        let def = self.get_function(fid);
-        let def = FunctionDefinition {
-          id: FunctionId(gen.next()),
-          module_id: self.id,
-          name_in_code: def.name_in_code.clone(),
-          signature: sig,
-          generics: vec![],
-          implementation: def.implementation.clone(),
-          loc: def.loc,
-        };
-        let fid = def.id;
-        self.functions.insert(fid, arena.alloc(def));
-        fid
-      },
+  pub fn concrete_signature(&mut self, arena : &Arena, gen : &mut UIDGenerator, r : FindFunctionResult) -> Ap<FunctionSignature> {
+    if let Some(generic_map) = &r.generic_map {
+      let sig = self.get_function(r.fid).signature;
+      let mut args = arena.alloc_slice_mut(sig.args.as_ref());
+      for t in args.iter_mut() {
+        *t = self.generic_replace(arena, generic_map, gen, *t);
+      }
+      let return_type = self.generic_replace(arena, generic_map, gen, sig.return_type);
+      let sig = FunctionSignature { args: args.into_ap(), return_type };
+      arena.alloc(sig)
+    }
+    else {
+      let def = self.get_function(r.fid);
+      def.signature
     }
   }
   

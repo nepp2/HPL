@@ -1,3 +1,10 @@
+# TODO - 21/11/2019
+
+- Pass modules into type inference step properly
+- Look up type definitions properly in the inference step
+- Loop up type definitions properly in the codegen step
+- Fix the type evaluation (needs to retrigger equivalences)
+
 # TODO - 19/11/2019
 
 Currently types and modules are stored together in one big blob. They have to be because otherwise a Type could end up with two different TypeIds, and that would break Type comparisons.
