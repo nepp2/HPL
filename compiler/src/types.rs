@@ -141,7 +141,7 @@ impl  fmt::Display for Type {
       }
       Type::Array(t) => write!(f, "array({})", t),
       Type::Ptr(t) => write!(f, "ptr({})", t),
-      Type::Generic(t) => write!(f, "@Generic"),
+      Type::Generic(_t) => write!(f, "@Generic"),
       Type::Prim(t) => write!(f, "{:?}", t),
     }
   }
@@ -246,7 +246,7 @@ impl  TypeInfo {
     }
   }
 
-  pub fn concrete_function(&self, arena : Ap<Arena>, gen : &mut UIDGenerator, r : FindFunctionResult) -> FunctionId {
+  pub fn concrete_function(&mut self, arena : &Arena, gen : &mut UIDGenerator, r : FindFunctionResult) -> FunctionId {
     match r {
       FindFunctionResult::ConcreteFunction(fid) => fid,
       FindFunctionResult::GenericInstance(fid, generics) => {
@@ -272,7 +272,7 @@ impl  TypeInfo {
     }
   }
   
-  fn generic_replace(&mut self, arena : Ap<Arena>, generics : &HashMap<GenericId, Type>, gen : &mut UIDGenerator, t : Type)
+  fn generic_replace(&mut self, arena : &Arena, generics : &HashMap<GenericId, Type>, gen : &mut UIDGenerator, t : Type)
     -> Type
   {
     match t {

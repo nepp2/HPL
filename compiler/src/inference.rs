@@ -14,39 +14,44 @@ use crate::types::{
   FunctionId, FunctionDefinition, FunctionSignature,
   GenericId, FunctionImplementation, GlobalDefinition,
 };
-use crate::arena::Arena;
+use crate::modules::TypedModule;
+use crate::arena::{ Arena, Ap };
 
 use std::collections::HashMap;
 
 pub fn infer_types(
-  arena : &Arena,
-  parent_module : &TypeInfo,
-  new_module : &mut TypeInfo,
+  nodes : Nodes,
+  imports : &[&TypeInfo],
   gen : &mut UIDGenerator,
-  nodes : &Nodes)
-    -> Result<CodegenInfo, Vec<Error>>
+)
+  -> Result<TypedModule, Vec<Error>>
 {
+  let arena = Arena::new();
+  let intrinsics = get_intrinsics(&arena, gen);
   let mut c = Constraints::new();
   let mut cg = CodegenInfo::new();
   let mut errors = vec![];
+  let module_id = gen.next().into();
+  let aaa = (); // TODO: not using intrisics or imports yet
+  let mut t = TypeInfo::new(module_id);
   let mut gather = GatherConstraints::new(
-    arena, new_module, &mut cg, gen, &mut c, &mut errors);
-  gather.gather_constraints(nodes);
-  let mut i = Inference::new(arena, nodes, &mut new_module, &mut cg, &c, gen, &mut errors);
+    &arena, &mut t, &mut cg, gen, &mut c, &mut errors);
+  gather.gather_constraints(&nodes);
+  let mut i = Inference::new(&arena, &nodes, &mut t, &mut cg, &c, gen, &mut errors);
   i.infer();
   if errors.len() > 0 {
     Err(errors)
   }
   else {
-    Ok(cg)
+    Ok(TypedModule::new(arena, module_id, nodes, t, cg))
   }
 }
 
 use Type::*;
 use PType::*;
 
-pub fn base_module<'a>(arena : &'a Arena, gen : &mut UIDGenerator) -> TypeInfo<'a> {
-  let mut ti : TypeInfo<'a> = TypeInfo::new(gen.next().into());
+pub fn get_intrinsics(arena : &Arena, gen : &mut UIDGenerator) -> TypeInfo {
+  let mut ti = TypeInfo::new(gen.next().into());
   let prim_number_types =
     &[Prim(I64), Prim(I32), Prim(F32), Prim(F64),
       Prim(U64), Prim(U32), Prim(U16), Prim(U8) ];
@@ -82,18 +87,18 @@ pub fn base_module<'a>(arena : &'a Arena, gen : &mut UIDGenerator) -> TypeInfo<'
   ti
 }
 
-fn add_intrinsic<'a>(
-  arena : &'a Arena, gen : &mut UIDGenerator,
-  t : &mut TypeInfo<'a>, name : &'a str,
-  args : &[Type<'a>], return_type : Type<'a>)
+fn add_intrinsic(
+  arena : &Arena, gen : &mut UIDGenerator,
+  t : &mut TypeInfo, name : &str,
+  args : &[Type], return_type : Type)
 {
   add_generic_intrinsic(arena, gen, t, name, args, return_type, vec![])
 }
 
-fn add_generic_intrinsic<'a>(
-  arena : &'a Arena, gen : &mut UIDGenerator,
-  t : &mut TypeInfo<'a>, name : &'a str,
-  args : &[Type<'a>], return_type : Type<'a>,
+fn add_generic_intrinsic(
+  arena : &Arena, gen : &mut UIDGenerator,
+  t : &mut TypeInfo, name : &str,
+  args : &[Type], return_type : Type,
   generics : Vec<GenericId>)
 {
   let sig = FunctionSignature{
@@ -103,7 +108,7 @@ fn add_generic_intrinsic<'a>(
   let f = FunctionDefinition {
     id: gen.next().into(),
     module_id: t.id,
-    name_in_code: name.into(),
+    name_in_code: arena.alloc_str(name),
     signature: arena.alloc(sig),
     generics,
     implementation: FunctionImplementation::Intrinsic,
@@ -119,7 +124,7 @@ pub struct CodegenInfo {
   pub global_references : HashMap<NodeId, RefStr>,
 }
 
-impl <'a> CodegenInfo<'a> {
+impl CodegenInfo {
   fn new() -> Self {
     CodegenInfo {
       node_type: HashMap::new(),
@@ -144,7 +149,7 @@ impl TypeClass {
     }
   }
 
-  fn default_type<'a>(self) -> Option<Type<'a>> {
+  fn default_type(self) -> Option<Type> {
     match self {
       TypeClass::Float => Some(Type::Prim(PType::F64)),
       TypeClass::Integer => Some(Type::Prim(PType::I64)),
@@ -153,13 +158,13 @@ impl TypeClass {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-pub enum TypeConstraint<'a> {
-  Concrete(Type<'a>),
+pub enum TypeConstraint {
+  Concrete(Type),
   Class(TypeClass),
 }
 
-impl <'a> TypeConstraint<'a> {
-  fn default_type(self) -> Option<Type<'a>> {
+impl TypeConstraint {
+  fn default_type(self) -> Option<Type> {
     match self {
       TypeConstraint::Concrete(t) => Some(t),
       TypeConstraint::Class(c) => c.default_type(),
@@ -167,7 +172,7 @@ impl <'a> TypeConstraint<'a> {
   }
 }
 
-impl <'a> fmt::Display for TypeConstraint<'a> {
+impl fmt::Display for TypeConstraint {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
       TypeConstraint::Concrete(t) => write!(f, "{}", t),
@@ -180,12 +185,12 @@ impl <'a> fmt::Display for TypeConstraint<'a> {
 struct Inference<'a> {
   arena : &'a Arena,
   nodes : &'a Nodes,
-  t : &'a mut TypeInfo<'a>,
-  cg : &'a mut CodegenInfo<'a>,
-  c : &'a Constraints<'a>,
+  t : &'a mut TypeInfo,
+  cg : &'a mut CodegenInfo,
+  c : &'a Constraints,
   gen : &'a mut UIDGenerator,
   errors : &'a mut Vec<Error>,
-  resolved : HashMap<TypeSymbol, TypeConstraint<'a>>,
+  resolved : HashMap<TypeSymbol, TypeConstraint>,
 }
 
 impl <'a> Inference<'a> {
@@ -193,9 +198,9 @@ impl <'a> Inference<'a> {
   fn new(
     arena : &'a Arena,
     nodes : &'a Nodes,
-    t : &'a mut TypeInfo<'a>,
-    cg : &'a mut CodegenInfo<'a>,
-    c : &'a Constraints<'a>,
+    t : &'a mut TypeInfo,
+    cg : &'a mut CodegenInfo,
+    c : &'a Constraints,
     gen : &'a mut UIDGenerator,
     errors : &'a mut Vec<Error>)
       -> Self
@@ -206,14 +211,14 @@ impl <'a> Inference<'a> {
     }
   }
 
-  fn get_type(&self, ts : TypeSymbol) -> Option<Type<'a>> {
+  fn get_type(&self, ts : TypeSymbol) -> Option<Type> {
     self.resolved.get(&ts).and_then(|it| match it {
       TypeConstraint::Concrete(t) => Some(*t),
       TypeConstraint::Class(c) => c.default_type(),
     })
   }
 
-  fn unify(&self, a : TypeConstraint<'a>, b : TypeConstraint<'a>) -> Option<TypeConstraint<'a>> {
+  fn unify(&self, a : TypeConstraint, b : TypeConstraint) -> Option<TypeConstraint> {
     use TypeConstraint::*;
     match (a, b) {
       (Concrete(ta), Concrete(tb)) => {
@@ -231,7 +236,7 @@ impl <'a> Inference<'a> {
     }
   }
 
-  fn set_type_constraint(&mut self, ts : TypeSymbol, tc : TypeConstraint<'a>) {
+  fn set_type_constraint(&mut self, ts : TypeSymbol, tc : TypeConstraint) {
     if let Some(prev_tc) = self.resolved.get(&ts).cloned() {
       if let Some(tc) = self.unify(prev_tc, tc) {
         let aaa = (); // TODO: This needs to trigger re-evaluation of other constraints
@@ -248,7 +253,7 @@ impl <'a> Inference<'a> {
     }
   }
 
-  fn set_type(&mut self, ts : TypeSymbol, t : Type<'a>) {
+  fn set_type(&mut self, ts : TypeSymbol, t : Type) {
     self.set_type_constraint(ts, TypeConstraint::Concrete(t))
   }
 
@@ -309,7 +314,7 @@ impl <'a> Inference<'a> {
     self.errors.push(e);
   }
 
-  fn process_constraint(&mut self, c : &Constraint<'a>) -> bool {
+  fn process_constraint(&mut self, c : &Constraint) -> bool {
     match c  {
       Constraint::Assert(ts, tc) => {
         self.set_type_constraint(*ts, *tc);
@@ -542,7 +547,7 @@ impl <'a> Inference<'a> {
         let t = self.get_type(*container);
         if let Some(t) = t {
           if let Type::Def(name) = t { 
-            if let Some(def) = self.t.find_type_def(name) {
+            if let Some(def) = self.t.find_type_def(&name) {
               let f = def.fields.iter().find(|(n, _)| n.name == field.name);
               if let Some((_, t)) = f.cloned() {
                 self.set_type(*result, t);
@@ -631,11 +636,11 @@ pub enum Function {
   Name(Symbol),
 }
 
-pub enum Constraint<'a> {
-  Assert(TypeSymbol, TypeConstraint<'a>),
+pub enum Constraint {
+  Assert(TypeSymbol, TypeConstraint),
   Equalivalent(TypeSymbol, TypeSymbol),
   Array{ array : TypeSymbol, element : TypeSymbol },
-  Convert{ val : TypeSymbol, into_type : Type<'a> },
+  Convert{ val : TypeSymbol, into_type : Type },
   FieldAccess {
     container : TypeSymbol,
     field : Symbol,
@@ -678,14 +683,14 @@ pub enum Constraint<'a> {
   },
 }
 
-struct Constraints<'a> {
+struct Constraints {
   symbols : HashMap<TypeSymbol, TextLocation>,
   node_symbols : HashMap<NodeId, TypeSymbol>,
   variable_symbols : HashMap<SymbolId, TypeSymbol>,
-  constraints : Vec<Constraint<'a>>,
+  constraints : Vec<Constraint>,
 }
 
-impl <'a> Constraints<'a> {
+impl Constraints {
   fn new() -> Self {
     Constraints {
       symbols: HashMap::new(),
@@ -703,11 +708,11 @@ impl <'a> Constraints<'a> {
 struct GatherConstraints<'a> {
   arena : &'a Arena,
   labels : HashMap<LabelId, TypeSymbol>,
-  type_def_refs : Vec<(&'a str, TextLocation)>,
-  t : &'a mut TypeInfo<'a>,
-  cg : &'a mut CodegenInfo<'a>,
+  type_def_refs : Vec<(Ap<str>, TextLocation)>,
+  t : &'a mut TypeInfo,
+  cg : &'a mut CodegenInfo,
   gen : &'a mut UIDGenerator,
-  c : &'a mut Constraints<'a>,
+  c : &'a mut Constraints,
   errors : &'a mut Vec<Error>,
 }
 
@@ -715,10 +720,10 @@ impl <'a> GatherConstraints<'a> {
 
   fn new(
     arena : &'a Arena,
-    t : &'a mut TypeInfo<'a>,
-    cg : &'a mut CodegenInfo<'a>,
+    t : &'a mut TypeInfo,
+    cg : &'a mut CodegenInfo,
     gen : &'a mut UIDGenerator,
-    c : &'a mut Constraints<'a>,
+    c : &'a mut Constraints,
     errors : &'a mut Vec<Error>,
   ) -> Self
   {
@@ -727,15 +732,6 @@ impl <'a> GatherConstraints<'a> {
       type_def_refs: vec![],
       arena, t, cg, gen, c, errors,
     }
-  }
-
-  fn new2(
-    arena : &'a Arena,
-    gen : &'a mut UIDGenerator,
-    errors : &'a mut Vec<Error>,
-  ) -> Self
-  {
-    loop {}
   }
 
   fn gather_constraints(&mut self, n : &Nodes) {
@@ -779,7 +775,7 @@ impl <'a> GatherConstraints<'a> {
     }
   }
 
-  fn constraint(&mut self, c : Constraint<'a>) {
+  fn constraint(&mut self, c : Constraint) {
     self.c.constraints.push(c);
   }
 
@@ -791,11 +787,11 @@ impl <'a> GatherConstraints<'a> {
     self.constraint(Constraint::Assert(ts, TypeConstraint::Concrete(Type::Prim(t))));
   }
 
-  fn assert_type(&mut self, ts : TypeSymbol, t : Type<'a>) {
+  fn assert_type(&mut self, ts : TypeSymbol, t : Type) {
     self.constraint(Constraint::Assert(ts, TypeConstraint::Concrete(t)));
   }
 
-  fn assert_type_constraint(&mut self, ts : TypeSymbol, tc : TypeConstraint<'a>) {
+  fn assert_type_constraint(&mut self, ts : TypeSymbol, tc : TypeConstraint) {
     self.constraint(Constraint::Assert(ts, tc));
   }
 
@@ -823,7 +819,7 @@ impl <'a> GatherConstraints<'a> {
           Bool(_) => TypeConstraint::Concrete(PType::Bool.into()),
           Void => TypeConstraint::Concrete(PType::Void.into()),
           String(_) => {
-            let string = self.type_def(node.loc, "string");
+            let string = self.type_def(node.loc, self.arena.alloc_str("string"));
             TypeConstraint::Concrete(string)
           }
         };
@@ -883,7 +879,7 @@ impl <'a> GatherConstraints<'a> {
         }
       }
       Content::Quote(_e) => {
-        let t = self.arena.alloc(self.type_def(node.loc, "expr"));
+        let t = self.arena.alloc(self.type_def(node.loc, self.arena.alloc_str("expr")));
         self.assert_type(ts, Type::Ptr(t));
       }
       Content::Reference{ name, refers_to } => {
@@ -1045,19 +1041,19 @@ impl <'a> GatherConstraints<'a> {
     ts
   }
 
-  fn try_expr_to_type(&mut self, e : &Expr) -> Option<Type<'a>> {
+  fn try_expr_to_type(&mut self, e : &Expr) -> Option<Type> {
     let r = self.expr_to_type(e);
     self.log_error(r)
   }
 
-  fn type_def(&mut self, loc : TextLocation, name : &'a str) -> Type<'a> {
+  fn type_def(&mut self, loc : TextLocation, name : Ap<str>) -> Type {
     self.type_def_refs.push((name, loc));
     Type::Def(name)
   }
 
   /// Converts expression into type. Logs symbol error if definition references a type that hasn't been defined yet
   /// These symbol errors may be resolved later, when the rest of the module has been checked.
-  fn expr_to_type(&mut self, expr : &Expr) -> Result<Type<'a>, Error> {
+  fn expr_to_type(&mut self, expr : &Expr) -> Result<Type, Error> {
     if let Some(name) = expr.try_symbol() {
       if let Some(t) = Type::from_string(name) {
         return Ok(t);

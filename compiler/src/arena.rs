@@ -7,17 +7,17 @@ use core::hash::{Hash, Hasher};
 
 const ARENA_SLOTS : usize = 4064;
 
-static mut arena_ids : [u64; ARENA_SLOTS] = [0; ARENA_SLOTS];
-static mut next_arena_id : u64 = 1;
-static mut next_arena_slot : usize = 0;
+static mut ARENA_IDS : [u64; ARENA_SLOTS] = [0; ARENA_SLOTS];
+static mut NEXT_ARENA_ID : u64 = 1;
+static mut NEXT_ARENA_SLOT : usize = 0;
 
 unsafe fn next_id() -> u64 {
-  next_arena_id += 1;
-  next_arena_id
+  NEXT_ARENA_ID += 1;
+  NEXT_ARENA_ID
 }
 
 unsafe fn check_validity(id : u64, slot : usize) {
-  if arena_ids[slot] != id {
+  if ARENA_IDS[slot] != id {
     panic!("Arena pointer used after arena was freed!");
   }
 }
@@ -35,7 +35,7 @@ impl Drop for Arena {
   fn drop(&mut self) {
     unsafe {
       check_validity(self.id, self.slot);
-      arena_ids[self.slot] = 0;
+      ARENA_IDS[self.slot] = 0;
     }
   }
 }
@@ -46,10 +46,10 @@ impl Arena {
     unsafe {
       let id = next_id();
       for slot in 0..ARENA_SLOTS {
-        let slot = (slot + next_arena_slot) % ARENA_SLOTS;
-        if arena_ids[slot] == 0 {
-          arena_ids[slot] = id;
-          next_arena_slot = slot + 1;
+        let slot = (slot + NEXT_ARENA_SLOT) % ARENA_SLOTS;
+        if ARENA_IDS[slot] == 0 {
+          ARENA_IDS[slot] = id;
+          NEXT_ARENA_SLOT = slot + 1;
           return Arena { id, slot, bump : Bump::new() };
         }
       }
@@ -75,13 +75,16 @@ impl Arena {
 
   pub fn alloc_str(&self, s : &str) -> Ap<str> {
     let bytes = self.bump.alloc_slice_copy(s.as_bytes());
-    let s = std::str::from_utf8_unchecked_mut(bytes);
+    let s = unsafe { std::str::from_utf8_unchecked_mut(bytes) };
     self.alloc_ap(s)
   }
 }
 
 /// An arena pointer. The safety of this is not checked by the compiler.
 /// It is checked at runtime in debug mode.
+/// This reference type also allows mutable multi-aliasing, which may be
+/// a terrible idea. It's normally unsafe in Rust, but I'm not sure if it
+/// really needs to be in a single-threaded context.
 /// TODO: remove the safety checks in release mode
 pub struct Ap<T : ?Sized>
 {
@@ -90,7 +93,7 @@ pub struct Ap<T : ?Sized>
   ptr : *mut T,
 }
 
-//impl<T : ?Sized> Copy for Ap<T> {}
+impl<T : ?Sized> Copy for Ap<T> {}
 
 impl<T : ?Sized> Clone for Ap<T> {
     fn clone(&self) -> Self {

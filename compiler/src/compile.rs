@@ -1,5 +1,5 @@
 
-use crate::error::{Error, error, error_raw};
+use crate::error::{Error, ErrorContent, error, error_raw};
 use crate::expr::{StringCache, Expr, UIDGenerator};
 use crate::lexer;
 use crate::parser;
@@ -7,10 +7,9 @@ use crate::c_interface::CSymbols;
 use crate::structure;
 use crate::structure::{Val, TOP_LEVEL_FUNCTION_NAME};
 use crate::inference;
-use crate::types::{ Type, PType, TypeInfo, FunctionImplementation };
+use crate::types::{ Type, PType, FunctionImplementation };
 use crate::codegen2::{Gen, LlvmUnit, dump_module, CompileInfo};
-use crate::modules::{CompiledModule, TypedModule };
-use crate::arena::{ Arena, Ap };
+use crate::modules::CompiledModule;
 
 use inkwell::context::{Context};
 // use inkwell::module::{Module, Linkage};
@@ -41,15 +40,9 @@ fn execute<T>(function_name : &str, ee : &ExecutionEngine) -> T {
 
 pub fn run_program(code : &str) -> Result<Val, Error> {
   let mut c = Compiler::new();
-
   let expr = c.parse(code)?;
-
-  let arena = Arena::new();
-
-  let t = inference::base_module(&arena, &mut c.gen);
-
-  let m = c.compile_module(&t, &[], &expr)?;
-  run_top_level(m.borrow())
+  let m = c.compile_module(&[], &expr)?;
+  run_top_level(&m)
 }
 
 pub struct Compiler {
@@ -87,11 +80,11 @@ impl Compiler {
     c
   }
 
-  pub fn load_module<'a>(&mut self, t : &TypeInfo, code_modules : &[&CodeModuleRef], expr : &Expr)
-    -> Result<(CodeModule, Val), Error>
+  pub fn load_module<'a>(&mut self, imports : &[&CompiledModule], expr : &Expr)
+    -> Result<(CompiledModule, Val), Error>
   {
-    let m = self.compile_module(&t, code_modules, &expr)?;
-    let val = run_top_level(m.borrow())?;
+    let m = self.compile_module(imports, &expr)?;
+    let val = run_top_level(&m)?;
     Ok((m, val))
   }
 
@@ -103,7 +96,7 @@ impl Compiler {
     parser::parse(tokens, &self.cache)
   }
 
-  pub fn compile_module(&mut self, compiled_module : &[CompiledModule], expr : &Expr)
+  pub fn compile_module(&mut self, imports : &[&CompiledModule], expr : &Expr)
     -> Result<CompiledModule, Error>
   {
     if DEBUG_PRINTING_EXPRS {
@@ -111,13 +104,15 @@ impl Compiler {
     }
 
     let nodes = structure::to_nodes(&mut self.gen, &self.cache, &expr)?;
+    let imported_types : Vec<_> =
+      imports.iter().map(|m| &m.t).collect();
 
-    let arena = Arena::new();
-    let new_module = TypeInfo::new(self.gen.next().into());
-    let cg = inference::infer_types(
-      &arena, &mut new_module, &mut self.gen, &nodes).unwrap();
+    let typed_module =
+      inference::infer_types(nodes, imported_types.as_slice(), &mut self.gen)
+      .map_err(|es| error_raw(expr,
+        ErrorContent::InnerErrors("type errors".into(), es)))?;
 
-    let module_name = format!("{:?}", new_module.id);
+    let module_name = format!("{:?}", typed_module.id);
     let mut llvm_module = self.context.create_module(&module_name);
 
     let ee =
@@ -143,7 +138,7 @@ impl Compiler {
       let gen = Gen::new(
           &mut self.context, &mut llvm_module, &mut ee.get_target_data(),
           &self.c_symbols.local_symbol_table, &mut globals_to_link, &mut functions_to_link, &pm);
-      let info = CompileInfo::new(code_modules, &new_module, &cg, &nodes);
+      let info = CompileInfo::new(imports, &typed_module);
       gen.codegen_module(&info)?
     };
 
@@ -166,12 +161,12 @@ impl Compiler {
     // TODO: is this needed?
     ee.run_static_constructors();
 
-    let cu = CompiledUnit { module_id: new_module.id, ee, llvm_module };
-    Ok((cu, new_module))
+    let lu = LlvmUnit { module_id: typed_module.id, ee, llvm_module };
+    Ok(typed_module.to_compiled(lu))
   }
 }
 
-fn run_top_level(m : &CodeModuleRef) -> Result<Val, Error> {
+fn run_top_level(m : &CompiledModule) -> Result<Val, Error> {
   let f = TOP_LEVEL_FUNCTION_NAME;
   let def = m.t.functions.values().find(|def| def.name_in_code.as_ref() == f).unwrap();
   let f = if let FunctionImplementation::Normal{ name_for_codegen, .. } = &def.implementation {

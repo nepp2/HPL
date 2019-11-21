@@ -1,13 +1,10 @@
 
 use crate::error::Error;
 use crate::structure::Val;
-use crate::inference;
-use crate::types::TypeInfo;
-use crate::codegen2::CompiledUnit;
+use crate::modules::CompiledModule;
 use crate::compile::Compiler;
 use crate::expr::Expr;
 
-use owning_ref::BoxRef;
 use std::fs::File;
 use std::io::Read;
 
@@ -17,18 +14,14 @@ static PRELUDE_PATH : &'static str = "code/prelude.code";
 #[cfg(test)]
 static PRELUDE_PATH : &'static str = "../code/prelude.code";
 
-pub struct IModule { cu: CompiledUnit, info : TypeInfo }
-
 pub struct Interpreter {
   pub c : Box<Compiler>,
-  pub compiled_units : Vec<CompiledUnit>,
-  pub type_info : TypeInfo,
+  pub compiled_modules : Vec<CompiledModule>,
 }
 
 pub fn interpreter() -> Interpreter {
   let mut c = Compiler::new();
-  let type_info = inference::base_module(&mut c.gen);
-  let mut i = Interpreter { c, type_info, compiled_units: vec![] };
+  let mut i = Interpreter { c, compiled_modules: vec![] };
   
   // load prelude
   if let Err(e) = i.load_prelude() {
@@ -41,9 +34,9 @@ pub fn interpreter() -> Interpreter {
 impl Interpreter {
 
   pub fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
-    let (cu, module_info, val) = self.c.load_module(&self.type_info, self.compiled_units.as_slice(), expr)?;
-    self.compiled_units.push(cu);
-    self.type_info = module_info;
+    let imports : Vec<_> = self.compiled_modules.iter().collect();
+    let (m, val) = self.c.load_module(imports.as_slice(), expr)?;
+    self.compiled_modules.push(m);
     Ok(val)
   }
 
@@ -80,18 +73,15 @@ impl Interpreter {
       -> Result<T, Error>
   {
     self.load_module(code)?;
-    let r =
-      self.type_info.functions.values()
+    let m = self.compiled_modules.last().unwrap();
+    let function_name = m.t.functions.values()
       .find(|def| def.name_in_code.as_ref() == function_name)
-      .and_then(|def| def.codegen_name().map(|n| (n, def)));
-    if let Some((function_name, def)) = r {
-      let f =
-        self.compiled_units.iter().rev().filter(|cu| cu.module_id == def.module_id)
-        .flat_map(|cu| unsafe {
-          cu.ee.get_function::<unsafe extern "C" fn(A) -> T>(function_name)
-        })
-        .next();
-      if let Some(f) = f {
+      .and_then(|def| def.codegen_name());
+    if let Some(function_name) = function_name {
+      let f = unsafe {
+        m.llvm_unit.ee.get_function::<unsafe extern "C" fn(A) -> T>(function_name)
+      };
+      if let Ok(f) = f {
         let v = unsafe { f.call(arg) };
         return Ok(v);
       }

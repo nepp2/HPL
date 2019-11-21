@@ -102,7 +102,7 @@ impl <S : Into<String>> From<S> for ErrorContent {
 #[derive(Debug, PartialEq)]
 pub enum ErrorContent {
   Message(String),
-  InnerError(String, Box<Error>),
+  InnerErrors(String, Vec<Error>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -137,10 +137,13 @@ impl fmt::Display for Error {
       ErrorContent::Message(m) => {
         write!(f, ", message: {}", m)
       },
-      ErrorContent::InnerError(m, e) => {
+      ErrorContent::InnerErrors(m, es) => {
         writeln!(f, ", message: {}", m)?;
-        writeln!(f, "  inner error:")?;
-        write!(f, "    {}", e)
+        writeln!(f, "  inner errors:")?;
+        for e in es.iter() {
+          writeln!(f, "    {}", e)?
+        }
+        Ok(())
       },
     }
   }
