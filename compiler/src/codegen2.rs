@@ -5,14 +5,14 @@ use crate::error::{Error, error, error_raw, TextLocation};
 use crate::expr::RefStr;
 
 use crate::structure::{
-  Node, NodeId, Content, Val, TypeKind, SymbolId,
+  Node, NodeId, Nodes, Content, Val, TypeKind, SymbolId,
   Symbol, LabelId, NodeValueType, FunctionNode, VarScope,
   GlobalType };
-
 use crate::types::{
-  Type, PType, TypeDefinition, FunctionId, FunctionDefinition,
-  ModuleId, FunctionImplementation, GlobalDefinition };
-use crate::modules::{ TypedModule, CompiledModule };
+  Type, PType, TypeDefinition, FunctionDefinition,
+  ModuleId, FunctionImplementation, GlobalDefinition, TypeInfo };
+use crate::inference::CodegenInfo;
+use crate::modules::CompiledModule;
 use crate::arena::Ap;
 
 use std::collections::HashMap;
@@ -197,34 +197,31 @@ pub struct GenFunction<'l, 'a> {
 
 pub struct CompileInfo<'l> {
   compiled_modules : &'l [&'l CompiledModule],
-  m : &'l TypedModule,
+  t : &'l TypeInfo,
+  nodes : &'l Nodes,
+  cg : &'l CodegenInfo,
 }
 
 impl <'l> CompileInfo<'l> {
 
   pub fn new(
     compiled_modules : &'l [&'l CompiledModule],
-    m : &'l TypedModule)
+    t : &'l TypeInfo,
+    nodes : &'l Nodes,
+    cg : &'l CodegenInfo,
+  )
       -> Self 
   {
-    CompileInfo { compiled_modules, m }
+    CompileInfo { compiled_modules, t, nodes, cg }
   }
 
   fn typed_node(&self, nid : NodeId) -> TypedNode {
-    let node = self.m.nodes.node(nid);
+    let node = self.nodes.node(nid);
     TypedNode { info: self, node }
   }
-  
-  fn find_type_def(&self, name : &str) -> Option<&TypeDefinition> {
-    self.m.t.find_type_def(name)
-  }
 
-  fn find_function_def(&self, id : FunctionId) -> &FunctionDefinition {
-    self.m.t.functions.get(&id).unwrap()
-  }
-
-  fn find_global(&self, name : &str) -> &GlobalDefinition {
-    self.m.t.globals.get(name).unwrap()
+  fn find_type_def(&self, name : &str) -> Option<Ap<TypeDefinition>> {
+    self.cg.type_def_references.get(name).cloned()
   }
 
   fn find_function_address(&self, module_id : ModuleId, name_for_codegen : &str) -> usize {
@@ -260,7 +257,7 @@ impl <'l> Into<TextLocation> for TypedNode<'l> {
 
 impl <'l> TypedNode<'l> {
   fn type_tag(&self) -> Type {
-    *self.info.m.cg.node_type.get(&self.node.id).unwrap()
+    *self.info.cg.node_type.get(&self.node.id).unwrap()
   }
 
   fn get(&self, nid : NodeId) -> TypedNode {
@@ -276,15 +273,15 @@ impl <'l> TypedNode<'l> {
   }
 
   fn sizeof_type(&self) -> Option<Type> {
-    self.info.m.cg.sizeof_info.get(&self.node.id).cloned()
+    self.info.cg.sizeof_info.get(&self.node.id).cloned()
   }
 
-  fn node_function_reference(&self) -> Option<FunctionId> {
-    self.info.m.cg.function_references.get(&self.node.id).cloned()
+  fn node_function_reference(&self) -> Option<Ap<FunctionDefinition>> {
+    self.info.cg.function_references.get(&self.node.id).cloned()
   }
 
-  fn node_global_reference(&self) -> Option<&RefStr> {
-    self.info.m.cg.global_references.get(&self.node.id)
+  fn node_global_reference(&self) -> Option<Ap<GlobalDefinition>> {
+    self.info.cg.global_references.get(&self.node.id).cloned()
   }
 }
 
@@ -324,7 +321,7 @@ impl <'l> Gen<'l> {
   /// Code-generates a module, returning a reference to the top-level function in the module
   pub fn codegen_module(mut self, info : &'l CompileInfo) -> Result<(), Error> {
     // declare the local globals
-    for (name, def) in info.m.t.globals.iter() {
+    for (name, def) in info.t.globals.iter() {
       let t = self.to_basic_type(info, def.type_tag).unwrap();
       match def.global_type {
         GlobalType::CBind => {
@@ -344,7 +341,7 @@ impl <'l> Gen<'l> {
 
     // generate the prototypes first (so the functions find each other)
     let mut functions_to_codegen = vec!();
-    for def in info.m.t.functions.values() {
+    for def in info.t.functions.values() {
       let sig = def.signature;
       match &def.implementation {
         FunctionImplementation::Normal{ body, name_for_codegen, args } => {
@@ -522,7 +519,7 @@ impl <'l> Gen<'l> {
       }
       Type::Def(name) => {
         if let Some(def) = info.find_type_def(&name) {
-          Some(self.composite_type(info, def).as_basic_type_enum())
+          Some(self.composite_type(info, &def).as_basic_type_enum())
         }
         else {
           panic!("type `{}` not found", name);
@@ -1111,20 +1108,19 @@ impl <'l, 'a> GenFunction<'l, 'a> {
   }
 
   /// ensure necessary definitions are inserted and linking operations performed when a global is referenced
-  fn get_linked_global_reference(&mut self, info: &CompileInfo, name : &RefStr) -> GlobalValue {
-    let def = info.find_global(name);
-    if def.module_id == info.m.id {
-      self.gen.module.get_global(name)
+  fn get_linked_global_reference(&mut self, info: &CompileInfo, def : &GlobalDefinition) -> GlobalValue {
+    if def.module_id == info.t.module_id {
+      self.gen.module.get_global(&def.name)
         .expect("expected local global!")
     }
     else {
-      if let Some(gv) = self.gen.module.get_global(name) {
+      if let Some(gv) = self.gen.module.get_global(&def.name) {
         gv
       }
       else {
         let t = self.gen.to_basic_type(info, def.type_tag).unwrap();
-        let gv = self.gen.module.add_global(t, Some(AddressSpace::Generic), &name);
-        let address = info.find_global_address(def.module_id, name);
+        let gv = self.gen.module.add_global(t, Some(AddressSpace::Generic), &def.name);
+        let address = info.find_global_address(def.module_id, &def.name);
         self.gen.globals_to_link.push((gv, address));
         gv
       }
@@ -1132,12 +1128,11 @@ impl <'l, 'a> GenFunction<'l, 'a> {
   }
 
   /// ensure necessary definitions are inserted and linking operations performed when a function is referenced
-  fn get_linked_function_reference(&mut self, info : &CompileInfo, fid : FunctionId) -> FunctionValue {
-    let def = info.find_function_def(fid);
+  fn get_linked_function_reference(&mut self, info : &CompileInfo, def : &FunctionDefinition) -> FunctionValue {
     let sig = def.signature;
     match &def.implementation {
       FunctionImplementation::Normal { name_for_codegen, args, .. } => {
-        if def.module_id == info.m.id {
+        if def.module_id == info.t.module_id {
           self.gen.module.get_function(name_for_codegen)
             .expect("expected local function!")
         }
@@ -1175,8 +1170,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     -> Option<Result<MaybeVal, Error>>
   {
     if let FunctionNode::Name(sym) = function {
-      let fid = node.node_function_reference().expect("missing function reference!");
-      let def = node.info.find_function_def(fid);
+      let def = node.node_function_reference().expect("missing function reference!");
       if let FunctionImplementation::Intrinsic = def.implementation {
         return Some(codegen_intrinsic_call(self, node, &sym.name, args));
       }
@@ -1197,8 +1191,8 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         self.codegen_pointer(node.get(*nid))?
       },
       FunctionNode::Name(_) => {
-        let fid = node.node_function_reference().expect("missing function reference!");
-        self.get_linked_function_reference(node.info, fid).as_global_value().as_pointer_value()
+        let def = node.node_function_reference().expect("missing function reference!");
+        self.get_linked_function_reference(node.info, &def).as_global_value().as_pointer_value()
       }
     };
     let mut arg_vals = vec!();
@@ -1214,7 +1208,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     if let Type::Def(name) = t {
       let def = info.find_type_def(&name).unwrap();
       if let Some(drop) = def.drop_function {
-        return Some(self.get_linked_function_reference(info, drop));
+        return Some(self.get_linked_function_reference(info, &drop));
       }
     }
     None
@@ -1224,7 +1218,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     if let Type::Def(name) = t {
       let def = info.find_type_def(&name).unwrap();
       if let Some(clone) = def.clone_function {
-        return Some(self.get_linked_function_reference(info, clone));
+        return Some(self.get_linked_function_reference(info, &clone));
       }
     }
     None
@@ -1422,7 +1416,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         let v = Box::into_raw(e.clone()) as u64;
         let v = self.gen.context.i64_type().const_int(v, false);
         let def = info.find_type_def("expr").unwrap();
-        let bt = self.gen.composite_type(info, def).into();
+        let bt = self.gen.composite_type(info, &def).into();
         let t = self.gen.pointer_to_type(Some(bt));
         reg(self.builder.build_int_to_ptr(v, t, "quote_expr").into())
       }
@@ -1444,10 +1438,10 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         let def = info.find_type_def(name).unwrap();
         match def.kind {
           TypeKind::Struct => {
-            self.codegen_struct_initialise(info, def, a?.as_slice())
+            self.codegen_struct_initialise(info, &def, a?.as_slice())
           }
           TypeKind::Union => {
-            self.codegen_union_initialise(info, def, a?[0])
+            self.codegen_union_initialise(info, &def, a?[0])
           }
         }
       }
@@ -1590,12 +1584,12 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         if let Some(ptr) = refers_to.as_ref().and_then(|sid| self.variables.get(sid)) {
           pointer(*ptr)
         }
-        else if let Some(fid) = node.node_function_reference() {
-          let f = self.get_linked_function_reference(info, fid);
+        else if let Some(def) = node.node_function_reference() {
+          let f = self.get_linked_function_reference(info, &def);
           pointer(f.as_global_value().as_pointer_value())
         }
         else if let Some(global) = node.node_global_reference() {
-          let gv = self.get_linked_global_reference(node.info, global);
+          let gv = self.get_linked_global_reference(node.info, &global);
           pointer(gv.as_pointer_value())
         }
         else {
@@ -1650,7 +1644,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
             let string_pointer = self.builder.build_pointer_cast(ptr, cast_to, "string_pointer");
             let string_length = self.gen.context.i64_type().const_int(vs.len() as u64, false);
             let def = info.find_type_def("string").unwrap();
-            self.codegen_struct_initialise(info, def, &[string_pointer.into(), string_length.into()])
+            self.codegen_struct_initialise(info, &def, &[string_pointer.into(), string_length.into()])
           }
           _ => reg(self.gen.codegen_static(node)?),
         }

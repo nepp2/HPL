@@ -6,7 +6,7 @@ use crate::lexer;
 use crate::parser;
 use crate::c_interface::CSymbols;
 use crate::structure;
-use crate::structure::{Nodes, Val, TOP_LEVEL_FUNCTION_NAME};
+use crate::structure::{Val, TOP_LEVEL_FUNCTION_NAME};
 use crate::inference;
 use crate::inference::CodegenInfo;
 use crate::types::{
@@ -14,7 +14,7 @@ use crate::types::{
   FunctionSignature, FunctionDefinition, GenericId };
 use crate::codegen2::{Gen, LlvmUnit, dump_module, CompileInfo};
 use crate::modules::{ CompiledModule, TypedModule };
-use crate::arena::{ Arena, Ap };
+use crate::arena::{ Arena };
 
 use inkwell::context::{Context};
 // use inkwell::module::{Module, Linkage};
@@ -107,8 +107,12 @@ impl Compiler {
       println!("{}", expr);
     }
     let nodes = structure::to_nodes(&mut self.gen, &self.cache, &expr)?;
+
+    let mut import_types = vec![&self.intrinsics.t];
+    import_types.extend(imports.iter().map(|m| &m.t));
+
     let typed_module =
-      inference::infer_types(nodes, &self.intrinsics, imports, &mut self.gen)
+      inference::infer_types(nodes, import_types.as_slice(), &mut self.gen)
       .map_err(|es| error_raw(expr,
         ErrorContent::InnerErrors("type errors".into(), es)))?;
 
@@ -135,10 +139,12 @@ impl Compiler {
     let mut globals_to_link : Vec<(GlobalValue, usize)> = vec![];
     let mut functions_to_link : Vec<(FunctionValue, usize)> = vec![];
     {
+      //let type_directory
       let gen = Gen::new(
           &mut self.context, &mut llvm_module, &mut ee.get_target_data(),
           &self.c_symbols.local_symbol_table, &mut globals_to_link, &mut functions_to_link, &pm);
-      let info = CompileInfo::new(imports, &typed_module);
+      
+      let info = CompileInfo::new(imports, &typed_module.t, &typed_module.nodes, &typed_module.cg);
       gen.codegen_module(&info)?
     };
 
@@ -213,7 +219,7 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
 
   let arena = Arena::new();
   let id = gen.next().into();
-  let mut ti = TypeInfo::new();
+  let mut ti = TypeInfo::new(id);
   let prim_number_types =
     &[Prim(I64), Prim(I32), Prim(F32), Prim(F64),
       Prim(U64), Prim(U32), Prim(U16), Prim(U8) ];

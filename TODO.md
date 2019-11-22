@@ -1,8 +1,33 @@
+# THOUGHTS - 22/11/2019
+
+This arena type allows the storage of persistant regions alongside pointers into the region. It currently does not provide compile-time safety. Instead it makes a best-effort at runtime safety with slightly expensive dereferencing checks (which should be optimised out in release builds). However, it might be possible to provide compile-time safety with a carefully-designed interface. Specifically, arenas contain top-level types which can only be accessed by passing closures into an access function.
+
+```Rust
+  pub impl <T> Arena<T> {
+    pub fn access(&self, Fn(&Allocator, &mut T)) {
+      ...
+    }
+  }
+```
+
+Arena pointers can only be obtained inside this closure (which receives the arena allocator as an argument). However, the closure would likely need to capture some external data to do anything interesting. If this external data is immutable I think the interface would be safe, but that might be a painful restriction. To lift this restriction the type system would need to somehow guarantee that no arena pointers can escape from the closure.
+
+```Rust
+  let mut v = vec![];
+  arena.access(|allocator, t| {
+    let x : Ap<i64> = allocator.alloc(5);
+    v.push(x); // uh oh
+  })
+```
+
+The arena pointers should also not be allowed to store anything that must be dropped. Or it must detect them and store a reference in a drop list to be dropped when the arena is freed (although this will not be much faster than using an Rc pointer would have been.) I'm not sure if Rust's type system can express these things.
+
+This simple interface would allow the user to build and store tree structures of regions, but it would not easily
+allow them to build graphs of regions. A better interface could probably do that though.
+
 # TODO - 21/11/2019
 
-- Pass modules into type inference step properly
-- Look up type definitions properly in the inference step
-- Loop up type definitions properly in the codegen step
+- Look up type definitions properly in the codegen step
 - Fix the type evaluation (needs to retrigger equivalences)
 
 # TODO - 19/11/2019
