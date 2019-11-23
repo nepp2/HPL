@@ -317,7 +317,8 @@ impl <'l> Gen<'l> {
       Ok(*address)
     }
     else {
-      error(loc, "c symbol could not be found.")
+      println!("FAILURE");
+      error(loc, format!("c symbol '{}' could not be found.", name))
     }
   }
 
@@ -355,6 +356,7 @@ impl <'l> Gen<'l> {
         }
         FunctionImplementation::CFunction => {
           let f = self.codegen_prototype(info, def.name_in_code.as_ref(), sig.return_type, None, &sig.args);
+          println!("FUNCTIONS_TO_CODEGEN: {}({:?}) : {}", def.name_in_code, sig.args, sig.return_type);
           let address = self.get_c_symbol_address(def.loc, &def.name_in_code)?;
           self.functions_to_link.push((f, address));
         }

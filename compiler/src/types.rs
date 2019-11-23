@@ -192,9 +192,16 @@ impl  Type {
   }
 }
 
+#[derive(Copy, Clone)]
 pub struct FindFunctionResult {
   pub def : Ap<FunctionDefinition>,
-  pub generic_map : Option<HashMap<GenericId, Type>>,
+  pub concrete_signature : Option<Ap<FunctionSignature>>,
+}
+
+#[derive(Copy, Clone)]
+pub enum FindGlobalResult {
+  Function(Ap<FunctionDefinition>),
+  Global(Ap<FunctionDefinition>),
 }
 
 impl TypeInfo {
@@ -207,8 +214,11 @@ impl TypeInfo {
     }
   }
 
-  pub fn find_global(&self, name : &str) -> Option<Ap<GlobalDefinition>> {
-    self.globals.get(name).cloned()
+  pub fn find_global(&self, name : &str) -> Option<FindGlobalResult> {
+    self.globals.get(name).map(|g| FindGlobalResult::Global(g))
+      .or_else(||
+        self.functions.values().find(|def| def.name_in_code.as_ref() == name)
+          .map(|f| FindGlobalResult::Function(f)))
   }
 
   pub fn find_type_def(&self, name : &str) -> Option<Ap<TypeDefinition>> {
@@ -219,45 +229,52 @@ impl TypeInfo {
     *self.functions.get(&fid).unwrap()
   }
 
-  pub fn find_function(&self, name : &str, args : &[Type]) -> Option<FindFunctionResult> {
+  pub fn find_function(
+    &self,
+    name : &str, args : &[Type],
+    arena : &Arena,
+    gen : &mut UIDGenerator, 
+    generics : &mut HashMap<GenericId, Type>,
+    result : &mut Vec<FindFunctionResult>,
+  )
+  {
     let r = self.functions.values().find(|def| {
       def.generics.is_empty() && def.name_in_code.as_ref() == name && {
         args == def.signature.args.as_ref()
       }
     });
     if let Some(def) = r {
-      let r = FindFunctionResult { def: *def, generic_map: None };
-      return Some(r);
+      let r = FindFunctionResult { def: *def, concrete_signature: None };
+      result.push(r);
     }
-    let mut generics = HashMap::new();
-    let r = self.functions.values().find(|def| {
-      (!def.generics.is_empty()) && def.name_in_code.as_ref() == name && {
-        let matched = generic_match_sig(&mut generics, args, def, &def.signature);
-        if !matched {
-          generics.clear();
+    else {
+      let r = self.functions.values().find(|def| {
+        (!def.generics.is_empty()) && def.name_in_code.as_ref() == name && {
+          let matched = generic_match_sig(&mut generics, args, def, &def.signature);
+          if !matched {
+            generics.clear();
+          }
+          matched
         }
-        matched
+      });
+      if let Some(def) = r {
+        let sig = concrete_signature(arena, gen, def, generics);
+        result.push(FindFunctionResult { def: *def, concrete_signature: Some(sig) });
       }
-    });
-    r.map(|def| FindFunctionResult { def: *def, generic_map: Some(generics) })
+    }
   }
 }
 
 
-pub fn concrete_signature(arena : &Arena, gen : &mut UIDGenerator, r : FindFunctionResult) -> Ap<FunctionSignature> {
-  if let Some(generic_map) = &r.generic_map {
-    let sig = r.def.signature;
-    let mut args = arena.alloc_slice_mut(sig.args.as_ref());
-    for t in args.iter_mut() {
-      *t = generic_replace(arena, generic_map, gen, *t);
-    }
-    let return_type = generic_replace(arena, generic_map, gen, sig.return_type);
-    let sig = FunctionSignature { args: args.into_ap(), return_type };
-    arena.alloc(sig)
+fn concrete_signature(arena : &Arena, gen : &mut UIDGenerator, def : &FunctionDefinition, generic_map : &mut HashMap<GenericId, Type>) -> Ap<FunctionSignature> {
+  let sig = def.signature;
+  let mut args = arena.alloc_slice_mut(sig.args.as_ref());
+  for t in args.iter_mut() {
+    *t = generic_replace(arena, generic_map, gen, *t);
   }
-  else {
-    r.def.signature
-  }
+  let return_type = generic_replace(arena, generic_map, gen, sig.return_type);
+  let sig = FunctionSignature { args: args.into_ap(), return_type };
+  arena.alloc(sig)
 }
 
 fn generic_replace(arena : &Arena, generics : &HashMap<GenericId, Type>, gen : &mut UIDGenerator, t : Type)
@@ -318,6 +335,8 @@ pub struct TypeDirectory<'a> {
   pub new_module_id : ModuleId,
   import_types : &'a [&'a TypeInfo],
   new_module : &'a mut TypeInfo,
+  internal_generics : HashMap<GenericId, Type>,
+  internal_results : Vec<FindFunctionResult>,
 }
 
 impl <'a> TypeDirectory<'a> {
@@ -326,7 +345,11 @@ impl <'a> TypeDirectory<'a> {
     import_types : &'a [&'a TypeInfo],
     new_module : &'a mut TypeInfo) -> Self
   {
-    TypeDirectory{ new_module_id, import_types, new_module }
+    TypeDirectory{
+      new_module_id, import_types, new_module,
+      internal_generics: HashMap::new(),
+      internal_results: vec![],
+    }
   }
 
   pub fn create_type_def(&mut self, def : Ap<TypeDefinition>) {
@@ -341,7 +364,8 @@ impl <'a> TypeDirectory<'a> {
     self.new_module.functions.insert(def.id, def);
   }
 
-  pub fn find_global(&self, name : &str) -> Option<Ap<GlobalDefinition>> {
+  pub fn find_global(&self, name : &str, args : &[Type]) -> Option<FindGlobalResult> 
+  {
     self.new_module.find_global(name).or_else(||
       self.import_types.iter().rev().flat_map(|m| m.find_global(name)).next())
   }
@@ -351,9 +375,19 @@ impl <'a> TypeDirectory<'a> {
       self.import_types.iter().rev().flat_map(|m| m.find_type_def(name)).next())
   }
 
-  pub fn find_function(&self, name : &str, args : &[Type]) -> Option<FindFunctionResult> {
-    self.new_module.find_function(name, args).or_else(||
-      self.import_types.iter().rev().flat_map(|m| m.find_function(name, args)).next())
+  pub fn find_function(
+    &mut self,
+    name : &str, args : &[Type],
+    arena : &Arena, gen : &mut UIDGenerator, 
+  ) -> &[FindFunctionResult] 
+  {
+    self.internal_generics.clear();
+    self.internal_results.clear();
+    self.new_module.find_function(name, args, arena, gen, &mut self.internal_generics, &mut self.internal_results);
+    for m in self.import_types.iter().rev() {
+      m.find_function(name, args, arena, gen, &mut self.internal_generics, &mut self.internal_results);
+    }
+    self.internal_results.as_slice()
   }
 
   pub fn new_module(&self) -> &TypeInfo {
@@ -369,9 +403,5 @@ impl <'a> TypeDirectory<'a> {
 
   pub fn get_function(&self, module_id : ModuleId, fid : FunctionId) -> Ap<FunctionDefinition> {
     self.find_module(module_id).get_function(fid)
-  }
-
-  pub fn concrete_signature(&self, arena : &Arena, gen : &mut UIDGenerator, r : FindFunctionResult) -> Ap<FunctionSignature> {
-    concrete_signature(arena, gen, r)
   }
 }

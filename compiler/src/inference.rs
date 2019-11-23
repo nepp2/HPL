@@ -398,6 +398,14 @@ impl <'a> Inference<'a> {
       }
       Constraint::GlobalDef{ name, type_symbol, global_type, loc } => {
         if let Some(t) = self.get_type(*type_symbol) {
+          if self.t.find_global(&name).is_some() {
+            let e = error_raw(loc, "global with that name already defined");
+            self.errors.push(e);
+          }
+          if self.t.new_module().find_function(&name, sig.args.as_ref()).is_some() {
+            let e = error_raw(loc, "function with that name and signature already defined");
+            self.errors.push(e);
+          }
           if let Type::Fun(sig) = t {
             let aaa = (); // TODO: this check isn't strong good enough
             if self.t.new_module().find_function(&name, sig.args.as_ref()).is_some() {
@@ -415,7 +423,6 @@ impl <'a> Inference<'a> {
                 loc: *loc,
               };
               self.t.create_function(self.arena.alloc(f));
-              return true;
             }
           }
           else {
