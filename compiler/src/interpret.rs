@@ -88,16 +88,4 @@ impl Interpreter {
     }
     panic!("function not found in compiled units");
   }
-
-  // /// Load expression as a module and return the value of its top-level function
-  // pub fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
-  //   let (v, _) = self.compile_and_initialise_module(expr)?;
-  //   Ok(v)
-  // }
-
-  // /// Compile and initialise a new module
-  // pub fn build_module(&mut self, expr : &Expr) -> Result<&CompiledModule, Error> {
-  //   let (_, c) = self.compile_and_initialise_module(expr)?;
-  //   Ok(c)
-  // }
 }

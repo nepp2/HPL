@@ -220,8 +220,11 @@ impl <'l> CompileInfo<'l> {
     TypedNode { info: self, node }
   }
 
-  fn find_type_def(&self, name : &str) -> Option<Ap<TypeDefinition>> {
+  fn find_type_def(&self, name : &str) -> Option<Ap<TypeDefinition>> {    
     self.cg.type_def_references.get(name).cloned()
+    .or_else(|| 
+      self.t.find_type_def(name).or_else(||
+        self.compiled_modules.iter().rev().flat_map(|m| m.t.find_type_def(name)).next()))
   }
 
   fn find_function_address(&self, module_id : ModuleId, name_for_codegen : &str) -> usize {

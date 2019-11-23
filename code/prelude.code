@@ -124,7 +124,7 @@ struct expr {
 }
 
 struct module_handle {
-  id : u64
+  module : ptr(u8)
 }
 
 cbind expr_to_string : fun(out : ptr(string), e : ptr(expr))
@@ -148,10 +148,10 @@ fun build_module(expr : ptr(expr)) {
 }
 
 cbind get_function :
-  fun(compiler : ptr(u8), module : module_handle, name : ptr(string)) => ptr(u8)
+  fun(module : module_handle, name : ptr(string)) => ptr(u8)
 
 fun get_function(module : module_handle, name : string) {
-  get_function(compiler, module, &name)
+  get_function(module, &name)
 }
 
 // ----------------- DEFINE RC AND ARRAY STUFF -------------------

@@ -1,6 +1,7 @@
 // external C interface for the compiler (so that the language can use it)
 
 use crate::compile::Compiler;
+use crate::modules::CompiledModule;
 use crate::expr::{RefStr, Expr, ExprContent};
 
 use std::fs::File;
@@ -100,24 +101,33 @@ pub extern "C" fn load_quote(c : *mut Compiler, s : SStr) -> *mut u8 {
 }
 
 #[no_mangle]
-pub extern "C" fn build_module(c : *mut Compiler, e : &Expr) -> SModuleHandle {
-  // let c = unsafe { &mut *c };
-  // let cm = c.load_module(e).expect("failed to build the module");
-  // SModuleHandle { id: cm.info.id }
-  loop {}
+pub extern "C" fn build_module(c : *mut Compiler, e : &Expr) -> *mut CompiledModule {
+  let c = unsafe { &mut *c };
+  let (cm, _val) = c.load_module(&[], e).expect("failed to build the module");
+  Box::into_raw(Box::new(cm))
 }
 
+// TODO: panics if there is more than one overload, because no argument types
+// are provided to narrow the search, and it would be very unsafe to return
+// the wrong one.
 #[no_mangle]
 pub extern "C" fn get_function(
-  c : *mut Compiler, h : SModuleHandle, name : SStr)
+  cm : *mut CompiledModule, name : SStr)
     -> *mut u8
 {
-  // let c = unsafe { &mut *c };
-  // let address =
-  //   c.get_function_address(h.id, name.as_str())
-  //   .expect("no matching function found");
-  // address as *mut u8
-  loop {}
+  let cm = unsafe { &mut *cm };
+  let name = name.as_str();
+  let mut i = cm.t.functions.values()
+    .filter(|def| def.name_in_code.as_ref() == name)
+    .flat_map(|def| def.codegen_name());
+  let address =
+    i.next().and_then(|codegen_name|
+      unsafe { cm.llvm_unit.ee.get_function_address(codegen_name) })
+    .expect("could not find function address");
+  if i.next().is_some() {
+    panic!("two matching overloads for '{}' in get_function_address", name);
+  }
+  address as *mut u8
 }
 
 #[no_mangle]

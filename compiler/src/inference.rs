@@ -275,8 +275,12 @@ impl <'a> Inference<'a> {
             arg_names.push(arg.clone());
             arg_types.push(self.get_type(*arg_ts).unwrap());
           }
-          if self.t.find_function(&name, arg_types.as_slice()).is_some() {
-            let e = error_raw(loc, "function with that name and signature already defined");
+          let aaa = (); // TODO: this check isn't strong good enough
+          if self.t.new_module().find_function(&name, arg_types.as_slice()).is_some() {
+            let e =
+              error_raw(loc,
+                format!("function '{}({})' with signature already defined",
+                  name, arg_types.iter().join(", ")));
             self.errors.push(e);
           }
           else {
@@ -395,7 +399,8 @@ impl <'a> Inference<'a> {
       Constraint::GlobalDef{ name, type_symbol, global_type, loc } => {
         if let Some(t) = self.get_type(*type_symbol) {
           if let Type::Fun(sig) = t {
-            if self.t.find_function(&name, sig.args.as_ref()).is_some() {
+            let aaa = (); // TODO: this check isn't strong good enough
+            if self.t.new_module().find_function(&name, sig.args.as_ref()).is_some() {
               let e = error_raw(loc, "function with that name and signature already defined");
               self.errors.push(e);
             }
@@ -457,12 +462,14 @@ impl <'a> Inference<'a> {
         let i = self.get_type(*index);
         if let [Some(c), Some(i)] = [c, i] {
           if i.int() {
-            match c {
-              Type::Ptr(element) => {
-                self.set_type(*result, *element);
-                return true;
-              }
-              _ => (),
+            let element = match c {
+                Type::Ptr(e) => Some(*e),
+                Type::Array(e) => Some(*e),
+              _ => None,
+            };
+            if let Some(element) = element {
+              self.set_type(*result, element);
+              return true;              
             }
           }
           if let Some(r) = self.t.find_function("Index", &[c, i]) {
@@ -498,11 +505,13 @@ impl <'a> Inference<'a> {
         if let Some(array_type) = self.get_type(*array) {
           if let Type::Array(element_type) = array_type {
             self.set_type(*element, *element_type);
+            return true;
           }
         }
         if let Some(element_type) = self.get_type(*element) {
           let element_type = self.arena.alloc(element_type);
           self.set_type(*array, Type::Array(element_type));
+          return true;
         }
       }
     }

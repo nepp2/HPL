@@ -17,7 +17,6 @@ use crate::modules::{ CompiledModule, TypedModule };
 use crate::arena::{ Arena };
 
 use inkwell::context::{Context};
-// use inkwell::module::{Module, Linkage};
 use inkwell::passes::PassManager;
 use inkwell::values::{FunctionValue, GlobalValue};
 use inkwell::OptimizationLevel;
@@ -233,6 +232,9 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
     for &n in &["==", ">", "<", ">=", "<=", "!="] {
       add_intrinsic(&arena, gen, id, &mut ti, n, &[t, t], Prim(Bool));
     }
+  }
+  for &n in &["&&", "||"] {
+    add_intrinsic(&arena, gen, id, &mut ti, n, &[Prim(Bool), Prim(Bool)], Prim(Bool));
   }
   {
     let gid = gen.next().into();

@@ -356,6 +356,10 @@ impl <'a> TypeDirectory<'a> {
       self.import_types.iter().rev().flat_map(|m| m.find_function(name, args)).next())
   }
 
+  pub fn new_module(&self) -> &TypeInfo {
+    self.new_module
+  }
+
   fn find_module(&self, module_id : ModuleId) -> &TypeInfo {
     [&*self.new_module].iter()
       .chain(self.import_types.iter().rev())
