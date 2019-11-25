@@ -1,3 +1,39 @@
+# THOUGHTS - 25/11/2019
+
+Hopelessly stuck again, trying to figure out how to handle function resolution in the presence of both overloading and two-way type inference. I had the idea that I could detect when all of the information is available and then just choose the single matching implementation if there is one, or return an error otherwise. But that is complicated to implement in practise, and has become a bit of a mess with globals and generics. Consider the following:
+
+```Rust
+  fun blah(a : float, b : float) {
+    blah(a as int, b as int)
+  }
+
+  fun blah(a : int, b : int) {
+    a + b
+  }
+```
+
+This is hard to resolve because I deliberately wait for all overloads of a function name to be defined before resolving any function calls to them. So here, `blah` can never resolve itself because it calls an overload with its own name. This could be fixed with a return type annotation, but that is kind of weird. This is why most languages dispatch on the first argument, which works pretty well for method chaining.
+
+Another problem I'm having is in resolving globals. Globals exist in the same namespace as functions, and a global variable might hold a reference to a function. So the exact same syntax works for function calls and for global variables references. So I should possibly unify the type resolution mechanism, but that's tricky because I want to evaluate globals eagerly when they clearly aren't functions, but in the presence of overloading they can't be evaluated eagerly.
+
+```Rust
+  fun blah(a : float) { }
+
+  static blah = 5
+
+  let a = blah
+
+  a(6)
+```
+
+The code above is ambiguous until `a` is used. Then the correct `blah` can be inferred. But then blah has to be inferred from a type.
+
+## Possible Solution
+
+The language lets you define whatever symbol you want, but complains if you try to call something that's ambiguous. It then has two mechanisms for disambiguating in relevant cases; you can either manually specify the namespace (when namespaces are supported), or you can call a function with method-call syntax. This tells the type checker to try and resolve overloads. It also applies to the language's operators.
+
+The first advantage is that global resolution is now always simple. The second is that type inference will work much better for normal functions. It still doesn't really fix the general complexity of overloads, and I'm not sure whether it should dispatch on more than the type of the first argument. It could also dispatch on the number of arguments, possibly.
+
 # THOUGHTS - 22/11/2019
 
 This arena type allows the storage of persistant regions alongside pointers into the region. It currently does not provide compile-time safety. Instead it makes a best-effort at runtime safety with slightly expensive dereferencing checks (which should be optimised out in release builds). However, it might be possible to provide compile-time safety with a carefully-designed interface. Specifically, arenas contain top-level types which can only be accessed by passing closures into an access function.

@@ -3,15 +3,15 @@ use std::fmt;
 use itertools::Itertools;
 
 use crate::error::{Error, error, error_raw, TextLocation};
-use crate::expr::{RefStr, Expr, UIDGenerator};
+use crate::expr::{Expr, UIDGenerator};
 use crate::structure::{
   Node, NodeId, Nodes, Symbol, SymbolId, Content,
   Val, LabelId, TypeKind, FunctionNode, VarScope,
   GlobalType,
 };
 use crate::types::{
-  Type, PType, TypeInfo, TypeDefinition, FindFunctionResult,
-  FunctionId, FunctionDefinition, FunctionSignature, ModuleId,
+  Type, PType, TypeInfo, TypeDefinition, ConcreteFunction, FindGlobalResult,
+  FunctionId, FunctionDefinition, FunctionSignature, ModuleId, ValueDefinition,
   GenericId, FunctionImplementation, GlobalDefinition, TypeDirectory,
 };
 use crate::modules::{ TypedModule, CompiledModule };
@@ -210,8 +210,8 @@ impl <'a> Inference<'a> {
               format!("{} : {}", s.name, t)
             }).join(", ")))
       }
-      Constraint::FunctionCall{ node, function, args:_, result:_ } => {
-        let loc = self.nodes.node(*node).loc;
+      Constraint::FunctionCall{ node:_, function, args:_, result } => {
+        let loc = self.loc(*result);
         if let Function::Name(sym) = function {
           error_raw(loc, format!("function call {} not resolved", sym.name))
         }
@@ -249,6 +249,25 @@ impl <'a> Inference<'a> {
     self.errors.push(e);
   }
 
+  fn find_function(&mut self, name : &str, args : &[Type], loc : TextLocation) -> Option<Result<ValueDefinition, ()>> {
+    match self.t.find_function(name, args, self.arena, self.gen) {
+      Some([vd]) => {
+        Some(Ok(*vd))
+      }
+      Some(cfs) => {
+        let s = if cfs.len() == 0 {
+          format!("no function found matching '{}({})'", name, args.iter().join(", "))
+        }
+        else {
+          format!("found multiple functions matching '{}({})'", name, args.iter().join(", "))
+        };
+        self.errors.push(error_raw(loc, s));
+        Some(Err(()))
+      }
+      None => None
+    }
+  }
+
   fn process_constraint(&mut self, c : &Constraint) -> bool {
     match c  {
       Constraint::Assert(ts, tc) => {
@@ -275,8 +294,8 @@ impl <'a> Inference<'a> {
             arg_names.push(arg.clone());
             arg_types.push(self.get_type(*arg_ts).unwrap());
           }
-          let aaa = (); // TODO: this check isn't strong good enough
-          if self.t.new_module().find_function(&name, arg_types.as_slice()).is_some() {
+          let aaa = (); // TODO: can functions from other modules now be shadowed?
+          if self.t.find_function_local(&name, arg_types.as_slice(), self.arena, self.gen).len() > 0 {
             let e =
               error_raw(loc,
                 format!("function '{}({})' with signature already defined",
@@ -297,7 +316,7 @@ impl <'a> Inference<'a> {
             };
             let f = FunctionDefinition {
               id: self.gen.next().into(),
-              module_id: self.t.new_module_id,
+              module_id: self.t.new_module_id(),
               name_in_code: self.arena.alloc_str(name),
               signature: self.arena.alloc(sig),
               generics: vec![],
@@ -315,10 +334,11 @@ impl <'a> Inference<'a> {
         if arg_types.len() == args.len() {
           match function {
             Function::Name(sym) => {
-              if let Some(r) = self.t.find_function(&sym.name, arg_types.as_slice()) {
-                self.cg.function_references.insert(*node, r.def);
-                let sig = self.t.concrete_signature(self.arena, self.gen, r);
-                self.set_type(*result, sig.return_type);
+              if let Some(r) = self.find_function(&sym.name, arg_types.as_slice(), self.loc(*result)) {
+                if let Ok(cf) = r {
+                  self.cg.function_references.insert(*node, cf.def);
+                  self.set_type(*result, cf.sig().return_type);
+                }
                 return true;
               }
             }
@@ -398,12 +418,8 @@ impl <'a> Inference<'a> {
       }
       Constraint::GlobalDef{ name, type_symbol, global_type, loc } => {
         if let Some(t) = self.get_type(*type_symbol) {
-          if self.t.find_global(&name).is_some() {
-            let e = error_raw(loc, "global with that name already defined");
-            self.errors.push(e);
-          }
-          if self.t.new_module().find_function(&name, sig.args.as_ref()).is_some() {
-            let e = error_raw(loc, "function with that name and signature already defined");
+          if self.t.find_global_local(&name).len() > 0 {
+            let e = error_raw(loc, "symbol with that name already defined in this module");
             self.errors.push(e);
           }
           if let Type::Fun(sig) = t {
@@ -479,10 +495,11 @@ impl <'a> Inference<'a> {
               return true;              
             }
           }
-          if let Some(r) = self.t.find_function("Index", &[c, i]) {
-            self.cg.function_references.insert(*node, r.def);
-            let sig = self.t.concrete_signature(self.arena, self.gen, r);
-            self.set_type(*result, sig.return_type);
+          if let Some(r) = self.find_function("Index", &[c, i], self.loc(*result)) {
+            if let Ok(cf) = r {
+              self.cg.function_references.insert(*node, cf.def);
+              self.set_type(*result, cf.sig().return_type);
+            }
             return true;
           }
         }
@@ -593,12 +610,12 @@ pub enum Constraint {
     result : TypeSymbol,
   },
   Constructor {
-    type_name : RefStr,
+    type_name : Ap<str>,
     fields : Vec<(Option<Symbol>, TypeSymbol)>,
     result : TypeSymbol,
   },
   FunctionDef {
-    name : RefStr,
+    name : Ap<str>,
     return_type : TypeSymbol,
     args : Vec<(Symbol, TypeSymbol)>,
     body : NodeId,
@@ -617,14 +634,14 @@ pub enum Constraint {
     result : TypeSymbol,
   },
   GlobalDef {
-    name: RefStr,
+    name: Ap<str>,
     type_symbol: TypeSymbol,
     global_type: GlobalType,
     loc: TextLocation,
   },
   GlobalReference {
     node : NodeId,
-    name : RefStr,
+    name : Ap<str>,
     result : TypeSymbol,
   },
 }
@@ -796,8 +813,10 @@ impl <'l, 't> GatherConstraints<'l, 't> {
         let vid = self.process_node(n, *value);
         self.equalivalent(var_type_symbol, vid);
         if let VarScope::Global(global_type) = *var_scope {
+          let name = self.arena.alloc_str(&name.name);
+          self.t.register_pending_global_symbol(name);
           self.constraint(Constraint::GlobalDef{
-            name: name.name.clone(),
+            name,
             type_symbol: var_type_symbol,
             global_type,
             loc: node.loc,
@@ -848,7 +867,8 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           self.equalivalent(ts, var_type);
         }
         else {
-          self.constraint(Constraint::GlobalReference{ node: id, name: name.clone(), result: ts });
+          let name = self.arena.alloc_str(&name);
+          self.constraint(Constraint::GlobalReference{ node: id, name, result: ts });
         }
       }
       Content::FunctionDefinition{ name, args, return_tag, body } => {
@@ -867,10 +887,12 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           gc.process_node(n, *body)
         };
         self.tagged_symbol(body_ts, return_tag);
-        let f = Constraint::FunctionDef { 
-          name: name.clone(), args: ts_args,
+        let name = self.arena.alloc_str(&name);
+        let f = Constraint::FunctionDef {
+          name, args: ts_args,
           return_type: body_ts, body: *body, loc: node.loc };
         self.constraint(f);
+        self.t.register_pending_global_symbol(name);
       }
       Content::CBind { name, type_tag } => {
         self.assert(ts, PType::Void);
@@ -878,9 +900,10 @@ impl <'l, 't> GatherConstraints<'l, 't> {
         if let Some(t) = self.try_expr_to_type(type_tag) {
           self.assert_type(cbind_ts, t);
         }
+        let name = self.arena.alloc_str(&name);
+        self.t.register_pending_global_symbol(name);
         self.constraint(Constraint::GlobalDef{
-          name: name.clone(),
-          type_symbol: cbind_ts,
+          name, type_symbol: cbind_ts,
           global_type: GlobalType::CBind,
           loc: node.loc,
         });
@@ -917,8 +940,9 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           let field_type_symbol = self.process_node(n, *value);
           fields.push((field.clone(), field_type_symbol));
         }
-        let tc = Constraint::Constructor{ type_name: name.clone(), fields, result: ts };
-        let def_type = self.type_def(node.loc, self.arena.alloc_str(name));
+        let type_name = self.arena.alloc_str(&name);
+        let tc = Constraint::Constructor{ type_name, fields, result: ts };
+        let def_type = self.type_def(node.loc, type_name);
         self.assert_type(ts, def_type);
         self.constraint(tc);
       }

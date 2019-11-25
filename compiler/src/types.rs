@@ -192,21 +192,9 @@ impl  Type {
   }
 }
 
-#[derive(Copy, Clone)]
-pub struct FindFunctionResult {
-  pub def : Ap<FunctionDefinition>,
-  pub concrete_signature : Option<Ap<FunctionSignature>>,
-}
-
-#[derive(Copy, Clone)]
-pub enum FindGlobalResult {
-  Function(Ap<FunctionDefinition>),
-  Global(Ap<GlobalDefinition>),
-}
-
 impl TypeInfo {
   pub fn new(module_id : ModuleId) -> TypeInfo {
-    TypeInfo{
+    TypeInfo {
       type_defs: HashMap::new(),
       functions: HashMap::new(),
       globals: HashMap::new(),
@@ -214,11 +202,17 @@ impl TypeInfo {
     }
   }
 
-  pub fn find_global(&self, name : &str) -> Option<FindGlobalResult> {
-    self.globals.get(name).map(|g| FindGlobalResult::Global(*g))
-      .or_else(||
-        self.functions.values().find(|def| def.name_in_code.as_ref() == name)
-          .map(|f| FindGlobalResult::Function(*f)))
+  pub fn find_global(&self, name : &str, skip_repl_globals : bool, results : &mut Vec<SymbolDef>) {
+    if let Some(g) = self.globals.get(name) {
+      if !(skip_repl_globals && g.global_type == GlobalType::Repl) {
+        results.push(SymbolDef::Glob(*g));
+      }
+    }
+    for f in self.functions.values() {
+      if f.name_in_code.as_ref() == name {
+        results.push(SymbolDef::Fun(*f));
+      }
+    }
   }
 
   pub fn find_type_def(&self, name : &str) -> Option<Ap<TypeDefinition>> {
@@ -231,21 +225,34 @@ impl TypeInfo {
 
   pub fn find_function(
     &self,
-    name : &str, args : &[Type],
+    name : &str,
+    args : &[Type],
+    skip_repl_globals : bool,
     arena : &Arena,
     gen : &mut UIDGenerator, 
     generics : &mut HashMap<GenericId, Type>,
-    result : &mut Vec<FindFunctionResult>,
+    results : &mut Vec<ConcreteFunction>,
   )
   {
+    if let Some(def) = self.globals.get(name) {
+      if !(skip_repl_globals && def.global_type == GlobalType::Repl) {
+        if let Type::Fun(sig) = def.type_tag {
+          if args == sig.args.as_ref() {
+            let def = SymbolDef::Glob(*def);
+            results.push(ConcreteFunction { def, concrete_signature: sig });
+          }
+        }
+      }
+    }
     let r = self.functions.values().find(|def| {
       def.generics.is_empty() && def.name_in_code.as_ref() == name && {
         args == def.signature.args.as_ref()
       }
     });
     if let Some(def) = r {
-      let r = FindFunctionResult { def: *def, concrete_signature: None };
-      result.push(r);
+      let concrete_signature = def.signature;
+      let def = SymbolDef::Fun(*def);
+      results.push(ConcreteFunction { def, concrete_signature });
     }
     else {
       let r = self.functions.values().find(|def| {
@@ -258,8 +265,9 @@ impl TypeInfo {
         }
       });
       if let Some(def) = r {
-        let sig = concrete_signature(arena, gen, def, generics);
-        result.push(FindFunctionResult { def: *def, concrete_signature: Some(sig) });
+        let concrete_signature = concrete_signature(arena, gen, def, generics);
+        let def = SymbolDef::Fun(*def);
+        results.push(ConcreteFunction { def, concrete_signature });
       }
     }
   }
@@ -329,14 +337,28 @@ fn generic_match(generics : &mut HashMap<GenericId, Type>, t : Type, gt : Type) 
   generic_match(generics, *t, *gt)
 }
 
+#[derive(Copy, Clone)]
+pub enum SymbolDef {
+  Fun(Ap<FunctionDefinition>),
+  Glob(Ap<GlobalDefinition>),
+}
+
+#[derive(Copy, Clone)]
+pub struct ConcreteFunction {
+  def : SymbolDef,
+  concrete_signature : Ap<FunctionSignature>,
+}
+
 /// Utility type for finding definitions either in the module being constructed,
 /// or in the other modules in scope.
 pub struct TypeDirectory<'a> {
-  pub new_module_id : ModuleId,
+  new_module_id : ModuleId,
   import_types : &'a [&'a TypeInfo],
   new_module : &'a mut TypeInfo,
-  internal_generics : HashMap<GenericId, Type>,
-  internal_results : Vec<FindFunctionResult>,
+  pending_global_symbol : HashMap<Ap<str>, i32>,
+  generic_bindings : HashMap<GenericId, Type>,
+  function_results : Vec<ConcreteFunction>,
+  global_results : Vec<SymbolDef>,
 }
 
 impl <'a> TypeDirectory<'a> {
@@ -347,8 +369,10 @@ impl <'a> TypeDirectory<'a> {
   {
     TypeDirectory{
       new_module_id, import_types, new_module,
-      internal_generics: HashMap::new(),
-      internal_results: vec![],
+      pending_global_symbol: HashMap::new(),
+      generic_bindings: HashMap::new(),
+      function_results: vec![],
+      global_results: vec![],
     }
   }
 
@@ -357,17 +381,47 @@ impl <'a> TypeDirectory<'a> {
   }
 
   pub fn create_global(&mut self, def : Ap<GlobalDefinition>) {
+    self.complete_pending_global_symbol(&def.name);
     self.new_module.globals.insert(def.name, def);
   }
 
   pub fn create_function(&mut self, def : Ap<FunctionDefinition>) {
+    self.complete_pending_global_symbol(&def.name_in_code);
     self.new_module.functions.insert(def.id, def);
   }
 
-  pub fn find_global(&self, name : &str, args : &[Type]) -> Option<FindGlobalResult> 
+  fn complete_pending_global_symbol(&mut self, name : &str) {
+    let v = self.pending_global_symbol.get_mut(name).expect("pending symbol not found");
+    *v -= 1;
+    if *v <= 0 {
+      self.pending_global_symbol.remove(name);
+    }
+  }  
+
+  pub fn register_pending_global_symbol(&mut self, name : Ap<str>) {
+    self.pending_global_symbol.entry(name)
+      .and_modify(|count| *count += 1)
+      .or_insert(1);
+  }
+
+  pub fn find_global_local(&self, name : &str) -> &[SymbolDef]
   {
-    self.new_module.find_global(name).or_else(||
-      self.import_types.iter().rev().flat_map(|m| m.find_global(name)).next())
+    self.global_results.clear();
+    self.new_module.find_global(name, true, &mut self.global_results);
+    self.global_results.as_slice()
+  }
+
+  pub fn find_global(&self, name : &str) -> Option<&[SymbolDef]> 
+  {
+    if self.pending_global_symbol.contains_key(name) {
+      return None;
+    }
+    self.global_results.clear();
+    self.new_module.find_global(name, true, &mut self.global_results);
+    for m in self.import_types.iter().rev() {
+      m.find_global(name, false, &mut self.global_results);
+    }
+    Some(self.global_results.as_slice())
   }
 
   pub fn find_type_def(&self, name : &str) -> Option<Ap<TypeDefinition>> {
@@ -375,26 +429,44 @@ impl <'a> TypeDirectory<'a> {
       self.import_types.iter().rev().flat_map(|m| m.find_type_def(name)).next())
   }
 
+  /// Return true if a local symbol already has this name and a matching argument list
+  pub fn find_function_local(
+    &mut self,
+    name : &str, args : &[Type],
+    arena : &Arena, gen : &mut UIDGenerator, 
+  ) -> &[ConcreteFunction]
+  {
+    self.generic_bindings.clear();
+    self.function_results.clear();
+    self.new_module.find_function(name, args, true, arena, gen, &mut self.generic_bindings, &mut self.function_results);
+    self.function_results.as_slice()
+  }
+
+  /// Returns None if there still functions with this name to be resolved.
+  /// Otherwise returns a slice of all matching definitions.
   pub fn find_function(
     &mut self,
     name : &str, args : &[Type],
     arena : &Arena, gen : &mut UIDGenerator, 
-  ) -> &[FindFunctionResult] 
+  ) -> Option<&[ConcreteFunction]>
   {
-    self.internal_generics.clear();
-    self.internal_results.clear();
-    self.new_module.find_function(name, args, arena, gen, &mut self.internal_generics, &mut self.internal_results);
-    for m in self.import_types.iter().rev() {
-      m.find_function(name, args, arena, gen, &mut self.internal_generics, &mut self.internal_results);
+    if self.pending_global_symbol.contains_key(name) {
+      return None;
     }
-    self.internal_results.as_slice()
+    self.generic_bindings.clear();
+    self.function_results.clear();
+    self.new_module.find_function(name, args, true, arena, gen, &mut self.generic_bindings, &mut self.function_results);
+    for m in self.import_types.iter().rev() {
+      m.find_function(name, args, false, arena, gen, &mut self.generic_bindings, &mut self.function_results);
+    }
+    Some(self.function_results.as_slice())
   }
 
-  pub fn new_module(&self) -> &TypeInfo {
-    self.new_module
+  pub fn new_module_id(&self) -> ModuleId {
+    self.new_module.module_id
   }
 
-  fn find_module(&self, module_id : ModuleId) -> &TypeInfo {
+  pub fn find_module(&self, module_id : ModuleId) -> &TypeInfo {
     [&*self.new_module].iter()
       .chain(self.import_types.iter().rev())
       .find(|t| t.module_id == module_id)
@@ -405,3 +477,5 @@ impl <'a> TypeDirectory<'a> {
     self.find_module(module_id).get_function(fid)
   }
 }
+
+
