@@ -201,7 +201,7 @@ pub struct FindFunctionResult {
 #[derive(Copy, Clone)]
 pub enum FindGlobalResult {
   Function(Ap<FunctionDefinition>),
-  Global(Ap<FunctionDefinition>),
+  Global(Ap<GlobalDefinition>),
 }
 
 impl TypeInfo {
@@ -215,10 +215,10 @@ impl TypeInfo {
   }
 
   pub fn find_global(&self, name : &str) -> Option<FindGlobalResult> {
-    self.globals.get(name).map(|g| FindGlobalResult::Global(g))
+    self.globals.get(name).map(|g| FindGlobalResult::Global(*g))
       .or_else(||
         self.functions.values().find(|def| def.name_in_code.as_ref() == name)
-          .map(|f| FindGlobalResult::Function(f)))
+          .map(|f| FindGlobalResult::Function(*f)))
   }
 
   pub fn find_type_def(&self, name : &str) -> Option<Ap<TypeDefinition>> {
