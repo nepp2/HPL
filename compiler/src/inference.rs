@@ -211,7 +211,9 @@ impl <'a> Inference<'a> {
       Constraint::FunctionCall{ node:_, function, args:_, result } => {
         let loc = self.loc(*result);
         if let Function::Name(sym) = function {
-          error_raw(loc, format!("function call {} not resolved", sym.name))
+          let symbols = self.t.find_global("sym");
+          error_raw(loc, format!("function call {} not resolved,\n{:?}\n\n", sym.name,
+            symbols.iter().map(|s| match s { SymbolDef::Fun(f) => f.name_in_code, SymbolDef::Glob(g) => g.name}).join(", ")))
         }
         else {
           error_raw(loc, "function call not resolved")
@@ -449,7 +451,9 @@ impl <'a> Inference<'a> {
           match r {
             Ok(SymbolDef::Fun(def)) => {
               if def.generics.len() > 0 {
-                panic!("generic reference not yet supported");
+                let s = format!("generic reference not yet supported, '{}'", name);
+                self.errors.push(error_raw(loc, s));
+                return true;
               }
               self.cg.symbol_references.insert(*node, SymbolDef::Fun(def));
               self.set_type(*result, Type::Fun(def.signature));

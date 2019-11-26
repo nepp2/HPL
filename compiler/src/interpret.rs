@@ -74,7 +74,7 @@ impl Interpreter {
   {
     self.load_module(code)?;
     let m = self.compiled_modules.last().unwrap();
-    let function_name = m.t.functions.values()
+    let function_name = m.t.functions.iter()
       .find(|def| def.name_in_code.as_ref() == function_name)
       .and_then(|def| def.codegen_name());
     if let Some(function_name) = function_name {

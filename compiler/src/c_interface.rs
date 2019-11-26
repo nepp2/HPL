@@ -117,7 +117,7 @@ pub extern "C" fn get_function(
 {
   let cm = unsafe { &mut *cm };
   let name = name.as_str();
-  let mut i = cm.t.functions.values()
+  let mut i = cm.t.functions.iter()
     .filter(|def| def.name_in_code.as_ref() == name)
     .flat_map(|def| def.codegen_name());
   let address =

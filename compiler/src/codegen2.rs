@@ -352,7 +352,7 @@ impl <'l> Gen<'l> {
 
     // generate the prototypes first (so the functions find each other)
     let mut functions_to_codegen = vec!();
-    for def in info.t.functions.values() {
+    for def in info.t.functions.iter() {
       let sig = def.signature;
       match &def.implementation {
         FunctionImplementation::Normal{ body, name_for_codegen, args } => {

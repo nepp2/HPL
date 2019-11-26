@@ -210,7 +210,7 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
       implementation: FunctionImplementation::Intrinsic,
       loc: TextLocation::zero(),
     };
-    t.functions.insert(f.id, arena.alloc(f));
+    t.functions.push(arena.alloc(f));
   }
 
   let expr = parse(cache, "").unwrap();
@@ -259,7 +259,7 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
 
 fn run_top_level(m : &CompiledModule) -> Result<Val, Error> {
   let f = TOP_LEVEL_FUNCTION_NAME;
-  let def = m.t.functions.values().find(|def| def.name_in_code.as_ref() == f).unwrap();
+  let def = m.t.functions.iter().find(|def| def.name_in_code.as_ref() == f).unwrap();
   let f = if let FunctionImplementation::Normal{ name_for_codegen, .. } = &def.implementation {
     name_for_codegen.as_ref()
   }

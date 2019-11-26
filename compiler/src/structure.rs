@@ -199,10 +199,10 @@ impl <'l> NodeConverter<'l> {
     id
   }
 
-  fn symbol(&mut self, name : &str, loc : TextLocation) -> Symbol {
+  fn symbol<Loc : Into<TextLocation>>(&mut self, name : &str, loc : Loc) -> Symbol {
     let name = self.cache.get(name);
     let id = SymbolId(self.uid_generator.next());
-    let s = Symbol { id, name, loc };
+    let s = Symbol { id, name, loc: loc.into() };
     self.symbols.insert(id, s.clone());
     s
   }
@@ -278,12 +278,15 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       let marker_name = self.cached("text_marker");
       for n in template_args.into_iter() {
         let loc = self.loc_struct(expr, loc_name.clone(), marker_name.clone());
-        let expr_val = self.function_call(expr, self.cached("sym"), vec![n, loc]);
-        let arg = self.function_call(expr, self.cached("&"), vec![expr_val]);
+        let sym = self.t.symbol("sym", expr);
+        let expr_val = self.function_call(expr, sym, vec![n, loc]);
+        let to_ref = self.t.symbol("&", expr);
+        let arg = self.function_call(expr, to_ref, vec![expr_val]);
         coerced_args.push(arg);
       }
       let array_literal = self.array_literal(expr, coerced_args);
-      Ok(self.function_call(expr, self.cached("template_quote"), vec![main_quote, array_literal]))
+      let template_quote = self.t.symbol("template_quote", expr);
+      Ok(self.function_call(expr, template_quote, vec![main_quote, array_literal]))
     }
     else {
       Ok(main_quote)
@@ -597,8 +600,8 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     self.node(expr, args)
   }
 
-  fn function_call(&mut self, expr : &Expr, function : RefStr, args : Vec<NodeId>) -> NodeId {
-    let function = FunctionNode::Value(self.node(expr, Reference{ name: function, refers_to: None }));
+  fn function_call(&mut self, expr : &Expr, function : Symbol, args : Vec<NodeId>) -> NodeId {
+    let function = FunctionNode::Name(function);
     let function_call = FunctionCall{ function, args };
     self.node(expr, function_call)
   }
