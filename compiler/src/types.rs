@@ -345,8 +345,8 @@ pub enum SymbolDef {
 
 #[derive(Copy, Clone)]
 pub struct ConcreteFunction {
-  def : SymbolDef,
-  concrete_signature : Ap<FunctionSignature>,
+  pub def : SymbolDef,
+  pub concrete_signature : Ap<FunctionSignature>,
 }
 
 /// Utility type for finding definitions either in the module being constructed,

@@ -10,8 +10,8 @@ use crate::structure::{
   GlobalType,
 };
 use crate::types::{
-  Type, PType, TypeInfo, TypeDefinition, ConcreteFunction, FindGlobalResult,
-  FunctionId, FunctionDefinition, FunctionSignature, ModuleId, ValueDefinition,
+  Type, PType, TypeInfo, TypeDefinition, ConcreteFunction, SymbolDef,
+  FunctionId, FunctionDefinition, FunctionSignature, ModuleId,
   GenericId, FunctionImplementation, GlobalDefinition, TypeDirectory,
 };
 use crate::modules::{ TypedModule, CompiledModule };
@@ -249,10 +249,40 @@ impl <'a> Inference<'a> {
     self.errors.push(e);
   }
 
-  fn find_function(&mut self, name : &str, args : &[Type], loc : TextLocation) -> Option<Result<ValueDefinition, ()>> {
+  fn register_def(&mut self, node : NodeId, def : SymbolDef) {
+    match def {
+      SymbolDef::Fun(def) => {
+        self.cg.function_references.insert(node, def);
+      }
+      SymbolDef::Glob(def) => {
+        self.cg.global_references.insert(node, def);
+      }
+    }
+  }
+
+  fn find_global(&mut self, name : &str, loc : TextLocation) -> Option<Result<SymbolDef, ()>> {
+    match self.t.find_global(name) {
+      Some([sd]) => {
+        Some(Ok(*sd))
+      }
+      Some(cfs) => {
+        let s = if cfs.len() == 0 {
+          format!("no symbol found matching '{}'", name)
+        }
+        else {
+          format!("found multiple symbols matching '{}'", name)
+        };
+        self.errors.push(error_raw(loc, s));
+        Some(Err(()))
+      }
+      None => None
+    }
+  }
+
+  fn find_function(&mut self, name : &str, args : &[Type], loc : TextLocation) -> Option<Result<ConcreteFunction, ()>> {
     match self.t.find_function(name, args, self.arena, self.gen) {
-      Some([vd]) => {
-        Some(Ok(*vd))
+      Some([cf]) => {
+        Some(Ok(*cf))
       }
       Some(cfs) => {
         let s = if cfs.len() == 0 {
@@ -336,8 +366,8 @@ impl <'a> Inference<'a> {
             Function::Name(sym) => {
               if let Some(r) = self.find_function(&sym.name, arg_types.as_slice(), self.loc(*result)) {
                 if let Ok(cf) = r {
-                  self.cg.function_references.insert(*node, cf.def);
-                  self.set_type(*result, cf.sig().return_type);
+                  self.register_def(*node, cf.def);
+                  self.set_type(*result, cf.concrete_signature.return_type);
                 }
                 return true;
               }
@@ -422,58 +452,27 @@ impl <'a> Inference<'a> {
             let e = error_raw(loc, "symbol with that name already defined in this module");
             self.errors.push(e);
           }
-          if let Type::Fun(sig) = t {
-            let aaa = (); // TODO: this check isn't strong good enough
-            if self.t.new_module().find_function(&name, sig.args.as_ref()).is_some() {
-              let e = error_raw(loc, "function with that name and signature already defined");
-              self.errors.push(e);
-            }
-            else {
-              let f = FunctionDefinition {
-                id: self.gen.next().into(),
-                module_id: self.t.new_module_id,
-                name_in_code: self.arena.alloc_str(name),
-                signature: sig,
-                generics: vec![],
-                implementation: FunctionImplementation::CFunction,
-                loc: *loc,
-              };
-              self.t.create_function(self.arena.alloc(f));
-            }
-          }
           else {
-            if self.t.find_global(&name).is_some() {
-              let e = error_raw(loc, "global with that name already defined");
-              self.errors.push(e);
-            }
-            else {
-              let name = self.arena.alloc_str(name);
-              let g = GlobalDefinition {
-                module_id: self.t.new_module_id,
-                name,
-                global_type: *global_type,
-                type_tag: t,
-                loc: *loc,
-              };
-              self.t.create_global(self.arena.alloc(g));
-            }
+            let name = self.arena.alloc_str(name);
+            let g = GlobalDefinition {
+              module_id: self.t.new_module_id(),
+              name,
+              global_type: *global_type,
+              type_tag: t,
+              loc: *loc,
+            };
+            self.t.create_global(self.arena.alloc(g));
           }
           return true;
         }
       }
       Constraint::GlobalReference { node, name, result } => {
         if let Some(def) = self.t.find_global(&name) {
-          // This is a bit confusing. Basically "Repl" globals use lexical scope,
-          // because they are initialised by the top-level functions. It isn't
-          // safe to reference them until they are in scope.
-          if !(def.module_id == self.t.new_module_id && def.global_type == GlobalType::Repl) {
-            let t = def.type_tag;
-            self.set_type(*result, t);
-            self.cg.global_references.insert(*node, def);
-            return true;
-          }
+          self.set_type(*result, t);
+          self.cg.global_references.insert(*node, def);
+          return true;
         }
-        if let Some(Type::Fun(sig)) = self.get_type(*result) {
+        else if let Some(Type::Fun(sig)) = self.get_type(*result) {
           if let Some(r) = self.t.find_function(&name, sig.args.as_ref()) {
             self.cg.function_references.insert(*node, r.def);
             return true;
@@ -497,8 +496,8 @@ impl <'a> Inference<'a> {
           }
           if let Some(r) = self.find_function("Index", &[c, i], self.loc(*result)) {
             if let Ok(cf) = r {
-              self.cg.function_references.insert(*node, cf.def);
-              self.set_type(*result, cf.sig().return_type);
+              self.register_def(*node, cf.def);
+              self.set_type(*result, cf.concrete_signature.return_type);
             }
             return true;
           }
