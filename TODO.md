@@ -1,3 +1,50 @@
+# THOUGHTS - 26/11/2019
+
+Resolving function types is complicated if the function is both polymorphic and overloaded. But all polymorphic functions are overloaded, right? This is not really true from the perspective of symbol resolution. You resolve repeatedly against the polymorphic symbol instead of the specialisations, because the important detail is the particular function body that you dispatch on.
+
+A potential resolution rule is: try to resolve on monomorphic functions first. If you find nothing, then try the polymorphic ones.
+
+In both cases it should be possible to resolve using incomplete types.
+
+## Yesterday's hack
+
+I realised there is a potential ordering problem with resolution, if functions are able to shadow each other:
+
+```Rust
+  fun blah(a : float, b : float) { ... }
+  fun blah(a : float, b : float) { ... }
+  blah(3, 4)
+```
+
+Which blah is called? It may depend on which order they happen to be resolved in. If one of them is from a previous module, it will likely win. However, it seems that a new blah should really shadow the old one. If we just wait for all new blah symbols to be resolved, we can end up with a tangle:
+
+```Rust
+  fun blah(a : float, b : float) { ... }
+
+  // --- new module ---
+
+  fun blah(a : float) {
+    bloo(a)
+  }
+  fun bloo(a : float) {
+    blah(a, 5)
+  }
+```
+
+This will never terminate, even though the desired behaviour is obvious. If we resolve it naively it works, but then the shadowing example will resolve incorrectly. Another way to fix it is just to never drop constraints. Keep iterating on everything, and only stop once nothing is happening.
+
+Finally, I could fix it by re-introducing function call constraints where relevant.
+
+## A list of stuff to fix
+
+- Get rid of the checks on unresolved symbols
+- Instead, reintroduce function call constraints when new symbols are resolved instead
+- Turn index operations into function calls properly
+- Merge all symbols into one kind
+- Do overload matches on return types too, using the "unknown" Type
+- Do overload checks first. Then look for polymorphic variants.
+- Make sure that the equivalence constraints hang around.
+
 # THOUGHTS - 25/11/2019
 
 Hopelessly stuck again, trying to figure out how to handle function resolution in the presence of both overloading and two-way type inference. I had the idea that I could detect when all of the information is available and then just choose the single matching implementation if there is one, or return an error otherwise. But that is complicated to implement in practise, and has become a bit of a mess with globals and generics. Consider the following:

@@ -9,7 +9,7 @@ use crate::structure::{
   Symbol, LabelId, NodeValueType, FunctionNode, VarScope,
   GlobalType };
 use crate::types::{
-  Type, PType, TypeDefinition, FunctionDefinition,
+  Type, PType, TypeDefinition, FunctionDefinition, SymbolDef,
   ModuleId, FunctionImplementation, GlobalDefinition, TypeInfo };
 use crate::inference::CodegenInfo;
 use crate::modules::CompiledModule;
@@ -279,12 +279,19 @@ impl <'l> TypedNode<'l> {
     self.info.cg.sizeof_info.get(&self.node.id).cloned()
   }
 
-  fn node_function_reference(&self) -> Option<Ap<FunctionDefinition>> {
-    self.info.cg.function_references.get(&self.node.id).cloned()
+  fn node_symbol_def(&self) -> Option<SymbolDef> {
+    self.info.cg.symbol_references.get(&self.node.id).cloned()
   }
 
-  fn node_global_reference(&self) -> Option<Ap<GlobalDefinition>> {
-    self.info.cg.global_references.get(&self.node.id).cloned()
+  fn is_intrinsic_function(&self) -> bool {
+    self.info.cg.symbol_references.get(&self.node.id)
+    .map(|def| match def {
+      SymbolDef::Fun(def) =>
+        if let FunctionImplementation::Intrinsic = def.implementation { true }
+        else { false },
+      _ => false
+    })
+    .unwrap_or(false)
   }
 }
 
@@ -356,7 +363,6 @@ impl <'l> Gen<'l> {
         }
         FunctionImplementation::CFunction => {
           let f = self.codegen_prototype(info, def.name_in_code.as_ref(), sig.return_type, None, &sig.args);
-          println!("FUNCTIONS_TO_CODEGEN: {}({:?}) : {}", def.name_in_code, sig.args, sig.return_type);
           let address = self.get_c_symbol_address(def.loc, &def.name_in_code)?;
           self.functions_to_link.push((f, address));
         }
@@ -519,9 +525,6 @@ impl <'l> Gen<'l> {
         let t = self.to_function_type(info, sig.args.as_ref(), sig.return_type);
         Some(t.ptr_type(AddressSpace::Generic).into())
       }
-      Type::Generic(_) => {
-        panic!()
-      }
       Type::Def(name) => {
         if let Some(def) = info.find_type_def(&name) {
           Some(self.composite_type(info, &def).as_basic_type_enum())
@@ -537,6 +540,8 @@ impl <'l> Gen<'l> {
         let bt = self.to_basic_type(info, *t);
         Some(self.pointer_to_type(bt).into())
       }
+      Type::Generic(_) => panic!(),
+      Type::Unknown => panic!(),
     }
   }
 
@@ -1112,6 +1117,17 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     Ok(reg(self.codegen_address_of_genval(v)?.into()))
   }
 
+  fn get_linked_symbol_reference(&mut self, info: &CompileInfo, def : SymbolDef) -> GlobalValue {
+    match def {
+      SymbolDef::Fun(def) => {
+        self.get_linked_function_reference(info, &def).as_global_value()
+      }
+      SymbolDef::Glob(def) => {
+        self.get_linked_global_reference(info, &def)
+      }
+    }
+  }
+
   /// ensure necessary definitions are inserted and linking operations performed when a global is referenced
   fn get_linked_global_reference(&mut self, info: &CompileInfo, def : &GlobalDefinition) -> GlobalValue {
     if def.module_id == info.t.module_id {
@@ -1175,8 +1191,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     -> Option<Result<MaybeVal, Error>>
   {
     if let FunctionNode::Name(sym) = function {
-      let def = node.node_function_reference().expect("missing function reference!");
-      if let FunctionImplementation::Intrinsic = def.implementation {
+      if node.is_intrinsic_function() {
         return Some(codegen_intrinsic_call(self, node, &sym.name, args));
       }
     }
@@ -1196,8 +1211,8 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         self.codegen_pointer(node.get(*nid))?
       },
       FunctionNode::Name(_) => {
-        let def = node.node_function_reference().expect("missing function reference!");
-        self.get_linked_function_reference(node.info, &def).as_global_value().as_pointer_value()
+        let def = node.node_symbol_def().expect("missing symbol reference!");
+        self.get_linked_symbol_reference(node.info, def).as_pointer_value()
       }
     };
     let mut arg_vals = vec!();
@@ -1589,12 +1604,8 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         if let Some(ptr) = refers_to.as_ref().and_then(|sid| self.variables.get(sid)) {
           pointer(*ptr)
         }
-        else if let Some(def) = node.node_function_reference() {
-          let f = self.get_linked_function_reference(info, &def);
-          pointer(f.as_global_value().as_pointer_value())
-        }
-        else if let Some(global) = node.node_global_reference() {
-          let gv = self.get_linked_global_reference(node.info, &global);
+        else if let Some(def) = node.node_symbol_def() {
+          let gv = self.get_linked_symbol_reference(info, def);
           pointer(gv.as_pointer_value())
         }
         else {

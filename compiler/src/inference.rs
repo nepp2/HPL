@@ -53,8 +53,7 @@ pub fn infer_types(
 pub struct CodegenInfo {
   pub node_type : HashMap<NodeId, Type>,
   pub sizeof_info : HashMap<NodeId, Type>,
-  pub function_references : HashMap<NodeId, Ap<FunctionDefinition>>,
-  pub global_references : HashMap<NodeId, Ap<GlobalDefinition>>,
+  pub symbol_references : HashMap<NodeId, SymbolDef>,
   pub type_def_references : HashMap<Ap<str>, Ap<TypeDefinition>>,
 }
 
@@ -63,8 +62,7 @@ impl CodegenInfo {
     CodegenInfo {
       node_type: HashMap::new(),
       sizeof_info: HashMap::new(),
-      function_references: HashMap::new(),
-      global_references: HashMap::new(),
+      symbol_references: HashMap::new(),
       type_def_references: HashMap::new(),
     }
   }
@@ -250,51 +248,30 @@ impl <'a> Inference<'a> {
   }
 
   fn register_def(&mut self, node : NodeId, def : SymbolDef) {
-    match def {
-      SymbolDef::Fun(def) => {
-        self.cg.function_references.insert(node, def);
-      }
-      SymbolDef::Glob(def) => {
-        self.cg.global_references.insert(node, def);
-      }
-    }
+    self.cg.symbol_references.insert(node, def);
   }
 
   fn find_global(&mut self, name : &str, loc : TextLocation) -> Option<Result<SymbolDef, ()>> {
     match self.t.find_global(name) {
-      Some([sd]) => {
-        Some(Ok(*sd))
-      }
-      Some(cfs) => {
-        let s = if cfs.len() == 0 {
-          format!("no symbol found matching '{}'", name)
-        }
-        else {
-          format!("found multiple symbols matching '{}'", name)
-        };
+      [sd] => Some(Ok(*sd)),
+      [] => None,
+      _ => {
+        let s = format!("found multiple symbols matching '{}'", name);
         self.errors.push(error_raw(loc, s));
         Some(Err(()))
       }
-      None => None
     }
   }
 
   fn find_function(&mut self, name : &str, args : &[Type], loc : TextLocation) -> Option<Result<ConcreteFunction, ()>> {
     match self.t.find_function(name, args, self.arena, self.gen) {
-      Some([cf]) => {
-        Some(Ok(*cf))
-      }
-      Some(cfs) => {
-        let s = if cfs.len() == 0 {
-          format!("no function found matching '{}({})'", name, args.iter().join(", "))
-        }
-        else {
-          format!("found multiple functions matching '{}({})'", name, args.iter().join(", "))
-        };
+      [cf] => Some(Ok(*cf)),
+      [] => None,
+      _ => {
+        let s = format!("found multiple functions matching '{}({})'", name, args.iter().join(", "));
         self.errors.push(error_raw(loc, s));
         Some(Err(()))
       }
-      None => None
     }
   }
 
@@ -467,14 +444,31 @@ impl <'a> Inference<'a> {
         }
       }
       Constraint::GlobalReference { node, name, result } => {
-        if let Some(def) = self.t.find_global(&name) {
-          self.set_type(*result, t);
-          self.cg.global_references.insert(*node, def);
+        let loc = self.loc(*result);
+        if let Some(r) = self.find_global(&name, loc) {
+          match r {
+            Ok(SymbolDef::Fun(def)) => {
+              if def.generics.len() > 0 {
+                panic!("generic reference not yet supported");
+              }
+              self.cg.symbol_references.insert(*node, SymbolDef::Fun(def));
+              self.set_type(*result, Type::Fun(def.signature));
+            }
+            Ok(SymbolDef::Glob(def)) => {
+              self.cg.symbol_references.insert(*node, SymbolDef::Glob(def));
+              self.set_type(*result, def.type_tag);
+            }
+            _ => (),
+          }
           return true;
         }
         else if let Some(Type::Fun(sig)) = self.get_type(*result) {
-          if let Some(r) = self.t.find_function(&name, sig.args.as_ref()) {
-            self.cg.function_references.insert(*node, r.def);
+          let loc = self.loc(*result);
+          if let Some(r) = self.find_function(&name, sig.args.as_ref(), loc) {
+            if let Ok(cf) = r {
+              self.register_def(*node, cf.def);
+              self.set_type(*result, Type::Fun(cf.concrete_signature));
+            }
             return true;
           }
         }
@@ -684,7 +678,7 @@ fn gather_constraints(
       gc.cg.type_def_references.insert(def.name, def);
     }
     else {
-      let e = error_raw(loc, "No type definition with this name found.");
+      let e = error_raw(loc, format!("No type definition named '{}' found.", name));
       gc.errors.push(e);
     }
   }
@@ -813,7 +807,6 @@ impl <'l, 't> GatherConstraints<'l, 't> {
         self.equalivalent(var_type_symbol, vid);
         if let VarScope::Global(global_type) = *var_scope {
           let name = self.arena.alloc_str(&name.name);
-          self.t.register_pending_global_symbol(name);
           self.constraint(Constraint::GlobalDef{
             name,
             type_symbol: var_type_symbol,
@@ -882,7 +875,6 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           // Need new scope stack for new function
           let mut gc =
             GatherConstraints::new(self.arena, self.t, self.cg, self.gen, self.c, self.errors, self.type_def_refs);
-            //GatherConstraints::new2(self.arena, self.gen, self.errors);
           gc.process_node(n, *body)
         };
         self.tagged_symbol(body_ts, return_tag);
@@ -891,21 +883,36 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           name, args: ts_args,
           return_type: body_ts, body: *body, loc: node.loc };
         self.constraint(f);
-        self.t.register_pending_global_symbol(name);
       }
       Content::CBind { name, type_tag } => {
         self.assert(ts, PType::Void);
         let cbind_ts = self.type_symbol(node.loc);
         if let Some(t) = self.try_expr_to_type(type_tag) {
           self.assert_type(cbind_ts, t);
+          let name = self.arena.alloc_str(&name);
+          if let Type::Fun(sig) = t {
+            let f = FunctionDefinition {
+              id: self.gen.next().into(),
+              module_id: self.t.new_module_id(),
+              name_in_code: name,
+              signature: sig,
+              generics: vec![],
+              implementation: FunctionImplementation::CFunction,
+              loc: node.loc,
+            };
+            self.t.create_function(self.arena.alloc(f));
+          }
+          else {
+            let g = GlobalDefinition {
+              module_id: self.t.new_module_id(),
+              name,
+              global_type: GlobalType::CBind,
+              type_tag: t,
+              loc: node.loc,
+            };
+            self.t.create_global(self.arena.alloc(g));
+          }
         }
-        let name = self.arena.alloc_str(&name);
-        self.t.register_pending_global_symbol(name);
-        self.constraint(Constraint::GlobalDef{
-          name, type_symbol: cbind_ts,
-          global_type: GlobalType::CBind,
-          loc: node.loc,
-        });
       }
       Content::TypeDefinition{ name, kind, fields } => {
         self.assert(ts, PType::Void);
