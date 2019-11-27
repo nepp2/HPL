@@ -29,10 +29,9 @@ fn assert_error(code : &str, error_substring : &str){
   let mut i = interpreter();
   let result = i.run(code);
   if let Err(e) = &result {
-    if let ErrorContent::Message(s) = &e.message {
-      if s.contains(error_substring) {
-        return; // success
-      }
+    let s = format!("{}", e);
+    if s.contains(error_substring) {
+      return; // success
     }
   }
   panic!(
