@@ -11,10 +11,10 @@ use crate::structure::{
 };
 use crate::types::{
   Type, PType, TypeInfo, TypeDefinition, ConcreteFunction, SymbolDef,
-  FunctionId, FunctionDefinition, FunctionSignature, ModuleId,
-  GenericId, FunctionImplementation, GlobalDefinition, TypeDirectory,
+  FunctionDefinition, FunctionSignature, FunctionImplementation,
+  GlobalDefinition, TypeDirectory,
 };
-use crate::modules::{ TypedModule, CompiledModule };
+use crate::modules::TypedModule;
 use crate::arena::{ Arena, Ap };
 
 use std::collections::HashMap;

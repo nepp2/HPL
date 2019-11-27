@@ -1,5 +1,5 @@
 
-use crate::error::{Error, ErrorContent};
+use crate::error::Error;
 use crate::interpret::{Interpreter, interpreter};
 use crate::structure::{Val, TOP_LEVEL_FUNCTION_NAME};
 use crate::c_interface::SStr;
