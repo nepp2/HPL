@@ -91,6 +91,10 @@ static literal_int_tag : u64 = 4
 static literal_bool_tag : u64 = 5
 static literal_unit_tag : u64 = 6
 
+fun sym(e : ptr(expr), loc : text_location) {
+  *e
+}
+
 fun sym(s : string, loc : text_location) {
   let data = expr_data.new(symbol: s)
   let c = expr_content.new(symbol_tag, data)

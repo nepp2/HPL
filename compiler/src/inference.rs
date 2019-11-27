@@ -208,12 +208,19 @@ impl <'a> Inference<'a> {
               format!("{} : {}", s.name, t)
             }).join(", ")))
       }
-      Constraint::FunctionCall{ node:_, function, args:_, result } => {
+      Constraint::FunctionCall{ node:_, function, args, result } => {
         let loc = self.loc(*result);
         if let Function::Name(sym) = function {
-          let symbols = self.t.find_global("sym");
-          error_raw(loc, format!("function call {} not resolved,\n{:?}\n\n", sym.name,
-            symbols.iter().map(|s| match s { SymbolDef::Fun(f) => f.name_in_code, SymbolDef::Glob(g) => g.name}).join(", ")))
+          let arg_types : Vec<_> =
+            args.iter().map(|(_, ts)| self.get_type(*ts).unwrap_or(Type::Unknown)).collect();
+          let symbols = self.t.find_global(&sym.name);
+          error_raw(loc, format!("function call {}({}) not resolved,\n{}\n\n",
+            sym.name,
+            arg_types.iter().join(", "),
+            symbols.iter().map(|s| match s {
+              SymbolDef::Fun(f) => format!("fun - {} : {}", f.name_in_code, Type::Fun(f.signature)),
+              SymbolDef::Glob(g) => format!("glob - {} : {}", g.name, &g.type_tag),
+            }).join("\n")))
         }
         else {
           error_raw(loc, "function call not resolved")
