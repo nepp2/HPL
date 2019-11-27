@@ -10,11 +10,13 @@ use crate::structure::{Val, TOP_LEVEL_FUNCTION_NAME};
 use crate::inference;
 use crate::inference::CodegenInfo;
 use crate::types::{
-  Type, PType, TypeInfo, FunctionImplementation, ModuleId,
-  FunctionSignature, FunctionDefinition, GenericId };
+  Type, PType, TypeInfo, ModuleId, FunctionSignature,
+  GlobalDefinition, PolyFunctionDef,
+  GenericId, GlobalInit,
+};
 use crate::codegen2::{Gen, LlvmUnit, dump_module, CompileInfo};
 use crate::modules::{ CompiledModule, TypedModule };
-use crate::arena::{ Arena };
+use crate::arena::{ Arena, Ap };
 
 use inkwell::context::{Context};
 use inkwell::passes::PassManager;
@@ -191,34 +193,45 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
   use Type::*;
   use PType::*;
 
-  fn add_intrinsic(
-    arena : &Arena, gen : &mut UIDGenerator,
-    id : ModuleId, t : &mut TypeInfo, name : &str,
+  fn create_definition(
+    arena : &Arena, id : ModuleId, name : &str,
     args : &[Type], return_type : Type)
-  {
-    add_generic_intrinsic(arena, gen, id, t, name, args, return_type, vec![])
-  }
-  
-  fn add_generic_intrinsic(
-    arena : &Arena, gen : &mut UIDGenerator,
-    id : ModuleId, t : &mut TypeInfo, name : &str,
-    args : &[Type], return_type : Type,
-    generics : Vec<GenericId>)
+      -> (Ap<GlobalDefinition>, Ap<FunctionSignature>)
   {
     let sig = FunctionSignature{
       return_type,
       args: arena.alloc_slice(args),
     };
-    let f = FunctionDefinition {
-      id: gen.next().into(),
+    let sig = arena.alloc(sig);
+    let g = GlobalDefinition {
       module_id: id,
-      name_in_code: arena.alloc_str(name),
-      signature: arena.alloc(sig),
-      generics,
-      implementation: FunctionImplementation::Intrinsic,
+      name: arena.alloc_str(name),
+      type_tag: Type::Fun(sig),
+      initialiser: GlobalInit::Intrinsic,
       loc: TextLocation::zero(),
     };
-    t.functions.push(arena.alloc(f));
+    (arena.alloc(g), sig)
+  }
+
+  fn add_intrinsic(
+    arena : &Arena, id : ModuleId, t : &mut TypeInfo,
+    name : &str, args : &[Type], return_type : Type)
+  {
+    let (g, _) = create_definition(arena, id, name, args, return_type);
+    t.globals.push(g);
+  }
+  
+  fn add_generic_intrinsic(
+    arena : &Arena, id : ModuleId, t : &mut TypeInfo,
+    name : &str, args : &[Type], return_type : Type,
+    generics : &[GenericId])
+  {
+    let (global, poly_signature) = create_definition(arena, id, name, args, return_type);
+    let pf = PolyFunctionDef {
+      global, poly_signature,
+      generics: arena.alloc_slice(generics),
+    };
+    t.poly_functions.push(arena.alloc(pf));
   }
 
   let expr = parse(cache, "").unwrap();
@@ -232,51 +245,46 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
       Prim(U64), Prim(U32), Prim(U16), Prim(U8) ];
   for &t in prim_number_types {
     for &n in &["-"] {
-      add_intrinsic(&arena, gen, id, &mut ti, n, &[t], t);
+      add_intrinsic(&arena, id, &mut ti, n, &[t], t);
     }
     for &n in &["+", "-", "*", "/"] {
-      add_intrinsic(&arena, gen, id, &mut ti, n, &[t, t], t);
+      add_intrinsic(&arena, id, &mut ti, n, &[t, t], t);
     }
     for &n in &["==", ">", "<", ">=", "<=", "!="] {
-      add_intrinsic(&arena, gen, id, &mut ti, n, &[t, t], Prim(Bool));
+      add_intrinsic(&arena, id, &mut ti, n, &[t, t], Prim(Bool));
     }
   }
   for &n in &["&&", "||"] {
-    add_intrinsic(&arena, gen, id, &mut ti, n, &[Prim(Bool), Prim(Bool)], Prim(Bool));
+    add_intrinsic(&arena, id, &mut ti, n, &[Prim(Bool), Prim(Bool)], Prim(Bool));
   }
   {
     let gid = gen.next().into();
     let gt = Type::Generic(gid);
     let gptr = Type::Ptr(arena.alloc(gt));
-    add_generic_intrinsic(&arena, gen, id, &mut ti, "Index", &[gptr], gt, vec![gid]);
+    add_generic_intrinsic(&arena, id, &mut ti, "Index", &[gptr], gt, &[gid]);
   }
   {
     let gid = gen.next().into();
     let gt = Type::Generic(gid);
     let gptr = Type::Ptr(arena.alloc(gt));
-    add_generic_intrinsic(&arena, gen, id, &mut ti, "*", &[gptr], gt, vec![gid]);
+    add_generic_intrinsic(&arena, id, &mut ti, "*", &[gptr], gt, &[gid]);
   }
   {
     let gid = gen.next().into();
     let gt = Type::Generic(gid);
     let gptr = Type::Ptr(arena.alloc(gt));
-    add_generic_intrinsic(&arena, gen, id, &mut ti, "&", &[gt], gptr, vec![gid]);
+    add_generic_intrinsic(&arena, id, &mut ti, "&", &[gt], gptr, &[gid]);
   }
   TypedModule::new(arena, id, nodes, ti, CodegenInfo::new())
 }
 
 fn run_top_level(m : &CompiledModule) -> Result<Val, Error> {
   let f = TOP_LEVEL_FUNCTION_NAME;
-  let def = m.t.functions.iter().find(|def| def.name_in_code.as_ref() == f).unwrap();
-  let f = if let FunctionImplementation::Normal{ name_for_codegen, .. } = &def.implementation {
-    name_for_codegen.as_ref()
-  }
-  else {
-    f
-  };
+  let def = m.t.globals.iter().find(|def| def.name.as_ref() == f).unwrap();
+  let f = def.codegen_name().unwrap();
   use Type::*;
   use PType::*;
-  let sig = def.signature;
+  let sig = if let Type::Fun(sig) = def.type_tag {sig} else {panic!()};
   let lu = &m.llvm_unit;
   let value = match sig.return_type {
     Prim(Bool) => Val::Bool(execute::<bool>(f, &lu.ee)),

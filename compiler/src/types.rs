@@ -5,7 +5,7 @@ use itertools::Itertools;
 use crate::error::TextLocation;
 use crate::expr::UIDGenerator;
 use crate::structure::{
-  NodeId, Symbol, TypeKind, GlobalType,
+  NodeId, SymbolId, TypeKind,
 };
 use crate::arena::{ Arena, Ap };
 
@@ -26,8 +26,8 @@ impl From<u64> for GenericId { fn from(v : u64) -> Self { GenericId(v) } }
 
 pub struct TypeInfo {
   pub type_defs : HashMap<Ap<str>, Ap<TypeDefinition>>,
-  pub functions : Vec<Ap<FunctionDefinition>>,
-  pub globals : HashMap<Ap<str>, Ap<GlobalDefinition>>,
+  pub globals : Vec<Ap<GlobalDefinition>>,
+  pub poly_functions : Vec<Ap<PolyFunctionDef>>,
   pub module_id : ModuleId,
 }
 
@@ -61,22 +61,21 @@ pub enum Type {
   Unknown,
 }
 
-#[derive(Clone, Debug)]
-pub struct TypeDefinition {
+#[derive(Copy, Clone, Debug)]
+pub struct Symbol {
+  pub id : SymbolId,
   pub name : Ap<str>,
-  pub fields : Vec<(Symbol, Type)>,
-  pub kind : TypeKind,
-  pub drop_function : Option<Ap<FunctionDefinition>>,
-  pub clone_function : Option<Ap<FunctionDefinition>>,
-  pub definition_location : TextLocation,
+  pub loc : TextLocation,
 }
 
-#[derive(Debug, Clone)]
-pub enum GlobalInitialiser {
-  Function{ body: NodeId, name_for_codegen: Ap<str>, args : Vec<Symbol> },
-  Expression(NodeId),
-  Intrinsic,
-  CBind,
+#[derive(Clone, Copy, Debug)]
+pub struct TypeDefinition {
+  pub name : Ap<str>,
+  pub fields : Ap<[(Symbol, Type)]>,
+  pub kind : TypeKind,
+  pub drop_function : Option<Ap<ConcreteFunction>>,
+  pub clone_function : Option<Ap<ConcreteFunction>>,
+  pub definition_location : TextLocation,
 }
 
 #[derive(Debug, Clone)]
@@ -86,56 +85,59 @@ pub enum FunctionImplementation {
   Intrinsic,
 }
 
-/// TODO: This is a messy way of supporting REPL functionality.
-// #[derive(Debug, Clone, Copy, PartialEq)]
-// pub enum GlobalType { Static(NodeId), Repl, CBind }
-
-#[derive(Debug, Clone)]
-pub struct FunctionDefinition {
-  pub id : FunctionId,
-  pub module_id : ModuleId,
-  pub name_in_code : Ap<str>,
-  pub signature : Ap<FunctionSignature>,
-  pub generics : Vec<GenericId>,
-  pub implementation : FunctionImplementation,
-  pub loc : TextLocation,
-}
-
-impl  FunctionDefinition {
-  pub fn codegen_name(&self) -> Option<&str> {
-    match &self.implementation {
-      FunctionImplementation::Normal{ name_for_codegen, .. } => Some(name_for_codegen),
-      FunctionImplementation::CFunction => Some(&self.name_in_code),
-      FunctionImplementation::Intrinsic => None,
-    }
-  }
-}
-
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct FunctionSignature {
   pub return_type : Type,
   pub args : Ap<[Type]>,
 }
 
-#[derive(Clone)]
+/// The initialiser for the global
+#[derive(Debug, Clone, Copy)]
+pub enum GlobalInit {
+  Function(Ap<FunctionInit>),
+  Expression(NodeId),
+  Intrinsic,
+  CBind,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct FunctionInit {
+  pub body: NodeId,
+  pub name_for_codegen: Ap<str>,
+  pub args : Ap<[Symbol]>,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct GlobalDefinition {
   pub module_id : ModuleId,
   pub name : Ap<str>,
   pub type_tag : Type,
-  pub global_type : GlobalType,
+  pub initialiser : GlobalInit,
   pub loc : TextLocation,
 }
 
-#[derive(Clone)]
-pub struct GlobalDefinition2 {
-  pub module_id : ModuleId,
-  pub name : Ap<str>,
-  pub type_tag : Type,
-  pub global_type : GlobalType,
-  pub loc : TextLocation,
+impl GlobalDefinition {
+  pub fn codegen_name(&self) -> Option<&str> {
+    match &self.initialiser {
+      GlobalInit::Function(f) => Some(&f.name_for_codegen),
+      GlobalInit::CBind | GlobalInit::Expression(_) => Some(&self.name),
+      _ => None,
+    }
+  }
 
-  pub generics : Vec<GenericId>,
-  pub implementation : FunctionImplementation,
+  pub fn signature(&self) -> Option<Ap<FunctionSignature>> {
+    match self.type_tag {
+      Type::Fun(sig) => Some(sig),
+      _ => None,
+    }
+  }
+}
+
+#[derive(Copy, Clone)]
+pub struct PolyFunctionDef {
+  pub global : Ap<GlobalDefinition>,
+  pub poly_signature : Ap<FunctionSignature>,
+  pub generics : Ap<[GenericId]>,
 }
 
 impl  PartialEq for Type {
@@ -229,19 +231,16 @@ impl TypeInfo {
   pub fn new(module_id : ModuleId) -> TypeInfo {
     TypeInfo {
       type_defs: HashMap::new(),
-      functions: vec![],
-      globals: HashMap::new(),
+      globals: vec![],
+      poly_functions: vec![],
       module_id,
     }
   }
 
-  pub fn find_global(&self, name : &str, results : &mut Vec<SymbolDef>) {
-    if let Some(g) = self.globals.get(name) {
-      results.push(SymbolDef::Glob(*g));
-    }
-    for f in self.functions.iter() {
-      if f.name_in_code.as_ref() == name {
-        results.push(SymbolDef::Fun(*f));
+  pub fn find_global(&self, name : &str, results : &mut Vec<Ap<GlobalDefinition>>) {
+    for g in self.globals.iter() {
+      if g.name.as_ref() == name {
+        results.push(*g);
       }
     }
   }
@@ -260,28 +259,22 @@ impl TypeInfo {
     results : &mut Vec<ConcreteFunction>,
   )
   {
-    if let Some(def) = self.globals.get(name) {
+    let r = self.globals.iter().find_map(|def| {
       if let Type::Fun(sig) = def.type_tag {
-        if args == sig.args.as_ref() {
-          let def = SymbolDef::Glob(*def);
-          results.push(ConcreteFunction { def, concrete_signature: sig });
+        if def.name.as_ref() == name && args == sig.args.as_ref() {
+          return Some((*def, sig));
         }
       }
-    }
-    let r = self.functions.iter().find(|def| {
-      def.generics.is_empty() && def.name_in_code.as_ref() == name && {
-        args == def.signature.args.as_ref()
-      }
+      None
     });
-    if let Some(def) = r {
-      let concrete_signature = def.signature;
-      let def = SymbolDef::Fun(*def);
+    if let Some((def, sig)) = r {
+      let concrete_signature = sig;
       results.push(ConcreteFunction { def, concrete_signature });
     }
     else {
-      let r = self.functions.iter().find(|def| {
-        (!def.generics.is_empty()) && def.name_in_code.as_ref() == name && {
-          let matched = generic_match_sig(generics, args, def, &def.signature);
+      let r = self.poly_functions.iter().find(|def| {
+        def.global.name.as_ref() == name && {
+          let matched = generic_match_sig(generics, args, def, &def.poly_signature);
           if !matched {
             generics.clear();
           }
@@ -290,7 +283,7 @@ impl TypeInfo {
       });
       if let Some(def) = r {
         let concrete_signature = concrete_signature(arena, gen, def, generics);
-        let def = SymbolDef::Fun(*def);
+        let def = def.global;
         results.push(ConcreteFunction { def, concrete_signature });
       }
     }
@@ -298,8 +291,8 @@ impl TypeInfo {
 }
 
 
-fn concrete_signature(arena : &Arena, gen : &mut UIDGenerator, def : &FunctionDefinition, generic_map : &mut HashMap<GenericId, Type>) -> Ap<FunctionSignature> {
-  let sig = def.signature;
+fn concrete_signature(arena : &Arena, gen : &mut UIDGenerator, def : &PolyFunctionDef, generic_map : &mut HashMap<GenericId, Type>) -> Ap<FunctionSignature> {
+  let sig = def.poly_signature;
   let mut args = arena.alloc_slice_mut(sig.args.as_ref());
   for t in args.iter_mut() {
     *t = generic_replace(arena, generic_map, gen, *t);
@@ -330,7 +323,7 @@ fn generic_replace(arena : &Arena, generics : &HashMap<GenericId, Type>, gen : &
 
 fn generic_match_sig(
   generics : &mut HashMap<GenericId, Type>, args : &[Type],
-  def : &FunctionDefinition, sig : &FunctionSignature)
+  def : &PolyFunctionDef, sig : &FunctionSignature)
     -> bool
 {
   args.len() == sig.args.len() && {
@@ -361,15 +354,15 @@ fn generic_match(generics : &mut HashMap<GenericId, Type>, t : Type, gt : Type) 
   generic_match(generics, *t, *gt)
 }
 
-#[derive(Copy, Clone)]
-pub enum SymbolDef {
-  Fun(Ap<FunctionDefinition>),
-  Glob(Ap<GlobalDefinition>),
-}
+// #[derive(Copy, Clone)]
+// pub enum SymbolDef {
+//   Fun(Ap<FunctionDefinition>),
+//   Glob(Ap<GlobalDefinition>),
+// }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct ConcreteFunction {
-  pub def : SymbolDef,
+  pub def : Ap<GlobalDefinition>,
   pub concrete_signature : Ap<FunctionSignature>,
 }
 
@@ -381,7 +374,7 @@ pub struct TypeDirectory<'a> {
   new_module : &'a mut TypeInfo,
   generic_bindings : HashMap<GenericId, Type>,
   function_results : Vec<ConcreteFunction>,
-  global_results : Vec<SymbolDef>,
+  global_results : Vec<Ap<GlobalDefinition>>,
 }
 
 impl <'a> TypeDirectory<'a> {
@@ -403,21 +396,10 @@ impl <'a> TypeDirectory<'a> {
   }
 
   pub fn create_global(&mut self, def : Ap<GlobalDefinition>) {
-    self.new_module.globals.insert(def.name, def);
+    self.new_module.globals.push(def);
   }
 
-  pub fn create_function(&mut self, def : Ap<FunctionDefinition>) {
-    self.new_module.functions.push(def);
-  }
-
-  pub fn find_global_local(&mut self, name : &str) -> &[SymbolDef]
-  {
-    self.global_results.clear();
-    self.new_module.find_global(name, &mut self.global_results);
-    self.global_results.as_slice()
-  }
-
-  pub fn find_global(&mut self, name : &str) -> &[SymbolDef]
+  pub fn find_global(&mut self, name : &str) -> &[Ap<GlobalDefinition>]
   {
     self.global_results.clear();
     self.new_module.find_global(name, &mut self.global_results);
@@ -430,19 +412,6 @@ impl <'a> TypeDirectory<'a> {
   pub fn find_type_def(&self, name : &str) -> Option<Ap<TypeDefinition>> {
     self.new_module.find_type_def(name).or_else(||
       self.import_types.iter().rev().flat_map(|m| m.find_type_def(name)).next())
-  }
-
-  /// Return true if a local symbol already has this name and a matching argument list
-  pub fn find_function_local(
-    &mut self,
-    name : &str, args : &[Type],
-    arena : &Arena, gen : &mut UIDGenerator, 
-  ) -> &[ConcreteFunction]
-  {
-    self.generic_bindings.clear();
-    self.function_results.clear();
-    self.new_module.find_function(name, args, arena, gen, &mut self.generic_bindings, &mut self.function_results);
-    self.function_results.as_slice()
   }
 
   /// Returns a slice of all matching definitions.

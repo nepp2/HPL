@@ -65,7 +65,7 @@ impl Arena {
     }
   }
 
-  pub fn alloc<T>(&self, val : T) -> Ap<T> {
+  pub fn alloc<T : Copy>(&self, val : T) -> Ap<T> {
     self.alloc_ap(self.bump.alloc(val))
   }
 
@@ -83,7 +83,7 @@ impl Arena {
     ApMut { ap }
   }
 
-  pub fn alloc_mut<T>(&self, val : T) -> ApMut<T> {
+  pub fn alloc_mut<T : Copy>(&self, val : T) -> ApMut<T> {
     self.alloc_ap_mut(self.alloc(val))
   }
 

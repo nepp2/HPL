@@ -6,11 +6,10 @@ use crate::expr::RefStr;
 
 use crate::structure::{
   Node, NodeId, Nodes, Content, Val, TypeKind, SymbolId,
-  Symbol, LabelId, NodeValueType, FunctionNode, VarScope,
-  GlobalType };
+  LabelId, NodeValueType, FunctionNode, VarScope };
 use crate::types::{
-  Type, PType, TypeDefinition, FunctionDefinition, SymbolDef,
-  ModuleId, FunctionImplementation, GlobalDefinition, TypeInfo };
+  Type, PType, TypeDefinition, GlobalInit, Symbol,
+  ModuleId, GlobalDefinition, TypeInfo };
 use crate::inference::CodegenInfo;
 use crate::modules::CompiledModule;
 use crate::arena::Ap;
@@ -279,18 +278,13 @@ impl <'l> TypedNode<'l> {
     self.info.cg.sizeof_info.get(&self.node.id).cloned()
   }
 
-  fn node_symbol_def(&self) -> Option<SymbolDef> {
+  fn node_symbol_def(&self) -> Option<Ap<GlobalDefinition>> {
     self.info.cg.symbol_references.get(&self.node.id).cloned()
   }
 
   fn is_intrinsic_function(&self) -> bool {
     self.info.cg.symbol_references.get(&self.node.id)
-    .map(|def| match def {
-      SymbolDef::Fun(def) =>
-        if let FunctionImplementation::Intrinsic = def.implementation { true }
-        else { false },
-      _ => false
-    })
+    .map(|def| if let GlobalInit::Intrinsic = def.initialiser { true } else { false })
     .unwrap_or(false)
   }
 }
@@ -331,47 +325,44 @@ impl <'l> Gen<'l> {
 
   /// Code-generates a module, returning a reference to the top-level function in the module
   pub fn codegen_module(mut self, info : &'l CompileInfo) -> Result<(), Error> {
-    // declare the local globals
-    for (name, def) in info.t.globals.iter() {
+    // declare the globals and functions
+    let mut functions_to_codegen = vec!();
+    for def in info.t.globals.iter() {
       let t = self.to_basic_type(info, def.type_tag).unwrap();
-      match def.global_type {
-        GlobalType::CBind => {
-          let gv = self.module.add_global(t, Some(AddressSpace::Generic), &name);
-          let address = self.get_c_symbol_address(def.loc, name)?;
-          self.globals_to_link.push((gv, address));
+      match def.initialiser {
+        GlobalInit::CBind => {
+          if let Some(sig) = def.signature() {
+            let f = self.codegen_prototype(info, def.name.as_ref(), sig.return_type, None, &sig.args);
+            let address = self.get_c_symbol_address(def.loc, &def.name)?;
+            self.functions_to_link.push((f, address));
+          }
+          else {
+            let gv = self.module.add_global(t, Some(AddressSpace::Generic), &def.name);
+            let address = self.get_c_symbol_address(def.loc, &def.name)?;
+            self.globals_to_link.push((gv, address));
+          }
         }
-        GlobalType::Normal => {
-          self.add_global(const_zero(t), false, &name);
+        GlobalInit::Expression(_node) => {
+          self.add_global(const_zero(t), false, &def.name);
           let aaa = (); // Do static initialisation where possible
           // let v = self.codegen_static(info.typed_node(node_id))?;
           // self.add_global(v, false, &name);
         }
-      }
-    }
-
-    // generate the prototypes first (so the functions find each other)
-    let mut functions_to_codegen = vec!();
-    for def in info.t.functions.iter() {
-      let sig = def.signature;
-      match &def.implementation {
-        FunctionImplementation::Normal{ body, name_for_codegen, args } => {
-          let f = self.codegen_prototype(
-            info, name_for_codegen.as_ref(), sig.return_type,
-            Some(args.as_slice()), sig.args.as_ref());
-          functions_to_codegen.push((f, args.as_ref(), *body));
+        GlobalInit::Function(init) => {
+          let sig = def.signature().unwrap();
+          let f =
+            self.codegen_prototype(
+              info, init.name_for_codegen.as_ref(), sig.return_type,
+              Some(&init.args), sig.args.as_ref());
+          functions_to_codegen.push((f, init.args, init.body));
         }
-        FunctionImplementation::CFunction => {
-          let f = self.codegen_prototype(info, def.name_in_code.as_ref(), sig.return_type, None, &sig.args);
-          let address = self.get_c_symbol_address(def.loc, &def.name_in_code)?;
-          self.functions_to_link.push((f, address));
-        }
-        _ => (),
+        GlobalInit::Intrinsic => (),
       }
     }
 
     // codegen the functions
     for (p, args, body) in functions_to_codegen {
-      self.codegen_function(p, info.typed_node(body), args)?;
+      self.codegen_function(p, info.typed_node(body), &args)?;
     }
 
     Ok(())
@@ -427,7 +418,7 @@ impl <'l> Gen<'l> {
 
       // set function parameters
       for (arg_value, arg_symbol) in function.get_param_iter().zip(args) {
-        genf.init_local_var(arg_symbol, arg_value);
+        genf.init_local_var(arg_symbol.id, &arg_symbol.name, arg_value);
       }
 
       // compile body and emit return
@@ -852,23 +843,23 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     pointer
   }
 
-  fn init_local_var(&mut self, var : &Symbol, value : BasicValueEnum) {
-    let pointer = self.create_entry_block_alloca(value.get_type(), &var.name);
+  fn init_local_var(&mut self, var_id : SymbolId, name: &str, value : BasicValueEnum) {
+    let pointer = self.create_entry_block_alloca(value.get_type(), name);
     self.builder.build_store(pointer, value);
-    self.add_var_pointer_to_scope(var, pointer);
+    self.add_var_pointer_to_scope(var_id, pointer);
   }
 
-  fn init_global_var(&mut self, var : &Symbol, value : BasicValueEnum) {
-    let gv = self.gen.module.get_global(&var.name).unwrap();
+  fn init_global_var(&mut self, name : &str, value : BasicValueEnum) {
+    let gv = self.gen.module.get_global(name).unwrap();
     let pointer = gv.as_pointer_value();
     self.builder.build_store(pointer, value);
   }
 
-  fn add_var_pointer_to_scope(&mut self, var : &Symbol, pointer : PointerValue) {
-    if self.variables.contains_key(&var.id) { 
+  fn add_var_pointer_to_scope(&mut self, id : SymbolId, pointer : PointerValue) {
+    if self.variables.contains_key(&id) { 
       panic!("variable initialised twice!");
     }
-    self.variables.insert(var.id, pointer);
+    self.variables.insert(id, pointer);
   }
 
   fn codegen_value(&mut self, n : TypedNode) -> Result<BasicValueEnum, Error> {
@@ -1118,15 +1109,37 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     Ok(reg(self.codegen_address_of_genval(v)?.into()))
   }
 
-  fn get_linked_symbol_value(&mut self, info: &CompileInfo, def : SymbolDef) -> GenVal {
-    match def {
-      SymbolDef::Fun(def) => {
-        let fv = self.get_linked_function_reference(info, &def);
+  /// ensure necessary definitions are inserted and linking operations performed when a global is referenced
+  fn get_linked_global_value(&mut self, info: &CompileInfo, def : &GlobalDefinition) -> GenVal {
+    match def.initialiser {
+      GlobalInit::Expression(_) => {
+        let gv = self.get_linked_global_reference(info, def);
+        pointer(gv.as_pointer_value())
+      }
+      GlobalInit::Function(_) => {
+        let fv = self.get_linked_function_reference(info, def);
         reg(fv.as_global_value().as_pointer_value().into())
       }
-      SymbolDef::Glob(def) => {
-        let gv = self.get_linked_global_reference(info, &def);
-        pointer(gv.as_pointer_value())
+      GlobalInit::CBind => {
+        if let Some(sig) = def.signature() {
+          let fv = if let Some(local_f) = self.gen.module.get_function(&def.name) {
+            local_f
+          }
+          else {
+            let f = self.gen.codegen_prototype(info, &def.name, sig.return_type, None, &sig.args);
+            let address = self.gen.get_c_symbol_address(def.loc, &def.name).unwrap();
+            self.gen.functions_to_link.push((f, address));
+            f
+          };
+          reg(fv.as_global_value().as_pointer_value().into())
+        }
+        else {
+          let gv = self.get_linked_global_reference(info, def);
+          pointer(gv.as_pointer_value())
+        }
+      }
+      GlobalInit::Intrinsic => {
+        panic!("cannot get reference to intrinsic");
       }
     }
   }
@@ -1151,36 +1164,22 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     }
   }
 
-  /// ensure necessary definitions are inserted and linking operations performed when a function is referenced
-  fn get_linked_function_reference(&mut self, info : &CompileInfo, def : &FunctionDefinition) -> FunctionValue {
-    let sig = def.signature;
-    match &def.implementation {
-      FunctionImplementation::Normal { name_for_codegen, args, .. } => {
+  fn get_linked_function_reference(&mut self, info: &CompileInfo, def : &GlobalDefinition) -> FunctionValue {
+    match def.initialiser {
+      GlobalInit::Function(init) => {
         if def.module_id == info.t.module_id {
-          self.gen.module.get_function(name_for_codegen)
+          self.gen.module.get_function(&init.name_for_codegen)
             .expect("expected local function!")
         }
         else {
-          let f = self.gen.codegen_prototype(info, name_for_codegen, sig.return_type, Some(args), &sig.args);
-          let address = info.find_function_address(def.module_id, name_for_codegen);
+          let sig = def.signature().unwrap();
+          let f = self.gen.codegen_prototype(info, &init.name_for_codegen, sig.return_type, Some(&init.args), &sig.args);
+          let address = info.find_function_address(def.module_id, &init.name_for_codegen);
           self.gen.functions_to_link.push((f, address));
           f
         }
       }
-      FunctionImplementation::CFunction => {
-        if let Some(local_f) = self.gen.module.get_function(&def.name_in_code) {
-          local_f
-        }
-        else {
-          let f = self.gen.codegen_prototype(info, &def.name_in_code, sig.return_type, None, &sig.args);
-          let address = self.gen.get_c_symbol_address(def.loc, &def.name_in_code).unwrap();
-          self.gen.functions_to_link.push((f, address));
-          f
-        }
-      }
-      FunctionImplementation::Intrinsic => {
-        panic!("cannot get reference to intrinsic");
-      }
+      _ => panic!("expected function initialiser"),
     }
   }
 
@@ -1215,7 +1214,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
       },
       FunctionNode::Name(_) => {
         let def = node.node_symbol_def().expect("missing symbol reference!");
-        let v = self.get_linked_symbol_value(node.info, def);
+        let v = self.get_linked_global_value(node.info, &def);
         *self.genval_to_register(v).as_pointer_value()
       }
     };
@@ -1232,7 +1231,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     if let Type::Def(name) = t {
       let def = info.find_type_def(&name).unwrap();
       if let Some(drop) = def.drop_function {
-        return Some(self.get_linked_function_reference(info, &drop));
+        return Some(self.get_linked_function_reference(info, &drop.def));
       }
     }
     None
@@ -1242,7 +1241,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     if let Type::Def(name) = t {
       let def = info.find_type_def(&name).unwrap();
       if let Some(clone) = def.clone_function {
-        return Some(self.get_linked_function_reference(info, &clone));
+        return Some(self.get_linked_function_reference(info, &clone.def));
       }
     }
     None
@@ -1482,7 +1481,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
           TypeKind::Struct => {
             let (field_index, _) =
               def.fields.iter().enumerate()
-              .find(|(_, (n, _))| n.name == field.name).unwrap();
+              .find(|(_, (n, _))| n.name.as_ref() == field.name.as_ref()).unwrap();
             match v.storage {
               Storage::Register => {
                 // if the struct is in a register, dereference the field into a register
@@ -1594,14 +1593,13 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         match var_scope {
           VarScope::Local => {
             let v = self.codegen_value(value)?;
-            self.init_local_var(name, v);
+            self.init_local_var(name.id, &name.name, v);
           }
           VarScope::Global(_) => {
             let aaa = (); // THIS SHOULDN'T HAPPEN FOR CONST GLOBALS
             let v = self.codegen_value(value)?;
-            self.init_global_var(name, v);
+            self.init_global_var(&name.name, v);
           }
-          _ => (),
         }
         return Ok(Void);
       }
@@ -1610,7 +1608,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
           pointer(*ptr)
         }
         else if let Some(def) = node.node_symbol_def() {
-          self.get_linked_symbol_value(info, def)
+          self.get_linked_global_value(info, &def)
         }
         else {
           panic!("no value found for reference!");

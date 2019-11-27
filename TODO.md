@@ -38,11 +38,11 @@ Finally, I could fix it by re-introducing function call constraints where releva
 ## A list of stuff to fix
 
 - ~~Get rid of the checks on unresolved symbols~~
+- Merge all symbols into one kind
 - Do overload checks first. Then look for polymorphic variants.
 - Do overload matches on return types too, using the "unknown" Type
 - Reintroduce function call/global constraints when new symbols are resolved
 - Turn index operations into function calls properly
-- Merge all symbols into one kind
 - Make sure that the equivalence constraints hang around.
 
 # THOUGHTS - 25/11/2019
