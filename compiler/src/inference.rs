@@ -214,12 +214,12 @@ impl <'a> Inference<'a> {
           let arg_types : Vec<_> =
             args.iter().map(|(_, ts)| self.get_type(*ts).unwrap_or(Type::Unknown)).collect();
           let symbols = self.t.find_global(&sym.name);
-          error_raw(loc, format!("function call {}({}) not resolved,\n{}\n\n",
+          error_raw(loc, format!("function call {}({}) not resolved.\n   Symbols available:\n{}",
             sym.name,
             arg_types.iter().join(", "),
             symbols.iter().map(|s| match s {
-              SymbolDef::Fun(f) => format!("fun - {} : {}", f.name_in_code, Type::Fun(f.signature)),
-              SymbolDef::Glob(g) => format!("glob - {} : {}", g.name, &g.type_tag),
+              SymbolDef::Fun(f) => format!("      fun - {} : {}", f.name_in_code, Type::Fun(f.signature)),
+              SymbolDef::Glob(g) => format!("      glob - {} : {}", g.name, &g.type_tag),
             }).join("\n")))
         }
         else {
@@ -809,8 +809,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
       Content::VariableInitialise{ name, type_tag, value, var_scope } => {
         self.assert(ts, PType::Void);
         let var_type_symbol = match var_scope {
-          VarScope::Local | VarScope::Global(GlobalType::Repl) =>
-            self.variable_to_type_symbol(name),
+          VarScope::Local => self.variable_to_type_symbol(name),
           VarScope::Global(_) => self.type_symbol(name.loc),
         };
         self.tagged_symbol(var_type_symbol, type_tag);

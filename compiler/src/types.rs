@@ -72,11 +72,23 @@ pub struct TypeDefinition {
 }
 
 #[derive(Debug, Clone)]
+pub enum GlobalInitialiser {
+  Function{ body: NodeId, name_for_codegen: Ap<str>, args : Vec<Symbol> },
+  Expression(NodeId),
+  Intrinsic,
+  CBind,
+}
+
+#[derive(Debug, Clone)]
 pub enum FunctionImplementation {
   Normal{body: NodeId, name_for_codegen: Ap<str>, args : Vec<Symbol> },
   CFunction,
   Intrinsic,
 }
+
+/// TODO: This is a messy way of supporting REPL functionality.
+// #[derive(Debug, Clone, Copy, PartialEq)]
+// pub enum GlobalType { Static(NodeId), Repl, CBind }
 
 #[derive(Debug, Clone)]
 pub struct FunctionDefinition {
@@ -112,6 +124,18 @@ pub struct GlobalDefinition {
   pub type_tag : Type,
   pub global_type : GlobalType,
   pub loc : TextLocation,
+}
+
+#[derive(Clone)]
+pub struct GlobalDefinition2 {
+  pub module_id : ModuleId,
+  pub name : Ap<str>,
+  pub type_tag : Type,
+  pub global_type : GlobalType,
+  pub loc : TextLocation,
+
+  pub generics : Vec<GenericId>,
+  pub implementation : FunctionImplementation,
 }
 
 impl  PartialEq for Type {
@@ -211,11 +235,9 @@ impl TypeInfo {
     }
   }
 
-  pub fn find_global(&self, name : &str, skip_repl_globals : bool, results : &mut Vec<SymbolDef>) {
+  pub fn find_global(&self, name : &str, results : &mut Vec<SymbolDef>) {
     if let Some(g) = self.globals.get(name) {
-      if !(skip_repl_globals && g.global_type == GlobalType::Repl) {
-        results.push(SymbolDef::Glob(*g));
-      }
+      results.push(SymbolDef::Glob(*g));
     }
     for f in self.functions.iter() {
       if f.name_in_code.as_ref() == name {
@@ -232,7 +254,6 @@ impl TypeInfo {
     &self,
     name : &str,
     args : &[Type],
-    skip_repl_globals : bool,
     arena : &Arena,
     gen : &mut UIDGenerator, 
     generics : &mut HashMap<GenericId, Type>,
@@ -240,12 +261,10 @@ impl TypeInfo {
   )
   {
     if let Some(def) = self.globals.get(name) {
-      if !(skip_repl_globals && def.global_type == GlobalType::Repl) {
-        if let Type::Fun(sig) = def.type_tag {
-          if args == sig.args.as_ref() {
-            let def = SymbolDef::Glob(*def);
-            results.push(ConcreteFunction { def, concrete_signature: sig });
-          }
+      if let Type::Fun(sig) = def.type_tag {
+        if args == sig.args.as_ref() {
+          let def = SymbolDef::Glob(*def);
+          results.push(ConcreteFunction { def, concrete_signature: sig });
         }
       }
     }
@@ -394,16 +413,16 @@ impl <'a> TypeDirectory<'a> {
   pub fn find_global_local(&mut self, name : &str) -> &[SymbolDef]
   {
     self.global_results.clear();
-    self.new_module.find_global(name, true, &mut self.global_results);
+    self.new_module.find_global(name, &mut self.global_results);
     self.global_results.as_slice()
   }
 
   pub fn find_global(&mut self, name : &str) -> &[SymbolDef]
   {
     self.global_results.clear();
-    self.new_module.find_global(name, true, &mut self.global_results);
+    self.new_module.find_global(name, &mut self.global_results);
     for m in self.import_types.iter().rev() {
-      m.find_global(name, false, &mut self.global_results);
+      m.find_global(name, &mut self.global_results);
     }
     self.global_results.as_slice()
   }
@@ -422,7 +441,7 @@ impl <'a> TypeDirectory<'a> {
   {
     self.generic_bindings.clear();
     self.function_results.clear();
-    self.new_module.find_function(name, args, true, arena, gen, &mut self.generic_bindings, &mut self.function_results);
+    self.new_module.find_function(name, args, arena, gen, &mut self.generic_bindings, &mut self.function_results);
     self.function_results.as_slice()
   }
 
@@ -435,9 +454,9 @@ impl <'a> TypeDirectory<'a> {
   {
     self.generic_bindings.clear();
     self.function_results.clear();
-    self.new_module.find_function(name, args, true, arena, gen, &mut self.generic_bindings, &mut self.function_results);
+    self.new_module.find_function(name, args, arena, gen, &mut self.generic_bindings, &mut self.function_results);
     for m in self.import_types.iter().rev() {
-      m.find_function(name, args, false, arena, gen, &mut self.generic_bindings, &mut self.function_results);
+      m.find_function(name, args, arena, gen, &mut self.generic_bindings, &mut self.function_results);
     }
     self.function_results.as_slice()
   }

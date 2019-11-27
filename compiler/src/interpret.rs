@@ -35,7 +35,7 @@ impl Interpreter {
 
   pub fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
     let imports : Vec<_> = self.compiled_modules.iter().collect();
-    let (m, val) = self.c.load_module(imports.as_slice(), expr)?;
+    let (m, val) = self.c.interpret_expression(imports.as_slice(), expr)?;
     self.compiled_modules.push(m);
     Ok(val)
   }
@@ -45,7 +45,7 @@ impl Interpreter {
     self.run_expression(&expr)
   }
 
-  pub fn load_module(&mut self, code : &str) -> Result<(), Error> {
+  fn load_module(&mut self, code : &str) -> Result<(), Error> {
     self.run(code)?;
     Ok(())
   }

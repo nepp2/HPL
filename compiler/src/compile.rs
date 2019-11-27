@@ -45,7 +45,7 @@ fn execute<T>(function_name : &str, ee : &ExecutionEngine) -> T {
 pub fn run_program(code : &str) -> Result<Val, Error> {
   let mut c = Compiler::new();
   let expr = c.parse(code)?;
-  let m = c.compile_module(&[], &expr)?;
+  let m = c.compile_module(&[], &expr, false)?;
   run_top_level(&m)
 }
 
@@ -94,18 +94,26 @@ impl Compiler {
   pub fn load_module<'a>(&mut self, imports : &[&CompiledModule], expr : &Expr)
     -> Result<(CompiledModule, Val), Error>
   {
-    let m = self.compile_module(imports, &expr)?;
+    let m = self.compile_module(imports, &expr, false)?;
     let val = run_top_level(&m)?;
     Ok((m, val))
   }
 
-  pub fn compile_module(&mut self, imports : &[&CompiledModule], expr : &Expr)
+  pub fn interpret_expression<'a>(&mut self, imports : &[&CompiledModule], expr : &Expr)
+    -> Result<(CompiledModule, Val), Error>
+  {
+    let m = self.compile_module(imports, &expr, true)?;
+    let val = run_top_level(&m)?;
+    Ok((m, val))
+  }
+
+  fn compile_module(&mut self, imports : &[&CompiledModule], expr : &Expr, repl_enabled : bool)
     -> Result<CompiledModule, Error>
   {
     if DEBUG_PRINTING_EXPRS {
       println!("{}", expr);
     }
-    let nodes = structure::to_nodes(&mut self.gen, &self.cache, &expr)?;
+    let nodes = structure::to_nodes(&mut self.gen, &self.cache, &expr, repl_enabled)?;
 
     let mut import_types = vec![&self.intrinsics.t];
     import_types.extend(imports.iter().map(|m| &m.t));
@@ -214,7 +222,7 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
   }
 
   let expr = parse(cache, "").unwrap();
-  let nodes = structure::to_nodes(gen, cache, &expr).unwrap();
+  let nodes = structure::to_nodes(gen, cache, &expr, false).unwrap();
 
   let arena = Arena::new();
   let id = gen.next().into();

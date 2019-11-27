@@ -340,12 +340,11 @@ impl <'l> Gen<'l> {
           let address = self.get_c_symbol_address(def.loc, name)?;
           self.globals_to_link.push((gv, address));
         }
-        GlobalType::Repl => {
+        GlobalType::Normal => {
           self.add_global(const_zero(t), false, &name);
-        }
-        GlobalType::Static(node_id) => {
-          let v = self.codegen_static(info.typed_node(node_id))?;
-          self.add_global(v, false, &name);
+          let aaa = (); // Do static initialisation where possible
+          // let v = self.codegen_static(info.typed_node(node_id))?;
+          // self.add_global(v, false, &name);
         }
       }
     }
@@ -859,11 +858,10 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     self.add_var_pointer_to_scope(var, pointer);
   }
 
-  fn init_repl_var(&mut self, var : &Symbol, value : BasicValueEnum) {
+  fn init_global_var(&mut self, var : &Symbol, value : BasicValueEnum) {
     let gv = self.gen.module.get_global(&var.name).unwrap();
     let pointer = gv.as_pointer_value();
     self.builder.build_store(pointer, value);
-    self.add_var_pointer_to_scope(var, pointer);
   }
 
   fn add_var_pointer_to_scope(&mut self, var : &Symbol, pointer : PointerValue) {
@@ -911,7 +909,6 @@ impl <'l, 'a> GenFunction<'l, 'a> {
 
   fn codegen_expression_to_register(&mut self, n : TypedNode) -> Result<Option<BasicValueEnum>, Error> {
     let v = self.codegen_expression(n)?;
-    println!("\n{:?}", n.content());
     Ok(self.maybeval_to_register(v))
   }
 
@@ -928,7 +925,6 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     match v.storage {
       Storage::Pointer => {
         let ptr = *v.value.as_pointer_value();
-        println!("{:?}", ptr);
         self.builder.build_load(ptr, "stack_value")
       }
       Storage::Register => {
@@ -1600,9 +1596,10 @@ impl <'l, 'a> GenFunction<'l, 'a> {
             let v = self.codegen_value(value)?;
             self.init_local_var(name, v);
           }
-          VarScope::Global(GlobalType::Repl) => {
+          VarScope::Global(_) => {
+            let aaa = (); // THIS SHOULDN'T HAPPEN FOR CONST GLOBALS
             let v = self.codegen_value(value)?;
-            self.init_repl_var(name, v);
+            self.init_global_var(name, v);
           }
           _ => (),
         }
