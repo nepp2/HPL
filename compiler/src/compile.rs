@@ -29,7 +29,7 @@ use llvm_sys::support::LLVMLoadLibraryPermanently;
 static mut LOADED_SYMBOLS : bool = false;
 
 // TODO: Put these options somewhere more sensible
-static DEBUG_PRINTING_EXPRS : bool = false;
+static DEBUG_PRINTING_EXPRS : bool = true;
 static DEBUG_PRINTING_IR : bool = false;
 static ENABLE_IR_OPTIMISATION : bool = false;
 

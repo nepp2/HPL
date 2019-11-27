@@ -911,24 +911,29 @@ impl <'l, 'a> GenFunction<'l, 'a> {
 
   fn codegen_expression_to_register(&mut self, n : TypedNode) -> Result<Option<BasicValueEnum>, Error> {
     let v = self.codegen_expression(n)?;
-    Ok(self.genval_to_register(v))
+    println!("\n{:?}", n.content());
+    Ok(self.maybeval_to_register(v))
   }
 
-  fn genval_to_register(&mut self, v : MaybeVal) -> Option<BasicValueEnum> {
+  fn maybeval_to_register(&mut self, v : MaybeVal) -> Option<BasicValueEnum> {
     if let IsVal(v) = v {
-      let reg_val = match v.storage {
-        Storage::Pointer => {
-          let ptr = *v.value.as_pointer_value();
-          self.builder.build_load(ptr, "stack_value")
-        }
-        Storage::Register => {
-          v.value
-        }
-      };
-      Some(reg_val)
+      Some(self.genval_to_register(v))
     }
     else {
       None
+    }
+  }
+
+  fn genval_to_register(&mut self, v : GenVal) -> BasicValueEnum {
+    match v.storage {
+      Storage::Pointer => {
+        let ptr = *v.value.as_pointer_value();
+        println!("{:?}", ptr);
+        self.builder.build_load(ptr, "stack_value")
+      }
+      Storage::Register => {
+        v.value
+      }
     }
   }
 
@@ -1117,13 +1122,15 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     Ok(reg(self.codegen_address_of_genval(v)?.into()))
   }
 
-  fn get_linked_symbol_reference(&mut self, info: &CompileInfo, def : SymbolDef) -> GlobalValue {
+  fn get_linked_symbol_value(&mut self, info: &CompileInfo, def : SymbolDef) -> GenVal {
     match def {
       SymbolDef::Fun(def) => {
-        self.get_linked_function_reference(info, &def).as_global_value()
+        let fv = self.get_linked_function_reference(info, &def);
+        reg(fv.as_global_value().as_pointer_value().into())
       }
       SymbolDef::Glob(def) => {
-        self.get_linked_global_reference(info, &def)
+        let gv = self.get_linked_global_reference(info, &def);
+        pointer(gv.as_pointer_value())
       }
     }
   }
@@ -1212,7 +1219,8 @@ impl <'l, 'a> GenFunction<'l, 'a> {
       },
       FunctionNode::Name(_) => {
         let def = node.node_symbol_def().expect("missing symbol reference!");
-        self.get_linked_symbol_reference(node.info, def).as_pointer_value()
+        let v = self.get_linked_symbol_value(node.info, def);
+        *self.genval_to_register(v).as_pointer_value()
       }
     };
     let mut arg_vals = vec!();
@@ -1581,7 +1589,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         }
         // TODO: this is very inefficient when assigning large structs. Can optimise
         // by detecting pointers and using the memcopy intrinsic
-        let reg_val = self.genval_to_register(val).unwrap();
+        let reg_val = self.maybeval_to_register(val).unwrap();
         self.builder.build_store(assign_ptr, reg_val);
         return Ok(Void);
       }
@@ -1605,8 +1613,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
           pointer(*ptr)
         }
         else if let Some(def) = node.node_symbol_def() {
-          let gv = self.get_linked_symbol_reference(info, def);
-          pointer(gv.as_pointer_value())
+          self.get_linked_symbol_value(info, def)
         }
         else {
           panic!("no value found for reference!");
@@ -1617,7 +1624,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         let v = return_value.as_ref().map(|n| {
           let n = node.get(*n);
           let v = self.codegen_owned_expression(n)?;
-          Ok(self.genval_to_register(v))
+          Ok(self.maybeval_to_register(v))
         }).unwrap_or(Ok(None))?;
         let label_state = self.labels_in_scope.iter_mut().find(|(l, _)| l == label);
         if let Some((_, label_state)) = label_state {
