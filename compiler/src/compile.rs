@@ -260,8 +260,16 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
   {
     let gid = gen.next().into();
     let gt = Type::Generic(gid);
-    let gptr = Type::Ptr(arena.alloc(gt));
-    add_generic_intrinsic(&arena, id, &mut ti, "Index", &[gptr], gt, &[gid]);
+    let gcontainer = Type::Ptr(arena.alloc(gt));
+    let args = &[gcontainer, Type::Prim(PType::I64)];
+    add_generic_intrinsic(&arena, id, &mut ti, "Index", args, gt, &[gid]);
+  }
+  {
+    let gid = gen.next().into();
+    let gt = Type::Generic(gid);
+    let gcontainer = Type::Array(arena.alloc(gt));
+    let args = &[gcontainer, Type::Prim(PType::I64)];
+    add_generic_intrinsic(&arena, id, &mut ti, "Index", args, gt, &[gid]);
   }
   {
     let gid = gen.next().into();

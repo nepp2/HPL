@@ -67,7 +67,6 @@ pub enum Content {
   TypeDefinition{ name: RefStr, kind : TypeKind, fields: Vec<(Symbol, Option<Box<Expr>>)> },
   TypeConstructor{ name: RefStr, field_values: Vec<(Option<Symbol>, NodeId)> },
   FieldAccess{ container: NodeId, field: Symbol },
-  Index{ container: NodeId, index: NodeId },
   ArrayLiteral(Vec<NodeId>),
   FunctionCall{ function: FunctionNode, args: Vec<NodeId> },
   While{ condition: NodeId, body: NodeId },
@@ -82,7 +81,7 @@ impl Content {
   pub fn node_value_type(&self) -> NodeValueType {
     match self {
       FieldAccess{..} | Reference{..} |
-      Index{..} | Literal(_) | Quote(_)
+      Literal(_) | Quote(_)
         => NodeValueType::Ref,
       Block(_) | FunctionCall{..} |
       IfThenElse{..} | TypeConstructor{..}
@@ -496,7 +495,9 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         if let [index_expr] = &exprs[1..] {
           let container = self.to_node(array_expr)?;
           let index = self.to_node(index_expr)?;
-          return Ok(self.node(expr, Index{ container, index }));
+          let function = FunctionNode::Name(self.t.symbol("Index", expr));
+          let c = Content::FunctionCall{ function, args: vec![container, index] };
+          return Ok(self.node(expr, c));
         }
         error(expr, "malformed array index expression")
       }

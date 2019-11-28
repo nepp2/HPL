@@ -1,5 +1,6 @@
 
 use bumpalo::Bump;
+use bumpalo::collections::Vec as BVec;
 use std::ops::{Deref, DerefMut};
 use std::fmt;
 use std::borrow;
@@ -69,6 +70,12 @@ impl Arena {
     self.alloc_ap(self.bump.alloc(val))
   }
 
+  pub fn slice_of<T : Copy>(&self, size : usize, val : T) -> ApMut<[T]> {
+    let mut v = BVec::with_capacity_in(size, &self.bump);
+    for _ in 0..size { v.push(val); }
+    ApMut { ap: self.alloc_ap(v.as_mut_slice()) }
+  }
+
   pub fn alloc_slice<T : Copy>(&self, vs : &[T]) -> Ap<[T]> {
     self.alloc_ap(self.bump.alloc_slice_copy(vs))
   }
@@ -79,16 +86,12 @@ impl Arena {
     self.alloc_ap(s)
   }
 
-  fn alloc_ap_mut<T : ?Sized>(&self, ap : Ap<T>) -> ApMut<T> {
-    ApMut { ap }
-  }
-
   pub fn alloc_mut<T : Copy>(&self, val : T) -> ApMut<T> {
-    self.alloc_ap_mut(self.alloc(val))
+    ApMut { ap: self.alloc(val) }
   }
 
   pub fn alloc_slice_mut<T : Copy>(&self, vs : &[T]) -> ApMut<[T]> {
-    self.alloc_ap_mut(self.alloc_slice(vs))
+    ApMut{ ap: self.alloc_slice(vs) }
   }
 }
 
@@ -103,6 +106,12 @@ pub struct Ap<T : ?Sized>
   arena_id : u64,
   arena_slot : usize,
   ptr : *mut T,
+}
+
+impl <T : ?Sized> Ap<T> {
+  pub fn get_mut(self) -> ApMut<T> {
+    ApMut { ap: self }
+  }
 }
 
 impl<T : ?Sized> Copy for Ap<T> {}

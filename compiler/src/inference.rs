@@ -10,7 +10,7 @@ use crate::structure::{
   GlobalType,
 };
 use crate::types::{
-  Type, PType, TypeInfo, TypeDefinition, ConcreteFunction,
+  Type, PType, TypeInfo, TypeDefinition, ConcreteGlobal,
   FunctionSignature, FunctionInit, GlobalDefinition,
   TypeDirectory, GlobalInit, Symbol,
 };
@@ -207,18 +207,18 @@ impl <'a> Inference<'a> {
               format!("{} : {}", s.name, t)
             }).join(", ")))
       }
-      Constraint::FunctionCall{ node:_, function, args, result } => {
+      Constraint::FunctionCall{ node:_, function, args, result, mut_sig:_ } => {
         let loc = self.loc(*result);
         if let Function::Name(sym) = function {
           let arg_types : Vec<_> =
             args.iter().map(|(_, ts)| self.get_type(*ts).unwrap_or(Type::Unknown)).collect();
-          let symbols = self.t.find_global(&sym.name);
+          let symbols = self.t.find_global(&sym.name, Type::Unknown, self.arena, self.gen);
           error_raw(loc,
             format!("function call {}({}) not resolved.\n   Symbols available:\n{}",
               sym.name,
               arg_types.iter().join(", "),
               symbols.iter()
-                .map(|def| format!("      {} : {}", def.name, def.type_tag))
+                .map(|g| format!("      {} : {}", g.def.name, g.concrete_type))
                 .join("\n")))
         }
         else {
@@ -247,10 +247,6 @@ impl <'a> Inference<'a> {
       Constraint::Array{ array, element:_ } => {
         error_raw(self.loc(*array), "array literal not resolved")
       }
-      Constraint::Index{ node, container:_, index:_, result:_ } => {
-        let loc = self.nodes.node(*node).loc;
-        error_raw(loc, "array access not resolved")
-      }
     };
     self.errors.push(e);
   }
@@ -259,24 +255,12 @@ impl <'a> Inference<'a> {
     self.cg.symbol_references.insert(node, def);
   }
 
-  fn find_global(&mut self, name : &str, loc : TextLocation) -> Option<Result<Ap<GlobalDefinition>, ()>> {
-    match self.t.find_global(name) {
-      [def] => Some(Ok(*def)),
+  fn find_global(&mut self, name : &str, t : Type, loc : TextLocation) -> Option<Result<ConcreteGlobal, ()>> {
+    match self.t.find_global(name, t, self.arena, self.gen) {
+      [g] => Some(Ok(*g)),
       [] => None,
       _ => {
         let s = format!("found multiple symbols matching '{}'", name);
-        self.errors.push(error_raw(loc, s));
-        Some(Err(()))
-      }
-    }
-  }
-
-  fn find_function(&mut self, name : &str, args : &[Type], loc : TextLocation) -> Option<Result<ConcreteFunction, ()>> {
-    match self.t.find_function(name, args, self.arena, self.gen) {
-      [cf] => Some(Ok(*cf)),
-      [] => None,
-      _ => {
-        let s = format!("found multiple functions matching '{}({})'", name, args.iter().join(", "));
         self.errors.push(error_raw(loc, s));
         Some(Err(()))
       }
@@ -331,32 +315,34 @@ impl <'a> Inference<'a> {
           return true;
         }
       }
-      Constraint::FunctionCall{ node, function, args, result } => {
-        let arg_types : Vec<_> =
-          args.iter().flat_map(|(_, ts)| self.get_type(*ts)).collect();
-        if arg_types.len() == args.len() {
-          match function {
-            Function::Name(sym) => {
-              if let Some(r) = self.find_function(&sym.name, arg_types.as_slice(), self.loc(*result)) {
-                if let Ok(cf) = r {
-                  self.register_def(*node, cf.def);
-                  self.set_type(*result, cf.concrete_signature.return_type);
-                }
-                return true;
+      Constraint::FunctionCall{ node, function, args, result, mut_sig } => {
+        let mut mut_args = Ap::get_mut(mut_sig.args);
+        for (i, (_, ts)) in args.iter().enumerate() {
+          mut_args[i] = self.get_type(*ts).unwrap_or(Type::Unknown);
+        }
+        Ap::get_mut(*mut_sig).return_type =
+        self.get_type(*result).unwrap_or(Type::Unknown); 
+        match function {
+          Function::Name(sym) => {
+            if let Some(r) = self.find_global(&sym.name, Type::Fun(*mut_sig), self.loc(*result)) {
+              if let Ok(g) = r {
+                self.register_def(*node, g.def);
+                self.set_type(*result, g.concrete_type.signature().unwrap().return_type);
               }
+              return true;
             }
-            Function::Value(ts) => {
-              if let Some(t) = self.get_type(*ts) {
-                if let Type::Fun(sig) = t {
-                  let rt = sig.return_type;
-                  self.set_type(*result, rt);
-                }
-                else {
-                  let e = error_raw(self.loc(*ts), "cannot call value of this type as function");
-                  self.errors.push(e);
-                }
-                return true;
+          }
+          Function::Value(ts) => {
+            if let Some(t) = self.get_type(*ts) {
+              if let Type::Fun(sig) = t {
+                let rt = sig.return_type;
+                self.set_type(*result, rt);
               }
+              else {
+                let e = error_raw(self.loc(*ts), "cannot call value of this type as function");
+                self.errors.push(e);
+              }
+              return true;
             }
           }
         }
@@ -435,46 +421,13 @@ impl <'a> Inference<'a> {
       }
       Constraint::GlobalReference { node, name, result } => {
         let loc = self.loc(*result);
-        if let Some(r) = self.find_global(&name, loc) {
-          if let Ok(def) = r {
-            self.cg.symbol_references.insert(*node, def);
-            self.set_type(*result, def.type_tag);
+        let t = self.get_type(*result).unwrap_or(Type::Unknown);
+        if let Some(r) = self.find_global(&name, t, loc) {
+          if let Ok(g) = r {
+            self.register_def(*node, g.def);
+            self.set_type(*result, g.concrete_type);
           }
           return true;
-        }
-        else if let Some(Type::Fun(sig)) = self.get_type(*result) {
-          let loc = self.loc(*result);
-          if let Some(r) = self.find_function(&name, sig.args.as_ref(), loc) {
-            if let Ok(cf) = r {
-              self.register_def(*node, cf.def);
-              self.set_type(*result, Type::Fun(cf.concrete_signature));
-            }
-            return true;
-          }
-        }
-      }
-      Constraint::Index{ node, container, index, result } => {
-        let c = self.get_type(*container);
-        let i = self.get_type(*index);
-        if let [Some(c), Some(i)] = [c, i] {
-          if i.int() {
-            let element = match c {
-                Type::Ptr(e) => Some(*e),
-                Type::Array(e) => Some(*e),
-              _ => None,
-            };
-            if let Some(element) = element {
-              self.set_type(*result, element);
-              return true;              
-            }
-          }
-          if let Some(r) = self.find_function("Index", &[c, i], self.loc(*result)) {
-            if let Ok(cf) = r {
-              self.register_def(*node, cf.def);
-              self.set_type(*result, cf.concrete_signature.return_type);
-            }
-            return true;
-          }
         }
       }
       Constraint::FieldAccess{ container, field, result } => {
@@ -599,12 +552,11 @@ pub enum Constraint {
     function : Function,
     args : Vec<(Option<SymbolId>, TypeSymbol)>,
     result : TypeSymbol,
-  },
-  Index {
-    node : NodeId,
-    container : TypeSymbol,
-    index : TypeSymbol,
-    result : TypeSymbol,
+
+    /// this just exists to prevent repeated arena allocations when trying to resolve
+    /// the function call. It's mutated a lot, which is pretty unsafe, so it shouldn't
+    /// be assigned to anything.
+    mut_sig : Ap<FunctionSignature>,
   },
   GlobalDef {
     name: Ap<str>,
@@ -934,14 +886,6 @@ impl <'l, 't> GatherConstraints<'l, 't> {
         };
         self.constraint(fa);
       }
-      Content::Index{ container, index } => {
-        let container = self.process_node(n, *container);
-        let index = self.process_node(n, *index);
-        let i = Constraint::Index {
-          node: id, container, index, result: ts,
-        };
-        self.constraint(i);
-      }
       Content::ArrayLiteral(ns) => {
         let element_ts = self.type_symbol(node.loc);
         for element in ns.iter() {
@@ -958,11 +902,16 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             Function::Value(val)
           }
         };
+        let mut_sig = FunctionSignature {
+          args: self.arena.slice_of(args.len(), Type::Unknown).into_ap(),
+          return_type: Type::Unknown,
+        };
         let fc = Constraint::FunctionCall {
           node: id,
           function,
           args: args.iter().map(|id| (None, self.process_node(n, *id))).collect(),
           result: ts,
+          mut_sig: self.arena.alloc(mut_sig),
         };
         self.constraint(fc);
       }

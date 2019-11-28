@@ -15,13 +15,9 @@ use std::collections::HashMap;
 pub struct ModuleId(u64);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct FunctionId(u64);
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct GenericId(u64);
 
 impl From<u64> for ModuleId { fn from(v : u64) -> Self { ModuleId(v) } }
-impl From<u64> for FunctionId { fn from(v : u64) -> Self { FunctionId(v) } }
 impl From<u64> for GenericId { fn from(v : u64) -> Self { GenericId(v) } }
 
 pub struct TypeInfo {
@@ -49,7 +45,7 @@ impl  Into<Type> for PType {
 
 use PType::*;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Type {
   /// Primitive type (e.g. int, float, bool, etc)
   Prim(PType),
@@ -59,6 +55,15 @@ pub enum Type {
   Ptr(Ap<Type>),
   Generic(GenericId),
   Unknown,
+}
+
+impl Type {
+  pub fn signature(self) -> Option<Ap<FunctionSignature>> {
+    match self {
+      Type::Fun(sig) => Some(sig),
+      _ => None,
+    }
+  }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -73,8 +78,8 @@ pub struct TypeDefinition {
   pub name : Ap<str>,
   pub fields : Ap<[(Symbol, Type)]>,
   pub kind : TypeKind,
-  pub drop_function : Option<Ap<ConcreteFunction>>,
-  pub clone_function : Option<Ap<ConcreteFunction>>,
+  pub drop_function : Option<Ap<ConcreteGlobal>>,
+  pub clone_function : Option<Ap<ConcreteGlobal>>,
   pub definition_location : TextLocation,
 }
 
@@ -124,13 +129,6 @@ impl GlobalDefinition {
       _ => None,
     }
   }
-
-  pub fn signature(&self) -> Option<Ap<FunctionSignature>> {
-    match self.type_tag {
-      Type::Fun(sig) => Some(sig),
-      _ => None,
-    }
-  }
 }
 
 #[derive(Copy, Clone)]
@@ -138,21 +136,6 @@ pub struct PolyFunctionDef {
   pub global : Ap<GlobalDefinition>,
   pub poly_signature : Ap<FunctionSignature>,
   pub generics : Ap<[GenericId]>,
-}
-
-impl  PartialEq for Type {
-  fn eq(&self, other: &Self) -> bool {
-    use Type::*;
-    match (*self, *other) {
-      (Fun(a), Fun(b)) => a == b,
-      (Def(a), Def(b)) => a == b,
-      (Array(a), Array(b)) => a == b,
-      (Ptr(a), Ptr(b)) => a == b,
-      (Prim(a), Prim(b)) => a == b,
-      (Generic(a), Generic(b)) => a == b,
-      _ => false,
-    }
-  }
 }
 
 impl  fmt::Display for GenericId {
@@ -237,10 +220,28 @@ impl TypeInfo {
     }
   }
 
-  pub fn find_global(&self, name : &str, results : &mut Vec<Ap<GlobalDefinition>>) {
+  pub fn find_global(
+    &self,
+    name : &str,
+    t : Type,
+    arena : &Arena,
+    gen : &mut UIDGenerator, 
+    generics : &mut HashMap<GenericId, Type>,
+    results : &mut Vec<ConcreteGlobal>) {
     for g in self.globals.iter() {
-      if g.name.as_ref() == name {
-        results.push(*g);
+      if g.name.as_ref() == name && unknown_match(t, g.type_tag) {
+        results.push(ConcreteGlobal { def: *g, concrete_type: g.type_tag });
+      }
+    }
+    for def in self.poly_functions.iter() {
+      if def.global.name.as_ref() == name {
+        generics.clear();
+        let matched = generic_match(generics, t, Type::Fun(def.poly_signature));
+        if matched && generics.len() == def.generics.len() {
+          let sig = concrete_signature(arena, gen, def, generics);
+          let def = def.global;
+          results.push(ConcreteGlobal { def, concrete_type: Type::Fun(sig) });
+        }
       }
     }
   }
@@ -248,45 +249,26 @@ impl TypeInfo {
   pub fn find_type_def(&self, name : &str) -> Option<Ap<TypeDefinition>> {
     self.type_defs.get(name).cloned()
   }
+}
 
-  pub fn find_function(
-    &self,
-    name : &str,
-    args : &[Type],
-    arena : &Arena,
-    gen : &mut UIDGenerator, 
-    generics : &mut HashMap<GenericId, Type>,
-    results : &mut Vec<ConcreteFunction>,
-  )
-  {
-    let r = self.globals.iter().find_map(|def| {
-      if let Type::Fun(sig) = def.type_tag {
-        if def.name.as_ref() == name && args == sig.args.as_ref() {
-          return Some((*def, sig));
+fn unknown_match(u : Type, t : Type) -> bool {
+  match (u, t) {
+    (Type::Unknown, _) => true,
+    (Type::Ptr(u), Type::Ptr(t)) => unknown_match(*u, *t),
+    (Type::Array(u), Type::Array(t)) => unknown_match(*u, *t),
+    (Type::Fun(u_sig), Type::Fun(t_sig)) => {
+      if u_sig.args.len() != t_sig.args.len() { return false }
+      for (u, t) in u_sig.args.iter().zip(t_sig.args.iter()) {
+        if !unknown_match(*u, *t) {
+          return false;
         }
       }
-      None
-    });
-    if let Some((def, sig)) = r {
-      let concrete_signature = sig;
-      results.push(ConcreteFunction { def, concrete_signature });
+      unknown_match(u_sig.return_type, t_sig.return_type)
     }
-    else {
-      let r = self.poly_functions.iter().find(|def| {
-        def.global.name.as_ref() == name && {
-          let matched = generic_match_sig(generics, args, def, &def.poly_signature);
-          if !matched {
-            generics.clear();
-          }
-          matched
-        }
-      });
-      if let Some(def) = r {
-        let concrete_signature = concrete_signature(arena, gen, def, generics);
-        let def = def.global;
-        results.push(ConcreteFunction { def, concrete_signature });
-      }
-    }
+    // enumerate all the options so the compiler complains if a new Type is added
+    (Type::Generic(_), _) => panic!("unexpected generic type"),
+    (Type::Def(_), _) | (Type::Prim(_), _) => u == t,
+    (Type::Ptr(_), _) | (Type::Array(_), _) | (Type::Fun(_), _) => false,
   }
 }
 
@@ -314,56 +296,58 @@ fn generic_replace(arena : &Arena, generics : &HashMap<GenericId, Type>, gen : &
       let t = arena.alloc(generic_replace(arena, generics, gen, *t));
       Type::Array(t)
     }
+    Type::Fun(sig) => {
+      let mut args = arena.alloc_slice_mut(&sig.args);
+      for t in args.iter_mut() {
+        *t = generic_replace(arena, generics, gen, *t);
+      }
+      let args = args.into_ap();
+      let return_type = generic_replace(arena, generics, gen, sig.return_type);
+      let sig = FunctionSignature{ args, return_type };
+      Type::Fun(arena.alloc(sig))
+    }
     Type::Generic(gid) => {
       *generics.get(&gid).unwrap()
     }
-    _ => return t,
-  }
-}
-
-fn generic_match_sig(
-  generics : &mut HashMap<GenericId, Type>, args : &[Type],
-  def : &PolyFunctionDef, sig : &FunctionSignature)
-    -> bool
-{
-  args.len() == sig.args.len() && {
-    for (t, gt) in args.iter().zip(sig.args.iter()) {
-      if !generic_match(generics, *t, *gt) {
-        return false;
-      }
-    }
-    generics.len() == def.generics.len()
+    Type::Def(_) | Type::Prim(_) => t,
+    Type::Unknown => panic!("unexpected unknown"),
   }
 }
 
 fn generic_match(generics : &mut HashMap<GenericId, Type>, t : Type, gt : Type) -> bool {
-  let (t, gt) = match (t, gt) {
-    (Type::Ptr(t), Type::Ptr(gt)) => (t, gt),
-    (Type::Array(t), Type::Array(gt)) => (t, gt),
+  match (t, gt) {
+    (Type::Unknown, _) => true,
+    (Type::Ptr(t), Type::Ptr(gt)) => generic_match(generics, *t, *gt),
+    (Type::Array(t), Type::Array(gt)) => generic_match(generics, *t, *gt),
+    (Type::Fun(t_sig), Type::Fun(gt_sig)) => {
+      if t_sig.args.len() != gt_sig.args.len() { return false }
+      for (t, gt) in t_sig.args.iter().zip(gt_sig.args.iter()) {
+        if !generic_match(generics, *t, *gt) {
+          return false;
+        }
+      }
+      generic_match(generics, t_sig.return_type, gt_sig.return_type)
+    },
     (t, Type::Generic(gid)) => {
       if let Some(bound_type) = generics.get(&gid) {
-        return t == *bound_type;
+        t == *bound_type
       }
       else {
         generics.insert(gid, t);
-        return true;
+        true
       }
     }
-    _ => return t == gt,
-  };
-  generic_match(generics, *t, *gt)
+      // enumerate all the options so the compiler complains if a new Type is added
+    (Type::Generic(_), _) => panic!("unexpected generic type"),
+    (Type::Def(_), _) | (Type::Prim(_), _) => t == gt,
+    (Type::Ptr(_), _) | (Type::Array(_), _) | (Type::Fun(_), _) => false,
+  }
 }
 
-// #[derive(Copy, Clone)]
-// pub enum SymbolDef {
-//   Fun(Ap<FunctionDefinition>),
-//   Glob(Ap<GlobalDefinition>),
-// }
-
 #[derive(Copy, Clone, Debug)]
-pub struct ConcreteFunction {
+pub struct ConcreteGlobal {
   pub def : Ap<GlobalDefinition>,
-  pub concrete_signature : Ap<FunctionSignature>,
+  pub concrete_type : Type,
 }
 
 /// Utility type for finding definitions either in the module being constructed,
@@ -373,10 +357,12 @@ pub struct TypeDirectory<'a> {
   import_types : &'a [&'a TypeInfo],
   new_module : &'a mut TypeInfo,
   generic_bindings : HashMap<GenericId, Type>,
-  function_results : Vec<ConcreteFunction>,
-  global_results : Vec<Ap<GlobalDefinition>>,
+  global_results : Vec<ConcreteGlobal>,
 }
 
+// TODO: A lot of these functions are slow because they iterate through everything.
+// This could probably be improved with some caching, although any caching needs to
+// be wary of new symbols being added.
 impl <'a> TypeDirectory<'a> {
   pub fn new(
     new_module_id : ModuleId,
@@ -386,7 +372,6 @@ impl <'a> TypeDirectory<'a> {
     TypeDirectory{
       new_module_id, import_types, new_module,
       generic_bindings: HashMap::new(),
-      function_results: vec![],
       global_results: vec![],
     }
   }
@@ -399,12 +384,21 @@ impl <'a> TypeDirectory<'a> {
     self.new_module.globals.push(def);
   }
 
-  pub fn find_global(&mut self, name : &str) -> &[Ap<GlobalDefinition>]
+  /// Returns a slice of all matching definitions
+  pub fn find_global(
+    &mut self,
+    name : &str,
+    t : Type,
+    arena : &Arena,
+    gen : &mut UIDGenerator
+  )
+      -> &[ConcreteGlobal]
   {
+    self.generic_bindings.clear();
     self.global_results.clear();
-    self.new_module.find_global(name, &mut self.global_results);
+    self.new_module.find_global(name, t, arena, gen, &mut self.generic_bindings, &mut self.global_results);
     for m in self.import_types.iter().rev() {
-      m.find_global(name, &mut self.global_results);
+      m.find_global(name, t, arena, gen, &mut self.generic_bindings, &mut self.global_results);
     }
     self.global_results.as_slice()
   }
@@ -412,22 +406,6 @@ impl <'a> TypeDirectory<'a> {
   pub fn find_type_def(&self, name : &str) -> Option<Ap<TypeDefinition>> {
     self.new_module.find_type_def(name).or_else(||
       self.import_types.iter().rev().flat_map(|m| m.find_type_def(name)).next())
-  }
-
-  /// Returns a slice of all matching definitions.
-  pub fn find_function(
-    &mut self,
-    name : &str, args : &[Type],
-    arena : &Arena, gen : &mut UIDGenerator, 
-  ) -> &[ConcreteFunction]
-  {
-    self.generic_bindings.clear();
-    self.function_results.clear();
-    self.new_module.find_function(name, args, arena, gen, &mut self.generic_bindings, &mut self.function_results);
-    for m in self.import_types.iter().rev() {
-      m.find_function(name, args, arena, gen, &mut self.generic_bindings, &mut self.function_results);
-    }
-    self.function_results.as_slice()
   }
 
   pub fn new_module_id(&self) -> ModuleId {

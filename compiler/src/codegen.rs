@@ -331,7 +331,7 @@ impl <'l> Gen<'l> {
       let t = self.to_basic_type(info, def.type_tag).unwrap();
       match def.initialiser {
         GlobalInit::CBind => {
-          if let Some(sig) = def.signature() {
+          if let Some(sig) = def.type_tag.signature() {
             let f = self.codegen_prototype(info, def.name.as_ref(), sig.return_type, None, &sig.args);
             let address = self.get_c_symbol_address(def.loc, &def.name)?;
             self.functions_to_link.push((f, address));
@@ -349,7 +349,7 @@ impl <'l> Gen<'l> {
           // self.add_global(v, false, &name);
         }
         GlobalInit::Function(init) => {
-          let sig = def.signature().unwrap();
+          let sig = def.type_tag.signature().unwrap();
           let f =
             self.codegen_prototype(
               info, init.name_for_codegen.as_ref(), sig.return_type,
@@ -773,6 +773,29 @@ fn integer_binary_ops(gf : &mut GenFunction, name: &str, a : TypedNode, b : Type
   }
 }
 
+fn codegen_index(
+  gf : &mut GenFunction, container : TypedNode, index : TypedNode)
+    -> Result<MaybeVal, Error>
+{
+  use Type::*;
+  use PType::*;
+  let ptr = match (container.type_tag(), index.type_tag()) {
+    (Ptr(_), Prim(I64)) => {
+      gf.codegen_pointer(container)?
+    }
+    (Array(_), Prim(I64)) => {
+      // TODO: add bounds checks
+      let array = gf.codegen_struct(container)?;
+      gf.builder.build_extract_value(array, 0, "array_pointer")
+        .unwrap().into_pointer_value()
+    }
+    _ => panic!("unsupported index intrinsic"),
+  };
+  let index = gf.codegen_int(index)?;
+  let element_ptr = unsafe { gf.builder.build_gep(ptr, &[index], "element_ptr") };
+  return Ok(pointer(element_ptr).into());
+}
+
 fn codegen_intrinsic_call(gf : &mut GenFunction, node : TypedNode, name : &str, args : &[NodeId])
   -> Result<MaybeVal, Error>
 {
@@ -780,17 +803,20 @@ fn codegen_intrinsic_call(gf : &mut GenFunction, node : TypedNode, name : &str, 
   use PType::*;
   let gv : GenVal = if let [a, b] = args {
     let (a, b) = (node.get(*a), node.get(*b));
-    if a.type_tag() != b.type_tag() {
+    if name == "Index" {
+      return codegen_index(gf, a, b);
+    }
+    let (ta, tb) = (a.type_tag(), b.type_tag());
+    if ta != tb {
       panic!("invalid intrinsic");
     }
-    let t = a.type_tag();
-    if t.float() {
+    if ta.float() {
       float_binary_ops(gf, name, a, b)?
     }
-    else if t.int() {
+    else if ta.int() {
       integer_binary_ops(gf, name, a, b)?
     }
-    else if t == Prim(Bool) {
+    else if ta == Prim(Bool) {
       match name {
         "&&" => gf.codegen_short_circuit_op(a, b, ShortCircuitOp::And)?,
         "||" => gf.codegen_short_circuit_op(a, b, ShortCircuitOp::Or)?,
@@ -1121,7 +1147,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         reg(fv.as_global_value().as_pointer_value().into())
       }
       GlobalInit::CBind => {
-        if let Some(sig) = def.signature() {
+        if let Some(sig) = def.type_tag.signature() {
           let fv = if let Some(local_f) = self.gen.module.get_function(&def.name) {
             local_f
           }
@@ -1172,7 +1198,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
             .expect("expected local function!")
         }
         else {
-          let sig = def.signature().unwrap();
+          let sig = def.type_tag.signature().unwrap();
           let f = self.gen.codegen_prototype(info, &init.name_for_codegen, sig.return_type, Some(&init.args), &sig.args);
           let address = info.find_function_address(def.module_id, &init.name_for_codegen);
           self.gen.functions_to_link.push((f, address));
@@ -1546,22 +1572,6 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         else{
           panic!();
         }
-      }
-      Content::Index{ container, index } => {
-        let (container, index) = (node.get(*container), node.get(*index));
-        // TODO: add bounds checks
-        let array_ptr = match container.type_tag() {
-          Type::Array(_) => {
-            let array = self.codegen_struct(container)?;
-            // TODO: is this right?
-            self.builder.build_extract_value(array, 0, "array_pointer").unwrap().into_pointer_value()
-          }
-          Type::Ptr(_) => self.codegen_pointer(container)?,
-          _ => panic!("unsupported index type"),
-        };
-        let index = self.codegen_int(index)?;
-        let element_ptr = unsafe { self.builder.build_gep(array_ptr, &[index], "element_ptr") };
-        pointer(element_ptr)
       }
       Content::Assignment{ assignee, value } => {
         // TODO: WHAT IS BEING ASSIGNED TO? Should only work for FIELDS and ARRAYS
