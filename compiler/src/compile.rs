@@ -14,7 +14,7 @@ use crate::types::{
   GlobalDefinition, PolyFunctionDef,
   GenericId, GlobalInit,
 };
-use crate::codegen2::{Gen, LlvmUnit, dump_module, CompileInfo};
+use crate::codegen::{Gen, LlvmUnit, dump_module, CompileInfo};
 use crate::modules::{ CompiledModule, TypedModule };
 use crate::arena::{ Arena, Ap };
 

@@ -17,7 +17,7 @@ pub mod structure;
 pub mod types;
 pub mod inference;
 pub mod modules;
-pub mod codegen2;
+pub mod codegen;
 pub mod compile;
 pub mod interpret;
 pub mod repl;

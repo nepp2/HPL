@@ -1,6 +1,6 @@
 
 use crate::types::{TypeInfo, ModuleId};
-use crate::codegen2::LlvmUnit;
+use crate::codegen::LlvmUnit;
 use crate::inference::CodegenInfo;
 use crate::arena::Arena;
 use crate::structure::Nodes;
