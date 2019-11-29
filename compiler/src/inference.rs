@@ -12,7 +12,8 @@ use crate::structure::{
 use crate::types::{
   Type, PType, TypeInfo, TypeDefinition, ConcreteGlobal,
   FunctionSignature, FunctionInit, GlobalDefinition,
-  TypeDirectory, GlobalInit, Symbol,
+  TypeDirectory, GlobalInit, Symbol, unify_abstract,
+  AbstractType,
 };
 use crate::modules::TypedModule;
 use crate::arena::{ Arena, Ap };
@@ -90,30 +91,6 @@ impl TypeClass {
   }
 }
 
-#[derive(Clone, Copy, PartialEq)]
-pub enum TypeConstraint {
-  Concrete(Type),
-  Class(TypeClass),
-}
-
-impl TypeConstraint {
-  fn default_type(self) -> Option<Type> {
-    match self {
-      TypeConstraint::Concrete(t) => Some(t),
-      TypeConstraint::Class(c) => c.default_type(),
-    }
-  }
-}
-
-impl fmt::Display for TypeConstraint {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match self {
-      TypeConstraint::Concrete(t) => write!(f, "{}", t),
-      TypeConstraint::Class(c) => write!(f, "{:?}", c),
-    }
-  }
-}
-
 struct Inference<'a> {
   arena : &'a Arena,
   nodes : &'a Nodes,
@@ -122,7 +99,7 @@ struct Inference<'a> {
   c : &'a Constraints,
   gen : &'a mut UIDGenerator,
   errors : &'a mut Vec<Error>,
-  resolved : HashMap<TypeSymbol, TypeConstraint>,
+  resolved : HashMap<TypeSymbol, Type>,
 }
 
 impl <'a> Inference<'a> {
@@ -144,49 +121,24 @@ impl <'a> Inference<'a> {
   }
 
   fn get_type(&self, ts : TypeSymbol) -> Option<Type> {
-    self.resolved.get(&ts).and_then(|it| match it {
-      TypeConstraint::Concrete(t) => Some(*t),
-      TypeConstraint::Class(c) => Some(Type::Unknown),
-    })
+    self.resolved.get(&ts).cloned()
   }
 
-  fn unify(&self, a : TypeConstraint, b : TypeConstraint) -> Option<TypeConstraint> {
-    use TypeConstraint::*;
-    match (a, b) {
-      (Concrete(ta), Concrete(tb)) => {
-        if ta == tb { Some(a) } else { None }
-      }
-      (Class(c), Concrete(t)) => {
-        if c.contains_type(t) { Some(Concrete(t)) } else { None }
-      }
-      (Concrete(t), Class(c)) => {
-        if c.contains_type(t) { Some(Concrete(t)) } else { None }
-      }
-      (Class(ca), Class(cb)) => {
-        if ca == cb { return Some(a) } else { None }
-      }
-    }
-  }
-
-  fn set_type_constraint(&mut self, ts : TypeSymbol, tc : TypeConstraint) {
-    if let Some(prev_tc) = self.resolved.get(&ts).cloned() {
-      if let Some(tc) = self.unify(prev_tc, tc) {
+  fn set_type(&mut self, ts : TypeSymbol, t : Type) {
+    if let Some(prev_t) = self.resolved.get(&ts).cloned() {
+      if let Some(unified_type) = unify_abstract(prev_t, t) {
         let aaa = (); // TODO: This needs to trigger re-evaluation of other constraints
-        self.resolved.insert(ts, tc);
+        self.resolved.insert(ts, unified_type);
       }
       else {
         let e = error_raw(self.loc(ts),
-          format!("conflicting types inferred; {} and {}.", tc, prev_tc));
+          format!("conflicting types inferred; {} and {}.", t, prev_t));
         self.errors.push(e);
       }
     }
     else {
-      self.resolved.insert(ts, tc);
+      self.resolved.insert(ts, t);
     }
-  }
-
-  fn set_type(&mut self, ts : TypeSymbol, t : Type) {
-    self.set_type_constraint(ts, TypeConstraint::Concrete(t))
   }
 
   fn loc(&self, ts : TypeSymbol) -> TextLocation {
@@ -210,9 +162,10 @@ impl <'a> Inference<'a> {
       Constraint::FunctionCall{ node:_, function, args, result, mut_sig:_ } => {
         let loc = self.loc(*result);
         if let Function::Name(sym) = function {
+          let unknown = Type::Abstract(AbstractType::Any);
           let arg_types : Vec<_> =
-            args.iter().map(|(_, ts)| self.get_type(*ts).unwrap_or(Type::Unknown)).collect();
-          let symbols = self.t.find_global(&sym.name, Type::Unknown, self.arena, self.gen);
+            args.iter().map(|(_, ts)| self.get_type(*ts).unwrap_or(unknown)).collect();
+          let symbols = self.t.find_global(&sym.name, unknown, self.arena, self.gen);
           error_raw(loc,
             format!("function call {}({}) not resolved.\n   Symbols available:\n{}",
               sym.name,
@@ -229,8 +182,11 @@ impl <'a> Inference<'a> {
         error_raw(self.loc(*result),
           format!("constructor for '{}' not resolved", type_name))
       }
-      Constraint::Convert { val, into_type:_ } => {
-        error_raw(self.loc(*val), "convert not resolved")
+      Constraint::Convert { val, into_type } => {
+        let unknown = Type::Abstract(AbstractType::Any);
+        let t = self.get_type(*val).unwrap_or(unknown);
+        let s = format!("type conversion from {} into {} not supported", t, into_type);
+        error_raw(self.loc(*val), s)
       }
       Constraint::GlobalDef { name, type_symbol:_, initialiser:_, loc } => {
         error_raw(loc,
@@ -255,34 +211,33 @@ impl <'a> Inference<'a> {
     self.cg.symbol_references.insert(node, def);
   }
 
-  fn find_global(&mut self, name : &str, t : Type, loc : TextLocation)
+  fn find_global(&mut self, name : &str, t : Type)
     -> Option<Result<ConcreteGlobal, ()>> 
   {
     match self.t.find_global(name, t, self.arena, self.gen) {
       [g] => Some(Ok(*g)),
-      [] => None,
-      _ => {
-        let s = format!("found multiple symbols matching '{}'", name);
-        self.errors.push(error_raw(loc, s));
-        Some(Err(()))
-      }
+      _ => None,
     }
   }
 
   fn process_constraint(&mut self, c : &Constraint) -> bool {
     match c  {
-      Constraint::Assert(ts, tc) => {
-        self.set_type_constraint(*ts, *tc);
+      Constraint::Assert(ts, t) => {
+        self.set_type(*ts, *t);
         return true;
       }
       Constraint::Equalivalent(a, b) => {
         if let Some(t) = self.get_type(*a) {
-          self.set_type(*b, t);
-          return true;
+          if t.is_concrete() {
+            self.set_type(*b, t);
+            return true;
+          }
         }
         if let Some(t) = self.get_type(*b) {
-          self.set_type(*a, t);
-          return true;
+          if t.is_concrete() {
+            self.set_type(*a, t);
+            return true;
+          }
         }
       }
       Constraint::FunctionDef{ name, return_type, args, body, loc } => {
@@ -318,15 +273,16 @@ impl <'a> Inference<'a> {
         }
       }
       Constraint::FunctionCall{ node, function, args, result, mut_sig } => {
+        let unknown = Type::Abstract(AbstractType::Any);
         let mut mut_args = Ap::get_mut(mut_sig.args);
         for (i, (_, ts)) in args.iter().enumerate() {
-          mut_args[i] = self.get_type(*ts).unwrap_or(Type::Unknown);
+          mut_args[i] = self.get_type(*ts).unwrap_or(unknown);
         }
         Ap::get_mut(*mut_sig).return_type =
-        self.get_type(*result).unwrap_or(Type::Unknown); 
+        self.get_type(*result).unwrap_or(unknown); 
         match function {
           Function::Name(sym) => {
-            if let Some(r) = self.find_global(&sym.name, Type::Fun(*mut_sig), self.loc(*result)) {
+            if let Some(r) = self.find_global(&sym.name, Type::Fun(*mut_sig)) {
               if let Ok(g) = r {
                 self.register_def(*node, g.def);
                 self.set_type(*result, g.concrete_type.signature().unwrap().return_type);
@@ -397,15 +353,21 @@ impl <'a> Inference<'a> {
       }
       Constraint::Convert { val, into_type } => {
         if let Some(t) = self.get_type(*val) {
-          if t.pointer() && into_type.pointer() {}
-          else if t.number() && into_type.number() {}
-          else if t.pointer() && into_type.unsigned_int() {}
-          else if t.unsigned_int() && into_type.pointer() {}
-          else {
-            let e = error_raw(self.loc(*val), "type conversion not supported");
-            self.errors.push(e);
+          fn abstract_contains(t : Type, into_type : Type) -> bool {
+            if let Type::Abstract(abs_t) = t {
+              return abs_t.contains_type(into_type);
+            }
+            false
           }
-          return true;
+          if
+            abstract_contains(t, *into_type) ||
+            (t.pointer() && into_type.pointer()) ||
+            (t.number() && into_type.number()) ||
+            (t.pointer() && into_type.unsigned_int()) ||
+            (t.unsigned_int() && into_type.pointer())
+          {
+            return true;
+          }
         }
       }
       Constraint::GlobalDef{ name, type_symbol, initialiser, loc } => {
@@ -423,9 +385,9 @@ impl <'a> Inference<'a> {
         }
       }
       Constraint::GlobalReference { node, name, result } => {
-        let loc = self.loc(*result);
-        let t = self.get_type(*result).unwrap_or(Type::Unknown);
-        if let Some(r) = self.find_global(&name, t, loc) {
+        let unknown = Type::Abstract(AbstractType::Any);
+        let t = self.get_type(*result).unwrap_or(unknown);
+        if let Some(r) = self.find_global(&name, t) {
           if let Ok(g) = r {
             self.register_def(*node, g.def);
             self.set_type(*result, g.concrete_type);
@@ -477,6 +439,19 @@ impl <'a> Inference<'a> {
     false
   }
 
+  fn try_resolve_abstract_types(&mut self) -> bool {
+    let mut count = 0;
+    for r in self.resolved.values_mut() {
+      if let Type::Abstract(ab) = r {
+        if let Some(t) = ab.default_type() {
+          *r = t;
+          count += 1;
+        }
+      }
+    }
+    count > 0
+  }
+
   fn infer(&mut self) {
     println!("To resolve: {}", self.c.symbols.len());
     let mut unused_constraints = vec![];
@@ -490,10 +465,15 @@ impl <'a> Inference<'a> {
       total_passes += 1;
       let remaining_before_pass = unused_constraints.len();
       unused_constraints.retain(|c| !self.process_constraint(c));
-      // Exit if no constraints were resolved in the last pass
-      if remaining_before_pass == unused_constraints.len() {
-        break;
+      // Continue if some constraints were resolved in the last pass
+      if unused_constraints.len() < remaining_before_pass {
+        continue;
       }
+      // Continue if some literals can be hardened into specific types
+      if self.try_resolve_abstract_types() {
+        continue;
+      }
+      break;
     }
     println!("\nPasses taken: {}\n", total_passes);
     
@@ -508,6 +488,20 @@ impl <'a> Inference<'a> {
       panic!("Symbol unresolved! Some kind of error should be generated!");
     }
 
+    // Assign types to all of the nodes
+    for (n, ts) in self.c.node_symbols.iter() {
+      let t = self.get_type(*ts).unwrap();
+      // Make sure the type isn't abstract
+      if let Some(t) = t.to_concrete(self.arena) {
+        self.cg.node_type.insert(*n, t);
+      }
+      else {
+        let loc = self.loc(*ts);
+        let e = error_raw(loc, "unresolved type");
+        self.errors.push(e);
+      }
+    }
+
     // Print errors (if there are any)
     if self.errors.len() > 0 {
       println!("\nErrors:");
@@ -515,13 +509,6 @@ impl <'a> Inference<'a> {
         println!("         {}", e);
       }
       println!();
-    }
-    else {
-      // Assign types to all of the nodes
-      for (n, ts) in self.c.node_symbols.iter() {
-        let t = self.get_type(*ts).unwrap();
-        self.cg.node_type.insert(*n, t);
-      }
     }
   }
 }
@@ -535,7 +522,7 @@ pub enum Function {
 }
 
 pub enum Constraint {
-  Assert(TypeSymbol, TypeConstraint),
+  Assert(TypeSymbol, Type),
   Equalivalent(TypeSymbol, TypeSymbol),
   Array{ array : TypeSymbol, element : TypeSymbol },
   Convert{ val : TypeSymbol, into_type : Type },
@@ -695,15 +682,11 @@ impl <'l, 't> GatherConstraints<'l, 't> {
   }
 
   fn assert(&mut self, ts : TypeSymbol, t : PType) {
-    self.constraint(Constraint::Assert(ts, TypeConstraint::Concrete(Type::Prim(t))));
+    self.constraint(Constraint::Assert(ts, Type::Prim(t)));
   }
 
   fn assert_type(&mut self, ts : TypeSymbol, t : Type) {
-    self.constraint(Constraint::Assert(ts, TypeConstraint::Concrete(t)));
-  }
-
-  fn assert_type_constraint(&mut self, ts : TypeSymbol, tc : TypeConstraint) {
-    self.constraint(Constraint::Assert(ts, tc));
+    self.constraint(Constraint::Assert(ts, t));
   }
 
   fn tagged_symbol(&mut self, ts : TypeSymbol, type_expr : &Option<Box<Expr>>) {
@@ -724,21 +707,20 @@ impl <'l, 't> GatherConstraints<'l, 't> {
     match &node.content {
       Content::Literal(val) => {
         use Val::*;
-        let tc = match val {
+        let t = match val {
           F64(_) | F32(_) => {
-            TypeConstraint::Class(TypeClass::Float)
+            Type::Abstract(AbstractType::Float)
           }
           I64(_) | I32(_) | U64(_) | U32(_) | U16(_) | U8(_) => {
-            TypeConstraint::Class(TypeClass::Integer)
+            Type::Abstract(AbstractType::Integer)
           }
-          Bool(_) => TypeConstraint::Concrete(PType::Bool.into()),
-          Void => TypeConstraint::Concrete(PType::Void.into()),
+          Bool(_) => Type::Prim(PType::Bool),
+          Void => Type::Prim(PType::Void),
           String(_) => {
-            let string = self.type_def(node.loc, self.arena.alloc_str("string"));
-            TypeConstraint::Concrete(string)
+            self.type_def(node.loc, self.arena.alloc_str("string"))
           }
         };
-        self.assert_type_constraint(ts, tc);
+        self.assert_type(ts, t);
       }
       Content::VariableInitialise{ name, type_tag, value, var_scope } => {
         self.assert(ts, PType::Void);
@@ -911,9 +893,10 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             Function::Value(val)
           }
         };
+        let unknown = Type::Abstract(AbstractType::Any);
         let mut_sig = FunctionSignature {
-          args: self.arena.slice_of(args.len(), Type::Unknown).into_ap(),
-          return_type: Type::Unknown,
+          args: self.arena.slice_of(args.len(), unknown).into_ap(),
+          return_type: unknown,
         };
         let fc = Constraint::FunctionCall {
           node: id,

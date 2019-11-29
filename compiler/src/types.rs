@@ -53,41 +53,31 @@ pub enum Type {
   Def(Ap<str>),
   Array(Ap<Type>),
   Ptr(Ap<Type>),
-  Class(TypeClass),
+  Abstract(AbstractType),
   Generic(GenericId),
-  Unknown,
-}
-
-impl Type {
-  pub fn signature(self) -> Option<Ap<FunctionSignature>> {
-    match self {
-      Type::Fun(sig) => Some(sig),
-      _ => None,
-    }
-  }
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub enum TypeClass {
+pub enum AbstractType {
   Float,
   Integer,
   Any,
 }
 
-impl TypeClass {
-  fn contains_type(self, t : Type) -> bool {
+impl AbstractType {
+  pub fn contains_type(self, t : Type) -> bool {
     match self {
-      TypeClass::Float => t.float(),
-      TypeClass::Integer => t.int(),
-      TypeClass::Any => true,
+      AbstractType::Float => t.float(),
+      AbstractType::Integer => t.int(),
+      AbstractType::Any => true,
     }
   }
 
-  fn default_type(self) -> Option<Type> {
+  pub fn default_type(self) -> Option<Type> {
     match self {
-      TypeClass::Float => Some(Type::Prim(PType::F64)),
-      TypeClass::Integer => Some(Type::Prim(PType::I64)),
-      TypeClass::Any => None,
+      AbstractType::Float => Some(Type::Prim(PType::F64)),
+      AbstractType::Integer => Some(Type::Prim(PType::I64)),
+      AbstractType::Any => None,
     }
   }
 }
@@ -186,13 +176,85 @@ impl  fmt::Display for Type {
       Type::Ptr(t) => write!(f, "ptr({})", t),
       Type::Prim(t) => write!(f, "{:?}", t),
       Type::Generic(id) => write!(f, "@Generic({})", id),
-      Type::Unknown => write!(f, "@Unknown"),
-      Type::Class(tc) => write!(f, "{:?}", tc),
+      Type::Abstract(tc) => write!(f, "{:?}", tc),
     }
   }
 }
 
+enum ConcreteResult {
+  Unchanged, Changed(Type)
+}
+
+/// Turns a type into a concrete type if possible. Avoids
+/// unnecessary copying where types are already concrete.
+fn to_concrete(t : Type, arena : &Arena) -> Option<ConcreteResult> {
+  use ConcreteResult::*;
+  let v = match t {
+    Type::Abstract(at) => Changed(at.default_type()?),
+    Type::Fun(sig) => {
+      if t.is_concrete() {
+        Unchanged
+      }
+      else {
+        let mut args = arena.alloc_slice_mut(&sig.args);
+        for t in args.iter_mut() {
+          *t = t.to_concrete(arena)?;
+        }
+        let args = args.into_ap();
+        let return_type = sig.return_type.to_concrete(arena)?;
+        let sig = FunctionSignature{ args, return_type };
+        Changed(Type::Fun(arena.alloc(sig)))
+      }
+    },
+    Type::Array(t) => match to_concrete(*t, arena)? {
+      Unchanged => Unchanged,
+      Changed(t) => Changed(Type::Array(arena.alloc(t))),
+    },
+    Type::Ptr(t) => match to_concrete(*t, arena)? {
+      Unchanged => Unchanged,
+      Changed(t) => Changed(Type::Ptr(arena.alloc(t))),
+    },
+    Type::Prim(_) => Unchanged,
+    Type::Def(_) => Unchanged,
+    Type::Generic(_) => return None,
+  };
+  Some(v)
+}
+
 impl  Type {
+
+  pub fn is_concrete(&self) -> bool {
+    match self {
+      Type::Abstract(_) => false,
+      Type::Fun(sig) => {
+        for t in sig.args.iter() {
+          if !t.is_concrete() { return false }
+        }
+        sig.return_type.is_concrete()
+      },
+      Type::Array(t) => t.is_concrete(),
+      Type::Ptr(t) => t.is_concrete(),
+      Type::Prim(_) => true,
+      Type::Def(_) => true,
+      Type::Generic(_) => false,
+    }
+  }
+
+  pub fn to_concrete(&self, arena : &Arena) -> Option<Type> {
+    use ConcreteResult::*;
+    match to_concrete(*self, arena)? {
+      Unchanged => Some(*self),
+      Changed(t) => Some(t),
+    }
+  }
+
+  pub fn signature(self) -> Option<Ap<FunctionSignature>> {
+    match self {
+      Type::Fun(sig) => Some(sig),
+      _ => None,
+    }
+  }
+
   pub fn from_string(s : &str) -> Option<Type> {
     let pt = match s {
       "f64" => F64,
@@ -204,9 +266,7 @@ impl  Type {
       "u32" => U32,
       "u16" => U16,
       "u8" => U8,
-      // "any" => Dynamic,
       "()" => Void,
-      // "" => Dynamic,
       _ => return None,
     };
     Some(Type::Prim(pt))
@@ -237,6 +297,25 @@ impl  Type {
   }
 }
 
+pub fn unify_abstract(a : Type, b : Type) -> Option<Type> {
+  use Type::*;
+  let aaa = (); // make this recursive
+  match (a, b) {
+    (Abstract(abs_a), Abstract(abs_b)) => {
+      if abs_a == abs_b { return Some(a) } else { None }
+    }
+    (Abstract(abs_a), b) => {
+      if abs_a.contains_type(b) { Some(b) } else { None }
+    }
+    (a, Abstract(abs_b)) => {
+      if abs_b.contains_type(a) { Some(a) } else { None }
+    }
+    (a, b) => {
+      if a == b { Some(a) } else { None }
+    }
+  }
+}
+
 impl TypeInfo {
   pub fn new(module_id : ModuleId) -> TypeInfo {
     TypeInfo {
@@ -256,18 +335,26 @@ impl TypeInfo {
     generics : &mut HashMap<GenericId, Type>,
     results : &mut Vec<ConcreteGlobal>) {
     for g in self.globals.iter() {
-      if g.name.as_ref() == name && unknown_match(t, g.type_tag) {
+      if g.name.as_ref() == name && abstract_match(t, g.type_tag) {
         results.push(ConcreteGlobal { def: *g, concrete_type: g.type_tag });
       }
     }
-    for def in self.poly_functions.iter() {
+    'outer: for def in self.poly_functions.iter() {
       if def.global.name.as_ref() == name {
         generics.clear();
         let matched = generic_match(generics, t, Type::Fun(def.poly_signature));
         if matched && generics.len() == def.generics.len() {
-          let sig = concrete_signature(arena, gen, def, generics);
+          for t in generics.values_mut() {
+            if let Some(ct) = t.to_concrete(arena) {
+              *t = ct;
+            }
+            else {
+              continue 'outer;
+            }
+          }
+          let concrete_type = generic_replace(generics, arena, gen, Type::Fun(def.poly_signature));
           let def = def.global;
-          results.push(ConcreteGlobal { def, concrete_type: Type::Fun(sig) });
+          results.push(ConcreteGlobal { def, concrete_type });
         }
       }
     }
@@ -278,19 +365,19 @@ impl TypeInfo {
   }
 }
 
-fn unknown_match(u : Type, t : Type) -> bool {
+fn abstract_match(u : Type, t : Type) -> bool {
   match (u, t) {
-    (Type::Unknown, _) => true,
-    (Type::Ptr(u), Type::Ptr(t)) => unknown_match(*u, *t),
-    (Type::Array(u), Type::Array(t)) => unknown_match(*u, *t),
+    (Type::Abstract(bt), _) => bt.contains_type(t),
+    (Type::Ptr(u), Type::Ptr(t)) => abstract_match(*u, *t),
+    (Type::Array(u), Type::Array(t)) => abstract_match(*u, *t),
     (Type::Fun(u_sig), Type::Fun(t_sig)) => {
       if u_sig.args.len() != t_sig.args.len() { return false }
       for (u, t) in u_sig.args.iter().zip(t_sig.args.iter()) {
-        if !unknown_match(*u, *t) {
+        if !abstract_match(*u, *t) {
           return false;
         }
       }
-      unknown_match(u_sig.return_type, t_sig.return_type)
+      abstract_match(u_sig.return_type, t_sig.return_type)
     }
     // enumerate all the options so the compiler complains if a new Type is added
     (Type::Generic(_), _) => panic!("unexpected generic type"),
@@ -299,37 +386,25 @@ fn unknown_match(u : Type, t : Type) -> bool {
   }
 }
 
-
-fn concrete_signature(arena : &Arena, gen : &mut UIDGenerator, def : &PolyFunctionDef, generic_map : &mut HashMap<GenericId, Type>) -> Ap<FunctionSignature> {
-  let sig = def.poly_signature;
-  let mut args = arena.alloc_slice_mut(sig.args.as_ref());
-  for t in args.iter_mut() {
-    *t = generic_replace(arena, generic_map, gen, *t);
-  }
-  let return_type = generic_replace(arena, generic_map, gen, sig.return_type);
-  let sig = FunctionSignature { args: args.into_ap(), return_type };
-  arena.alloc(sig)
-}
-
-fn generic_replace(arena : &Arena, generics : &HashMap<GenericId, Type>, gen : &mut UIDGenerator, t : Type)
+fn generic_replace(generics : &HashMap<GenericId, Type>, arena : &Arena, gen : &mut UIDGenerator, t : Type)
   -> Type
 {
   match t {
     Type::Ptr(t) => {
-      let t = arena.alloc(generic_replace(arena, generics, gen, *t));
+      let t = arena.alloc(generic_replace(generics, arena, gen, *t));
       Type::Ptr(t)
     }
     Type::Array(t) => {
-      let t = arena.alloc(generic_replace(arena, generics, gen, *t));
+      let t = arena.alloc(generic_replace(generics, arena, gen, *t));
       Type::Array(t)
     }
     Type::Fun(sig) => {
       let mut args = arena.alloc_slice_mut(&sig.args);
       for t in args.iter_mut() {
-        *t = generic_replace(arena, generics, gen, *t);
+        *t = generic_replace(generics, arena, gen, *t);
       }
       let args = args.into_ap();
-      let return_type = generic_replace(arena, generics, gen, sig.return_type);
+      let return_type = generic_replace(generics, arena, gen, sig.return_type);
       let sig = FunctionSignature{ args, return_type };
       Type::Fun(arena.alloc(sig))
     }
@@ -337,13 +412,29 @@ fn generic_replace(arena : &Arena, generics : &HashMap<GenericId, Type>, gen : &
       *generics.get(&gid).unwrap()
     }
     Type::Def(_) | Type::Prim(_) => t,
-    Type::Unknown => panic!("unexpected unknown"),
+    Type::Abstract(_) => panic!("unexpected abstract type"),
   }
 }
 
 fn generic_match(generics : &mut HashMap<GenericId, Type>, t : Type, gt : Type) -> bool {
   match (t, gt) {
-    (Type::Unknown, _) => true,
+    (Type::Generic(_), _) => panic!("unexpected generic type"),
+    (t, Type::Generic(gid)) => {
+      if let Some(bound_type) = generics.get(&gid) {
+        if let Some(unified_t) = unify_abstract(t, *bound_type) {
+          generics.insert(gid, unified_t);
+          true
+        }
+        else {
+          false
+        }
+      }
+      else {
+        generics.insert(gid, t);
+        true
+      }
+    }
+    (Type::Abstract(at), gt) => at.contains_type(gt),
     (Type::Ptr(t), Type::Ptr(gt)) => generic_match(generics, *t, *gt),
     (Type::Array(t), Type::Array(gt)) => generic_match(generics, *t, *gt),
     (Type::Fun(t_sig), Type::Fun(gt_sig)) => {
@@ -355,17 +446,7 @@ fn generic_match(generics : &mut HashMap<GenericId, Type>, t : Type, gt : Type) 
       }
       generic_match(generics, t_sig.return_type, gt_sig.return_type)
     },
-    (t, Type::Generic(gid)) => {
-      if let Some(bound_type) = generics.get(&gid) {
-        t == *bound_type
-      }
-      else {
-        generics.insert(gid, t);
-        true
-      }
-    }
       // enumerate all the options so the compiler complains if a new Type is added
-    (Type::Generic(_), _) => panic!("unexpected generic type"),
     (Type::Def(_), _) | (Type::Prim(_), _) => t == gt,
     (Type::Ptr(_), _) | (Type::Array(_), _) | (Type::Fun(_), _) => false,
   }

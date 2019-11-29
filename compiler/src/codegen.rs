@@ -531,7 +531,7 @@ impl <'l> Gen<'l> {
         Some(self.pointer_to_type(bt).into())
       }
       Type::Generic(_) => panic!(),
-      Type::Unknown => panic!(),
+      Type::Abstract(_) => panic!(),
     }
   }
 
