@@ -1,3 +1,11 @@
+# THOUGHTS - 29/11/2019
+
+The old prelude doesn't work fully because build_module can't find the existing modules. I'm not sure what solution is desirable here. The easiest thing is to say that modules are first-class values. You have to pass references to them into build_module.
+
+It's not clear how a module would obtain a reference to itself. It could be passed into the top_level function. It could go in via CBind too, but then there will be name conflicts. Or they could use the file-name and the module name (assuming modules are always named).
+
+Okay, it actually makes a lot of sense that there should be a global store of modules. Maybe just in the compiler. The build_module function can resume using this for now, but there should eventually be some way of narrowing what a module can see.
+
 # THOUGHTS - 26/11/2019
 
 Resolving function types is complicated if the function is both polymorphic and overloaded. But all polymorphic functions are overloaded, right? This is not really true from the perspective of symbol resolution. You resolve repeatedly against the polymorphic symbol instead of the specialisations, because the important detail is the particular function body that you dispatch on.
