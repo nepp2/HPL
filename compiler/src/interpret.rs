@@ -1,7 +1,7 @@
 
 use crate::error::Error;
 use crate::structure::Val;
-use crate::modules::CompiledModule;
+use crate::types::ModuleId;
 use crate::compile::Compiler;
 use crate::expr::Expr;
 
@@ -16,12 +16,12 @@ static PRELUDE_PATH : &'static str = "../code/prelude.code";
 
 pub struct Interpreter {
   pub c : Box<Compiler>,
-  pub compiled_modules : Vec<CompiledModule>,
+  module_container : Vec<ModuleId>,
 }
 
 pub fn interpreter() -> Interpreter {
   let c = Compiler::new();
-  let mut i = Interpreter { c, compiled_modules: vec![] };
+  let mut i = Interpreter { c, module_container: vec![] };
   
   // load prelude
   if let Err(e) = i.load_prelude() {
@@ -33,21 +33,24 @@ pub fn interpreter() -> Interpreter {
 
 impl Interpreter {
 
-  pub fn run_expression(&mut self, expr : &Expr) -> Result<Val, Error> {
-    let imports : Vec<_> = self.compiled_modules.iter().collect();
-    let (m, val) = self.c.interpret_expression(imports.as_slice(), expr)?;
-    self.compiled_modules.push(m);
-    Ok(val)
+  pub fn run_expression(&mut self, expr : &Expr) -> Result<(ModuleId, Val), Error> {
+    self.module_container.clear();
+    self.module_container.extend(self.c.compiled_modules.keys().cloned());
+    self.c.interpret_expression(self.module_container.as_slice(), expr)
   }
 
-  pub fn run(&mut self, code : &str) -> Result<Val, Error> {
+  fn run(&mut self, code : &str) -> Result<(ModuleId, Val), Error> {
     let expr = self.c.parse(code)?;
     self.run_expression(&expr)
   }
 
-  fn load_module(&mut self, code : &str) -> Result<(), Error> {
-    self.run(code)?;
-    Ok(())
+  pub fn eval(&mut self, code : &str) -> Result<Val, Error> {
+    Ok(self.run(code)?.1)
+  }
+
+  fn load_module(&mut self, code : &str) -> Result<ModuleId, Error> {
+    let (id, _val) = self.run(code)?;
+    Ok(id)
   }
 
   fn load_prelude(&mut self) -> Result<(), Error> {
@@ -72,8 +75,8 @@ impl Interpreter {
     &mut self, code : &str, function_name: &str, arg: A)
       -> Result<T, Error>
   {
-    self.load_module(code)?;
-    let m = self.compiled_modules.last().unwrap();
+    let module_id = self.load_module(code)?;
+    let m = self.c.compiled_modules.get(&module_id).unwrap();
     let function_name = m.t.globals.iter()
       .find(|def| def.name.as_ref() == function_name)
       .and_then(|def| def.codegen_name());

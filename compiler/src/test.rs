@@ -13,7 +13,7 @@ fn result_string(r : Result<Val, Error>) -> String {
 
 fn assert_result_with_interpreter(i : &mut Interpreter, code : &str, expected_result : Val){
   let expected = Ok(expected_result);
-  let result = i.run(code);
+  let result = i.eval(code);
   assert!(
     result == expected,
     "error in code '{}'. Expected result '{:?}'. Actual result was '{:?}'",
@@ -27,7 +27,7 @@ fn assert_result(code : &str, expected_result : Val){
 
 fn assert_error(code : &str, error_substring : &str){
   let mut i = interpreter();
-  let result = i.run(code);
+  let result = i.eval(code);
   if let Err(e) = &result {
     let s = format!("{}", e);
     if s.contains(error_substring) {

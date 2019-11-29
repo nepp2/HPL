@@ -1496,8 +1496,14 @@ impl <'l, 'a> GenFunction<'l, 'a> {
       }
       Content::FieldAccess{ container, field } => {
         let container = node.get(*container);
-        let v = self.codegen_expression(container)?.unwrap();
-        let def = match container.type_tag() {
+        let mut v = self.codegen_expression(container)?.unwrap();
+        let mut ct = container.type_tag();
+        while let Type::Ptr(inner) = ct {
+          ct = *inner;
+          let ptr = self.genval_to_register(v);
+          v = pointer(*ptr.as_pointer_value());
+        }
+        let def = match ct {
           Type::Def(name) => {
             info.find_type_def(&name).unwrap()
           }

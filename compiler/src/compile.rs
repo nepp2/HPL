@@ -10,13 +10,15 @@ use crate::structure::{Val, TOP_LEVEL_FUNCTION_NAME};
 use crate::inference;
 use crate::inference::CodegenInfo;
 use crate::types::{
-  Type, PType, TypeInfo, ModuleId, FunctionSignature,
-  GlobalDefinition, PolyFunctionDef,
-  GenericId, GlobalInit,
+  Type, PType, TypeInfo, ModuleId,
+  FunctionSignature, GlobalDefinition,
+  PolyFunctionDef, GenericId, GlobalInit,
 };
 use crate::codegen::{Gen, LlvmUnit, dump_module, CompileInfo};
 use crate::modules::{ CompiledModule, TypedModule };
 use crate::arena::{ Arena, Ap };
+
+use std::collections::HashMap;
 
 use inkwell::context::{Context};
 use inkwell::passes::PassManager;
@@ -47,8 +49,8 @@ fn execute<T>(function_name : &str, ee : &ExecutionEngine) -> T {
 pub fn run_program(code : &str) -> Result<Val, Error> {
   let mut c = Compiler::new();
   let expr = c.parse(code)?;
-  let m = c.compile_module(&[], &expr, false)?;
-  run_top_level(&m)
+  let (_, val) = c.load_module(&[], &expr)?;
+  Ok(val)
 }
 
 pub struct Compiler {
@@ -57,6 +59,7 @@ pub struct Compiler {
   pub cache : StringCache,
   pub c_symbols : CSymbols,
   pub intrinsics : TypedModule,
+  pub compiled_modules : HashMap<ModuleId, CompiledModule>,
 }
 
 impl Compiler {
@@ -64,7 +67,8 @@ impl Compiler {
     unsafe {
       if !LOADED_SYMBOLS {
         // TODO: delete?
-        Target::initialize_native(&InitializationConfig::default()).expect("Failed to initialize native target");
+        Target::initialize_native(&InitializationConfig::default())
+          .expect("Failed to initialize native target");
   
         // This makes sure that any symbols in the main executable can be
         // linked to the code we generate with the JIT. This includes any
@@ -83,7 +87,10 @@ impl Compiler {
 
     let intrinsics = get_intrinsics(&mut gen, &cache);
   
-    let mut c = Box::new(Compiler { context, gen, cache, c_symbols, intrinsics });
+    let mut c = Box::new(Compiler { 
+      context, gen, cache, c_symbols, intrinsics,
+      compiled_modules: HashMap::new(),
+    });
     let cptr = (&mut *c) as *mut Compiler;
     c.c_symbols.add_symbol("compiler", cptr);
     c
@@ -93,29 +100,38 @@ impl Compiler {
     parse(&self.cache, code)
   }
 
-  pub fn load_module<'a>(&mut self, imports : &[&CompiledModule], expr : &Expr)
-    -> Result<(CompiledModule, Val), Error>
+  fn load_module_internal(&mut self, imports : &[ModuleId], repl_enabled : bool, expr : &Expr)
+    -> Result<(ModuleId, Val), Error>
   {
-    let m = self.compile_module(imports, &expr, false)?;
-    let val = run_top_level(&m)?;
-    Ok((m, val))
+    let id = self.compile_module(imports, &expr, repl_enabled)?;
+    let val = run_top_level(self.compiled_modules.get(&id).unwrap())?;
+    Ok((id, val))
   }
 
-  pub fn interpret_expression<'a>(&mut self, imports : &[&CompiledModule], expr : &Expr)
-    -> Result<(CompiledModule, Val), Error>
+  pub fn load_module(&mut self, imports : &[ModuleId], expr : &Expr)
+    -> Result<(ModuleId, Val), Error>
   {
-    let m = self.compile_module(imports, &expr, true)?;
-    let val = run_top_level(&m)?;
-    Ok((m, val))
+    self.load_module_internal(imports, false, expr)
   }
 
-  fn compile_module(&mut self, imports : &[&CompiledModule], expr : &Expr, repl_enabled : bool)
-    -> Result<CompiledModule, Error>
+  pub fn interpret_expression(&mut self, imports : &[ModuleId], expr : &Expr)
+    -> Result<(ModuleId, Val), Error>
+  {
+    self.load_module_internal(imports, true, expr)
+  }
+
+  fn compile_module(&mut self, import_ids : &[ModuleId], expr : &Expr, repl_enabled : bool)
+    -> Result<ModuleId, Error>
   {
     if DEBUG_PRINTING_EXPRS {
       println!("{}", expr);
     }
     let nodes = structure::to_nodes(&mut self.gen, &self.cache, &expr, repl_enabled)?;
+
+    let mut imports = Vec::with_capacity(import_ids.len());
+    for id in import_ids.iter() {
+      imports.push(self.compiled_modules.get(id).unwrap());
+    }
 
     let mut import_types = vec![&self.intrinsics.t];
     import_types.extend(imports.iter().map(|m| &m.t));
@@ -150,10 +166,11 @@ impl Compiler {
     {
       //let type_directory
       let gen = Gen::new(
-          &mut self.context, &mut llvm_module, &mut ee.get_target_data(),
-          &self.c_symbols.local_symbol_table, &mut globals_to_link, &mut functions_to_link, &pm);
-      
-      let info = CompileInfo::new(imports, &typed_module.t, &typed_module.nodes, &typed_module.cg);
+        &mut self.context, &mut llvm_module, &mut ee.get_target_data(),
+        &self.c_symbols.local_symbol_table, &mut globals_to_link,
+        &mut functions_to_link, &pm);
+      let info = CompileInfo::new(
+        imports.as_slice(), &typed_module.t, &typed_module.nodes, &typed_module.cg);
       gen.codegen_module(&info)?
     };
 
@@ -177,7 +194,10 @@ impl Compiler {
     ee.run_static_constructors();
 
     let lu = LlvmUnit { module_id: typed_module.id, ee, llvm_module };
-    Ok(typed_module.to_compiled(lu))
+    let cm = typed_module.to_compiled(lu);
+    let module_id = cm.id;
+    self.compiled_modules.insert(module_id, cm);
+    Ok(module_id)
   }
 }
 
@@ -257,30 +277,25 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
   for &n in &["&&", "||"] {
     add_intrinsic(&arena, id, &mut ti, n, &[Prim(Bool), Prim(Bool)], Prim(Bool));
   }
-  {
-    let gid = gen.next().into();
-    let gt = Type::Generic(gid);
-    let gcontainer = Type::Ptr(arena.alloc(gt));
-    let args = &[gcontainer, Type::Prim(PType::I64)];
-    add_generic_intrinsic(&arena, id, &mut ti, "Index", args, gt, &[gid]);
+  for prim in &[I64, U64] {
+    for container in &[Ptr, Array] {
+      let gid = gen.next().into();
+      let gt = Generic(gid);
+      let gcontainer = container(arena.alloc(gt));
+      let args = &[gcontainer, Prim(*prim)];
+      add_generic_intrinsic(&arena, id, &mut ti, "Index", args, gt, &[gid]);
+    }
   }
   {
     let gid = gen.next().into();
-    let gt = Type::Generic(gid);
-    let gcontainer = Type::Array(arena.alloc(gt));
-    let args = &[gcontainer, Type::Prim(PType::I64)];
-    add_generic_intrinsic(&arena, id, &mut ti, "Index", args, gt, &[gid]);
-  }
-  {
-    let gid = gen.next().into();
-    let gt = Type::Generic(gid);
-    let gptr = Type::Ptr(arena.alloc(gt));
+    let gt = Generic(gid);
+    let gptr = Ptr(arena.alloc(gt));
     add_generic_intrinsic(&arena, id, &mut ti, "*", &[gptr], gt, &[gid]);
   }
   {
     let gid = gen.next().into();
-    let gt = Type::Generic(gid);
-    let gptr = Type::Ptr(arena.alloc(gt));
+    let gt = Generic(gid);
+    let gptr = Ptr(arena.alloc(gt));
     add_generic_intrinsic(&arena, id, &mut ti, "&", &[gt], gptr, &[gid]);
   }
   TypedModule::new(arena, id, nodes, ti, CodegenInfo::new())

@@ -146,7 +146,7 @@ impl <'a> Inference<'a> {
   fn get_type(&self, ts : TypeSymbol) -> Option<Type> {
     self.resolved.get(&ts).and_then(|it| match it {
       TypeConstraint::Concrete(t) => Some(*t),
-      TypeConstraint::Class(c) => c.default_type(),
+      TypeConstraint::Class(c) => Some(Type::Unknown),
     })
   }
 
@@ -255,7 +255,9 @@ impl <'a> Inference<'a> {
     self.cg.symbol_references.insert(node, def);
   }
 
-  fn find_global(&mut self, name : &str, t : Type, loc : TextLocation) -> Option<Result<ConcreteGlobal, ()>> {
+  fn find_global(&mut self, name : &str, t : Type, loc : TextLocation)
+    -> Option<Result<ConcreteGlobal, ()>> 
+  {
     match self.t.find_global(name, t, self.arena, self.gen) {
       [g] => Some(Ok(*g)),
       [] => None,
@@ -382,7 +384,8 @@ impl <'a> Inference<'a> {
                 }
               }
               else {
-                let e = error_raw(self.loc(*result), format!("incorrect number of field arguments for union '{}'", type_name));
+                let s = format!("incorrect number of field arguments for union '{}'", type_name);
+                let e = error_raw(self.loc(*result), s);
                 self.errors.push(e);
               }
             }
@@ -431,22 +434,28 @@ impl <'a> Inference<'a> {
         }
       }
       Constraint::FieldAccess{ container, field, result } => {
-        let t = self.get_type(*container);
-        if let Some(t) = t {
-          if let Type::Def(name) = t { 
+        let ct = self.get_type(*container);
+        if let Some(mut ct) = ct {
+          // Dereference any pointers
+          while let Type::Ptr(inner) = ct {
+            ct = *inner;
+          }
+          if let Type::Def(name) = ct { 
             if let Some(def) = self.t.find_type_def(&name) {
               let f = def.fields.iter().find(|(n, _)| n.name == field.name);
               if let Some((_, t)) = f.cloned() {
                 self.set_type(*result, t);
               }
               else {
-                self.errors.push(error_raw(field.loc, "type has no field with this name"));
+                let s = format!("type '{}' has no field '{}'", def.name, field.name);
+                self.errors.push(error_raw(field.loc, s));
               }
               return true;
             }
           }
           else {
-            self.errors.push(error_raw(field.loc, "type has no field with this name"));
+            let s = format!("type {} has no fields", ct);
+            self.errors.push(error_raw(field.loc, s));
             return true;
           }
         }

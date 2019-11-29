@@ -1,7 +1,7 @@
 // external C interface for the compiler (so that the language can use it)
 
 use crate::compile::Compiler;
-use crate::modules::CompiledModule;
+use crate::types::ModuleId;
 use crate::expr::{RefStr, Expr, ExprContent};
 
 use std::fs::File;
@@ -101,10 +101,11 @@ pub extern "C" fn load_quote(c : *mut Compiler, s : SStr) -> *mut u8 {
 }
 
 #[no_mangle]
-pub extern "C" fn build_module(c : *mut Compiler, e : &Expr) -> *mut CompiledModule {
+pub extern "C" fn build_module(c : *mut Compiler, e : &Expr) -> ModuleId {
   let c = unsafe { &mut *c };
-  let (cm, _val) = c.load_module(&[], e).expect("failed to build the module");
-  Box::into_raw(Box::new(cm))
+  let imports = c.compiled_modules.keys().cloned().collect::<Vec<_>>();
+  let (module_id, _val) = c.load_module(imports.as_slice(), e).expect("failed to build the module");
+  module_id
 }
 
 // TODO: panics if there is more than one overload, because no argument types
@@ -112,10 +113,14 @@ pub extern "C" fn build_module(c : *mut Compiler, e : &Expr) -> *mut CompiledMod
 // the wrong one.
 #[no_mangle]
 pub extern "C" fn get_function(
-  cm : *mut CompiledModule, name : SStr)
+  c : *mut Compiler,
+  module_id : ModuleId,
+  name : SStr,
+)
     -> *mut u8
 {
-  let cm = unsafe { &mut *cm };
+  let c = unsafe { &mut *c };
+  let cm = c.compiled_modules.get(&module_id).unwrap();
   let name = name.as_str();
   let mut i = cm.t.globals.iter()
     .filter(|def| def.name.as_ref() == name && def.type_tag.signature().is_some())

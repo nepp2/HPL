@@ -53,6 +53,7 @@ pub enum Type {
   Def(Ap<str>),
   Array(Ap<Type>),
   Ptr(Ap<Type>),
+  Class(TypeClass),
   Generic(GenericId),
   Unknown,
 }
@@ -62,6 +63,31 @@ impl Type {
     match self {
       Type::Fun(sig) => Some(sig),
       _ => None,
+    }
+  }
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum TypeClass {
+  Float,
+  Integer,
+  Any,
+}
+
+impl TypeClass {
+  fn contains_type(self, t : Type) -> bool {
+    match self {
+      TypeClass::Float => t.float(),
+      TypeClass::Integer => t.int(),
+      TypeClass::Any => true,
+    }
+  }
+
+  fn default_type(self) -> Option<Type> {
+    match self {
+      TypeClass::Float => Some(Type::Prim(PType::F64)),
+      TypeClass::Integer => Some(Type::Prim(PType::I64)),
+      TypeClass::Any => None,
     }
   }
 }
@@ -161,6 +187,7 @@ impl  fmt::Display for Type {
       Type::Prim(t) => write!(f, "{:?}", t),
       Type::Generic(id) => write!(f, "@Generic({})", id),
       Type::Unknown => write!(f, "@Unknown"),
+      Type::Class(tc) => write!(f, "{:?}", tc),
     }
   }
 }

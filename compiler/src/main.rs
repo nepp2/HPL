@@ -53,7 +53,7 @@ fn load(path : &str) -> String {
 fn load_and_run(path : &str) {
   let code = load(path);
   let mut i = interpreter();
-  let result = i.run(&code);
+  let result = i.eval(&code);
   println!("{}", print_result(result));
 }
 

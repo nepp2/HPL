@@ -128,7 +128,7 @@ struct expr {
 }
 
 struct module_handle {
-  module : ptr(u8)
+  module_id : u64
 }
 
 cbind expr_to_string : fun(out : ptr(string), e : ptr(expr))
@@ -152,101 +152,101 @@ fun build_module(expr : ptr(expr)) {
 }
 
 cbind get_function :
-  fun(module : module_handle, name : ptr(string)) => ptr(u8)
+  fun(compiler : ptr(u8), module : module_handle, name : ptr(string)) => ptr(u8)
 
 fun get_function(module : module_handle, name : string) {
-  get_function(module, &name)
+  get_function(compiler, module, &name)
 }
 
 // ----------------- DEFINE RC AND ARRAY STUFF -------------------
 
-// struct rc_inner {
-//   count : i64
-//   rc_data : u8
-// }
+struct rc_inner {
+  count : i64
+  rc_data : u8
+}
 
-// fun declare_rc(name : ptr(expr), inner_type : ptr(expr)) {
-//   build_module(#{
-//     struct $name {
-//       ptr : ptr(rc_inner)
-//     }
+fun declare_rc(name : ptr(expr), inner_type : ptr(expr)) {
+  build_module(#{
+    struct $name {
+      ptr : ptr(rc_inner)
+    }
 
-//     fun deref(rc : $name) {
-//       &rc.ptr.rc_data as ptr($inner_type)
-//     }
+    fun deref(rc : $name) {
+      &rc.ptr.rc_data as ptr($inner_type)
+    }
 
-//     fun Drop(rc : ptr($name)) {
-//       let inner = rc.ptr
-//       inner.count = inner.count - 1
-//       if inner.count <= 0 {
-//         free(rc.ptr as ptr(u8))
-//       }
-//     }
+    fun Drop(rc : ptr($name)) {
+      let inner = rc.ptr
+      inner.count = inner.count - 1
+      if inner.count <= 0 {
+        free(rc.ptr as ptr(u8))
+      }
+    }
 
-//     fun Clone(rc : ptr($name)) {
-//       rc.ptr.count = rc.ptr.count + 1
-//       *rc
-//     }
-//   })
-// }
+    fun Clone(rc : ptr($name)) {
+      rc.ptr.count = rc.ptr.count + 1
+      *rc
+    }
+  })
+}
 
-// struct array_inner {
-//   length : i64
-//   array_data : u8
-// }
+struct array_inner {
+  length : u64
+  array_data : u8
+}
 
-// fun declare_array(element_type : ptr(expr)) {
-//   let array_type_name = #$("array_" + element_type.to_string())
-//   declare_rc(array_type_name, #array_inner)
+fun declare_array(element_type : ptr(expr)) {
+  let array_type_name = #$("array_" + element_type.to_string())
+  declare_rc(array_type_name, #array_inner)
 
-//   build_module(#{
+  build_module(#{
 
-//     fun inner(a : $array_type_name) {
-//       &a.ptr.rc_data as ptr(array_inner)
-//     }
+    fun inner(a : $array_type_name) {
+      &a.ptr.rc_data as ptr(array_inner)
+    }
 
-//     fun len(a : $array_type_name) {
-//       a.inner().length
-//     }
+    fun len(a : $array_type_name) {
+      a.inner().length
+    }
 
-//     fun index_address(a : $array_type_name, i : i64) {
-//       let p = &a.ptr.rc_data as ptr(array_inner)
-//       let p = &p.array_data as ptr($element_type)
-//       &p[i]
-//     }
+    fun index_address(a : $array_type_name, i : u64) {
+      let p = &a.ptr.rc_data as ptr(array_inner)
+      let p = &p.array_data as ptr($element_type)
+      &p[i]
+    }
 
-//     fun index(a : $array_type_name, i : i64) {
-//       *a.index_address(i)
-//     }
+    fun index(a : $array_type_name, i : u64) {
+      *a.index_address(i)
+    }
 
-//     fun $array_type_name(values : array($element_type)) {
-//       let length = {
-//         let s = &values as ptr(string)
-//         s.length
-//       }
-//       // This is verbose, because I don't support unsigned multiplication yet
-//       let element_bytes = ((sizeof($element_type) as i64) * (length as i64)) as u64
-//       let total_bytes = {
-//         // This is a hack to find the offset to the first element
-//         let dummy = $array_type_name.new(0 as u64 as ptr(rc_inner))
-//         let offset = dummy.index_address(0) as u64
-//         offset + element_bytes
-//       }
-//       // I can't initialise the array pointer without knowing the name of the
-//       // internal rc type that was generated to hold the array, which I don't
-//       // know
-//       let array = *(&malloc(total_bytes) as ptr($array_type_name))
-//       array.ptr.count = 0
-//       array.inner().length = length
-//       let src = &values[0] as ptr(u8)
-//       memcpy(array.index_address(0) as ptr(u8), src, element_bytes)
-//       array
-//     }
-//   })
-// }
+    fun $array_type_name(values : array($element_type)) {
+      let length = {
+        let s = &values as ptr(string)
+        s.length
+      }
+      // This is verbose, because I don't support unsigned multiplication yet
+      let element_bytes = ((sizeof($element_type) as i64) * (length as i64)) as u64
+      let total_bytes = {
+        // This is a hack to find the offset to the first element
+        let dummy = $array_type_name.new(0 as u64 as ptr(rc_inner))
+        let offset = dummy.index_address(0) as u64
+        offset + element_bytes
+      }
+      // I can't initialise the array pointer without knowing the name of the
+      // internal rc type that was generated to hold the array, which I don't
+      // know
+      let array = *(&malloc(total_bytes) as ptr($array_type_name))
+      array.ptr.count = 0
+      array.inner().length = length
+      let src = &values[0] as ptr(u8)
+      memcpy(array.index_address(0) as ptr(u8), src, element_bytes)
+      array
+    }
+  })
+}
 
-// declare_array(#i64)
+declare_array(#i64)
 
-// declare_array(#string)
+declare_array(#string)
 
 ()
