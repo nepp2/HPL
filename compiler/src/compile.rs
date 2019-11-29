@@ -277,7 +277,7 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
   for &n in &["&&", "||"] {
     add_intrinsic(&arena, id, &mut ti, n, &[Prim(Bool), Prim(Bool)], Prim(Bool));
   }
-  for prim in &[I64, U64] {
+  for prim in &[I64, I32, U64, U32] {
     for container in &[Ptr, Array] {
       let gid = gen.next().into();
       let gt = Generic(gid);

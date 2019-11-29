@@ -193,8 +193,11 @@ impl <'a> Inference<'a> {
           format!("global definition '{}' not resolved", name))
       }
       Constraint::GlobalReference { node:_, name, result } => {
+        let unknown = Type::Abstract(AbstractType::Any);
+        let symbols = self.t.find_global(&name, unknown, self.arena, self.gen);
+        let s = symbols.iter().map(|g| format!("      {} : {}", g.def.name, g.concrete_type)).join("\n");
         error_raw(self.loc(*result),
-          format!("global reference '{}' not resolved", name))
+          format!("global reference '{}' not resolved\n   Symbols available:\n{}", name, s))
       }
       Constraint::FieldAccess{ container:_, field, result:_ } => {
         error_raw(field.loc,
@@ -285,7 +288,11 @@ impl <'a> Inference<'a> {
             if let Some(r) = self.find_global(&sym.name, Type::Fun(*mut_sig)) {
               if let Ok(g) = r {
                 self.register_def(*node, g.def);
-                self.set_type(*result, g.concrete_type.signature().unwrap().return_type);
+                let sig = g.concrete_type.signature().unwrap();
+                self.set_type(*result, sig.return_type);
+                for (i, (_, arg_ts)) in args.iter().enumerate() {
+                  self.set_type(*arg_ts, sig.args[i]);
+                }
               }
               return true;
             }
@@ -293,8 +300,10 @@ impl <'a> Inference<'a> {
           Function::Value(ts) => {
             if let Some(t) = self.get_type(*ts) {
               if let Type::Fun(sig) = t {
-                let rt = sig.return_type;
-                self.set_type(*result, rt);
+                self.set_type(*result, sig.return_type);
+                for (i, (_, arg_ts)) in args.iter().enumerate() {
+                  self.set_type(*arg_ts, sig.args[i]);
+                }
               }
               else {
                 let e = error_raw(self.loc(*ts), "cannot call value of this type as function");

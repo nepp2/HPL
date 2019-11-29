@@ -778,12 +778,11 @@ fn codegen_index(
     -> Result<MaybeVal, Error>
 {
   use Type::*;
-  use PType::*;
-  let ptr = match (container.type_tag(), index.type_tag()) {
-    (Ptr(_), Prim(I64)) => {
+  let ptr = match (container.type_tag(), index.type_tag().int()) {
+    (Ptr(_), true) => {
       gf.codegen_pointer(container)?
     }
-    (Array(_), Prim(I64)) => {
+    (Array(_), true) => {
       // TODO: add bounds checks
       let array = gf.codegen_struct(container)?;
       gf.builder.build_extract_value(array, 0, "array_pointer")
@@ -808,7 +807,7 @@ fn codegen_intrinsic_call(gf : &mut GenFunction, node : TypedNode, name : &str, 
     }
     let (ta, tb) = (a.type_tag(), b.type_tag());
     if ta != tb {
-      panic!("invalid intrinsic");
+      panic!("invalid intrinsic {} {} {}", ta, name, tb);
     }
     if ta.float() {
       float_binary_ops(gf, name, a, b)?

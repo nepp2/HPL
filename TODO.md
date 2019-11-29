@@ -13,8 +13,6 @@ Okay, it actually makes a lot of sense that there should be a global store of mo
 - Make sure that the equivalence constraints hang around.
 - Implement polymorphic functions
 
-## Broke everything
-
 # THOUGHTS - 26/11/2019
 
 Resolving function types is complicated if the function is both polymorphic and overloaded. But all polymorphic functions are overloaded, right? This is not really true from the perspective of symbol resolution. You resolve repeatedly against the polymorphic symbol instead of the specialisations, because the important detail is the particular function body that you dispatch on.
