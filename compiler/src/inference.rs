@@ -128,6 +128,7 @@ impl <'a> Inference<'a> {
     if let Some(prev_t) = self.resolved.get(&ts).cloned() {
       if let Some(unified_type) = unify_abstract(prev_t, t) {
         let aaa = (); // TODO: This needs to trigger re-evaluation of other constraints
+        println!("Resolved type '{}' at location '{}'", unified_type, self.loc(ts));
         self.resolved.insert(ts, unified_type);
       }
       else {
@@ -137,6 +138,7 @@ impl <'a> Inference<'a> {
       }
     }
     else {
+      println!("Resolved type '{}' at location '{}'", t, self.loc(ts));
       self.resolved.insert(ts, t);
     }
   }
@@ -465,20 +467,31 @@ impl <'a> Inference<'a> {
     println!("To resolve: {}", self.c.symbols.len());
     let mut unused_constraints = vec![];
     for c in self.c.constraints.iter() {
-      if !self.process_constraint(c) {
+      if self.process_constraint(c) {
+        println!("{}\n", c);
+      }
+      else {
         unused_constraints.push(c);
       }
     }
     let mut total_passes = 1;
     while unused_constraints.len() > 0 {
+      println!("Pass {}", total_passes);
       total_passes += 1;
       let remaining_before_pass = unused_constraints.len();
-      unused_constraints.retain(|c| !self.process_constraint(c));
+      unused_constraints.retain(|c| {
+        let resolved = self.process_constraint(c);
+        if resolved {
+          println!("{}\n", c);
+        }
+        !resolved
+      });
       // Continue if some constraints were resolved in the last pass
       if unused_constraints.len() < remaining_before_pass {
         continue;
       }
       // Continue if some literals can be hardened into specific types
+      println!("Give up and harden the primitives!");
       if self.try_resolve_abstract_types() {
         continue;
       }
@@ -574,6 +587,26 @@ pub enum Constraint {
     name : Ap<str>,
     result : TypeSymbol,
   },
+}
+
+impl  fmt::Display for Constraint {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    use Constraint::*;
+    match self {
+      Assert(_, t) => write!(f, "Assert {}", t),
+      Equalivalent(_, _) => write!(f, "Equalivalent"),
+      Array{ .. } => write!(f, "Array"),
+      Convert{ into_type, .. } => write!(f, "Convert into {}", into_type),
+      FieldAccess { field, .. } => write!(f, "FieldAccess {}", field.name),
+      Constructor { type_name, .. } => write!(f, "Constructor {}", type_name),
+      FunctionDef { name, .. } => write!(f, "FunctionDef {}", name),
+      FunctionCall { function, .. } =>
+        write!(f, "FunctionCall {}",
+          match function { Function::Name(sym) => sym.name.as_ref(), _ => ""}),
+      GlobalDef { name, type_symbol, .. } => write!(f, "GlobalDef {}", name),
+      GlobalReference { name, .. } => write!(f, "GlobalRef {}", name),
+    }
+  }
 }
 
 struct Constraints {

@@ -31,7 +31,7 @@
 
 let ai = array_i64([0, 1, 2, 20, 534, 3, 4])
 let a = array_string(["hello", "world"])
-let i = 0;
+let i = 0 // this is a global, so it doesn't get linked
 while i < a.len() {
   print("a: "); print(a.index(i)); println()
   i = i + 1

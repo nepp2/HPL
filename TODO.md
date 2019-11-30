@@ -1,3 +1,7 @@
+# TODO - 30/11/2019
+
+The current problem is that Globals aren't registered without concrete values (because abstract values may no longer be obtained by equivalence). At the moment this global issue only happens due to REPL mode. Maybe REPL globals should just be resolved in lexical scope again. This broke them previously, but I'm sure it could be made to work.
+
 # THOUGHTS - 29/11/2019
 
 The old prelude doesn't work fully because build_module can't find the existing modules. I'm not sure what solution is desirable here. The easiest thing is to say that modules are first-class values. You have to pass references to them into `build_module`.
