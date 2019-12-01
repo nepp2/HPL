@@ -33,7 +33,7 @@ use llvm_sys::support::LLVMLoadLibraryPermanently;
 static mut LOADED_SYMBOLS : bool = false;
 
 // TODO: Put these options somewhere more sensible
-static DEBUG_PRINTING_EXPRS : bool = true;
+static DEBUG_PRINTING_EXPRS : bool = false;
 static DEBUG_PRINTING_IR : bool = false;
 static ENABLE_IR_OPTIMISATION : bool = false;
 
@@ -100,33 +100,21 @@ impl Compiler {
     parse(&self.cache, code)
   }
 
-  fn load_module_internal(&mut self, imports : &[ModuleId], repl_enabled : bool, expr : &Expr)
+  pub fn load_module(&mut self, imports : &[ModuleId], expr : &Expr)
     -> Result<(ModuleId, Val), Error>
   {
-    let id = self.compile_module(imports, &expr, repl_enabled)?;
+    let id = self.compile_module(imports, &expr)?;
     let val = run_top_level(self.compiled_modules.get(&id).unwrap())?;
     Ok((id, val))
   }
 
-  pub fn load_module(&mut self, imports : &[ModuleId], expr : &Expr)
-    -> Result<(ModuleId, Val), Error>
-  {
-    self.load_module_internal(imports, false, expr)
-  }
-
-  pub fn interpret_expression(&mut self, imports : &[ModuleId], expr : &Expr)
-    -> Result<(ModuleId, Val), Error>
-  {
-    self.load_module_internal(imports, true, expr)
-  }
-
-  fn compile_module(&mut self, import_ids : &[ModuleId], expr : &Expr, repl_enabled : bool)
+  fn compile_module(&mut self, import_ids : &[ModuleId], expr : &Expr)
     -> Result<ModuleId, Error>
   {
     if DEBUG_PRINTING_EXPRS {
       println!("{}", expr);
     }
-    let nodes = structure::to_nodes(&mut self.gen, &self.cache, &expr, repl_enabled)?;
+    let nodes = structure::to_nodes(&mut self.gen, &self.cache, &expr)?;
 
     let mut imports = Vec::with_capacity(import_ids.len());
     for id in import_ids.iter() {
@@ -255,7 +243,7 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
   }
 
   let expr = parse(cache, "").unwrap();
-  let nodes = structure::to_nodes(gen, cache, &expr, false).unwrap();
+  let nodes = structure::to_nodes(gen, cache, &expr).unwrap();
 
   let arena = Arena::new();
   let id = gen.next().into();

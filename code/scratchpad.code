@@ -1,38 +1,12 @@
 
-// struct blah {
-//   i : i64
-//   count : ptr(i64)
-// }
-
-// fun blah(i : i64) {
-//   let count = malloc(sizeof(i64)) as ptr(i64)
-//   *count = 1
-//   blah.new(i, count)
-// }
-
-// fun print(b : blah) {
-//   print("blah(i: ") ; print(b.i) ; print(", count: ") ; print(*b.count) ; print(")")
-// }
-
-// fun Drop(p : ptr(blah)) {
-//   *p.count = *p.count - 1
-//   print("dropping "); print(*p); println()
-// }
-
-// fun Clone(p : ptr(blah)) {
-//   *p.count = *p.count + 1
-//   print("cloning "); print(*p); println()
-//   *p
-// }
-
-// let b = blah(5)
-// let c = b
-// c = b
-
-let ai = array_i64([0, 1, 2, 20, 534, 3, 4])
-let a = array_string(["hello", "world"])
-let i = 0 // this is a global, so it doesn't get linked
-while i < a.len() {
-  print("a: "); print(a.index(i)); println()
-  i = i + 1
+fun blah(a : u64) {
+  a + 5
 }
+
+let b = blah(5)
+
+fun blah(a : i64) {
+  a + 5
+}
+
+b

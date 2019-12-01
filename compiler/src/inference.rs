@@ -127,8 +127,6 @@ impl <'a> Inference<'a> {
   fn set_type(&mut self, ts : TypeSymbol, t : Type) {
     if let Some(prev_t) = self.resolved.get(&ts).cloned() {
       if let Some(unified_type) = unify_abstract(prev_t, t) {
-        let aaa = (); // TODO: This needs to trigger re-evaluation of other constraints
-        println!("Resolved type '{}' at location '{}'", unified_type, self.loc(ts));
         self.resolved.insert(ts, unified_type);
       }
       else {
@@ -138,7 +136,6 @@ impl <'a> Inference<'a> {
       }
     }
     else {
-      println!("Resolved type '{}' at location '{}'", t, self.loc(ts));
       self.resolved.insert(ts, t);
     }
   }
@@ -199,7 +196,7 @@ impl <'a> Inference<'a> {
         let symbols = self.t.find_global(&name, unknown, self.arena, self.gen);
         let s = symbols.iter().map(|g| format!("      {} : {}", g.def.name, g.concrete_type)).join("\n");
         error_raw(self.loc(*result),
-          format!("global reference '{}' not resolved\n   Symbols available:\n{}", name, s))
+          format!("Reference '{}' not resolved\n   Symbols available:\n{}", name, s))
       }
       Constraint::FieldAccess{ container:_, field, result:_ } => {
         error_raw(field.loc,
@@ -467,37 +464,26 @@ impl <'a> Inference<'a> {
     println!("To resolve: {}", self.c.symbols.len());
     let mut unused_constraints = vec![];
     for c in self.c.constraints.iter() {
-      if self.process_constraint(c) {
-        println!("{}\n", c);
-      }
-      else {
+      if !self.process_constraint(c) {
         unused_constraints.push(c);
       }
     }
     let mut total_passes = 1;
     while unused_constraints.len() > 0 {
-      println!("Pass {}", total_passes);
       total_passes += 1;
       let remaining_before_pass = unused_constraints.len();
-      unused_constraints.retain(|c| {
-        let resolved = self.process_constraint(c);
-        if resolved {
-          println!("{}\n", c);
-        }
-        !resolved
-      });
+      unused_constraints.retain(|c| !self.process_constraint(c));
       // Continue if some constraints were resolved in the last pass
       if unused_constraints.len() < remaining_before_pass {
         continue;
       }
       // Continue if some literals can be hardened into specific types
-      println!("Give up and harden the primitives!");
       if self.try_resolve_abstract_types() {
         continue;
       }
       break;
     }
-    println!("\nPasses taken: {}\n", total_passes);
+    println!("Passes taken: {}\n", total_passes);
     
     // Generate errors for unresolved constraints
     for c in unused_constraints.iter() {
@@ -511,16 +497,18 @@ impl <'a> Inference<'a> {
     }
 
     // Assign types to all of the nodes
-    for (n, ts) in self.c.node_symbols.iter() {
-      let t = self.get_type(*ts).unwrap();
-      // Make sure the type isn't abstract
-      if let Some(t) = t.to_concrete(self.arena) {
-        self.cg.node_type.insert(*n, t);
-      }
-      else {
-        let loc = self.loc(*ts);
-        let e = error_raw(loc, "unresolved type");
-        self.errors.push(e);
+    if self.errors.len() == 0 {
+      for (n, ts) in self.c.node_symbols.iter() {
+        let t = self.get_type(*ts).unwrap();
+        // Make sure the type isn't abstract
+        if let Some(t) = t.to_concrete(self.arena) {
+          self.cg.node_type.insert(*n, t);
+        }
+        else {
+          let loc = self.loc(*ts);
+          let e = error_raw(loc, "unresolved type");
+          self.errors.push(e);
+        }
       }
     }
 
@@ -603,7 +591,7 @@ impl  fmt::Display for Constraint {
       FunctionCall { function, .. } =>
         write!(f, "FunctionCall {}",
           match function { Function::Name(sym) => sym.name.as_ref(), _ => ""}),
-      GlobalDef { name, type_symbol, .. } => write!(f, "GlobalDef {}", name),
+      GlobalDef { name, .. } => write!(f, "GlobalDef {}", name),
       GlobalReference { name, .. } => write!(f, "GlobalRef {}", name),
     }
   }

@@ -36,7 +36,7 @@ impl Interpreter {
   pub fn run_expression(&mut self, expr : &Expr) -> Result<(ModuleId, Val), Error> {
     self.module_container.clear();
     self.module_container.extend(self.c.compiled_modules.keys().cloned());
-    self.c.interpret_expression(self.module_container.as_slice(), expr)
+    self.c.load_module(self.module_container.as_slice(), expr)
   }
 
   fn run(&mut self, code : &str) -> Result<(ModuleId, Val), Error> {

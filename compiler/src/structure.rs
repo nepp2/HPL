@@ -129,7 +129,6 @@ pub struct NodeConverter<'l> {
 pub struct FunctionConverter<'l, 'lt> {
   t : &'l mut NodeConverter<'lt>,
   is_top_level : bool,
-  repl_enabled : bool,
   labels_in_scope : Vec<LabelId>,
   block_scope : Vec<Vec<Symbol>>,
 }
@@ -177,8 +176,7 @@ impl <'l> NodeRef<'l> {
 pub fn to_nodes(
   uid_generator : &mut UIDGenerator,
   cache : &StringCache,
-  expr : &Expr,
-  repl_enabled : bool)
+  expr : &Expr)
     -> Result<Nodes, Error>
 {
   let mut nc = NodeConverter {
@@ -187,7 +185,7 @@ pub fn to_nodes(
     symbols: HashMap::new(),
     cache,
   };
-  let mut fc = FunctionConverter::new(&mut nc, true, repl_enabled, vec![]);
+  let mut fc = FunctionConverter::new(&mut nc, true, vec![]);
   let top_level = fc.top_level_expression(expr)?;
   Ok(Nodes{ root: top_level, nodes: nc.nodes, symbols: nc.symbols })
 }
@@ -211,10 +209,10 @@ impl <'l> NodeConverter<'l> {
 
 impl <'l, 'lt> FunctionConverter<'l, 'lt> {
 
-  pub fn new(t : &'l mut NodeConverter<'lt>, is_top_level : bool, repl_enabled : bool, args : Vec<Symbol>)
+  pub fn new(t : &'l mut NodeConverter<'lt>, is_top_level : bool, args : Vec<Symbol>)
    -> FunctionConverter<'l, 'lt>
   {
-    FunctionConverter { t, is_top_level, repl_enabled, labels_in_scope : vec![], block_scope: vec![args] }
+    FunctionConverter { t, is_top_level, labels_in_scope : vec![], block_scope: vec![args] }
   }
 
   fn add_var_to_scope(&mut self, var : Symbol) {
@@ -371,13 +369,8 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         if let Some(("=", [name_expr, value_expr])) = e.try_construct() {
           let (name, type_tag) = self.typed_symbol(name_expr)?;
           let value = self.to_node(value_expr)?;
-          let c = if self.repl_enabled && self.is_top_level && self.block_scope.len() == 2 {
-            VariableInitialise { name, type_tag, value, var_scope: VarScope::Global(GlobalType::Normal) }
-          }
-          else {
-            self.add_var_to_scope(name.clone());
-            VariableInitialise{ name, type_tag: None, value, var_scope: VarScope::Local }
-          };
+          self.add_var_to_scope(name.clone());
+          let c = VariableInitialise{ name, type_tag, value, var_scope: VarScope::Local };
           return Ok(self.node(expr, c));
         }
         error(expr, "malformed let expression")
@@ -455,7 +448,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
             .collect::<Result<Vec<_>, Error>>()?;
           let arg_symbols =
             args.iter().map(|(s, _)| s.clone()).collect();
-          let mut function_checker = FunctionConverter::new(self.t, false, false, arg_symbols);
+          let mut function_checker = FunctionConverter::new(self.t, false, arg_symbols);
           let body = function_checker.to_function_body(function_body)?;
           return Ok(self.node(expr, FunctionDefinition{name, args, return_tag: None, body}));
         }

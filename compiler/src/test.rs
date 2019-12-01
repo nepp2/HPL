@@ -284,7 +284,7 @@ rusty_fork_test! {
   #[test]
   fn test_jit_module_variable_linking() {
     let mut i = interpreter();
-    let a = "let foo = 5";
+    let a = "static foo = 5";
     let b = "foo";
     assert_result_with_interpreter(&mut i, a, Val::Void);
     assert_result_with_interpreter(&mut i, b, Val::I64(5));

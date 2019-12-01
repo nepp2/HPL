@@ -1,3 +1,8 @@
+# TODO - 01/12/2019
+
+- Declare symbols immediately, but with incomplete types.
+- Implement polymorphic functions
+
 # TODO - 30/11/2019
 
 The current problem is that Globals aren't registered without concrete values (because abstract values may no longer be obtained by equivalence). At the moment this global issue only happens due to REPL mode. Maybe REPL globals should just be resolved in lexical scope again. This broke them previously, but I'm sure it could be made to work.
@@ -12,7 +17,7 @@ Okay, it actually makes a lot of sense that there should be a global store of mo
 
 ## TODO
 
-- Add a global module store
+- ~~Add a global module store~~
 - Reintroduce function call/global constraints when new symbols are resolved
 - Make sure that the equivalence constraints hang around.
 - Implement polymorphic functions
