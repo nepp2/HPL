@@ -1,3 +1,12 @@
+# THOUGHTS - 02/12/2019
+
+I'm contemplating the possible wrongness of regions. Although not that they are very wrong. Just that possibly a slot map would be a better choice. Or some combination of the two.
+
+Requirements:
+- confidence that there is no accidental mutable aliasing
+- in-place mutations to types
+- confidence that different arenas don't contain pointers into each other
+
 # TODO - 01/12/2019
 
 - Declare symbols immediately, but with incomplete types.
