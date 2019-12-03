@@ -6,13 +6,12 @@ use crate::expr::RefStr;
 
 use crate::structure::{
   Node, NodeId, Nodes, Content, Val, TypeKind, SymbolId,
-  LabelId, NodeValueType, FunctionNode, VarScope };
+  LabelId, NodeValueType, FunctionNode, VarScope, Symbol };
 use crate::types::{
-  Type, PType, TypeDefinition, GlobalInit, Symbol,
+  Type, PType, TypeDefinition, GlobalInit,
   ModuleId, GlobalDefinition, TypeInfo };
 use crate::inference::CodegenInfo;
 use crate::modules::CompiledModule;
-use crate::arena::Ap;
 
 use std::collections::HashMap;
 
@@ -149,7 +148,7 @@ pub struct Gen<'l> {
   /// Functions that need linking when the execution engine is created
   functions_to_link: &'l mut Vec<(FunctionValue, usize)>,
 
-  struct_types: HashMap<Ap<str>, StructType>,
+  struct_types: HashMap<RefStr, StructType>,
 
   pm : &'l PassManager<FunctionValue>,
 }
@@ -219,8 +218,8 @@ impl <'l> CompileInfo<'l> {
     TypedNode { info: self, node }
   }
 
-  fn find_type_def(&self, name : &str) -> Option<Ap<TypeDefinition>> {    
-    self.cg.type_def_references.get(name).cloned()
+  fn find_type_def(&self, name : &str) -> Option<&TypeDefinition> {    
+    self.cg.type_def_references.get(name)
     .or_else(|| 
       self.t.find_type_def(name).or_else(||
         self.compiled_modules.iter().rev().flat_map(|m| m.t.find_type_def(name)).next()))
@@ -278,8 +277,8 @@ impl <'l> TypedNode<'l> {
     self.info.cg.sizeof_info.get(&self.node.id).cloned()
   }
 
-  fn node_symbol_def(&self) -> Option<Ap<GlobalDefinition>> {
-    self.info.cg.symbol_references.get(&self.node.id).cloned()
+  fn node_symbol_def(&self) -> Option<&GlobalDefinition> {
+    self.info.cg.symbol_references.get(&self.node.id)
   }
 
   fn is_intrinsic_function(&self) -> bool {

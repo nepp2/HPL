@@ -142,7 +142,6 @@ impl GlobalDefinition {
 #[derive(Clone)]
 pub struct PolyFunctionDef {
   pub global : GlobalDefinition,
-  pub poly_type : Type,
   pub generics : Vec<GenericId>,
 }
 
@@ -215,6 +214,13 @@ impl  Type {
       Type::Generic(_) => return Err(()),
     };
     Ok(())
+  }
+
+  pub fn signature_mut(&mut self) -> Option<&mut FunctionSignature> {
+    match self {
+      Type::Fun(sig) => Some(sig),
+      _ => None,
+    }
   }
 
   pub fn signature(&self) -> Option<&FunctionSignature> {
@@ -310,14 +316,14 @@ impl TypeInfo {
     'outer: for def in self.poly_functions.iter() {
       if def.global.name.as_ref() == name {
         generics.clear();
-        let matched = generic_match(generics, t, &def.poly_type);
+        let matched = generic_match(generics, t, &def.global.type_tag);
         if matched && generics.len() == def.generics.len() {
           for t in generics.values_mut() {
             if let Err(()) = t.to_concrete() {
               continue 'outer;
             }
           }
-          let mut concrete_type = def.poly_type.clone();
+          let mut concrete_type = def.global.type_tag.clone();
           generic_replace(generics, gen, &mut concrete_type);
           let def = def.global;
           results.push(ConcreteGlobal { def, concrete_type });

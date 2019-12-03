@@ -6,7 +6,6 @@ use crate::arena::Arena;
 use crate::structure::Nodes;
 
 pub struct TypedModule {
-  arena : Arena,
   pub id : ModuleId,
   pub nodes : Nodes,
   pub t : TypeInfo,
@@ -15,19 +14,17 @@ pub struct TypedModule {
 
 impl TypedModule {
   pub fn new(
-    arena : Arena,
     id : ModuleId,
     nodes : Nodes,
     t : TypeInfo,
     cg : CodegenInfo,
   ) -> Self 
   {
-    TypedModule { arena, id, nodes, t, cg }
+    TypedModule { id, nodes, t, cg }
   }
 
   pub fn to_compiled(self, llvm_unit : LlvmUnit) -> CompiledModule {
     CompiledModule {
-      arena: self.arena,
       id: self.id,
       nodes: self.nodes,
       t: self.t,
@@ -37,7 +34,6 @@ impl TypedModule {
 }
 
 pub struct CompiledModule {
-  arena : Arena,
   pub id : ModuleId,
   pub nodes : Nodes,
   pub t : TypeInfo,

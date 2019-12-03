@@ -16,7 +16,6 @@ use crate::types::{
 };
 use crate::codegen::{Gen, LlvmUnit, dump_module, CompileInfo};
 use crate::modules::{ CompiledModule, TypedModule };
-use crate::arena::{ Arena, Ap };
 
 use std::collections::HashMap;
 
@@ -125,9 +124,8 @@ impl Compiler {
     import_types.extend(imports.iter().map(|m| &m.t));
 
     let typed_module =
-      inference::infer_types(nodes, import_types.as_slice(), &mut self.gen)
-      .map_err(|es| error_raw(expr,
-        ErrorContent::InnerErrors("type errors".into(), es)))?;
+      inference::infer_types(nodes, import_types.as_slice(), &self.cache, &mut self.gen)
+      .map_err(|es| error_raw(expr, ErrorContent::InnerErrors("type errors".into(), es)))?;
 
     let module_name = format!("{:?}", typed_module.id);
     let mut llvm_module = self.context.create_module(&module_name);
@@ -202,50 +200,44 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
   use PType::*;
 
   fn create_definition(
-    arena : &Arena, id : ModuleId, name : &str,
-    args : &[Type], return_type : Type)
-      -> (Ap<GlobalDefinition>, Ap<FunctionSignature>)
+    cache : &StringCache, id : ModuleId, name : &str,
+    args : Vec<Type>, return_type : Type)
+      -> GlobalDefinition
   {
     let sig = FunctionSignature{
       return_type,
-      args: arena.alloc_slice(args),
+      args,
     };
-    let sig = arena.alloc(sig);
-    let g = GlobalDefinition {
+    GlobalDefinition {
       module_id: id,
-      name: arena.alloc_str(name),
-      type_tag: Type::Fun(sig),
+      name: cache.get(name),
+      type_tag: Type::Fun(Box::new(sig)),
       initialiser: GlobalInit::Intrinsic,
       loc: TextLocation::zero(),
-    };
-    (arena.alloc(g), sig)
+    }
   }
 
   fn add_intrinsic(
-    arena : &Arena, id : ModuleId, t : &mut TypeInfo,
-    name : &str, args : &[Type], return_type : Type)
+    cache : &StringCache, id : ModuleId, t : &mut TypeInfo,
+    name : &str, args : Vec<Type>, return_type : Type)
   {
-    let (g, _) = create_definition(arena, id, name, args, return_type);
+    let g = create_definition(cache, id, name, args, return_type);
     t.globals.push(g);
   }
   
   fn add_generic_intrinsic(
-    arena : &Arena, id : ModuleId, t : &mut TypeInfo,
-    name : &str, args : &[Type], return_type : Type,
-    generics : &[GenericId])
+    cache : &StringCache, id : ModuleId, t : &mut TypeInfo,
+    name : &str, args : Vec<Type>, return_type : Type,
+    generics : Vec<GenericId>)
   {
-    let (global, poly_signature) = create_definition(arena, id, name, args, return_type);
-    let pf = PolyFunctionDef {
-      global, poly_signature,
-      generics: arena.alloc_slice(generics),
-    };
-    t.poly_functions.push(arena.alloc(pf));
+    let global = create_definition(cache, id, name, args, return_type);
+    let pf = PolyFunctionDef {global, generics };
+    t.poly_functions.push(pf);
   }
 
   let expr = parse(cache, "").unwrap();
   let nodes = structure::to_nodes(gen, cache, &expr).unwrap();
 
-  let arena = Arena::new();
   let id = gen.next().into();
   let mut ti = TypeInfo::new(id);
   let prim_number_types =
@@ -253,40 +245,40 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
       Prim(U64), Prim(U32), Prim(U16), Prim(U8) ];
   for &t in prim_number_types {
     for &n in &["-"] {
-      add_intrinsic(&arena, id, &mut ti, n, &[t], t);
+      add_intrinsic(cache, id, &mut ti, n, vec![t], t);
     }
     for &n in &["+", "-", "*", "/"] {
-      add_intrinsic(&arena, id, &mut ti, n, &[t, t], t);
+      add_intrinsic(cache, id, &mut ti, n, vec![t, t], t);
     }
     for &n in &["==", ">", "<", ">=", "<=", "!="] {
-      add_intrinsic(&arena, id, &mut ti, n, &[t, t], Prim(Bool));
+      add_intrinsic(cache, id, &mut ti, n, vec![t, t], Prim(Bool));
     }
   }
   for &n in &["&&", "||"] {
-    add_intrinsic(&arena, id, &mut ti, n, &[Prim(Bool), Prim(Bool)], Prim(Bool));
+    add_intrinsic(cache, id, &mut ti, n, vec![Prim(Bool), Prim(Bool)], Prim(Bool));
   }
   for prim in &[I64, I32, U64, U32] {
     for container in &[Ptr, Array] {
       let gid = gen.next().into();
       let gt = Generic(gid);
-      let gcontainer = container(arena.alloc(gt));
-      let args = &[gcontainer, Prim(*prim)];
-      add_generic_intrinsic(&arena, id, &mut ti, "Index", args, gt, &[gid]);
+      let gcontainer = container(Box::new(gt));
+      let args = vec![gcontainer, Prim(*prim)];
+      add_generic_intrinsic(cache, id, &mut ti, "Index", args, gt, vec![gid]);
     }
   }
   {
     let gid = gen.next().into();
     let gt = Generic(gid);
-    let gptr = Ptr(arena.alloc(gt));
-    add_generic_intrinsic(&arena, id, &mut ti, "*", &[gptr], gt, &[gid]);
+    let gptr = Ptr(Box::new(gt));
+    add_generic_intrinsic(cache, id, &mut ti, "*", vec![gptr], gt, vec![gid]);
   }
   {
     let gid = gen.next().into();
     let gt = Generic(gid);
-    let gptr = Ptr(arena.alloc(gt));
-    add_generic_intrinsic(&arena, id, &mut ti, "&", &[gt], gptr, &[gid]);
+    let gptr = Ptr(Box::new(gt));
+    add_generic_intrinsic(cache, id, &mut ti, "&", vec![gt], gptr, vec![gid]);
   }
-  TypedModule::new(arena, id, nodes, ti, CodegenInfo::new())
+  TypedModule::new(id, nodes, ti, CodegenInfo::new())
 }
 
 fn run_top_level(m : &CompiledModule) -> Result<Val, Error> {
