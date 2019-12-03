@@ -3,20 +3,19 @@ use std::fmt;
 use itertools::Itertools;
 
 use crate::error::{Error, error, error_raw, TextLocation};
-use crate::expr::{Expr, UIDGenerator};
+use crate::expr::{Expr, UIDGenerator, RefStr, StringCache};
 use crate::structure::{
-  Node, NodeId, Nodes, Symbol as RefSymbol, SymbolId, Content,
-  Val, LabelId, TypeKind, FunctionNode, VarScope,
-  GlobalType,
+  Node, NodeId, Nodes, Symbol as RefSymbol, SymbolId,
+  Content, Val, LabelId, TypeKind, FunctionNode,
+  VarScope, GlobalType, Symbol,
 };
 use crate::types::{
   Type, PType, TypeInfo, TypeDefinition, ConcreteGlobal,
   FunctionSignature, FunctionInit, GlobalDefinition,
-  TypeDirectory, GlobalInit, Symbol, unify_abstract,
+  TypeDirectory, GlobalInit, unify_abstract,
   AbstractType,
 };
 use crate::modules::TypedModule;
-use crate::arena::{ Arena, Ap };
 
 use std::collections::HashMap;
 
@@ -55,7 +54,7 @@ pub struct CodegenInfo {
   pub node_type : HashMap<NodeId, Type>,
   pub sizeof_info : HashMap<NodeId, Type>,
   pub symbol_references : HashMap<NodeId, Ap<GlobalDefinition>>,
-  pub type_def_references : HashMap<Ap<str>, Ap<TypeDefinition>>,
+  pub type_def_references : HashMap<RefStr, Ap<TypeDefinition>>,
 }
 
 impl CodegenInfo {
@@ -542,12 +541,12 @@ pub enum Constraint {
     result : TypeSymbol,
   },
   Constructor {
-    type_name : Ap<str>,
+    type_name : RefStr,
     fields : Vec<(Option<Symbol>, TypeSymbol)>,
     result : TypeSymbol,
   },
   FunctionDef {
-    name : Ap<str>,
+    name : RefStr,
     return_type : TypeSymbol,
     args : Vec<(Symbol, TypeSymbol)>,
     body : NodeId,
@@ -565,14 +564,14 @@ pub enum Constraint {
     mut_sig : Ap<FunctionSignature>,
   },
   GlobalDef {
-    name: Ap<str>,
+    name: RefStr,
     type_symbol: TypeSymbol,
     initialiser: GlobalInit,
     loc: TextLocation,
   },
   GlobalReference {
     node : NodeId,
-    name : Ap<str>,
+    name : RefStr,
     result : TypeSymbol,
   },
 }
@@ -643,31 +642,31 @@ fn gather_constraints(
 }
 
 struct GatherConstraints<'l, 't> {
-  arena : &'l Arena,
   labels : HashMap<LabelId, TypeSymbol>,
+  cache : &'l StringCache,
   t : &'l mut TypeDirectory<'t>,
   cg : &'l mut CodegenInfo,
   gen : &'l mut UIDGenerator,
   c : &'l mut Constraints,
   errors : &'l mut Vec<Error>,
-  type_def_refs : &'l mut Vec<(Ap<str>, TextLocation)>,
+  type_def_refs : &'l mut Vec<(RefStr, TextLocation)>,
 }
 
 impl <'l, 't> GatherConstraints<'l, 't> {
 
   fn new(
-    arena : &'l Arena,
+    cache : &'l StringCache,
     t : &'l mut TypeDirectory<'t>,
     cg : &'l mut CodegenInfo,
     gen : &'l mut UIDGenerator,
     c : &'l mut Constraints,
     errors : &'l mut Vec<Error>,
-    type_def_refs : &'l mut Vec<(Ap<str>, TextLocation)>,
+    type_def_refs : &'l mut Vec<(RefStr, TextLocation)>,
   ) -> Self
   {
     GatherConstraints {
       labels: HashMap::new(),
-      arena, t, cg, gen, c,
+      cache, t, cg, gen, c,
       errors, type_def_refs,
     }
   }
@@ -925,7 +924,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
         };
         let unknown = Type::Abstract(AbstractType::Any);
         let mut_sig = FunctionSignature {
-          args: self.arena.slice_of(args.len(), unknown).into_ap(),
+          args: vec![unknown ; args.len()],
           return_type: unknown,
         };
         let fc = Constraint::FunctionCall {
@@ -933,7 +932,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           function,
           args: args.iter().map(|id| (None, self.process_node(n, *id))).collect(),
           result: ts,
-          mut_sig: self.arena.alloc(mut_sig),
+          mut_sig,
         };
         self.constraint(fc);
       }
@@ -983,8 +982,8 @@ impl <'l, 't> GatherConstraints<'l, 't> {
     self.log_error(r)
   }
 
-  fn type_def(&mut self, loc : TextLocation, name : Ap<str>) -> Type {
-    self.type_def_refs.push((name, loc));
+  fn type_def(&mut self, loc : TextLocation, name : RefStr) -> Type {
+    self.type_def_refs.push((name.clone(), loc));
     Type::Def(name)
   }
 
@@ -995,7 +994,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
       if let Some(t) = Type::from_string(name) {
         return Ok(t);
       }
-      let name = self.arena.alloc_str(name);
+      let name = self.cache.get(name);
       return Ok(self.type_def(expr.loc, name));
     }
     match expr.try_construct() {
@@ -1014,19 +1013,18 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           else {
             PType::Void.into()
           };
-          let args = self.arena.alloc_slice(args.as_slice());
-          let sig = self.arena.alloc(FunctionSignature{ args, return_type});
+          let sig = Box::new(FunctionSignature{ args, return_type});
           return Ok(Type::Fun(sig));
         }
       }
       Some(("call", [name, t])) => {
         match name.unwrap_symbol()? {
           "ptr" => {
-            let t = self.arena.alloc(self.expr_to_type(t)?);
+            let t = Box::new(self.expr_to_type(t)?);
             return Ok(Type::Ptr(t))
           }
           "array" => {
-            let t = self.arena.alloc(self.expr_to_type(t)?);
+            let t = Box::new(self.expr_to_type(t)?);
             return Ok(Type::Array(t))
           }
           _ => (),
