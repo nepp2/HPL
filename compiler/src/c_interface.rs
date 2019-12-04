@@ -123,7 +123,7 @@ pub extern "C" fn get_function(
   let cm = c.compiled_modules.get(&module_id).unwrap();
   let name = name.as_str();
   let mut i = cm.t.globals.iter()
-    .filter(|def| def.name.as_ref() == name && def.type_tag.signature().is_some())
+    .filter(|def| def.name.as_ref() == name && def.type_tag.sig().is_some())
     .flat_map(|def| def.codegen_name());
   let address =
     i.next().and_then(|codegen_name|

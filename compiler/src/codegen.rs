@@ -9,7 +9,7 @@ use crate::structure::{
   LabelId, NodeValueType, VarScope, Symbol };
 use crate::types::{
   Type, PType, TypeDefinition, GlobalInit,
-  ModuleId, GlobalDefinition, TypeInfo };
+  ModuleId, GlobalDefinition, TypeInfo, TypeContent };
 use crate::inference::CodegenInfo;
 use crate::modules::CompiledModule;
 
@@ -330,8 +330,8 @@ impl <'l> Gen<'l> {
       let t = self.to_basic_type(info, &def.type_tag).unwrap();
       match &def.initialiser {
         GlobalInit::CBind => {
-          if let Some(sig) = def.type_tag.signature() {
-            let f = self.codegen_prototype(info, def.name.as_ref(), &sig.return_type, None, &sig.args);
+          if let Some(sig) = def.type_tag.sig() {
+            let f = self.codegen_prototype(info, def.name.as_ref(), sig.return_type, None, sig.args);
             let address = self.get_c_symbol_address(def.loc, &def.name)?;
             self.functions_to_link.push((f, address));
           }
@@ -348,11 +348,11 @@ impl <'l> Gen<'l> {
           // self.add_global(v, false, &name);
         }
         GlobalInit::Function(init) => {
-          let sig = def.type_tag.signature().unwrap();
+          let sig = def.type_tag.sig().unwrap();
           let f =
             self.codegen_prototype(
-              info, init.name_for_codegen.as_ref(), &sig.return_type,
-              Some(&init.args), sig.args.as_ref());
+              info, init.name_for_codegen.as_ref(), sig.return_type,
+              Some(&init.args), sig.args);
           functions_to_codegen.push((f, init.args.as_slice(), init.body));
         }
         GlobalInit::Intrinsic => (),
@@ -483,8 +483,8 @@ impl <'l> Gen<'l> {
 
   // special case for handling struct/union fields to prevent infinite recursion
   fn to_basic_type_no_cycle(&mut self, info : &CompileInfo, t : &Type) -> Option<BasicTypeEnum> {
-    match t {
-      Type::Ptr(_t) => {
+    match &t.content {
+      TypeContent::Ptr => {
         let t = self.context.i8_type().ptr_type(AddressSpace::Generic);
         Some(t.into())
       }
@@ -495,8 +495,8 @@ impl <'l> Gen<'l> {
   }
 
   fn to_basic_type(&mut self, info : &CompileInfo, t : &Type) -> Option<BasicTypeEnum> {
-    match t {
-      Type::Prim(t) => {
+    match &t.content {
+      TypeContent::Prim(t) => {
         match t {
           PType::Void => None,
           PType::F64 => Some(self.context.f64_type().into()),
@@ -510,11 +510,12 @@ impl <'l> Gen<'l> {
           PType::Bool => Some(self.context.bool_type().into()),
         }
       }
-      Type::Fun(sig) => {
+      TypeContent::Fun => {
+        let sig = t.sig().unwrap();
         let t = self.to_function_type(info, sig.args.as_ref(), &sig.return_type);
         Some(t.ptr_type(AddressSpace::Generic).into())
       }
-      Type::Def(name) => {
+      TypeContent::Def(name) => {
         if let Some(def) = info.find_type_def(&name) {
           Some(self.composite_type(info, &def).as_basic_type_enum())
         }
@@ -522,15 +523,17 @@ impl <'l> Gen<'l> {
           panic!("type `{}` not found", name);
         }
       }
-      Type::Array(t) => {
+      TypeContent::Array => {
+        let t = t.array().unwrap();
         Some(self.bounded_array_type(info, t).into())
       }
-      Type::Ptr(t) => {
+      TypeContent::Ptr => {
+        let t = t.ptr().unwrap();
         let bt = self.to_basic_type(info, t);
         Some(self.pointer_to_type(bt).into())
       }
-      Type::Generic(_) => panic!(),
-      Type::Abstract(_) => panic!(),
+      TypeContent::Generic(_) => panic!(),
+      TypeContent::Abstract(_) => panic!(),
     }
   }
 
@@ -776,12 +779,11 @@ fn codegen_index(
   gf : &mut GenFunction, container : TypedNode, index : TypedNode)
     -> Result<MaybeVal, Error>
 {
-  use Type::*;
-  let ptr = match (container.type_tag(), index.type_tag().int()) {
-    (Ptr(_), true) => {
+  let ptr = match (&container.type_tag().content, index.type_tag().int()) {
+    (TypeContent::Ptr, true) => {
       gf.codegen_pointer(container)?
     }
-    (Array(_), true) => {
+    (TypeContent::Array, true) => {
       // TODO: add bounds checks
       let array = gf.codegen_struct(container)?;
       gf.builder.build_extract_value(array, 0, "array_pointer")
@@ -797,7 +799,7 @@ fn codegen_index(
 fn codegen_intrinsic_call(gf : &mut GenFunction, node : TypedNode, name : &str, args : &[NodeId])
   -> Result<MaybeVal, Error>
 {
-  use Type::*;
+  use TypeContent::*;
   use PType::*;
   let gv : GenVal = if let [a, b] = args {
     let (a, b) = (node.get(*a), node.get(*b));
@@ -814,7 +816,7 @@ fn codegen_intrinsic_call(gf : &mut GenFunction, node : TypedNode, name : &str, 
     else if ta.int() {
       integer_binary_ops(gf, name, a, b)?
     }
-    else if ta == &Prim(Bool) {
+    else if ta.content == Prim(Bool) {
       match name {
         "&&" => gf.codegen_short_circuit_op(a, b, ShortCircuitOp::And)?,
         "||" => gf.codegen_short_circuit_op(a, b, ShortCircuitOp::Or)?,
@@ -829,11 +831,11 @@ fn codegen_intrinsic_call(gf : &mut GenFunction, node : TypedNode, name : &str, 
   }
   else if let [a] = args {
     let a = node.get(*a);
-    match (a.type_tag(), name) {
+    match (&a.type_tag().content, name) {
       (Prim(F64), "-") => unary_op!(build_float_neg, FloatValue, gf, a),
       (Prim(I64), "-") => unary_op!(build_int_neg, IntValue, gf, a),
       (Prim(Bool), "!") => unary_op!(build_not, IntValue, gf, a),
-      (Ptr(_), "*") => {
+      (Ptr, "*") => {
         let ptr = gf.codegen_pointer(a)?;
         pointer(ptr)
       }
@@ -1145,12 +1147,12 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         reg(fv.as_global_value().as_pointer_value().into())
       }
       GlobalInit::CBind => {
-        if let Some(sig) = def.type_tag.signature() {
+        if let Some(sig) = def.type_tag.sig() {
           let fv = if let Some(local_f) = self.gen.module.get_function(&def.name) {
             local_f
           }
           else {
-            let f = self.gen.codegen_prototype(info, &def.name, &sig.return_type, None, &sig.args);
+            let f = self.gen.codegen_prototype(info, &def.name, sig.return_type, None, sig.args);
             let address = self.gen.get_c_symbol_address(def.loc, &def.name).unwrap();
             self.gen.functions_to_link.push((f, address));
             f
@@ -1196,8 +1198,8 @@ impl <'l, 'a> GenFunction<'l, 'a> {
             .expect("expected local function!")
         }
         else {
-          let sig = def.type_tag.signature().unwrap();
-          let f = self.gen.codegen_prototype(info, &init.name_for_codegen, &sig.return_type, Some(&init.args), &sig.args);
+          let sig = def.type_tag.sig().unwrap();
+          let f = self.gen.codegen_prototype(info, &init.name_for_codegen, sig.return_type, Some(&init.args), sig.args);
           let address = info.find_function_address(def.module_id, &init.name_for_codegen);
           self.gen.functions_to_link.push((f, address));
           f
@@ -1213,24 +1215,15 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     return r.map(reg).map(IsVal).unwrap_or(Void);
   }
 
-  fn try_codegen_intrinsic(&mut self, node : TypedNode, function : TypedNode, args : &[NodeId])
-    -> Option<Result<MaybeVal, Error>>
-  {
-    if let Content::Reference{ name, refers_to: None } = function.content() {
-      if node.is_intrinsic_function() {
-        return Some(codegen_intrinsic_call(self, node, name, args));
-      }
-    }
-    None
-  }
-
   fn codegen_function_call(&mut self, node : TypedNode, function : TypedNode, args : &[NodeId])
     -> Result<MaybeVal, Error>
   {
     // Check if it's an intrinsic
-    if let Some(r) = self.try_codegen_intrinsic(node, function, args) {
-      return r;
+    if function.is_intrinsic_function() {
+      let name = &function.node_symbol_def().unwrap().name;
+      return codegen_intrinsic_call(self, node, name, args);
     }
+
     // Check if it's a static call or a function value
     let function_pointer = if let Some(def) = node.node_symbol_def() {
       let v = self.get_linked_global_value(node.info, &def);
@@ -1249,7 +1242,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
   }
 
   fn get_linked_drop_reference(&mut self, info : &CompileInfo, t : &Type) -> Option<FunctionValue> {
-    if let Type::Def(name) = t {
+    if let TypeContent::Def(name) = &t.content {
       let def = info.find_type_def(&name).unwrap();
       if let Some(drop) = &def.drop_function {
         return Some(self.get_linked_function_reference(info, &drop.def));
@@ -1259,7 +1252,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
   }
 
   fn get_linked_clone_reference(&mut self, info : &CompileInfo, t : &Type) -> Option<FunctionValue> {
-    if let Type::Def(name) = t {
+    if let TypeContent::Def(name) = &t.content {
       let def = info.find_type_def(&name).unwrap();
       if let Some(clone) = &def.clone_function {
         return Some(self.get_linked_function_reference(info, &clone.def));
@@ -1493,13 +1486,13 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         let container = node.get(*container);
         let mut v = self.codegen_expression(container)?.unwrap();
         let mut ct = container.type_tag();
-        while let Type::Ptr(inner) = ct {
+        while let Some(inner) = ct.ptr() {
           ct = inner;
           let ptr = self.genval_to_register(v);
           v = pointer(*ptr.as_pointer_value());
         }
-        let def = match ct {
-          Type::Def(name) => {
+        let def = match &ct.content {
+          TypeContent::Def(name) => {
             info.find_type_def(&name).unwrap()
           }
           _ => panic!(),
@@ -1553,7 +1546,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         }
       }
       Content::ArrayLiteral(elements) => {
-        if let Type::Array(inner_type) = node.type_tag() {
+        if let Some(inner_type) = node.type_tag().array() {
           let element_type = self.gen.to_basic_type(info, inner_type).unwrap();
           let length = self.gen.context.i32_type().const_int(elements.len() as u64, false).into();
           let array_ptr = self.builder.build_array_malloc(element_type, length, "array_malloc");

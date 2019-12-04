@@ -10,8 +10,8 @@ use crate::structure::{Val, TOP_LEVEL_FUNCTION_NAME};
 use crate::inference;
 use crate::inference::CodegenInfo;
 use crate::types::{
-  Type, PType, TypeInfo, ModuleId,
-  FunctionSignature, GlobalDefinition,
+  Type, TypeContent, PType, TypeInfo, ModuleId,
+  SignatureBuilder, GlobalDefinition,
   PolyFunctionDef, GenericId, GlobalInit,
 };
 use crate::codegen::{Gen, LlvmUnit, dump_module, CompileInfo};
@@ -196,22 +196,21 @@ fn parse(cache : &StringCache, code : &str) -> Result<Expr, Error> {
 }
 
 fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule {
-  use Type::*;
   use PType::*;
 
   fn create_definition(
     cache : &StringCache, id : ModuleId, name : &str,
-    args : Vec<Type>, return_type : Type)
+    args : &[&Type], return_type : &Type)
       -> GlobalDefinition
   {
-    let sig = FunctionSignature{
-      return_type,
-      args,
-    };
+    let mut sig = SignatureBuilder::new(return_type.clone());
+    for &a in args {
+      sig.append_arg(a.clone());
+    }
     GlobalDefinition {
       module_id: id,
       name: cache.get(name),
-      type_tag: Type::Fun(Box::new(sig)),
+      type_tag: sig.into(),
       initialiser: GlobalInit::Intrinsic,
       loc: TextLocation::zero(),
     }
@@ -219,7 +218,7 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
 
   fn add_intrinsic(
     cache : &StringCache, id : ModuleId, t : &mut TypeInfo,
-    name : &str, args : Vec<Type>, return_type : Type)
+    name : &str, args : &[&Type], return_type : &Type)
   {
     let g = create_definition(cache, id, name, args, return_type);
     t.globals.push(g);
@@ -227,7 +226,7 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
   
   fn add_generic_intrinsic(
     cache : &StringCache, id : ModuleId, t : &mut TypeInfo,
-    name : &str, args : Vec<Type>, return_type : Type,
+    name : &str, args : &[&Type], return_type : &Type,
     generics : Vec<GenericId>)
   {
     let global = create_definition(cache, id, name, args, return_type);
@@ -240,56 +239,57 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
 
   let id = gen.next().into();
   let mut ti = TypeInfo::new(id);
-  let prim_number_types =
-    &[Prim(I64), Prim(I32), Prim(F32), Prim(F64),
-      Prim(U64), Prim(U32), Prim(U16), Prim(U8) ];
+  let prim_number_types : &[Type] =
+    &[I64.into(), I32.into(), F32.into(), F64.into(),
+      U64.into(), U32.into(), U16.into(), U8.into() ];
+  let boolean : &Type = &Bool.into();
   for t in prim_number_types {
     for &n in &["-"] {
-      add_intrinsic(cache, id, &mut ti, n, vec![t.clone()], t.clone());
+      add_intrinsic(cache, id, &mut ti, n, &[t], t);
     }
     for &n in &["+", "-", "*", "/"] {
-      add_intrinsic(cache, id, &mut ti, n, vec![t.clone(), t.clone()], t.clone());
+      add_intrinsic(cache, id, &mut ti, n, &[t, t], t);
     }
     for &n in &["==", ">", "<", ">=", "<=", "!="] {
-      add_intrinsic(cache, id, &mut ti, n, vec![t.clone(), t.clone()], Prim(Bool));
+      add_intrinsic(cache, id, &mut ti, n, &[t, t], boolean);
     }
   }
   for &n in &["&&", "||"] {
-    add_intrinsic(cache, id, &mut ti, n, vec![Prim(Bool), Prim(Bool)], Prim(Bool));
+    add_intrinsic(cache, id, &mut ti, n, &[boolean, boolean], boolean);
   }
-  for prim in &[I64, I32, U64, U32] {
-    for container in &[Ptr, Array] {
-      let gid = gen.next().into();
-      let gt = Generic(gid);
-      let gcontainer = container(Box::new(gt.clone()));
-      let args = vec![gcontainer, Prim(*prim)];
-      add_generic_intrinsic(cache, id, &mut ti, "Index", args, gt, vec![gid]);
+  for prim in &[I64.into(), I32.into(), U64.into(), U32.into()] {
+    for container in &[Type::ptr_to, Type::array_of] {
+      let gid : GenericId = gen.next().into();
+      let gt : Type = gid.into();
+      let gcontainer = container(gt.clone());
+      let args = &[&gcontainer, prim];
+      add_generic_intrinsic(cache, id, &mut ti, "Index", args, &gt, vec![gid]);
     }
   }
   {
-    let gid = gen.next().into();
-    let gt = Generic(gid);
-    let gptr = Ptr(Box::new(gt.clone()));
-    add_generic_intrinsic(cache, id, &mut ti, "*", vec![gptr], gt, vec![gid]);
+    let gid : GenericId = gen.next().into();
+    let gt : Type = gid.into();
+    let gptr = Type::ptr_to(gt.clone());
+    add_generic_intrinsic(cache, id, &mut ti, "*", &[&gptr], &gt, vec![gid]);
   }
   {
-    let gid = gen.next().into();
-    let gt = Generic(gid);
-    let gptr = Ptr(Box::new(gt.clone()));
-    add_generic_intrinsic(cache, id, &mut ti, "&", vec![gt], gptr, vec![gid]);
+    let gid : GenericId = gen.next().into();
+    let gt : Type = gid.into();
+    let gptr = Type::ptr_to(gt.clone());
+    add_generic_intrinsic(cache, id, &mut ti, "&", &[&gt], &gptr, vec![gid]);
   }
   TypedModule::new(id, nodes, ti, CodegenInfo::new())
 }
 
 fn run_top_level(m : &CompiledModule) -> Result<Val, Error> {
+  use TypeContent::*;
+  use PType::*;
   let f = TOP_LEVEL_FUNCTION_NAME;
   let def = m.t.globals.iter().find(|def| def.name.as_ref() == f).unwrap();
   let f = def.codegen_name().unwrap();
-  use Type::*;
-  use PType::*;
-  let sig = if let Type::Fun(sig) = &def.type_tag {sig} else {panic!()};
+  let sig = if let Some(sig) = def.type_tag.sig() {sig} else {panic!()};
   let lu = &m.llvm_unit;
-  let value = match &sig.return_type {
+  let value = match &sig.return_type.content {
     Prim(Bool) => Val::Bool(execute::<bool>(f, &lu.ee)),
     Prim(F64) => Val::F64(execute::<f64>(f, &lu.ee)),
     Prim(F32) => Val::F32(execute::<f32>(f, &lu.ee)),

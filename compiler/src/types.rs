@@ -38,22 +38,10 @@ pub enum PType {
 
 use PType::*;
 
-// #[derive(Clone, Debug, PartialEq)]
-// pub enum Type {
-//   /// Primitive type (e.g. int, float, bool, etc)
-//   Prim(PType),
-//   Fun(Box<FunctionSignature>),
-//   Def(RefStr),
-//   Array(Vec<Type>),
-//   Ptr(Vec<Type>),
-//   Abstract(AbstractType),
-//   Generic(GenericId),
-// }
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct Type {
-  content : TypeContent,
-  children : Vec<Type>,
+  pub content : TypeContent,
+  pub children : Vec<Type>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -87,17 +75,77 @@ impl Into<Type> for GenericId {
     Type::new(Generic(self), vec![])
   }
 }
-impl Type {
 
+pub struct SignatureBuilder {
+  types : Vec<Type>,
+}
+
+impl SignatureBuilder {
+  pub fn new(return_type : Type) -> Self {
+    SignatureBuilder { types: vec![return_type] }
+  }
+
+  pub fn append_arg(&mut self, arg : Type) {
+    self.types.push(arg);
+  }
+
+  pub fn set_arg(&mut self, i : usize, t : Type) {
+    self.types[1 + i] = t;
+  }
+
+  pub fn set_return(&mut self, t : Type) {
+    self.types[0] = t;
+  }
+
+  pub fn args(&mut self) -> &mut [Type] {
+    &mut self.types[1..]
+  }
+
+  pub fn return_type(&mut self) -> &mut Type {
+    &mut self.types[0]
+  }
+}
+
+impl Into<Type> for SignatureBuilder {
+  fn into(self) -> Type {
+    Type::new(Fun, self.types)
+  }
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub struct FunctionSignature<'a> {
+  pub return_type : &'a Type,
+  pub args : &'a [Type],
+}
+
+#[derive(Debug, PartialEq)]
+pub struct FunctionSignatureMut<'a> {
+  pub return_type : &'a mut Type,
+  pub args : &'a mut [Type],
+}
+
+impl Type {
+  
   fn new(content : TypeContent, children : Vec<Type>) -> Self {
     Type { content, children }
   }
+  
+  pub fn any() -> Self {
+    Type::new(Abstract(AbstractType::Any), vec![])
+  }
 
-  pub fn sig(&self) -> Option<(&[Type], &Type)> {
+  pub fn sig(&self) -> Option<FunctionSignature> {
     if self.content == Fun {
-      return Some((&self.children[1..], &self.children[0]));
+      Some(FunctionSignature{return_type: &self.children[0], args: &self.children[1..]})
     }
-    None
+    else { None }
+  }
+
+  pub fn sig_builder(&self) -> Option<SignatureBuilder> {
+    if self.content == Fun {
+      Some(SignatureBuilder{types: self.children.clone()})
+    }
+    else { None }
   }
 
   pub fn def(s : RefStr) -> Type {
@@ -127,7 +175,7 @@ impl Type {
   }
 
   pub fn array_of(t : Type) -> Self {
-    Type { content: Ptr, children: vec![t]}
+    Type { content: Array, children: vec![t]}
   }
 
   pub fn children(&self) -> &[Type] {
@@ -186,12 +234,6 @@ pub enum FunctionImplementation {
   Intrinsic,
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub struct FunctionSignature {
-  pub return_type : Type,
-  pub args : Vec<Type>,
-}
-
 /// The initialiser for the global
 #[derive(Debug, Clone)]
 pub enum GlobalInit {
@@ -244,13 +286,13 @@ impl  fmt::Display for Type {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match &self.content {
       Fun => {
-        let (args, return_type) = self.sig().unwrap();
+        let sig = self.sig().unwrap();
         write!(f, "fun({}) => {}", 
-          args.iter().join(", "), return_type)
+          sig.args.iter().join(", "), sig.return_type)
       }
       Def(name) => write!(f, "{}", name),
-      Array => write!(f, "array({})", self.ptr().unwrap()),
-      Ptr => write!(f, "ptr({})", self.array().unwrap()),
+      Array => write!(f, "array({})", self.array().unwrap()),
+      Ptr => write!(f, "ptr({})", self.ptr().unwrap()),
       Prim(t) => write!(f, "{:?}", t),
       Generic(id) => write!(f, "@Generic({})", id),
       Abstract(tc) => write!(f, "{:?}", tc),
@@ -285,7 +327,7 @@ impl  Type {
       Generic(_) => return Err(()),
       _ => (),
     };
-    for t in self.children.iter() {
+    for t in self.children.iter_mut() {
       t.to_concrete()?;
     }
     Ok(())
@@ -333,30 +375,83 @@ impl  Type {
   }
 }
 
-pub fn unify_types(a : &Type, b : &mut Type) -> Option<Type> {
-  if let Abstract(abs_a) = &a.content {
-    if abs_a.matches_type(b) { Some(b.clone()) } else { None }
-  }
-  else if let Abstract(abs_b) = &b.content {
-    if abs_b.matches_type(a) { Some(a.clone()) } else { None }
-  }
-  else {
-    match &a.content {
-      Ptr | Array | Fun | Def(_) | Prim(_) => {
-        if a.content != b.content {
-          return None;
-        }
+#[derive(PartialEq)]
+pub enum IncrementalUnifyResult {
+  ChangedOld,
+  EqualOrSubsumedByOld,
+  Failure,
+}
+
+pub fn incremental_unify(old : &Type, new : &mut Type) -> IncrementalUnifyResult {
+  use IncrementalUnifyResult::*;
+  if let Generic(_) = &old.content { return Failure }
+  if old.content != new.content {
+    if let Abstract(abs_old) = &old.content {
+      if abs_old.contains_type(new) { return ChangedOld }
+    }
+    if let Abstract(abs_new) = &new.content {
+      if abs_new.contains_type(old) {
+        *new = old.clone();
+        return EqualOrSubsumedByOld;
       }
-      Abstract(_) => panic!("impossible state"),
-      Generic(_) => panic!("unexpected generic type"),
     }
-    if a.children.len() != b.children.len() { return None }
-    let mut children = vec![];
-    for (o, t) in a.children.iter().zip(b.children.iter_mut()) {
-      children.push(unify_types(o, t)?);
-    }
-    Some(Type::new(a.content.clone(), children))
+    return Failure;
   }
+  if old.children.len() != new.children.len() { return Failure }
+  let mut changed_old_type = false;
+  for (i, old) in old.children.iter().enumerate() {
+    match incremental_unify(old, &mut new.children[i]) {
+      ChangedOld => changed_old_type = true,
+      EqualOrSubsumedByOld => (),
+      Failure => return Failure,
+    }
+  }
+  if changed_old_type { ChangedOld } else { EqualOrSubsumedByOld }
+}
+
+fn unify_types(a : &Type, b : &Type) -> Option<Type> {
+  match can_unify_types(a, b) {
+    CanUnifyResult::CanUnify => {
+      let mut t = b.clone();
+      if incremental_unify(a, &mut t) == IncrementalUnifyResult::Failure {panic!("bug in unify_types")}
+      Some(t)
+    }
+    CanUnifyResult::AlreadyEqual => Some(a.clone()),
+    CanUnifyResult::CannotUnify => None,
+  }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum CanUnifyResult {
+  CanUnify, AlreadyEqual, CannotUnify
+}
+
+impl CanUnifyResult {
+  pub fn success(self) -> bool { self != CanUnifyResult::CannotUnify }
+}
+
+pub fn can_unify_types(u : &Type, t : &Type) -> CanUnifyResult {
+  use CanUnifyResult::*;
+  if let Generic(_) = &u.content { return CannotUnify }
+  if u.content != t.content {
+    if let Abstract(au) = &u.content {
+      if au.contains_type(t) { return CanUnify }
+    }
+    if let Abstract(at) = &t.content {
+      if at.contains_type(u) { return CanUnify }
+    }
+    return CannotUnify;
+  }
+  if u.children.len() != t.children.len() { return CannotUnify }
+  let mut unification_required = false;
+  for (u, t) in u.children.iter().zip(t.children.iter()) {
+    match can_unify_types(u, t) {
+      CanUnify => unification_required = true,
+      CannotUnify => return CannotUnify,
+      AlreadyEqual => (),
+    }
+  }
+  if unification_required { CanUnify } else { AlreadyEqual }
 }
 
 impl TypeInfo {
@@ -377,8 +472,10 @@ impl TypeInfo {
     generics : &mut HashMap<GenericId, Type>,
     results : &mut Vec<ConcreteGlobal>) {
     for g in self.globals.iter() {
-      if g.name.as_ref() == name && abstract_match(t, &g.type_tag) {
-        results.push(ConcreteGlobal { def: g.clone(), concrete_type: g.type_tag.clone() });
+      if g.name.as_ref() == name {
+        if let Some(t) = unify_types(t, &g.type_tag) {
+          results.push(ConcreteGlobal { def: g.clone(), concrete_type: t });
+        }
       }
     }
     'outer: for def in self.poly_functions.iter() {
@@ -405,25 +502,6 @@ impl TypeInfo {
   }
 }
 
-fn abstract_match(u : &Type, t : &Type) -> bool {
-  if let Abstract(au) = &u.content {
-    return au.matches_type(t);
-  }
-  if let Abstract(at) = &t.content {
-    return at.matches_type(u);
-  }
-  if u.content != t.content {
-    return false;
-  }
-  if u.children.len() != t.children.len() { return false }
-  for (u, t) in u.children.iter().zip(t.children.iter()) {
-    if !abstract_match(u, t) {
-      return false;
-    }
-  }
-  true
-}
-
 fn generic_replace(generics : &HashMap<GenericId, Type>, gen : &mut UIDGenerator, t : &mut Type) {
   if let Generic(gid) = &t.content {
     *t = generics.get(&gid).unwrap().clone();
@@ -434,38 +512,31 @@ fn generic_replace(generics : &HashMap<GenericId, Type>, gen : &mut UIDGenerator
 }
 
 fn generic_match(generics : &mut HashMap<GenericId, Type>, t : &Type, gt : &Type) -> bool {
-  match (&t.content, &gt.content) {
-    (Generic(_), _) => panic!("unexpected generic type"),
-    (t, Generic(gid)) => {
-      if let Some(bound_type) = generics.get(&gid) {
-        if let Some(unified_t) = unify_types(&t, bound_type) {
-          generics.insert(*gid, unified_t);
-          true
-        }
-        else {
-          false
-        }
-      }
-      else {
-        generics.insert(*gid, t.clone());
+  if let Generic(_) = &t.content { panic!("unexpected generic type") }
+  if let Abstract(_) = &gt.content { panic!("unexpected abstract type") }
+  if let Generic(gid) = &gt.content {
+    if let Some(bound_type) = generics.get(&gid) {
+      if let Some(t) = unify_types(&t, bound_type) {
+        generics.insert(*gid, t);
         true
       }
+      else { false }
     }
-    (Abstract(at), gt) => at.contains_type(gt),
-    (Ptr(t), Ptr(gt)) => generic_match(generics, t, gt),
-    (Array(t), Array(gt)) => generic_match(generics, t, gt),
-    (Fun(t_sig), Fun(gt_sig)) => {
-      if t_sig.args.len() != gt_sig.args.len() { return false }
-      for (t, gt) in t_sig.args.iter().zip(gt_sig.args.iter()) {
-        if !generic_match(generics, t, gt) {
-          return false;
-        }
+    else {
+      generics.insert(*gid, t.clone());
+      true
+    }    
+  }
+  else if let Abstract(at) = &t.content { at.contains_type(gt) }
+  else {
+    if t.content != gt.content { return false }
+    if t.children.len() != gt.children.len() { return false }
+    for (t, gt) in t.children.iter().zip(gt.children.iter()) {
+      if !generic_match(generics, t, gt) {
+        return false;
       }
-      generic_match(generics, &t_sig.return_type, &gt_sig.return_type)
-    },
-      // enumerate all the options so the compiler complains if a new Type is added
-    (Def(_), _) | (Prim(_), _) => t == gt,
-    (Ptr(_), _) | (Array(_), _) | (Fun(_), _) => false,
+    }
+    true
   }
 }
 
