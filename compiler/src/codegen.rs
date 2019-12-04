@@ -6,7 +6,7 @@ use crate::expr::RefStr;
 
 use crate::structure::{
   Node, NodeId, Nodes, Content, Val, TypeKind, SymbolId,
-  LabelId, NodeValueType, FunctionNode, VarScope, Symbol };
+  LabelId, NodeValueType, VarScope, Symbol };
 use crate::types::{
   Type, PType, TypeDefinition, GlobalInit,
   ModuleId, GlobalDefinition, TypeInfo };
@@ -257,8 +257,8 @@ impl <'l> Into<TextLocation> for TypedNode<'l> {
 }
 
 impl <'l> TypedNode<'l> {
-  fn type_tag(&self) -> Type {
-    *self.info.cg.node_type.get(&self.node.id).unwrap()
+  fn type_tag(&self) -> &Type {
+    self.info.cg.node_type.get(&self.node.id).unwrap()
   }
 
   fn get(&self, nid : NodeId) -> TypedNode {
@@ -273,8 +273,8 @@ impl <'l> TypedNode<'l> {
     &self.node.content
   }
 
-  fn sizeof_type(&self) -> Option<Type> {
-    self.info.cg.sizeof_info.get(&self.node.id).cloned()
+  fn sizeof_type(&self) -> Option<&Type> {
+    self.info.cg.sizeof_info.get(&self.node.id)
   }
 
   fn node_symbol_def(&self) -> Option<&GlobalDefinition> {
@@ -327,11 +327,11 @@ impl <'l> Gen<'l> {
     // declare the globals and functions
     let mut functions_to_codegen = vec!();
     for def in info.t.globals.iter() {
-      let t = self.to_basic_type(info, def.type_tag).unwrap();
-      match def.initialiser {
+      let t = self.to_basic_type(info, &def.type_tag).unwrap();
+      match &def.initialiser {
         GlobalInit::CBind => {
           if let Some(sig) = def.type_tag.signature() {
-            let f = self.codegen_prototype(info, def.name.as_ref(), sig.return_type, None, &sig.args);
+            let f = self.codegen_prototype(info, def.name.as_ref(), &sig.return_type, None, &sig.args);
             let address = self.get_c_symbol_address(def.loc, &def.name)?;
             self.functions_to_link.push((f, address));
           }
@@ -351,9 +351,9 @@ impl <'l> Gen<'l> {
           let sig = def.type_tag.signature().unwrap();
           let f =
             self.codegen_prototype(
-              info, init.name_for_codegen.as_ref(), sig.return_type,
+              info, init.name_for_codegen.as_ref(), &sig.return_type,
               Some(&init.args), sig.args.as_ref());
-          functions_to_codegen.push((f, init.args, init.body));
+          functions_to_codegen.push((f, init.args.as_slice(), init.body));
         }
         GlobalInit::Intrinsic => (),
       }
@@ -361,7 +361,7 @@ impl <'l> Gen<'l> {
 
     // codegen the functions
     for (p, args, body) in functions_to_codegen {
-      self.codegen_function(p, info.typed_node(body), &args)?;
+      self.codegen_function(p, info.typed_node(body), args)?;
     }
 
     Ok(())
@@ -371,7 +371,7 @@ impl <'l> Gen<'l> {
     &mut self,
     info : &CompileInfo,
     name : &str,
-    return_type : Type,
+    return_type : &Type,
     args : Option<&[Symbol]>,
     arg_types : &[Type])
       -> FunctionValue
@@ -482,7 +482,7 @@ impl <'l> Gen<'l> {
   }
 
   // special case for handling struct/union fields to prevent infinite recursion
-  fn to_basic_type_no_cycle(&mut self, info : &CompileInfo, t : Type) -> Option<BasicTypeEnum> {
+  fn to_basic_type_no_cycle(&mut self, info : &CompileInfo, t : &Type) -> Option<BasicTypeEnum> {
     match t {
       Type::Ptr(_t) => {
         let t = self.context.i8_type().ptr_type(AddressSpace::Generic);
@@ -494,7 +494,7 @@ impl <'l> Gen<'l> {
     }
   }
 
-  fn to_basic_type(&mut self, info : &CompileInfo, t : Type) -> Option<BasicTypeEnum> {
+  fn to_basic_type(&mut self, info : &CompileInfo, t : &Type) -> Option<BasicTypeEnum> {
     match t {
       Type::Prim(t) => {
         match t {
@@ -511,7 +511,7 @@ impl <'l> Gen<'l> {
         }
       }
       Type::Fun(sig) => {
-        let t = self.to_function_type(info, sig.args.as_ref(), sig.return_type);
+        let t = self.to_function_type(info, sig.args.as_ref(), &sig.return_type);
         Some(t.ptr_type(AddressSpace::Generic).into())
       }
       Type::Def(name) => {
@@ -523,10 +523,10 @@ impl <'l> Gen<'l> {
         }
       }
       Type::Array(t) => {
-        Some(self.bounded_array_type(info, *t).into())
+        Some(self.bounded_array_type(info, t).into())
       }
       Type::Ptr(t) => {
-        let bt = self.to_basic_type(info, *t);
+        let bt = self.to_basic_type(info, t);
         Some(self.pointer_to_type(bt).into())
       }
       Type::Generic(_) => panic!(),
@@ -541,16 +541,16 @@ impl <'l> Gen<'l> {
   ///   length : u64
   /// }
   /// 
-  fn bounded_array_type(&mut self, info : &CompileInfo, t : Type) -> StructType {
+  fn bounded_array_type(&mut self, info : &CompileInfo, t : &Type) -> StructType {
     let bt = self.to_basic_type(info, t);
     let t = self.pointer_to_type(bt).into();
     let i64_type = self.context.i64_type();
     self.context.struct_type(&[t, i64_type.into()], false)
   }
 
-  fn to_function_type(&mut self, info : &CompileInfo, arg_types : &[Type], return_type : Type) -> FunctionType {
+  fn to_function_type(&mut self, info : &CompileInfo, arg_types : &[Type], return_type : &Type) -> FunctionType {
     let arg_types =
-      arg_types.iter().map(|&t| self.to_basic_type(info, t).unwrap())
+      arg_types.iter().map(|t| self.to_basic_type(info, t).unwrap())
       .collect::<Vec<BasicTypeEnum>>();
     let arg_types = arg_types.as_slice();
 
@@ -631,7 +631,7 @@ impl <'l> Gen<'l> {
       TypeKind::Struct => {
         let types =
           def.fields.iter().map(|(_, t)| {
-            self.to_basic_type_no_cycle(info, *t).unwrap()
+            self.to_basic_type_no_cycle(info, t).unwrap()
           })
           .collect::<Vec<BasicTypeEnum>>();
         self.context.struct_type(&types, false)
@@ -641,7 +641,7 @@ impl <'l> Gen<'l> {
         let mut bt : Option<BasicTypeEnum> = None;
         let mut widest_alignment = 0;
         for (_, t) in def.fields.iter() {
-          if let Some(t) = self.to_basic_type_no_cycle(info, *t) {
+          if let Some(t) = self.to_basic_type_no_cycle(info, t) {
             let alignment = self.target_data.get_preferred_alignment(&t);
             if alignment > widest_alignment {
               widest_alignment = alignment;
@@ -667,7 +667,7 @@ impl <'l> Gen<'l> {
         }
       }
     };
-    self.struct_types.insert(def.name, t);
+    self.struct_types.insert(def.name.clone(), t);
     return t;
   }
 
@@ -814,7 +814,7 @@ fn codegen_intrinsic_call(gf : &mut GenFunction, node : TypedNode, name : &str, 
     else if ta.int() {
       integer_binary_ops(gf, name, a, b)?
     }
-    else if ta == Prim(Bool) {
+    else if ta == &Prim(Bool) {
       match name {
         "&&" => gf.codegen_short_circuit_op(a, b, ShortCircuitOp::And)?,
         "||" => gf.codegen_short_circuit_op(a, b, ShortCircuitOp::Or)?,
@@ -1150,7 +1150,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
             local_f
           }
           else {
-            let f = self.gen.codegen_prototype(info, &def.name, sig.return_type, None, &sig.args);
+            let f = self.gen.codegen_prototype(info, &def.name, &sig.return_type, None, &sig.args);
             let address = self.gen.get_c_symbol_address(def.loc, &def.name).unwrap();
             self.gen.functions_to_link.push((f, address));
             f
@@ -1179,7 +1179,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         gv
       }
       else {
-        let t = self.gen.to_basic_type(info, def.type_tag).unwrap();
+        let t = self.gen.to_basic_type(info, &def.type_tag).unwrap();
         let gv = self.gen.module.add_global(t, Some(AddressSpace::Generic), &def.name);
         let address = info.find_global_address(def.module_id, &def.name);
         self.gen.globals_to_link.push((gv, address));
@@ -1189,7 +1189,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
   }
 
   fn get_linked_function_reference(&mut self, info: &CompileInfo, def : &GlobalDefinition) -> FunctionValue {
-    match def.initialiser {
+    match &def.initialiser {
       GlobalInit::Function(init) => {
         if def.module_id == info.t.module_id {
           self.gen.module.get_function(&init.name_for_codegen)
@@ -1197,7 +1197,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         }
         else {
           let sig = def.type_tag.signature().unwrap();
-          let f = self.gen.codegen_prototype(info, &init.name_for_codegen, sig.return_type, Some(&init.args), &sig.args);
+          let f = self.gen.codegen_prototype(info, &init.name_for_codegen, &sig.return_type, Some(&init.args), &sig.args);
           let address = info.find_function_address(def.module_id, &init.name_for_codegen);
           self.gen.functions_to_link.push((f, address));
           f
@@ -1213,34 +1213,31 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     return r.map(reg).map(IsVal).unwrap_or(Void);
   }
 
-  fn try_codegen_intrinsic(&mut self, node : TypedNode, function : &FunctionNode, args : &[NodeId])
+  fn try_codegen_intrinsic(&mut self, node : TypedNode, function : TypedNode, args : &[NodeId])
     -> Option<Result<MaybeVal, Error>>
   {
-    if let FunctionNode::Name(sym) = function {
+    if let Content::Reference{ name, refers_to: None } = function.content() {
       if node.is_intrinsic_function() {
-        return Some(codegen_intrinsic_call(self, node, &sym.name, args));
+        return Some(codegen_intrinsic_call(self, node, name, args));
       }
     }
     None
   }
 
-  fn codegen_function_call(&mut self, node : TypedNode, function : &FunctionNode, args : &[NodeId])
+  fn codegen_function_call(&mut self, node : TypedNode, function : TypedNode, args : &[NodeId])
     -> Result<MaybeVal, Error>
   {
     // Check if it's an intrinsic
     if let Some(r) = self.try_codegen_intrinsic(node, function, args) {
       return r;
     }
-    // Check if it's a function pointer or a static call
-    let function_pointer = match function {
-      FunctionNode::Value(nid) => {
-        self.codegen_pointer(node.get(*nid))?
-      },
-      FunctionNode::Name(_) => {
-        let def = node.node_symbol_def().expect("missing symbol reference!");
-        let v = self.get_linked_global_value(node.info, &def);
-        *self.genval_to_register(v).as_pointer_value()
-      }
+    // Check if it's a static call or a function value
+    let function_pointer = if let Some(def) = node.node_symbol_def() {
+      let v = self.get_linked_global_value(node.info, &def);
+      *self.genval_to_register(v).as_pointer_value()
+    }
+    else {
+      self.codegen_pointer(function)?
     };
     let mut arg_vals = vec!();
     for &a in args.iter() {
@@ -1251,20 +1248,20 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     Ok(self.build_function_call(function_pointer, arg_vals.as_slice(), "return_val"))
   }
 
-  fn get_linked_drop_reference(&mut self, info : &CompileInfo, t : Type) -> Option<FunctionValue> {
+  fn get_linked_drop_reference(&mut self, info : &CompileInfo, t : &Type) -> Option<FunctionValue> {
     if let Type::Def(name) = t {
       let def = info.find_type_def(&name).unwrap();
-      if let Some(drop) = def.drop_function {
+      if let Some(drop) = &def.drop_function {
         return Some(self.get_linked_function_reference(info, &drop.def));
       }
     }
     None
   }
 
-  fn get_linked_clone_reference(&mut self, info : &CompileInfo, t : Type) -> Option<FunctionValue> {
+  fn get_linked_clone_reference(&mut self, info : &CompileInfo, t : &Type) -> Option<FunctionValue> {
     if let Type::Def(name) = t {
       let def = info.find_type_def(&name).unwrap();
-      if let Some(clone) = def.clone_function {
+      if let Some(clone) = &def.clone_function {
         return Some(self.get_linked_function_reference(info, &clone.def));
       }
     }
@@ -1288,7 +1285,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     return Ok(v);
   }
 
-  fn codegen_cloned_expression(&mut self, info : &CompileInfo, t : Type, val : MaybeVal) -> Result<MaybeVal, Error> {
+  fn codegen_cloned_expression(&mut self, info : &CompileInfo, t : &Type, val : MaybeVal) -> Result<MaybeVal, Error> {
     if let Some(clone) = self.get_linked_clone_reference(info, t) {
       // do not auto-clone recursively
       if clone != self.fn_val {
@@ -1325,11 +1322,11 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     let info = node.info;
     let v : GenVal = match node.content() {
       Content::FunctionCall{ function, args } => {
-        return self.codegen_function_call(node, function, args);
+        return self.codegen_function_call(node, node.get(*function), args);
       }
       Content::SizeOf{ .. } => {
         let sizeof_type = node.sizeof_type().expect("sizeof node has no type associated with it");
-        let t = self.gen.to_basic_type(info, sizeof_type);
+        let t = self.gen.to_basic_type(info, &sizeof_type);
         reg(self.gen.size_of_type(t).into())
       }
       Content::Convert{ from_value, .. } => {
@@ -1497,7 +1494,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         let mut v = self.codegen_expression(container)?.unwrap();
         let mut ct = container.type_tag();
         while let Type::Ptr(inner) = ct {
-          ct = *inner;
+          ct = inner;
           let ptr = self.genval_to_register(v);
           v = pointer(*ptr.as_pointer_value());
         }
@@ -1557,7 +1554,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
       }
       Content::ArrayLiteral(elements) => {
         if let Type::Array(inner_type) = node.type_tag() {
-          let element_type = self.gen.to_basic_type(info, *inner_type).unwrap();
+          let element_type = self.gen.to_basic_type(info, inner_type).unwrap();
           let length = self.gen.context.i32_type().const_int(elements.len() as u64, false).into();
           let array_ptr = self.builder.build_array_malloc(element_type, length, "array_malloc");
           for (i, e) in elements.iter().enumerate() {
@@ -1566,7 +1563,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
             let element_ptr = unsafe { self.builder.build_gep(array_ptr, &[index], "element_ptr") };
             self.builder.build_store(element_ptr, v);
           }
-          let array_type = self.gen.bounded_array_type(info, *inner_type);
+          let array_type = self.gen.bounded_array_type(info, inner_type);
           let mut sv = array_type.get_undef();
           sv = self.builder.build_insert_value(sv, array_ptr, 0, "array_ptr").unwrap().into_struct_value();
           let length = self.gen.context.i64_type().const_int(elements.len() as u64, false);

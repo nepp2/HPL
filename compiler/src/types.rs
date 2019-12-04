@@ -272,24 +272,67 @@ impl  Type {
   }
 }
 
-pub fn unify_abstract<'l>(a : &'l Type, b : &'l Type) -> Option<&'l Type> {
+pub fn unify_types_mut<'l>(old : &'l Type, new : &'l mut Type) -> Result<bool, ()> {
   use Type::*;
   let aaa = (); // make this recursive
-  match (a, b) {
-    (Abstract(abs_a), Abstract(abs_b)) => {
-      if abs_a == abs_b { return Some(a) } else { None }
-    }
-    (Abstract(abs_a), b) => {
-      if abs_a.contains_type(b) { Some(b) } else { None }
-    }
-    (a, Abstract(abs_b)) => {
-      if abs_b.contains_type(a) { Some(a) } else { None }
-    }
-    (a, b) => {
-      if a == b { Some(a) } else { None }
+  if let Abstract(abs_old) = old {
+    if old == new { Ok(false) }
+    else if abs_old.contains_type(new) { Ok(true) }
+    else { Err(()) }
+  }
+  else if let Abstract(abs_new) = new {
+    if abs_new.contains_type(old) { Ok(false) } else { Err(()) }
+  }
+  else {
+    match old {
+      Ptr(old) =>
+        if let Ptr(new) = new { unify_types_mut(old, new) }
+        else { Err(()) }
+      Array(old) =>
+        if let Array(new) = new { unify_types_mut(old, new) }
+        else { Err(()) }
+      Fun(old_sig) => {
+        if let Fun(new_sig) = new {
+          if old_sig.args.len() != new_sig.args.len() { return Err(()) }
+          let mut changed = 0;
+          for (o, t) in old_sig.args.iter().zip(new_sig.args.iter_mut()) {
+            if unify_types_mut(o, t)? {
+              changed += 1;
+            }
+          }
+          if unify_types_mut(&old_sig.return_type, &mut new_sig.return_type)? {
+            changed += 1;
+          }
+          Ok(changed > 0)
+        }
+        else { Err(()) }
+      }
+      Abstract(_) => panic!("impossible state"),
+      Generic(_) => panic!("unexpected generic type"),
+      // enumerate all the options so the compiler complains if a new Type is added
+      Def(_) | Prim(_) => if old == new { Ok(false) } else { Err(()) },
     }
   }
 }
+
+// pub fn unify_abstract<'l>(a : &'l Type, b : &'l Type) -> Option<&'l Type> {
+//   use Type::*;
+//   let aaa = (); // make this recursive
+//   match (a, b) {
+//     (Abstract(abs_a), Abstract(abs_b)) => {
+//       if abs_a == abs_b { return Some(a) } else { None }
+//     }
+//     (Abstract(abs_a), b) => {
+//       if abs_a.contains_type(b) { Some(b) } else { None }
+//     }
+//     (a, Abstract(abs_b)) => {
+//       if abs_b.contains_type(a) { Some(a) } else { None }
+//     }
+//     (a, b) => {
+//       if a == b { Some(a) } else { None }
+//     }
+//   }
+// }
 
 impl TypeInfo {
   pub fn new(module_id : ModuleId) -> TypeInfo {
@@ -301,8 +344,8 @@ impl TypeInfo {
     }
   }
 
-  pub fn find_global(
-    &self,
+  pub fn find_global<'a>(
+    &'a self,
     name : &str,
     t : &Type,
     gen : &mut UIDGenerator, 
@@ -310,7 +353,7 @@ impl TypeInfo {
     results : &mut Vec<ConcreteGlobal>) {
     for g in self.globals.iter() {
       if g.name.as_ref() == name && abstract_match(t, &g.type_tag) {
-        results.push(ConcreteGlobal { def: *g, concrete_type: g.type_tag });
+        results.push(ConcreteGlobal { def: g.clone(), concrete_type: g.type_tag.clone() });
       }
     }
     'outer: for def in self.poly_functions.iter() {
@@ -325,7 +368,7 @@ impl TypeInfo {
           }
           let mut concrete_type = def.global.type_tag.clone();
           generic_replace(generics, gen, &mut concrete_type);
-          let def = def.global;
+          let def = def.global.clone();
           results.push(ConcreteGlobal { def, concrete_type });
         }
       }
@@ -382,7 +425,8 @@ fn generic_match(generics : &mut HashMap<GenericId, Type>, t : &Type, gt : &Type
     (t, Type::Generic(gid)) => {
       if let Some(bound_type) = generics.get(&gid) {
         if let Some(unified_t) = unify_abstract(&t, bound_type) {
-          generics.insert(*gid, unified_t.clone());
+          let ut = unified_t.clone();
+          generics.insert(*gid, ut);
           true
         }
         else {
@@ -414,6 +458,7 @@ fn generic_match(generics : &mut HashMap<GenericId, Type>, t : &Type, gt : &Type
 
 #[derive(Clone, Debug)]
 pub struct ConcreteGlobal {
+  /// TODO: this is very inefficient, because these are searched for and returned repeatedly
   pub def : GlobalDefinition,
   pub concrete_type : Type,
 }
@@ -445,7 +490,7 @@ impl <'a> TypeDirectory<'a> {
   }
 
   pub fn create_type_def(&mut self, def : TypeDefinition) {
-    self.new_module.type_defs.insert(def.name, def);
+    self.new_module.type_defs.insert(def.name.clone(), def);
   }
 
   pub fn create_global(&mut self, def : GlobalDefinition) {

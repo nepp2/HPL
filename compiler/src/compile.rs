@@ -243,15 +243,15 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
   let prim_number_types =
     &[Prim(I64), Prim(I32), Prim(F32), Prim(F64),
       Prim(U64), Prim(U32), Prim(U16), Prim(U8) ];
-  for &t in prim_number_types {
+  for t in prim_number_types {
     for &n in &["-"] {
-      add_intrinsic(cache, id, &mut ti, n, vec![t], t);
+      add_intrinsic(cache, id, &mut ti, n, vec![t.clone()], t.clone());
     }
     for &n in &["+", "-", "*", "/"] {
-      add_intrinsic(cache, id, &mut ti, n, vec![t, t], t);
+      add_intrinsic(cache, id, &mut ti, n, vec![t.clone(), t.clone()], t.clone());
     }
     for &n in &["==", ">", "<", ">=", "<=", "!="] {
-      add_intrinsic(cache, id, &mut ti, n, vec![t, t], Prim(Bool));
+      add_intrinsic(cache, id, &mut ti, n, vec![t.clone(), t.clone()], Prim(Bool));
     }
   }
   for &n in &["&&", "||"] {
@@ -261,7 +261,7 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
     for container in &[Ptr, Array] {
       let gid = gen.next().into();
       let gt = Generic(gid);
-      let gcontainer = container(Box::new(gt));
+      let gcontainer = container(Box::new(gt.clone()));
       let args = vec![gcontainer, Prim(*prim)];
       add_generic_intrinsic(cache, id, &mut ti, "Index", args, gt, vec![gid]);
     }
@@ -269,13 +269,13 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
   {
     let gid = gen.next().into();
     let gt = Generic(gid);
-    let gptr = Ptr(Box::new(gt));
+    let gptr = Ptr(Box::new(gt.clone()));
     add_generic_intrinsic(cache, id, &mut ti, "*", vec![gptr], gt, vec![gid]);
   }
   {
     let gid = gen.next().into();
     let gt = Generic(gid);
-    let gptr = Ptr(Box::new(gt));
+    let gptr = Ptr(Box::new(gt.clone()));
     add_generic_intrinsic(cache, id, &mut ti, "&", vec![gt], gptr, vec![gid]);
   }
   TypedModule::new(id, nodes, ti, CodegenInfo::new())
@@ -287,9 +287,9 @@ fn run_top_level(m : &CompiledModule) -> Result<Val, Error> {
   let f = def.codegen_name().unwrap();
   use Type::*;
   use PType::*;
-  let sig = if let Type::Fun(sig) = def.type_tag {sig} else {panic!()};
+  let sig = if let Type::Fun(sig) = &def.type_tag {sig} else {panic!()};
   let lu = &m.llvm_unit;
-  let value = match sig.return_type {
+  let value = match &sig.return_type {
     Prim(Bool) => Val::Bool(execute::<bool>(f, &lu.ee)),
     Prim(F64) => Val::F64(execute::<f64>(f, &lu.ee)),
     Prim(F32) => Val::F32(execute::<f32>(f, &lu.ee)),

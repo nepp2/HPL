@@ -39,12 +39,6 @@ pub struct Symbol {
   pub loc : TextLocation,
 }
 
-#[derive(Debug)]
-pub enum FunctionNode {
-  Value(NodeId),
-  Name(Symbol),
-}
-
 /// TODO: This is a messy way of supporting REPL functionality.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum GlobalType { Normal, CBind }
@@ -68,7 +62,7 @@ pub enum Content {
   TypeConstructor{ name: RefStr, field_values: Vec<(Option<Symbol>, NodeId)> },
   FieldAccess{ container: NodeId, field: Symbol },
   ArrayLiteral(Vec<NodeId>),
-  FunctionCall{ function: FunctionNode, args: Vec<NodeId> },
+  FunctionCall{ function: NodeId, args: Vec<NodeId> },
   While{ condition: NodeId, body: NodeId },
   Convert{ from_value: NodeId, into_type: Box<Expr> },
   SizeOf{ type_tag: Box<Expr> },
@@ -279,15 +273,12 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       let marker_name = self.cached("text_marker");
       for n in template_args.into_iter() {
         let loc = self.loc_struct(expr, loc_name.clone(), marker_name.clone());
-        let sym = self.t.symbol("sym", expr);
-        let expr_val = self.function_call(expr, sym, vec![n, loc]);
-        let to_ref = self.t.symbol("&", expr);
-        let arg = self.function_call(expr, to_ref, vec![expr_val]);
+        let expr_val = self.function_call(expr, "sym", vec![n, loc]);
+        let arg = self.function_call(expr, "&", vec![expr_val]);
         coerced_args.push(arg);
       }
       let array_literal = self.array_literal(expr, coerced_args);
-      let template_quote = self.t.symbol("template_quote", expr);
-      Ok(self.function_call(expr, template_quote, vec![main_quote, array_literal]))
+      Ok(self.function_call(expr, "template_quote", vec![main_quote, array_literal]))
     }
     else {
       Ok(main_quote)
@@ -334,19 +325,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         let args =
           exprs[1..].iter().map(|e| self.to_node(e))
           .collect::<Result<Vec<NodeId>, Error>>()?;
-        let function = if let Some(name) = function_expr.try_symbol() {
-          if let Some(var) = self.find_var(name) {
-            let name = self.cached(name);
-            let id = var.id;
-            FunctionNode::Value(self.node(function_expr, Reference{ name, refers_to: Some(id) }))
-          }
-          else {
-            FunctionNode::Name(self.expr_to_symbol(function_expr)?)
-          }
-        }
-        else {
-          FunctionNode::Value(self.to_node(function_expr)?)
-        };
+        let function = self.to_node(function_expr)?;
         let content = FunctionCall{ function, args };
         return Ok(self.node(expr, content));
       }
@@ -488,9 +467,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         if let [index_expr] = &exprs[1..] {
           let container = self.to_node(array_expr)?;
           let index = self.to_node(index_expr)?;
-          let function = FunctionNode::Name(self.t.symbol("Index", expr));
-          let c = Content::FunctionCall{ function, args: vec![container, index] };
-          return Ok(self.node(expr, c));
+          return Ok(self.function_call(expr, "Index", vec![container, index]));
         }
         error(expr, "malformed array index expression")
       }
@@ -598,8 +575,8 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     self.node(expr, args)
   }
 
-  fn function_call(&mut self, expr : &Expr, function : Symbol, args : Vec<NodeId>) -> NodeId {
-    let function = FunctionNode::Name(function);
+  fn function_call(&mut self, expr : &Expr, name: &str, args : Vec<NodeId>) -> NodeId {
+    let function = self.node(expr, Content::Reference{ name: self.cached(name), refers_to: None });
     let function_call = FunctionCall{ function, args };
     self.node(expr, function_call)
   }
