@@ -36,24 +36,103 @@ pub enum PType {
   Bool,
 }
 
-impl  Into<Type> for PType {
+use PType::*;
+
+// #[derive(Clone, Debug, PartialEq)]
+// pub enum Type {
+//   /// Primitive type (e.g. int, float, bool, etc)
+//   Prim(PType),
+//   Fun(Box<FunctionSignature>),
+//   Def(RefStr),
+//   Array(Vec<Type>),
+//   Ptr(Vec<Type>),
+//   Abstract(AbstractType),
+//   Generic(GenericId),
+// }
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Type {
+  content : TypeContent,
+  children : Vec<Type>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum TypeContent {
+  /// Primitive type (e.g. int, float, bool, etc)
+  Prim(PType),
+  Fun,
+  Def(RefStr),
+  Array,
+  Ptr,
+  Abstract(AbstractType),
+  Generic(GenericId),
+}
+
+use TypeContent::*;
+
+impl Into<Type> for PType {
   fn into(self) -> Type {
-    Type::Prim(self)
+    Type::new(Prim(self), vec![])
   }
 }
 
-use PType::*;
+impl Into<Type> for AbstractType {
+  fn into(self) -> Type {
+    Type::new(Abstract(self), vec![])
+  }
+}
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum Type {
-  /// Primitive type (e.g. int, float, bool, etc)
-  Prim(PType),
-  Fun(Box<FunctionSignature>),
-  Def(RefStr),
-  Array(Box<Type>),
-  Ptr(Box<Type>),
-  Abstract(AbstractType),
-  Generic(GenericId),
+impl Into<Type> for GenericId {
+  fn into(self) -> Type {
+    Type::new(Generic(self), vec![])
+  }
+}
+impl Type {
+
+  fn new(content : TypeContent, children : Vec<Type>) -> Self {
+    Type { content, children }
+  }
+
+  pub fn sig(&self) -> Option<(&[Type], &Type)> {
+    if self.content == Fun {
+      return Some((&self.children[1..], &self.children[0]));
+    }
+    None
+  }
+
+  pub fn def(s : RefStr) -> Type {
+    Type::new(Def(s), vec![])
+  }
+
+  pub fn ptr_to(t : Type) -> Self {
+    Type::new(Ptr, vec![t])
+  }
+
+  pub fn ptr(&self) -> Option<&Type> {
+    if self.content == Ptr {
+      if let [t] = self.children.as_slice() {
+        return Some(t);
+      }
+    }
+    None
+  }
+
+  pub fn array(&self) -> Option<&Type> {
+    if self.content == Array {
+      if let [t] = self.children.as_slice() {
+        return Some(t);
+      }
+    }
+    None
+  }
+
+  pub fn array_of(t : Type) -> Self {
+    Type { content: Ptr, children: vec![t]}
+  }
+
+  pub fn children(&self) -> &[Type] {
+    self.children.as_slice()
+  }
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -72,10 +151,19 @@ impl AbstractType {
     }
   }
 
+  pub fn matches_type(self, t : &Type) -> bool {
+    if let Abstract(a) = &t.content {
+      self == *a
+    }
+    else {
+      self.contains_type(t)
+    }
+  }
+
   pub fn default_type(self) -> Option<Type> {
     match self {
-      AbstractType::Float => Some(Type::Prim(PType::F64)),
-      AbstractType::Integer => Some(Type::Prim(PType::I64)),
+      AbstractType::Float => Some(PType::F64.into()),
+      AbstractType::Integer => Some(PType::I64.into()),
       AbstractType::Any => None,
     }
   }
@@ -154,20 +242,18 @@ impl  fmt::Display for GenericId {
 
 impl  fmt::Display for Type {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match self {
-      Type::Fun(sig) => {
+    match &self.content {
+      Fun => {
+        let (args, return_type) = self.sig().unwrap();
         write!(f, "fun({}) => {}", 
-          sig.args.iter().join(", "),
-          sig.return_type)
+          args.iter().join(", "), return_type)
       }
-      Type::Def(name) => {
-        write!(f, "{}", name)
-      }
-      Type::Array(t) => write!(f, "array({})", t),
-      Type::Ptr(t) => write!(f, "ptr({})", t),
-      Type::Prim(t) => write!(f, "{:?}", t),
-      Type::Generic(id) => write!(f, "@Generic({})", id),
-      Type::Abstract(tc) => write!(f, "{:?}", tc),
+      Def(name) => write!(f, "{}", name),
+      Array => write!(f, "array({})", self.ptr().unwrap()),
+      Ptr => write!(f, "ptr({})", self.array().unwrap()),
+      Prim(t) => write!(f, "{:?}", t),
+      Generic(id) => write!(f, "@Generic({})", id),
+      Abstract(tc) => write!(f, "{:?}", tc),
     }
   }
 }
@@ -175,25 +261,20 @@ impl  fmt::Display for Type {
 impl  Type {
 
   pub fn is_concrete(&self) -> bool {
-    match self {
-      Type::Abstract(_) => false,
-      Type::Fun(sig) => {
-        for t in sig.args.iter() {
-          if !t.is_concrete() { return false }
-        }
-        sig.return_type.is_concrete()
-      },
-      Type::Array(t) => t.is_concrete(),
-      Type::Ptr(t) => t.is_concrete(),
-      Type::Prim(_) => true,
-      Type::Def(_) => true,
-      Type::Generic(_) => false,
+    match self.content {
+      Abstract(_) => return false,
+      Generic(_) => return false,
+      _ => (),
     }
+    for t in self.children.iter() {
+      if !t.is_concrete() { return false }
+    }
+    true
   }
 
   pub fn to_concrete(&mut self) -> Result<(), ()> {
-    match self {
-      Type::Abstract(at) => {
+    match self.content {
+      Abstract(at) => {
         if let Some(t) = at.default_type() {
           *self = t;
         }
@@ -201,33 +282,13 @@ impl  Type {
           return Err(());
         }
       }
-      Type::Fun(sig) => {
-        for t in sig.args.iter_mut() {
-          t.to_concrete()?;
-        }
-        sig.return_type.to_concrete()?;
-      },
-      Type::Array(t) => t.to_concrete()?,
-      Type::Ptr(t) => t.to_concrete()?,
-      Type::Prim(_) => (),
-      Type::Def(_) => (),
-      Type::Generic(_) => return Err(()),
+      Generic(_) => return Err(()),
+      _ => (),
     };
+    for t in self.children.iter() {
+      t.to_concrete()?;
+    }
     Ok(())
-  }
-
-  pub fn signature_mut(&mut self) -> Option<&mut FunctionSignature> {
-    match self {
-      Type::Fun(sig) => Some(sig),
-      _ => None,
-    }
-  }
-
-  pub fn signature(&self) -> Option<&FunctionSignature> {
-    match self {
-      Type::Fun(sig) => Some(sig),
-      _ => None,
-    }
   }
 
   pub fn from_string(s : &str) -> Option<Type> {
@@ -244,19 +305,19 @@ impl  Type {
       "()" => Void,
       _ => return None,
     };
-    Some(Type::Prim(pt))
+    Some(pt.into())
   }
 
   pub fn float(&self) -> bool {
-    match self { Type::Prim(F32) | Type::Prim(F64) => true, _ => false }
+    match self.content { Prim(F32) | Prim(F64) => true, _ => false }
   }
 
   pub fn unsigned_int(&self) -> bool {
-    match self { Type::Prim(U64) | Type::Prim(U32) | Type::Prim(U16) | Type::Prim(U8) => true, _ => false }
+    match self.content { Prim(U64) | Prim(U32) | Prim(U16) | Prim(U8) => true, _ => false }
   }
 
   pub fn signed_int(&self) -> bool {
-    match self { Type::Prim(I64) | Type::Prim(I32) => true, _ => false }
+    match self.content { Prim(I64) | Prim(I32) => true, _ => false }
   }
 
   pub fn int(&self) -> bool {
@@ -268,71 +329,35 @@ impl  Type {
   }
 
   pub fn pointer(&self) -> bool {
-    match self { Type::Ptr(_) | Type::Fun(_) => true, _ => false }
+    match self.content { Ptr | Fun => true, _ => false }
   }
 }
 
-pub fn unify_types_mut<'l>(old : &'l Type, new : &'l mut Type) -> Result<bool, ()> {
-  use Type::*;
-  let aaa = (); // make this recursive
-  if let Abstract(abs_old) = old {
-    if old == new { Ok(false) }
-    else if abs_old.contains_type(new) { Ok(true) }
-    else { Err(()) }
+pub fn unify_types(a : &Type, b : &mut Type) -> Option<Type> {
+  if let Abstract(abs_a) = &a.content {
+    if abs_a.matches_type(b) { Some(b.clone()) } else { None }
   }
-  else if let Abstract(abs_new) = new {
-    if abs_new.contains_type(old) { Ok(false) } else { Err(()) }
+  else if let Abstract(abs_b) = &b.content {
+    if abs_b.matches_type(a) { Some(a.clone()) } else { None }
   }
   else {
-    match old {
-      Ptr(old) =>
-        if let Ptr(new) = new { unify_types_mut(old, new) }
-        else { Err(()) }
-      Array(old) =>
-        if let Array(new) = new { unify_types_mut(old, new) }
-        else { Err(()) }
-      Fun(old_sig) => {
-        if let Fun(new_sig) = new {
-          if old_sig.args.len() != new_sig.args.len() { return Err(()) }
-          let mut changed = 0;
-          for (o, t) in old_sig.args.iter().zip(new_sig.args.iter_mut()) {
-            if unify_types_mut(o, t)? {
-              changed += 1;
-            }
-          }
-          if unify_types_mut(&old_sig.return_type, &mut new_sig.return_type)? {
-            changed += 1;
-          }
-          Ok(changed > 0)
+    match &a.content {
+      Ptr | Array | Fun | Def(_) | Prim(_) => {
+        if a.content != b.content {
+          return None;
         }
-        else { Err(()) }
       }
       Abstract(_) => panic!("impossible state"),
       Generic(_) => panic!("unexpected generic type"),
-      // enumerate all the options so the compiler complains if a new Type is added
-      Def(_) | Prim(_) => if old == new { Ok(false) } else { Err(()) },
     }
+    if a.children.len() != b.children.len() { return None }
+    let mut children = vec![];
+    for (o, t) in a.children.iter().zip(b.children.iter_mut()) {
+      children.push(unify_types(o, t)?);
+    }
+    Some(Type::new(a.content.clone(), children))
   }
 }
-
-// pub fn unify_abstract<'l>(a : &'l Type, b : &'l Type) -> Option<&'l Type> {
-//   use Type::*;
-//   let aaa = (); // make this recursive
-//   match (a, b) {
-//     (Abstract(abs_a), Abstract(abs_b)) => {
-//       if abs_a == abs_b { return Some(a) } else { None }
-//     }
-//     (Abstract(abs_a), b) => {
-//       if abs_a.contains_type(b) { Some(b) } else { None }
-//     }
-//     (a, Abstract(abs_b)) => {
-//       if abs_b.contains_type(a) { Some(a) } else { None }
-//     }
-//     (a, b) => {
-//       if a == b { Some(a) } else { None }
-//     }
-//   }
-// }
 
 impl TypeInfo {
   pub fn new(module_id : ModuleId) -> TypeInfo {
@@ -381,52 +406,40 @@ impl TypeInfo {
 }
 
 fn abstract_match(u : &Type, t : &Type) -> bool {
-  match (u, t) {
-    (Type::Abstract(bt), _) => bt.contains_type(t),
-    (Type::Ptr(u), Type::Ptr(t)) => abstract_match(u, t),
-    (Type::Array(u), Type::Array(t)) => abstract_match(u, t),
-    (Type::Fun(u_sig), Type::Fun(t_sig)) => {
-      if u_sig.args.len() != t_sig.args.len() { return false }
-      for (u, t) in u_sig.args.iter().zip(t_sig.args.iter()) {
-        if !abstract_match(u, t) {
-          return false;
-        }
-      }
-      abstract_match(&u_sig.return_type, &t_sig.return_type)
-    }
-    // enumerate all the options so the compiler complains if a new Type is added
-    (Type::Generic(_), _) => panic!("unexpected generic type"),
-    (Type::Def(_), _) | (Type::Prim(_), _) => u == t,
-    (Type::Ptr(_), _) | (Type::Array(_), _) | (Type::Fun(_), _) => false,
+  if let Abstract(au) = &u.content {
+    return au.matches_type(t);
   }
+  if let Abstract(at) = &t.content {
+    return at.matches_type(u);
+  }
+  if u.content != t.content {
+    return false;
+  }
+  if u.children.len() != t.children.len() { return false }
+  for (u, t) in u.children.iter().zip(t.children.iter()) {
+    if !abstract_match(u, t) {
+      return false;
+    }
+  }
+  true
 }
 
 fn generic_replace(generics : &HashMap<GenericId, Type>, gen : &mut UIDGenerator, t : &mut Type) {
-  match t {
-    Type::Ptr(t) => generic_replace(generics, gen, t),
-    Type::Array(t) => generic_replace(generics, gen, t),
-    Type::Fun(sig) => {
-      for t in sig.args.iter_mut() {
-        generic_replace(generics, gen, t);
-      }
-      generic_replace(generics, gen, &mut sig.return_type);
-    }
-    Type::Generic(gid) => {
-      *t = generics.get(&gid).unwrap().clone();
-    }
-    Type::Def(_) | Type::Prim(_) => (),
-    Type::Abstract(_) => panic!("unexpected abstract type"),
+  if let Generic(gid) = &t.content {
+    *t = generics.get(&gid).unwrap().clone();
+  }
+  for t in t.children.iter_mut() {
+    generic_replace(generics, gen, t);
   }
 }
 
 fn generic_match(generics : &mut HashMap<GenericId, Type>, t : &Type, gt : &Type) -> bool {
-  match (t, gt) {
-    (Type::Generic(_), _) => panic!("unexpected generic type"),
-    (t, Type::Generic(gid)) => {
+  match (&t.content, &gt.content) {
+    (Generic(_), _) => panic!("unexpected generic type"),
+    (t, Generic(gid)) => {
       if let Some(bound_type) = generics.get(&gid) {
-        if let Some(unified_t) = unify_abstract(&t, bound_type) {
-          let ut = unified_t.clone();
-          generics.insert(*gid, ut);
+        if let Some(unified_t) = unify_types(&t, bound_type) {
+          generics.insert(*gid, unified_t);
           true
         }
         else {
@@ -438,10 +451,10 @@ fn generic_match(generics : &mut HashMap<GenericId, Type>, t : &Type, gt : &Type
         true
       }
     }
-    (Type::Abstract(at), gt) => at.contains_type(gt),
-    (Type::Ptr(t), Type::Ptr(gt)) => generic_match(generics, t, gt),
-    (Type::Array(t), Type::Array(gt)) => generic_match(generics, t, gt),
-    (Type::Fun(t_sig), Type::Fun(gt_sig)) => {
+    (Abstract(at), gt) => at.contains_type(gt),
+    (Ptr(t), Ptr(gt)) => generic_match(generics, t, gt),
+    (Array(t), Array(gt)) => generic_match(generics, t, gt),
+    (Fun(t_sig), Fun(gt_sig)) => {
       if t_sig.args.len() != gt_sig.args.len() { return false }
       for (t, gt) in t_sig.args.iter().zip(gt_sig.args.iter()) {
         if !generic_match(generics, t, gt) {
@@ -451,8 +464,8 @@ fn generic_match(generics : &mut HashMap<GenericId, Type>, t : &Type, gt : &Type
       generic_match(generics, &t_sig.return_type, &gt_sig.return_type)
     },
       // enumerate all the options so the compiler complains if a new Type is added
-    (Type::Def(_), _) | (Type::Prim(_), _) => t == gt,
-    (Type::Ptr(_), _) | (Type::Array(_), _) | (Type::Fun(_), _) => false,
+    (Def(_), _) | (Prim(_), _) => t == gt,
+    (Ptr(_), _) | (Array(_), _) | (Fun(_), _) => false,
   }
 }
 
