@@ -10,8 +10,8 @@ use crate::structure::{Val, TOP_LEVEL_FUNCTION_NAME};
 use crate::inference;
 use crate::inference::CodegenInfo;
 use crate::types::{
-  Type, TypeContent, PType, TypeInfo, ModuleId,
-  SignatureBuilder, GlobalDefinition,
+  Type, TypeContent, PType, TypeInfo,
+  ModuleId, SignatureBuilder, GlobalDefinition,
   PolyFunctionDef, GenericId, GlobalInit,
 };
 use crate::codegen::{Gen, LlvmUnit, dump_module, CompileInfo};
@@ -199,7 +199,7 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
   use PType::*;
 
   fn create_definition(
-    cache : &StringCache, id : ModuleId, name : &str,
+    cache : &StringCache, gen : &mut UIDGenerator, module_id : ModuleId, name : &str,
     args : &[&Type], return_type : &Type)
       -> GlobalDefinition
   {
@@ -208,7 +208,7 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
       sig.append_arg(a.clone());
     }
     GlobalDefinition {
-      module_id: id,
+      id: gen.next().into(), module_id,
       name: cache.get(name),
       type_tag: sig.into(),
       initialiser: GlobalInit::Intrinsic,
@@ -217,19 +217,19 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
   }
 
   fn add_intrinsic(
-    cache : &StringCache, id : ModuleId, t : &mut TypeInfo,
+    cache : &StringCache, gen : &mut UIDGenerator, module_id : ModuleId, t : &mut TypeInfo,
     name : &str, args : &[&Type], return_type : &Type)
   {
-    let g = create_definition(cache, id, name, args, return_type);
+    let g = create_definition(cache, gen, module_id, name, args, return_type);
     t.globals.push(g);
   }
   
   fn add_generic_intrinsic(
-    cache : &StringCache, id : ModuleId, t : &mut TypeInfo,
+    cache : &StringCache, gen : &mut UIDGenerator, module_id : ModuleId, t : &mut TypeInfo,
     name : &str, args : &[&Type], return_type : &Type,
     generics : Vec<GenericId>)
   {
-    let global = create_definition(cache, id, name, args, return_type);
+    let global = create_definition(cache, gen, module_id, name, args, return_type);
     let pf = PolyFunctionDef {global, generics };
     t.poly_functions.push(pf);
   }
@@ -237,25 +237,25 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
   let expr = parse(cache, "").unwrap();
   let nodes = structure::to_nodes(gen, cache, &expr).unwrap();
 
-  let id = gen.next().into();
-  let mut ti = TypeInfo::new(id);
+  let module_id = gen.next().into();
+  let mut ti = TypeInfo::new(module_id);
   let prim_number_types : &[Type] =
     &[I64.into(), I32.into(), F32.into(), F64.into(),
       U64.into(), U32.into(), U16.into(), U8.into() ];
   let boolean : &Type = &Bool.into();
   for t in prim_number_types {
     for &n in &["-"] {
-      add_intrinsic(cache, id, &mut ti, n, &[t], t);
+      add_intrinsic(cache, gen, module_id, &mut ti, n, &[t], t);
     }
     for &n in &["+", "-", "*", "/"] {
-      add_intrinsic(cache, id, &mut ti, n, &[t, t], t);
+      add_intrinsic(cache, gen, module_id, &mut ti, n, &[t, t], t);
     }
     for &n in &["==", ">", "<", ">=", "<=", "!="] {
-      add_intrinsic(cache, id, &mut ti, n, &[t, t], boolean);
+      add_intrinsic(cache, gen, module_id, &mut ti, n, &[t, t], boolean);
     }
   }
   for &n in &["&&", "||"] {
-    add_intrinsic(cache, id, &mut ti, n, &[boolean, boolean], boolean);
+    add_intrinsic(cache, gen, module_id, &mut ti, n, &[boolean, boolean], boolean);
   }
   for prim in &[I64.into(), I32.into(), U64.into(), U32.into()] {
     for container in &[Type::ptr_to, Type::array_of] {
@@ -263,22 +263,22 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
       let gt : Type = gid.into();
       let gcontainer = container(gt.clone());
       let args = &[&gcontainer, prim];
-      add_generic_intrinsic(cache, id, &mut ti, "Index", args, &gt, vec![gid]);
+      add_generic_intrinsic(cache, gen, module_id, &mut ti, "Index", args, &gt, vec![gid]);
     }
   }
   {
     let gid : GenericId = gen.next().into();
     let gt : Type = gid.into();
     let gptr = Type::ptr_to(gt.clone());
-    add_generic_intrinsic(cache, id, &mut ti, "*", &[&gptr], &gt, vec![gid]);
+    add_generic_intrinsic(cache, gen, module_id, &mut ti, "*", &[&gptr], &gt, vec![gid]);
   }
   {
     let gid : GenericId = gen.next().into();
     let gt : Type = gid.into();
     let gptr = Type::ptr_to(gt.clone());
-    add_generic_intrinsic(cache, id, &mut ti, "&", &[&gt], &gptr, vec![gid]);
+    add_generic_intrinsic(cache, gen, module_id, &mut ti, "&", &[&gt], &gptr, vec![gid]);
   }
-  TypedModule::new(id, nodes, ti, CodegenInfo::new())
+  TypedModule::new(module_id, nodes, ti, CodegenInfo::new())
 }
 
 fn run_top_level(m : &CompiledModule) -> Result<Val, Error> {

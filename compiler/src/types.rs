@@ -16,8 +16,12 @@ pub struct ModuleId(u64);
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct GenericId(u64);
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub struct GlobalId(u64);
+
 impl From<u64> for ModuleId { fn from(v : u64) -> Self { ModuleId(v) } }
 impl From<u64> for GenericId { fn from(v : u64) -> Self { GenericId(v) } }
+impl From<u64> for GlobalId { fn from(v : u64) -> Self { GlobalId(v) } }
 
 pub struct TypeInfo {
   pub type_defs : HashMap<RefStr, TypeDefinition>,
@@ -116,12 +120,6 @@ impl Into<Type> for SignatureBuilder {
 pub struct FunctionSignature<'a> {
   pub return_type : &'a Type,
   pub args : &'a [Type],
-}
-
-#[derive(Debug, PartialEq)]
-pub struct FunctionSignatureMut<'a> {
-  pub return_type : &'a mut Type,
-  pub args : &'a mut [Type],
 }
 
 impl Type {
@@ -252,6 +250,7 @@ pub struct FunctionInit {
 
 #[derive(Clone, Debug)]
 pub struct GlobalDefinition {
+  pub id : GlobalId,
   pub module_id : ModuleId,
   pub name : RefStr,
   pub type_tag : Type,
@@ -418,7 +417,7 @@ pub fn incremental_unify(old : &Type, new : &mut Type) -> IncrementalUnifyResult
   if changed_old_type { ChangedOld } else { EqualOrSubsumedByOld }
 }
 
-fn unify_types(a : &Type, b : &Type) -> Option<Type> {
+pub fn unify_types(a : &Type, b : &Type) -> Option<Type> {
   match can_unify_types(a, b) {
     CanUnifyResult::CanUnify => {
       let mut t = b.clone();
@@ -580,6 +579,10 @@ impl <'a> TypeDirectory<'a> {
       generic_bindings: HashMap::new(),
       global_results: vec![],
     }
+  }
+
+  pub fn get_global(&mut self, id : GlobalId) -> &mut GlobalDefinition {
+    self.new_module.globals.iter_mut().find(|def| def.id == id).unwrap()
   }
 
   pub fn create_type_def(&mut self, def : TypeDefinition) {

@@ -5,14 +5,14 @@ use itertools::Itertools;
 use crate::error::{Error, error, error_raw, TextLocation};
 use crate::expr::{Expr, UIDGenerator, RefStr, StringCache};
 use crate::structure::{
-  Node, NodeId, Nodes, SymbolId,
-  Content, Val, LabelId, TypeKind,
-  VarScope, GlobalType, Symbol,
+  Node, NodeId, SymbolId, Content, Val, LabelId, TypeKind,
+  VarScope, GlobalType, Symbol, Nodes,
 };
 use crate::types::{
   Type, TypeContent, PType, TypeInfo, TypeDefinition, ConcreteGlobal,
-  FunctionInit, GlobalDefinition, TypeDirectory, GlobalInit,
-  AbstractType, SignatureBuilder, incremental_unify, IncrementalUnifyResult
+  FunctionInit, GlobalDefinition, TypeDirectory, GlobalInit, GlobalId,
+  AbstractType, SignatureBuilder, unify_types,
+  incremental_unify, IncrementalUnifyResult
 };
 use crate::modules::TypedModule;
 
@@ -154,18 +154,8 @@ impl <'a> Inference<'a> {
     let e = match c  {
       Constraint::Assert(_ts, _t) => panic!(),
       Constraint::Equalivalent(_a, _b) => return,
-      Constraint::FunctionDef{ name, loc, args, .. } => {
-        error_raw(loc,
-          format!("function definition '{}({})' not resolved", name,
-            args.iter().map(|(s, ts)| {
-              let t = self.get_type(*ts)
-                .map(|t| format!("{}", t))
-                .unwrap_or_else(|| "???".into());
-              format!("{} : {}", s.name, t)
-            }).join(", ")))
-      }
       // this error should always be accompanied by other unresolved constraints
-      Constraint::FunctionCall{ function:_, args:_, result:_ } => return,
+      Constraint::Function{ function:_, args:_, return_type:_ } => return,
       Constraint::Constructor { type_name, fields:_, result } => {
         error_raw(self.loc(*result),
           format!("constructor for '{}' not resolved", type_name))
@@ -176,9 +166,10 @@ impl <'a> Inference<'a> {
         let s = format!("type conversion from {} into {} not supported", t, into_type);
         error_raw(self.loc(*val), s)
       }
-      Constraint::GlobalDef { name, type_symbol:_, initialiser:_, loc } => {
-        error_raw(loc,
-          format!("global definition '{}' not resolved", name))
+      Constraint::GlobalDef { global_id, type_symbol:_ } => {
+        let def = self.t.get_global(*global_id);
+        error_raw(def.loc,
+          format!("global definition '{}' not resolved", def.name))
       }
       Constraint::GlobalReference { node:_, name, result } => {
         let any = Type::any();
@@ -234,51 +225,23 @@ impl <'a> Inference<'a> {
           }
         }
       }
-      Constraint::FunctionDef{ name, return_type, args, body, loc } => {
-        let resolved_args_count = args.iter().flat_map(|(_, ts)| self.get_type(*ts)).count();
-        let return_type = self.get_type(*return_type);
-        if resolved_args_count == args.len() && return_type.is_some() {
-          let mut sig = SignatureBuilder::new(return_type.unwrap().clone());
-          let mut arg_names = vec!();
-          for (arg, arg_ts) in args.iter() {
-            arg_names.push(arg.clone());
-            sig.append_arg(self.get_type(*arg_ts).unwrap().clone());
-          }
-          let name_for_codegen =
-            self.cache.get(format!("{}.{}", name, self.gen.next()).as_str());
-          let f = FunctionInit {
-            body: *body,
-            name_for_codegen,
-            args: arg_names,
-          };
-          let g = GlobalDefinition {
-            module_id: self.t.new_module_id(),
-            name: name.clone(),
-            type_tag: sig.into(),
-            initialiser: GlobalInit::Function(f),
-            loc: *loc,
-          };
-          self.t.create_global(g);
-          return true;
-        }
-      }
-      Constraint::FunctionCall{ function, args, result } => {
+      Constraint::Function{ function, args, return_type } => {
         if let Some(t) = self.get_type(*function) {
           if let Some(mut sig) = t.sig_builder() {
             for (i, t) in sig.args().iter_mut().enumerate() {
-              self.update_type_mut(args[i].1, t);
+              self.update_type_mut(args[i], t);
             }
             let rt = sig.return_type();
-            self.update_type_mut(*result, rt);
+            self.update_type_mut(*return_type, rt);
             self.update_type(*function, sig.into());
           }
         }
         else {
           let any = Type::any();
-          let return_type = self.get_type(*result).cloned().unwrap_or(any.clone());
+          let return_type = self.get_type(*return_type).cloned().unwrap_or(any.clone());
           let mut sig = SignatureBuilder::new(return_type);
-          for arg in args {
-            let arg = self.get_type(arg.1).cloned().unwrap_or(any.clone());
+          for &arg in args {
+            let arg = self.get_type(arg).cloned().unwrap_or(any.clone());
             sig.append_arg(arg);
           }
           self.update_type(*function, sig.into());
@@ -351,17 +314,19 @@ impl <'a> Inference<'a> {
           }
         }
       }
-      Constraint::GlobalDef{ name, type_symbol, initialiser, loc } => {
-        if let Some(t) = self.get_type(*type_symbol) {
-          let g = GlobalDefinition {
-            module_id: self.t.new_module_id(),
-            name: name.clone(),
-            initialiser: initialiser.clone(),
-            type_tag: t.clone(),
-            loc: *loc,
-          };
-          self.t.create_global(g);
-          return true;
+      Constraint::GlobalDef{ global_id, type_symbol } => {
+        if let Some(t) = self.resolved.get(type_symbol) {
+          let def = self.t.get_global(*global_id);
+          if let Some(unified_type) = unify_types(t, &def.type_tag) {
+            def.type_tag = unified_type;
+            if def.type_tag.is_concrete() {
+              return true;
+            }
+          }
+          else {
+            let e = error_raw(def.loc, format!("conflicting types inferred; {} and {}.", t, def.type_tag));
+            self.errors.push(e);
+          }
         }
       }
       Constraint::GlobalReference { node, name, result } => {
@@ -456,6 +421,9 @@ impl <'a> Inference<'a> {
       }
       break;
     }
+    for _ in 0..10 {
+      unused_constraints.retain(|c| !self.process_constraint(c));
+    }
     println!("Passes taken: {}\n", total_passes);
     
     // Generate errors for unresolved constraints
@@ -479,7 +447,7 @@ impl <'a> Inference<'a> {
         }
         else {
           let loc = self.loc(*ts);
-          let e = error_raw(loc, "unresolved type");
+          let e = error_raw(loc, format!("unresolved type {}", t));
           self.errors.push(e);
         }
       }
@@ -519,23 +487,14 @@ pub enum Constraint {
     fields : Vec<(Option<Symbol>, TypeSymbol)>,
     result : TypeSymbol,
   },
-  FunctionDef {
-    name : RefStr,
-    return_type : TypeSymbol,
-    args : Vec<(Symbol, TypeSymbol)>,
-    body : NodeId,
-    loc : TextLocation,
-  },
-  FunctionCall {
+  Function {
     function : TypeSymbol,
-    args : Vec<(Option<SymbolId>, TypeSymbol)>,
-    result : TypeSymbol,
+    args : Vec<TypeSymbol>,
+    return_type : TypeSymbol,
   },
   GlobalDef {
-    name: RefStr,
+    global_id: GlobalId,
     type_symbol: TypeSymbol,
-    initialiser: GlobalInit,
-    loc: TextLocation,
   },
   GlobalReference {
     node : NodeId,
@@ -554,10 +513,9 @@ impl  fmt::Display for Constraint {
       Convert{ into_type, .. } => write!(f, "Convert into {}", into_type),
       FieldAccess { field, .. } => write!(f, "FieldAccess {}", field.name),
       Constructor { type_name, .. } => write!(f, "Constructor {}", type_name),
-      FunctionDef { name, .. } => write!(f, "FunctionDef {}", name),
-      FunctionCall { args, .. } =>
+      Function { args, .. } =>
         write!(f, "FunctionCall ({} args)", args.len()),
-      GlobalDef { name, .. } => write!(f, "GlobalDef {}", name),
+      GlobalDef { .. } => write!(f, "GlobalDef"),
       GlobalReference { name, .. } => write!(f, "GlobalRef {}", name),
     }
   }
@@ -728,11 +686,18 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             GlobalType::CBind => GlobalInit::CBind,
             GlobalType::Normal => GlobalInit::Expression(*value),
           };
-          self.constraint(Constraint::GlobalDef{
+          let global_id = self.gen.next().into();
+          self.t.create_global(GlobalDefinition {
+            id: global_id,
+            module_id: self.t.new_module_id(),
             name: name.name.clone(),
-            type_symbol: var_type_symbol,
+            type_tag: Type::any(),
             initialiser,
             loc: node.loc,
+          });
+          self.constraint(Constraint::GlobalDef{
+            global_id,
+            type_symbol: var_type_symbol,
           });          
         }
       }
@@ -785,23 +750,51 @@ impl <'l, 't> GatherConstraints<'l, 't> {
       }
       Content::FunctionDefinition{ name, args, return_tag, body } => {
         self.assert(ts, PType::Void);
-        let mut ts_args : Vec<(Symbol, TypeSymbol)> = vec![];
-        for (arg, type_tag) in args.iter() {
-          let arg_type_symbol = self.variable_to_type_symbol(arg);
-          self.tagged_symbol(arg_type_symbol, type_tag);
-          ts_args.push((arg.clone(), arg_type_symbol));
-        }
+        let global_id = self.gen.next().into();
         let body_ts = {
           // Need new scope stack for new function
-          let mut gc =
-            GatherConstraints::new(self.t, self.cg, self.cache, self.gen, self.c, self.errors, self.type_def_refs);
+          let mut gc = GatherConstraints::new(
+            self.t, self.cg, self.cache, self.gen,
+            self.c, self.errors, self.type_def_refs
+          );
           gc.process_node(n, *body)
         };
         self.tagged_symbol(body_ts, return_tag);
-        let f = Constraint::FunctionDef {
-          name: name.clone(), args: ts_args,
-          return_type: body_ts, body: *body, loc: node.loc };
-        self.constraint(f);
+        let mut arg_types : Vec<TypeSymbol> = vec![];
+        let mut arg_names = vec!();
+        for (arg, type_tag) in args.iter() {
+          arg_names.push(arg.clone());
+          let arg_type_symbol = self.variable_to_type_symbol(arg);
+          self.tagged_symbol(arg_type_symbol, type_tag);
+          arg_types.push(arg_type_symbol);
+        }
+        let global_ts = self.type_symbol(node.loc);
+        self.constraint(Constraint::Function {
+          function: global_ts,
+          args: arg_types,
+          return_type: body_ts,
+        });
+        self.constraint(Constraint::GlobalDef {
+          global_id,
+          type_symbol: global_ts,
+        });
+        self.t.create_global({
+          let name_for_codegen =
+            self.cache.get(format!("{}.{}", name, self.gen.next()).as_str());
+          let f = FunctionInit {
+            body: *body,
+            name_for_codegen,
+            args: arg_names,
+          };
+          GlobalDefinition {
+            id: global_id,
+            module_id: self.t.new_module_id(),
+            name: name.clone(),
+            type_tag: Type::any(),
+            initialiser: GlobalInit::Function(f),
+            loc: node.loc,
+          }
+        });
       }
       Content::CBind { name, type_tag } => {
         self.assert(ts, PType::Void);
@@ -809,6 +802,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
         if let Some(t) = self.try_expr_to_type(type_tag) {
           self.assert_type(cbind_ts, t.clone());
           let g = GlobalDefinition {
+            id: self.gen.next().into(),
             module_id: self.t.new_module_id(),
             name: name.clone(),
             initialiser: GlobalInit::CBind,
@@ -873,10 +867,10 @@ impl <'l, 't> GatherConstraints<'l, 't> {
       }
       Content::FunctionCall{ function, args } => {
         let function = self.process_node(n, *function);
-        let fc = Constraint::FunctionCall {
+        let fc = Constraint::Function {
           function,
-          args: args.iter().map(|id| (None, self.process_node(n, *id))).collect(),
-          result: ts,
+          args: args.iter().map(|id| self.process_node(n, *id)).collect(),
+          return_type: ts,
         };
         self.constraint(fc);
       }
