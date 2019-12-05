@@ -78,6 +78,7 @@ struct Inference<'a> {
   gen : &'a mut UIDGenerator,
   errors : &'a mut Vec<Error>,
   resolved : HashMap<TypeSymbol, Type>,
+  resolution_step : i64,
 }
 
 impl <'a> Inference<'a> {
@@ -95,6 +96,7 @@ impl <'a> Inference<'a> {
     Inference {
       nodes, t, cg, c, cache, gen, errors,
       resolved: HashMap::new(),
+      resolution_step : 0,
     }
   }
 
@@ -123,18 +125,23 @@ impl <'a> Inference<'a> {
     None
   }
 
+  fn type_updated(&mut self, ts : TypeSymbol) {
+    self.resolution_step += 1;
+    let aaa = (); // TODO: trigger recalculations
+  }
+
   fn update_type(&mut self, ts : TypeSymbol, t : Type) {
     if let Some(t) = self.unify(ts, t) {
-      let aaa = (); // TODO: trigger recalculations
       self.resolved.insert(ts, t);
+      self.type_updated(ts);
     }
   }
 
   fn update_type_mut(&mut self, ts : TypeSymbol, t : &mut Type) -> IncrementalUnifyResult {
     let r = self.unify_mut(ts, t);
     if r == IncrementalUnifyResult::ChangedOld {
-      let aaa = (); // TODO: trigger recalculations
       self.resolved.insert(ts, t.clone());
+      self.type_updated(ts);
     }
     r
   }
@@ -216,14 +223,14 @@ impl <'a> Inference<'a> {
           if t.is_concrete() {
             let t = t.clone();
             self.update_type(*b, t);
-            return true;
+            //return true;
           }
         }
         if let Some(t) = self.get_type(*b) {
           if t.is_concrete() {
             let t = t.clone();
             self.update_type(*a, t);
-            return true;
+            //return true;
           }
         }
       }
@@ -438,9 +445,14 @@ impl <'a> Inference<'a> {
     while unused_constraints.len() > 0 {
       total_passes += 1;
       let remaining_before_pass = unused_constraints.len();
+      let resolution_step_before_pass = self.resolution_step;
       unused_constraints.retain(|c| !self.process_constraint(c));
       // Continue if some constraints were resolved in the last pass
       if unused_constraints.len() < remaining_before_pass {
+        continue;
+      }
+      // Continue if a type was resolved
+      if resolution_step_before_pass != self.resolution_step {
         continue;
       }
       // Continue if some literals can be hardened into specific types

@@ -282,6 +282,15 @@ impl  fmt::Display for GenericId {
   }
 }
 
+impl  fmt::Display for AbstractType {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      AbstractType::Any => write!(f, "???"),
+      _ => write!(f, "{:?}", self),
+    }
+  }
+}
+
 impl  fmt::Display for Type {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match &self.content {
@@ -295,7 +304,7 @@ impl  fmt::Display for Type {
       Ptr => write!(f, "ptr({})", self.ptr().unwrap()),
       Prim(t) => write!(f, "{:?}", t),
       Generic(id) => write!(f, "@Generic({})", id),
-      Abstract(tc) => write!(f, "{:?}", tc),
+      Abstract(abs) => write!(f, "{}", abs),
     }
   }
 }
