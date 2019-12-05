@@ -1,12 +1,13 @@
 
-fun blah(a : u64) {
+fun blah(a) {
   a + 5
 }
 
 let b = blah(5)
 
-fun blah(a : i64) {
+fun blah(a) {
   a + 5
 }
 
 b
+

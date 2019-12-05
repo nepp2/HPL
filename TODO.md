@@ -1,3 +1,14 @@
+# TODO - 05/12/2019
+
+- Implement polymorphic functions
+- Prevent unnecessary array allocation
+  - Add sized array type to support stack/global allocation?
+    - Pass around as an unsized array reference (could break easily)
+    - Add region (lifetime?) to the type?
+  - Detect constant expressions and allocate them globally
+  - Maybe always allocate on the stack (or as global) without putting it in type info?
+- Type inference of new symbols should allow their types to be refined incrementally
+
 # THOUGHTS - 02/12/2019
 
 I'm contemplating the possible wrongness of regions. Although not that they are very wrong. Just that possibly a slot map would be a better choice. Or some combination of the two.

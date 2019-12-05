@@ -285,7 +285,7 @@ impl  fmt::Display for GenericId {
 impl  fmt::Display for AbstractType {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
-      AbstractType::Any => write!(f, "???"),
+      AbstractType::Any => write!(f, "@Unknown"),
       _ => write!(f, "{:?}", self),
     }
   }

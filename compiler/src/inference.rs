@@ -382,7 +382,7 @@ impl <'a> Inference<'a> {
           while let Some(inner) = ct.ptr() {
             ct = inner;
           }
-          if let Def(name) = &ct.content { 
+          if let Def(name) = &ct.content {
             if let Some(def) = self.t.find_type_def(&name) {
               let f = def.fields.iter().find(|(n, _)| n.name == field.name);
               if let Some((_, t)) = f.cloned() {
@@ -394,11 +394,6 @@ impl <'a> Inference<'a> {
               }
               return true;
             }
-          }
-          else {
-            let s = format!("type {} has no fields", ct);
-            self.errors.push(error_raw(field.loc, s));
-            return true;
           }
         }
       }
