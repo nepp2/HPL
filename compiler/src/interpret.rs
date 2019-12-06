@@ -1,6 +1,6 @@
 
 use crate::error::Error;
-use crate::structure::Val;
+use crate::compile::Val;
 use crate::types::ModuleId;
 use crate::compile::Compiler;
 use crate::expr::Expr;

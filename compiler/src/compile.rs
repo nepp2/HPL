@@ -6,7 +6,7 @@ use crate::lexer;
 use crate::parser;
 use crate::c_interface::CSymbols;
 use crate::structure;
-use crate::structure::{Val, TOP_LEVEL_FUNCTION_NAME};
+use crate::structure::TOP_LEVEL_FUNCTION_NAME;
 use crate::inference;
 use crate::inference::CodegenInfo;
 use crate::types::{
@@ -279,6 +279,21 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
     add_generic_intrinsic(cache, gen, module_id, &mut ti, "&", &[&gt], &gptr, vec![gid]);
   }
   TypedModule::new(module_id, nodes, ti, CodegenInfo::new())
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub enum Val {
+  Void,
+  F64(f64),
+  F32(f32),
+  I64(i64),
+  U64(u64),
+  I32(i32),
+  U32(u32),
+  U16(u16),
+  U8(u8),
+  String(String),
+  Bool(bool),
 }
 
 fn run_top_level(m : &CompiledModule) -> Result<Val, Error> {

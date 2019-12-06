@@ -7,7 +7,6 @@
 // #[macro_use] extern crate lazy_static;
 // #[macro_use] extern crate maplit;
 
-pub mod arena;
 pub mod error;
 pub mod lexer;
 pub mod parser;
@@ -32,7 +31,7 @@ use std::path::PathBuf;
 use std::env;
 
 use crate::interpret::interpreter;
-use crate::structure::Val;
+use crate::compile::Val;
 use crate::error::Error;
 
 pub fn print_result(r : Result<Val, Error>) -> String {

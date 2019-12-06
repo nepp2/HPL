@@ -7,16 +7,10 @@ use std::collections::HashMap;
 pub static TOP_LEVEL_FUNCTION_NAME : &'static str = "__top_level";
 
 #[derive(Clone, PartialEq, Debug)]
-pub enum Val {
+pub enum PrimitiveVal {
   Void,
-  F64(f64),
-  F32(f32),
-  I64(i64),
-  U64(u64),
-  I32(i32),
-  U32(u32),
-  U16(u16),
-  U8(u8),
+  Float(f64),
+  Int(i64),
   String(String),
   Bool(bool),
 }
@@ -48,7 +42,7 @@ pub enum VarScope { Local, Global(GlobalType) }
 
 #[derive(Debug)]
 pub enum Content {
-  Literal(Val),
+  Literal(PrimitiveVal),
   VariableInitialise{ name: Symbol, type_tag: Option<Box<Expr>>, value: NodeId, var_scope : VarScope },
   Assignment{ assignee: NodeId , value: NodeId },
   IfThen{ condition: NodeId, then_branch: NodeId },
@@ -498,23 +492,23 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         return Ok(self.node(expr, Reference{ name, refers_to: None}));
       }
       ExprContent::LiteralString(s) => {
-        let v = Val::String(s.as_str().to_string());
+        let v = PrimitiveVal::String(s.as_str().to_string());
         Ok(self.node(expr, Literal(v)))
       }
       ExprContent::LiteralFloat(f) => {
-        let v = Val::F64(*f as f64);
+        let v = PrimitiveVal::Float(*f as f64);
         Ok(self.node(expr, Literal(v)))
       }
       ExprContent::LiteralInt(v) => {
-        let v = Val::I64(*v as i64);
+        let v = PrimitiveVal::Int(*v as i64);
         Ok(self.node(expr, Literal(v)))
       }
       ExprContent::LiteralBool(b) => {
-        let v = Val::Bool(*b);
+        let v = PrimitiveVal::Bool(*b);
         Ok(self.node(expr, Literal(v)))
       },
       ExprContent::LiteralUnit => {
-        Ok(self.node(expr, Literal(Val::Void)))
+        Ok(self.node(expr, Literal(PrimitiveVal::Void)))
       },
       // _ => error(expr, "unsupported expression"),
     }
@@ -545,13 +539,13 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
 
   fn loc_struct(&mut self, expr : &Expr, loc_name : RefStr, marker_name : RefStr) -> NodeId {
     let start = {
-      let col = self.u64_literal(expr, expr.loc.start.col as u64);
-      let line = self.u64_literal(expr, expr.loc.start.line as u64);
+      let col = self.int_literal(expr, expr.loc.start.col as i64);
+      let line = self.int_literal(expr, expr.loc.start.line as i64);
       self.type_constructor(expr, marker_name.clone(), vec![col, line])
     };
     let end = {
-      let col = self.u64_literal(expr, expr.loc.end.col as u64);
-      let line = self.u64_literal(expr, expr.loc.end.line as u64);
+      let col = self.int_literal(expr, expr.loc.end.col as i64);
+      let line = self.int_literal(expr, expr.loc.end.line as i64);
       self.type_constructor(expr, marker_name, vec![col, line])
     };
     self.type_constructor(expr, loc_name, vec![start, end])
@@ -566,8 +560,8 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     self.node(expr, Block(args))
   }
 
-  fn u64_literal(&mut self, expr : &Expr, i : u64) -> NodeId {
-    self.node(expr, Literal(Val::U64(i)))
+  fn int_literal(&mut self, expr : &Expr, i : i64) -> NodeId {
+    self.node(expr, Literal(PrimitiveVal::Int(i)))
   }
 
   fn array_literal(&mut self, expr : &Expr, args : Vec<NodeId>) -> NodeId {

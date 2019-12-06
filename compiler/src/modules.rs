@@ -2,7 +2,6 @@
 use crate::types::{TypeInfo, ModuleId};
 use crate::codegen::LlvmUnit;
 use crate::inference::CodegenInfo;
-use crate::arena::Arena;
 use crate::structure::Nodes;
 
 pub struct TypedModule {

@@ -5,7 +5,7 @@ use crate::error::{Error, error, error_raw, TextLocation};
 use crate::expr::RefStr;
 
 use crate::structure::{
-  Node, NodeId, Nodes, Content, Val, TypeKind, SymbolId,
+  Node, NodeId, Nodes, Content, PrimitiveVal, TypeKind, SymbolId,
   LabelId, NodeValueType, VarScope, Symbol };
 use crate::types::{
   Type, PType, TypeDefinition, GlobalInit,
@@ -453,23 +453,37 @@ impl <'l> Gen<'l> {
   }
 
   fn codegen_static(&mut self, node : TypedNode) -> Result<BasicValueEnum, Error> {
+    use TypeContent::*;
+    use PType::*;
     let v = match node.content() {
       Content::Literal(v) => {
         match v {
-          Val::F64(f) => self.context.f64_type().const_float(*f).into(),
-          Val::F32(f) => self.context.f32_type().const_float(*f as f64).into(),
-          Val::I64(i) => self.context.i64_type().const_int(*i as u64, false).into(), // TODO the signed values should maybe pass "true" here?
-          Val::I32(i) => self.context.i32_type().const_int(*i as u64, false).into(),
-          Val::U64(i) => self.context.i64_type().const_int(*i as u64, false).into(),
-          Val::U32(i) => self.context.i32_type().const_int(*i as u64, false).into(),
-          Val::U16(i) => self.context.i16_type().const_int(*i as u64, false).into(),
-          Val::U8(i) => self.context.i8_type().const_int(*i as u64, false).into(),
-          Val::Bool(b) =>
+          PrimitiveVal::Float(f) => {
+            match &node.type_tag().content {
+              Prim(F64) => self.context.f64_type().const_float(*f).into(),
+              Prim(F32) => self.context.f32_type().const_float(*f as f64).into(),
+              _ => panic!("primitive type error {}", node.type_tag()),
+            }
+          }
+          PrimitiveVal::Int(i) => {
+            match &node.type_tag().content {
+              // TODO the signed values should maybe pass "true" here?
+              Prim(I64) => self.context.i64_type().const_int(*i as u64, false).into(),
+              Prim(I32) => self.context.i32_type().const_int(*i as u64, false).into(),
+              Prim(U64) => self.context.i64_type().const_int(*i as u64, false).into(),
+              Prim(U32) => self.context.i32_type().const_int(*i as u64, false).into(),
+              Prim(U16) => self.context.i16_type().const_int(*i as u64, false).into(),
+              Prim(U8) => self.context.i8_type().const_int(*i as u64, false).into(),
+              _ => panic!("primitive type error {}", node.type_tag()),
+            }
+            
+          }
+          PrimitiveVal::Bool(b) =>
             self.context.bool_type().const_int(if *b { 1 } else { 0 }, false).into(),
-          Val::Void => {
+          PrimitiveVal::Void => {
             return error(node, "static variables cannot be void");
           },
-          Val::String(_s) => {
+          PrimitiveVal::String(_s) => {
             return error(node, "static strings not supported");
           }
         }
@@ -1652,8 +1666,8 @@ impl <'l, 'a> GenFunction<'l, 'a> {
       }
       Content::Literal(v) => {
         match v {
-          Val::Void => return Ok(Void),
-          Val::String(s) => {
+          PrimitiveVal::Void => return Ok(Void),
+          PrimitiveVal::String(s) => {
             let vs : &[u8] = s.as_ref();
             let byte = self.gen.context.i8_type();
             let vs : Vec<IntValue> =

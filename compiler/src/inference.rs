@@ -5,7 +5,7 @@ use itertools::Itertools;
 use crate::error::{Error, error, error_raw, TextLocation};
 use crate::expr::{Expr, UIDGenerator, RefStr, StringCache};
 use crate::structure::{
-  Node, NodeId, SymbolId, Content, Val, LabelId, TypeKind,
+  Node, NodeId, SymbolId, Content, PrimitiveVal, LabelId, TypeKind,
   VarScope, GlobalType, Symbol, Nodes,
 };
 use crate::types::{
@@ -710,12 +710,12 @@ impl <'l, 't> GatherConstraints<'l, 't> {
     let ts = self.node_to_symbol(node);
     match &node.content {
       Content::Literal(val) => {
-        use Val::*;
+        use PrimitiveVal::*;
         let t : Type = match val {
-          F64(_) | F32(_) => {
+          Float(_) => {
             AbstractType::Float.into()
           }
-          I64(_) | I32(_) | U64(_) | U32(_) | U16(_) | U8(_) => {
+          Int(_) => {
             AbstractType::Integer.into()
           }
           Bool(_) => PType::Bool.into(),
