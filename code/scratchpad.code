@@ -1,13 +1,8 @@
 
-// fun blah(a) {
-//   a + 5
-// }
 
-// let b = blah(5)
+let i = 10
+while i < 10 {
 
-// fun blah(a) {
-//   a + 5
-// }
-
-// b
+  i = i + 1;
+}
 

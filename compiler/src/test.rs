@@ -68,6 +68,27 @@ rusty_fork_test! {
   }
 
   #[test]
+  fn test_inference() {
+    let code = "
+      fun blah(a : u64) {
+        (a as i64)
+      }
+      
+      fun blah(a : i64) {
+        (a as u64)
+      }
+      
+      let a = blah(5)
+      let b = a + blah(5)
+      let c = b + blah(5)
+      
+      c
+    ";
+    assert_result(code, Val::U64(15));
+  }
+
+
+  #[test]
   fn test_conversions() {
     let cases = vec![
       ("4.5 as i32", Val::I32(4)),
