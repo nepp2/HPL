@@ -16,7 +16,7 @@ use crate::types::{
 };
 use crate::modules::TypedModule;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use TypeContent::*;
 
@@ -77,8 +77,9 @@ struct Inference<'a> {
   cache : &'a StringCache,
   gen : &'a mut UIDGenerator,
   errors : &'a mut Vec<Error>,
+  dependency_map : ConstraintDependencyMap<'a>,
+  next_edge_set : HashMap<u64, &'a Constraint>,
   resolved : HashMap<TypeSymbol, Type>,
-  resolution_step : i64,
 }
 
 impl <'a> Inference<'a> {
@@ -95,8 +96,9 @@ impl <'a> Inference<'a> {
   {
     Inference {
       nodes, t, cg, c, cache, gen, errors,
+      dependency_map: ConstraintDependencyMap::new(),
+      next_edge_set: HashMap::new(),
       resolved: HashMap::new(),
-      resolution_step : 0,
     }
   }
 
@@ -126,8 +128,11 @@ impl <'a> Inference<'a> {
   }
 
   fn type_updated(&mut self, ts : TypeSymbol) {
-    self.resolution_step += 1;
-    let aaa = (); // TODO: trigger recalculations
+    if let Some(cs) = self.dependency_map.ts_map.get(&ts) {
+      for &c in cs.iter() {
+        self.next_edge_set.insert(c.id, c);
+      }
+    }
   }
 
   fn update_type(&mut self, ts : TypeSymbol, t : Type) {
@@ -151,27 +156,23 @@ impl <'a> Inference<'a> {
   }
 
   fn unresolved_constraint_error(&mut self, c : &Constraint) {
-    let e = match c  {
-      Constraint::Assert(_ts, _t) => panic!(),
-      Constraint::Equalivalent(_a, _b) => return,
+    use ConstraintContent::*;
+    let e = match &c.content  {
+      Assert(_ts, _t) => return,
+      Equalivalent(_a, _b) => return,
       // this error should always be accompanied by other unresolved constraints
-      Constraint::Function{ function:_, args:_, return_type:_ } => return,
-      Constraint::Constructor { type_name, fields:_, result } => {
+      Function{ function:_, args:_, return_type:_ } => return,
+      Constructor { type_name, fields:_, result } => {
         error_raw(self.loc(*result),
           format!("constructor for '{}' not resolved", type_name))
       }
-      Constraint::Convert { val, into_type } => {
-        let any = Type::any();
-        let t = self.get_type(*val).unwrap_or(&any);
-        let s = format!("type conversion from {} into {} not supported", t, into_type);
-        error_raw(self.loc(*val), s)
-      }
-      Constraint::GlobalDef { global_id, type_symbol:_ } => {
+      Convert { val:_, into_type:_ } => return,
+      GlobalDef { global_id, type_symbol:_ } => {
         let def = self.t.get_global(*global_id);
         error_raw(def.loc,
           format!("global definition '{}' not resolved", def.name))
       }
-      Constraint::GlobalReference { node:_, name, result } => {
+      GlobalReference { node:_, name, result } => {
         let any = Type::any();
         let t = self.resolved.get(result).unwrap_or(&any);
         let symbols = self.t.find_global(&name, t, self.gen);
@@ -179,11 +180,11 @@ impl <'a> Inference<'a> {
         error_raw(self.loc(*result),
           format!("Reference '{}' of type '{}' not resolved\n   Symbols available:\n{}", name, t, s))
       }
-      Constraint::FieldAccess{ container:_, field, result:_ } => {
+      FieldAccess{ container:_, field, result:_ } => {
         error_raw(field.loc,
           format!("field access '{}' not resolved", field.name))
       }
-      Constraint::Array{ array, element:_ } => {
+      Array{ array, element:_ } => {
         error_raw(self.loc(*array), "array literal not resolved")
       }
     };
@@ -203,31 +204,23 @@ impl <'a> Inference<'a> {
     }
   }
 
-  fn process_constraint(&mut self, c : &Constraint) -> bool {
-    match c  {
-      Constraint::Assert(ts, t) => {
+  fn process_constraint(&mut self, c : &Constraint) {
+    use ConstraintContent::*;
+    match &c.content  {
+      Assert(ts, t) => {
         self.update_type(*ts, t.clone());
-        return true;
       }
-      Constraint::Equalivalent(a, b) => {
+      Equalivalent(a, b) => {
         if let Some(t) = self.get_type(*a) {
-          let concrete = t.is_concrete();
           let t = t.clone();
           self.update_type(*b, t);
-          if concrete {
-            return true;
-          }
         }
         if let Some(t) = self.get_type(*b) {
-          let concrete = t.is_concrete();
           let t = t.clone();
           self.update_type(*a, t);
-          if concrete {
-            return true;
-          }
         }
       }
-      Constraint::Function{ function, args, return_type } => {
+      Function{ function, args, return_type } => {
         if let Some(t) = self.get_type(*function) {
           if let Some(mut sig) = t.sig_builder() {
             for (i, t) in sig.args().iter_mut().enumerate() {
@@ -248,11 +241,8 @@ impl <'a> Inference<'a> {
           }
           self.update_type(*function, sig.into());
         }
-        if self.get_type(*function).unwrap().is_concrete() {
-          return true;
-        }
       }
-      Constraint::Constructor { type_name, fields, result } => {
+      Constructor { type_name, fields, result } => {
         if let Some(def) = self.t.find_type_def(type_name) {
           match def.kind {
             TypeKind::Struct => {
@@ -294,35 +284,40 @@ impl <'a> Inference<'a> {
             }
           }
           self.update_type(*result, Type::def(type_name.clone()));
-          return true;
         }
       }
-      Constraint::Convert { val, into_type } => {
+      Convert { val, into_type } => {
         if let Some(t) = self.get_type(*val) {
-          fn abstract_contains(t : &Type, into_type : &Type) -> bool {
-            if let Abstract(abs_t) = &t.content {
-              return abs_t.contains_type(into_type);
+          if t.is_concrete() {
+            fn abstract_contains(t : &Type, into_type : &Type) -> bool {
+              if let Abstract(abs_t) = &t.content {
+                return abs_t.contains_type(into_type);
+              }
+              false
             }
-            false
-          }
-          if
-            abstract_contains(t, into_type) ||
-            (t.pointer() && into_type.pointer()) ||
-            (t.number() && into_type.number()) ||
-            (t.pointer() && into_type.unsigned_int()) ||
-            (t.unsigned_int() && into_type.pointer())
-          {
-            return true;
+            let valid =
+              abstract_contains(t, into_type) ||
+              (t.pointer() && into_type.pointer()) ||
+              (t.number() && into_type.number()) ||
+              (t.pointer() && into_type.unsigned_int()) ||
+              (t.unsigned_int() && into_type.pointer());
+            if !valid {
+              let s = format!("type conversion from {} into {} not supported", t, into_type);
+              self.errors.push(error_raw(self.loc(*val), s));
+            }
           }
         }
       }
-      Constraint::GlobalDef{ global_id, type_symbol } => {
+      GlobalDef{ global_id, type_symbol } => {
         if let Some(t) = self.resolved.get(type_symbol) {
           let def = self.t.get_global(*global_id);
           if let Some(unified_type) = unify_types(t, &def.type_tag) {
             def.type_tag = unified_type;
-            if def.type_tag.is_concrete() {
-              return true;
+            // Trigger any constraints looking for this name
+            if let Some(cs) = self.dependency_map.global_map.get(&def.name) {
+              for &c in cs.iter() {
+                self.next_edge_set.insert(c.id, c);
+              }
             }
           }
           else {
@@ -331,19 +326,15 @@ impl <'a> Inference<'a> {
           }
         }
       }
-      Constraint::GlobalReference { node, name, result } => {
+      GlobalReference { node, name, result } => {
         let any = Type::any();
         let t = self.get_type(*result).cloned().unwrap_or(any);
         if let Some(g) = self.find_global(&name, &t) {
           self.register_def(*node, g.def);
-          let concrete = g.resolved_type.is_concrete();
           self.update_type(*result, g.resolved_type);
-          if concrete {
-            return true;
-          }
         }
       }
-      Constraint::FieldAccess{ container, field, result } => {
+      FieldAccess{ container, field, result } => {
         let ct = self.get_type(*container);
         if let Some(mut ct) = ct {
           // Dereference any pointers
@@ -360,100 +351,91 @@ impl <'a> Inference<'a> {
                 let s = format!("type '{}' has no field '{}'", def.name, field.name);
                 self.errors.push(error_raw(field.loc, s));
               }
-              return true;
             }
           }
         }
       }
-      Constraint::Array{ array, element } => {
+      Array{ array, element } => {
         if let Some(array_type) = self.get_type(*array) {
           if let Some(element_type) = array_type.array() {
             let et = element_type.clone();
             self.update_type(*element, et);
-            return true;
           }
         }
         if let Some(element_type) = self.get_type(*element) {
           let et = element_type.clone();
           self.update_type(*array, Type::array_of(et));
-          return true;
         }
       }
     }
-    false
   }
 
-  fn try_resolve_abstract_types(&mut self) -> bool {
-    let mut count = 0;
-    for r in self.resolved.values_mut() {
-      if let Abstract(ab) = &r.content {
-        if let Some(t) = ab.default_type() {
-          *r = t;
-          count += 1;
-        }
+  /// Tries to harden a type symbol into a concrete type
+  fn try_harden_type_symbol(&mut self, ts : TypeSymbol) {
+    if let Abstract(ab) = &self.resolved.get(&ts).unwrap().content {
+      if let Some(default) = ab.default_type() {
+        self.update_type(ts, default);
       }
     }
-    count > 0
   }
 
   fn infer(&mut self) {
     println!("To resolve: {}", self.c.symbols.len());
-    let mut unused_constraints = vec![];
+    self.dependency_map.clear();
     for c in self.c.constraints.iter() {
-      if !self.process_constraint(c) {
-        unused_constraints.push(c);
+      self.dependency_map.populate_dependency_map(c);
+      self.next_edge_set.insert(c.id, c);
+    }
+    let mut literals = VecDeque::with_capacity(self.c.literals.len());
+    for lit in self.c.literals.iter() {
+      literals.push_back(*self.c.node_symbols.get(lit).unwrap());
+    }
+    let mut total_constraints_processed = 0;
+    let mut active_edge_set = HashMap::new();
+    while self.next_edge_set.len() > 0 || literals.len() > 0 {
+      std::mem::swap(&mut self.next_edge_set, &mut active_edge_set);
+      for (_, c) in active_edge_set.drain() {
+        total_constraints_processed += 1;
+        self.process_constraint(c);
+      }
+      // If nothing was resolved, try to harden a literal (in lexical order)
+      if self.next_edge_set.is_empty() && literals.len() > 0 {
+        self.try_harden_type_symbol(literals.pop_back().unwrap());
       }
     }
-    let mut total_passes = 1;
-    while unused_constraints.len() > 0 {
-      total_passes += 1;
-      let remaining_before_pass = unused_constraints.len();
-      let resolution_step_before_pass = self.resolution_step;
-      unused_constraints.retain(|c| !self.process_constraint(c));
-      // Continue if some constraints were resolved in the last pass
-      if unused_constraints.len() < remaining_before_pass {
-        continue;
-      }
-      // Continue if a type was resolved
-      if resolution_step_before_pass != self.resolution_step {
-        continue;
-      }
-      // Continue if some literals can be hardened into specific types
-      if self.try_resolve_abstract_types() {
-        continue;
-      }
-      break;
-    }
-    for _ in 0..10 {
-      unused_constraints.retain(|c| !self.process_constraint(c));
-    }
-    println!("Passes taken: {}\n", total_passes);
-    
-    // Generate errors for unresolved constraints
-    for c in unused_constraints.iter() {
-      self.unresolved_constraint_error(c);
-    }
-
-    // Sanity check to make sure that programs with unresolved symbols contain errors
-    let unresolved_symbol_count = self.c.symbols.len() - self.resolved.len();
-    if unresolved_symbol_count > 0 && self.errors.len() == 0 {
-      panic!("Symbol unresolved! Some kind of error should be generated!");
-    }
+    println!("Unique constraints: {}\n", self.c.constraints.len());
+    println!("Constraints processed (including duplicates): {}\n", total_constraints_processed);
 
     // Assign types to all of the nodes
-    if self.errors.len() == 0 {
+    if self.errors.is_empty() {
       for (n, ts) in self.c.node_symbols.iter() {
-        let mut t = self.get_type(*ts).unwrap().clone();
+        let t = self.get_type(*ts).unwrap().clone();
         // Make sure the type isn't abstract
-        if let Ok(()) = t.to_concrete() {
+        if t.is_concrete() {
           self.cg.node_type.insert(*n, t);
         }
-        else {
-          let loc = self.loc(*ts);
-          let e = error_raw(loc, format!("unresolved type {}", t));
-          self.errors.push(e);
+      }
+    }
+
+    // Generate errors if program has unresolved symbols contain errors
+    let mut unresolved = 0;
+    if self.errors.is_empty() {
+      for (ts, _) in self.c.symbols.iter() {
+        if !self.resolved.get(ts).map(|t| t.is_concrete()).unwrap_or(false) {
+          unresolved += 1;
+          for c in self.dependency_map.ts_map.get(ts).unwrap() {
+            active_edge_set.insert(c.id, c);
+          }
         }
       }
+      // Generate errors for unresolved constraints
+      for (_, c) in active_edge_set.drain() {
+        self.unresolved_constraint_error(c);
+      }
+    }
+
+    if self.errors.is_empty() && unresolved > 0 {
+      panic!("Unresolved types found, but no errors generated!");
     }
 
     // Print errors (if there are any)
@@ -475,7 +457,12 @@ pub enum Function {
   Name(Symbol),
 }
 
-pub enum Constraint {
+pub struct Constraint {
+  id : u64,
+  content : ConstraintContent,
+}
+
+pub enum ConstraintContent {
   Assert(TypeSymbol, Type),
   Equalivalent(TypeSymbol, TypeSymbol),
   Array{ array : TypeSymbol, element : TypeSymbol },
@@ -506,10 +493,70 @@ pub enum Constraint {
   },
 }
 
+struct ConstraintDependencyMap<'a> {
+  global_map : HashMap<RefStr, Vec<&'a Constraint>>,
+  ts_map : HashMap<TypeSymbol, Vec<&'a Constraint>>,
+}
+
+impl <'a> ConstraintDependencyMap<'a> {
+
+  fn new() -> Self {
+    ConstraintDependencyMap { global_map: HashMap::new(), ts_map: HashMap::new() }
+  }
+
+  fn clear(&mut self) {
+    self.ts_map.clear();
+    self.global_map.clear();
+  }
+
+  fn ts(&mut self, ts : &TypeSymbol, c : &'a Constraint) {
+    self.ts_map.entry(*ts).or_insert(vec![]).push(c);
+  }
+
+  fn global(&mut self, name : &RefStr, c : &'a Constraint) {
+    if let Some(cs) = self.global_map.get_mut(name) { cs.push(c); }
+    else { self.global_map.insert(name.clone(), vec![c]); }
+  }
+
+  fn populate_dependency_map(&mut self, c : &'a Constraint) {
+    use ConstraintContent::*;
+    match &c.content {
+      Assert(ts, _) => self.ts(ts, c),
+      Equalivalent(a, b) => {
+        self.ts(a, c);
+        self.ts(b, c);
+      }
+      Array{ array, element } => {
+        self.ts(array, c);
+        self.ts(element, c);
+      },
+      Convert{ val, into_type:_ } => self.ts(val, c),
+      FieldAccess { container, field:_, result } => {
+        self.ts(container, c);
+        self.ts(result, c);
+      },
+      Constructor { type_name:_, fields, result } => {
+        for (_, ts) in fields { self.ts(ts, c) }
+        self.ts(result, c);
+      },
+      Function { function, args, return_type } => {
+        self.ts(function, c);
+        for ts in args { self.ts(ts, c) }
+        self.ts(return_type, c);
+      },
+      GlobalDef { global_id:_, type_symbol } => self.ts(type_symbol, c),
+      GlobalReference { node:_, name, result } => {
+        self.global(name, c);
+        self.ts(result, c);
+      }
+    }
+  }
+}
+
 impl  fmt::Display for Constraint {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    use Constraint::*;
-    match self {
+    use ConstraintContent::*;
+    match &self.content {
       Assert(_, t) => write!(f, "Assert {}", t),
       Equalivalent(_, _) => write!(f, "Equalivalent"),
       Array{ .. } => write!(f, "Array"),
@@ -527,6 +574,7 @@ impl  fmt::Display for Constraint {
 struct Constraints {
   symbols : HashMap<TypeSymbol, TextLocation>,
   node_symbols : HashMap<NodeId, TypeSymbol>,
+  literals : Vec<NodeId>,
   variable_symbols : HashMap<SymbolId, TypeSymbol>,
   constraints : Vec<Constraint>,
 }
@@ -536,6 +584,7 @@ impl Constraints {
     Constraints {
       symbols: HashMap::new(),
       node_symbols: HashMap::new(),
+      literals: vec![],
       variable_symbols: HashMap::new(),
       constraints: vec![],
     }
@@ -630,20 +679,21 @@ impl <'l, 't> GatherConstraints<'l, 't> {
     }
   }
 
-  fn constraint(&mut self, c : Constraint) {
+  fn constraint(&mut self, c : ConstraintContent) {
+    let c = Constraint { id: self.gen.next(), content: c };
     self.c.constraints.push(c);
   }
 
   fn equalivalent(&mut self, a : TypeSymbol, b : TypeSymbol) {
-    self.constraint(Constraint::Equalivalent(a, b));
+    self.constraint(ConstraintContent::Equalivalent(a, b));
   }
 
   fn assert(&mut self, ts : TypeSymbol, t : PType) {
-    self.constraint(Constraint::Assert(ts, t.into()));
+    self.constraint(ConstraintContent::Assert(ts, t.into()));
   }
 
   fn assert_type(&mut self, ts : TypeSymbol, t : Type) {
-    self.constraint(Constraint::Assert(ts, t));
+    self.constraint(ConstraintContent::Assert(ts, t));
   }
 
   fn tagged_symbol(&mut self, ts : TypeSymbol, type_expr : &Option<Box<Expr>>) {
@@ -655,6 +705,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
   }
 
   fn process_node(&mut self, n : &Nodes, id : NodeId)-> TypeSymbol {
+    use ConstraintContent::*;
     let node = n.node(id);
     let ts = self.node_to_symbol(node);
     match &node.content {
@@ -674,6 +725,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           }
         };
         self.assert_type(ts, t);
+        self.c.literals.push(id);
       }
       Content::VariableInitialise{ name, type_tag, value, var_scope } => {
         self.assert(ts, PType::Void);
@@ -698,7 +750,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             initialiser,
             loc: node.loc,
           });
-          self.constraint(Constraint::GlobalDef{
+          self.constraint(GlobalDef{
             global_id,
             type_symbol: var_type_symbol,
           });          
@@ -748,7 +800,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           self.equalivalent(ts, var_type);
         }
         else {
-          self.constraint(Constraint::GlobalReference{ node: id, name: name.clone(), result: ts });
+          self.constraint(GlobalReference{ node: id, name: name.clone(), result: ts });
         }
       }
       Content::FunctionDefinition{ name, args, return_tag, body } => {
@@ -772,12 +824,12 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           arg_types.push(arg_type_symbol);
         }
         let global_ts = self.type_symbol(node.loc);
-        self.constraint(Constraint::Function {
+        self.constraint(Function {
           function: global_ts,
           args: arg_types,
           return_type: body_ts,
         });
-        self.constraint(Constraint::GlobalDef {
+        self.constraint(GlobalDef {
           global_id,
           type_symbol: global_ts,
         });
@@ -847,13 +899,13 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           let field = field.clone();
           fields.push((field, field_type_symbol));
         }
-        let tc = Constraint::Constructor{ type_name: name.clone(), fields, result: ts };
+        let tc = Constructor{ type_name: name.clone(), fields, result: ts };
         let def_type = self.type_def(node.loc, name.clone());
         self.assert_type(ts, def_type);
         self.constraint(tc);
       }
       Content::FieldAccess{ container, field } => {
-        let fa = Constraint::FieldAccess {
+        let fa = FieldAccess {
           container: self.process_node(n, *container),
           field: field.clone(),
           result: ts,
@@ -866,11 +918,11 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           let el = self.process_node(n, *element);
           self.equalivalent(el, element_ts);
         }
-        self.constraint(Constraint::Array{ array: ts, element: element_ts });
+        self.constraint(Array{ array: ts, element: element_ts });
       }
       Content::FunctionCall{ function, args } => {
         let function = self.process_node(n, *function);
-        let fc = Constraint::Function {
+        let fc = Function {
           function,
           args: args.iter().map(|id| self.process_node(n, *id)).collect(),
           return_type: ts,
@@ -888,7 +940,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
         let v = self.process_node(n, *from_value);
         if let Some(t) = self.try_expr_to_type(into_type) {
           self.assert_type(ts, t.clone());
-          let c = Constraint::Convert { val: v, into_type: t };
+          let c = Convert { val: v, into_type: t };
           self.constraint(c);
         }
       }
