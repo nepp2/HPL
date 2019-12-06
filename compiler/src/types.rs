@@ -220,8 +220,8 @@ pub struct TypeDefinition {
   pub name : RefStr,
   pub fields : Vec<(Symbol, Type)>,
   pub kind : TypeKind,
-  pub drop_function : Option<ConcreteGlobal>,
-  pub clone_function : Option<ConcreteGlobal>,
+  pub drop_function : Option<ResolvedGlobal>,
+  pub clone_function : Option<ResolvedGlobal>,
   pub definition_location : TextLocation,
 }
 
@@ -478,11 +478,11 @@ impl TypeInfo {
     t : &Type,
     gen : &mut UIDGenerator, 
     generics : &mut HashMap<GenericId, Type>,
-    results : &mut Vec<ConcreteGlobal>) {
+    results : &mut Vec<ResolvedGlobal>) {
     for g in self.globals.iter() {
       if g.name.as_ref() == name {
         if let Some(t) = unify_types(t, &g.type_tag) {
-          results.push(ConcreteGlobal { def: g.clone(), concrete_type: t });
+          results.push(ResolvedGlobal { def: g.clone(), resolved_type: t });
         }
       }
     }
@@ -496,10 +496,10 @@ impl TypeInfo {
               continue 'outer;
             }
           }
-          let mut concrete_type = def.global.type_tag.clone();
-          generic_replace(generics, gen, &mut concrete_type);
+          let mut resolved_type = def.global.type_tag.clone();
+          generic_replace(generics, gen, &mut resolved_type);
           let def = def.global.clone();
-          results.push(ConcreteGlobal { def, concrete_type });
+          results.push(ResolvedGlobal { def, resolved_type });
         }
       }
     }
@@ -549,10 +549,10 @@ fn generic_match(generics : &mut HashMap<GenericId, Type>, t : &Type, gt : &Type
 }
 
 #[derive(Clone, Debug)]
-pub struct ConcreteGlobal {
+pub struct ResolvedGlobal {
   /// TODO: this is very inefficient, because these are searched for and returned repeatedly
   pub def : GlobalDefinition,
-  pub concrete_type : Type,
+  pub resolved_type : Type,
 }
 
 /// Utility type for finding definitions either in the module being constructed,
@@ -562,7 +562,7 @@ pub struct TypeDirectory<'a> {
   import_types : &'a [&'a TypeInfo],
   new_module : &'a mut TypeInfo,
   generic_bindings : HashMap<GenericId, Type>,
-  global_results : Vec<ConcreteGlobal>,
+  global_results : Vec<ResolvedGlobal>,
 }
 
 // TODO: A lot of these functions are slow because they iterate through everything.
@@ -600,7 +600,7 @@ impl <'a> TypeDirectory<'a> {
     t : &Type,
     gen : &mut UIDGenerator
   )
-      -> &[ConcreteGlobal]
+    -> &[ResolvedGlobal]
   {
     self.generic_bindings.clear();
     self.global_results.clear();

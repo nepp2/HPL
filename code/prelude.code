@@ -75,9 +75,6 @@ union expr_data {
   literal_bool : bool
 }
 
-print("Hello Andy"); println()
-
-
 union expr_list {
   s : string
   array : expr_array
@@ -158,4 +155,4 @@ fun get_function(module : module_handle, name : string) {
   get_function(compiler, module, &name)
 }
 
-()
+print("Prelude loaded."); println()

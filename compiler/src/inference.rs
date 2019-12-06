@@ -9,7 +9,7 @@ use crate::structure::{
   VarScope, GlobalType, Symbol, Nodes,
 };
 use crate::types::{
-  Type, TypeContent, PType, TypeInfo, TypeDefinition, ConcreteGlobal,
+  Type, TypeContent, PType, TypeInfo, TypeDefinition, ResolvedGlobal,
   FunctionInit, GlobalDefinition, TypeDirectory, GlobalInit, GlobalId,
   AbstractType, SignatureBuilder, unify_types,
   incremental_unify, IncrementalUnifyResult
@@ -175,7 +175,7 @@ impl <'a> Inference<'a> {
         let any = Type::any();
         let t = self.resolved.get(result).unwrap_or(&any);
         let symbols = self.t.find_global(&name, t, self.gen);
-        let s = symbols.iter().map(|g| format!("      {} : {}", g.def.name, g.concrete_type)).join("\n");
+        let s = symbols.iter().map(|g| format!("      {} : {}", g.def.name, g.resolved_type)).join("\n");
         error_raw(self.loc(*result),
           format!("Reference '{}' of type '{}' not resolved\n   Symbols available:\n{}", name, t, s))
       }
@@ -195,10 +195,10 @@ impl <'a> Inference<'a> {
   }
 
   fn find_global(&mut self, name : &str, t : &Type)
-    -> Option<Result<ConcreteGlobal, ()>>
+    -> Option<ResolvedGlobal>
   {
     match self.t.find_global(name, t, self.gen) {
-      [g] => Some(Ok(g.clone())),
+      [g] => Some(g.clone()),
       _ => None,
     }
   }
@@ -211,17 +211,19 @@ impl <'a> Inference<'a> {
       }
       Constraint::Equalivalent(a, b) => {
         if let Some(t) = self.get_type(*a) {
-          if t.is_concrete() {
-            let t = t.clone();
-            self.update_type(*b, t);
-            //return true;
+          let concrete = t.is_concrete();
+          let t = t.clone();
+          self.update_type(*b, t);
+          if concrete {
+            return true;
           }
         }
         if let Some(t) = self.get_type(*b) {
-          if t.is_concrete() {
-            let t = t.clone();
-            self.update_type(*a, t);
-            //return true;
+          let concrete = t.is_concrete();
+          let t = t.clone();
+          self.update_type(*a, t);
+          if concrete {
+            return true;
           }
         }
       }
@@ -332,12 +334,13 @@ impl <'a> Inference<'a> {
       Constraint::GlobalReference { node, name, result } => {
         let any = Type::any();
         let t = self.get_type(*result).cloned().unwrap_or(any);
-        if let Some(r) = self.find_global(&name, &t) {
-          if let Ok(g) = r {
-            self.register_def(*node, g.def);
-            self.update_type(*result, g.concrete_type);
+        if let Some(g) = self.find_global(&name, &t) {
+          self.register_def(*node, g.def);
+          let concrete = g.resolved_type.is_concrete();
+          self.update_type(*result, g.resolved_type);
+          if concrete {
+            return true;
           }
-          return true;
         }
       }
       Constraint::FieldAccess{ container, field, result } => {
