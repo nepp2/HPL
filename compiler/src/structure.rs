@@ -383,6 +383,9 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         self.labels_in_scope.pop();
         Ok(labelled_while)
       }
+      ("for", [range_expr, body_expr]) => {
+        self.for_loop(expr, range_expr, body_expr)
+      }
       ("if", exprs) => {
         if exprs.len() > 3 {
           return error(expr, "malformed if expression");
@@ -551,13 +554,8 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     self.type_constructor(expr, loc_name, vec![start, end])
   }
 
-  fn let_var(&mut self, expr : &Expr, name : RefStr, val : NodeId) -> NodeId {
-    let name = self.t.symbol(&name, expr.loc);
+  fn let_var(&mut self, expr : &Expr, name : Symbol, val : NodeId) -> NodeId {
     self.node(expr, VariableInitialise{ name, type_tag: None, value: val, var_scope : VarScope::Local })
-  }
-
-  fn block(&mut self, expr : &Expr, args : Vec<NodeId>) -> NodeId {
-    self.node(expr, Block(args))
   }
 
   fn int_literal(&mut self, expr : &Expr, i : i64) -> NodeId {
@@ -579,42 +577,39 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     let field_values = field_values.into_iter().map(|a| (None, a)).collect();
     self.node(expr, TypeConstructor{ name, field_values })
   }
-}
 
-// TODO: maybe implement for loop:
-//
-// ("for", [var_range_expr, body_expr]) => {
-//   if let Some(("in", [var, range])) = var_range_expr.try_construct() {
-//     if let Some(var_name) = var.try_symbol() {
-//       /*
-//         {
-//           let #range = range(0, 10)
-//           let #end = #range.end
-//           let i = #range.start
-//           while i < #end {
-//             $body_expr
-//             i = i + 1
-//           }
-//         }
-//       */
-//       let range_var = self.cached("@range_var");
-//       let end_var = self.cached("@end_var");
-//       let loop_var = self.cached("@loop_var");
-//       let range_node = self.to_node(range)?;
-//       let for_block = block(expr, vec![
-//         let_var(expr, range_var.clone(), range_node),
-//         let_var(expr, end_var.clone(), field_access(expr, range_var.clone(), "end")),
-//         let_var(expr, loop_var.clone(), field_access(expr, range_var.clone(), "start")),
-//         self.node(expr, Type::Void, While((
-//           intrinsic("<", vec![loop_var, end_var]),
-//           block(expr, vec![
-//             self.to_node(body_expr)?,
-//             assignment(loop_var, intrinsic("+", vec![loop_var, literal_int(1)])),
-//           ])
-//         )))
-//       ]);
-//       return Ok(for_block);
-//     }
-//   }
-//   error(expr, "malformed for expression")
-// }
+  fn for_loop(&mut self, e : &Expr, range : &Expr, body : &Expr) -> Result<NodeId, Error> {
+    if let Some(("in", [var, range])) = range.try_construct() {
+      self.block_scope.push(vec![]);
+      let it_var = self.t.symbol("@range_var", e);
+      let loop_var = self.expr_to_symbol(var)?;
+      let let_it_node = {
+        let range = self.to_node(range)?;
+        let iter = self.function_call(e, "iter", vec![range]);
+        let iter_ref = self.function_call(e, "&", vec![iter]);
+        self.let_var(e, it_var.clone(), iter_ref)
+      };
+      let let_loop_node = {
+        let zero = self.int_literal(e, 0); // this value will be overwritten
+        self.let_var(e, loop_var.clone(), zero)
+      };
+      let while_node = {        
+        let condition = {
+          let it = self.node(e, Reference{ name: it_var.name.clone(), refers_to: Some(it_var.id) });
+          let var_ref = {
+            let var = self.node(e, Reference{ name: loop_var.name.clone(), refers_to: Some(loop_var.id) });
+            self.function_call(e, "&", vec![var])
+          };
+          self.function_call(e, "next", vec![it, var_ref])
+        };
+        let body = self.to_node(body)?;
+        self.node(e, While { condition, body })
+      };
+      let nodes = vec![let_it_node, let_loop_node, while_node];
+      self.block_scope.pop();
+      return Ok(self.node(e, Block(nodes)));
+    }
+    error(e, "malformed for expression")
+  }
+
+}

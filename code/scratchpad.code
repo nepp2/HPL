@@ -28,4 +28,8 @@ while it.next(&i) {
   print(i); println()
 }
 
+for i in range(0, 10) {
+  print(i); println()
+}
+
 
