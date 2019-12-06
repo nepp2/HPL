@@ -313,7 +313,7 @@ impl <'a> Inference<'a> {
           let def = self.t.get_global(*global_id);
           if let Some(unified_type) = unify_types(t, &def.type_tag) {
             def.type_tag = unified_type;
-            // Trigger any constraints looking for this name
+            // Trigger any constraints looking for this name or type
             if let Some(cs) = self.dependency_map.global_map.get(&def.name) {
               for &c in cs.iter() {
                 self.next_edge_set.insert(c.id, c);
@@ -332,6 +332,10 @@ impl <'a> Inference<'a> {
         if let Some(g) = self.find_global(&name, &t) {
           self.register_def(*node, g.def);
           self.update_type(*result, g.resolved_type);
+        }
+        else if t.is_concrete() {
+          let s = format!("no global '{}' has type '{}'", name, t);
+          self.errors.push(error_raw(self.loc(*result), s));          
         }
       }
       FieldAccess{ container, field, result } => {
