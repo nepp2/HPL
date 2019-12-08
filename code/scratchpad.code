@@ -22,12 +22,6 @@ fun next(it : ptr(range_iter), i : ptr(i64)) {
   else { false }
 }
 
-let it = &range(0, 10).iter()
-let i = 0;
-while it.next(&i) {
-  print(i); println()
-}
-
 for i in range(0, 10) {
   print(i); println()
 }

@@ -593,6 +593,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         let zero = self.int_literal(e, 0); // this value will be overwritten
         self.let_var(e, loop_var.clone(), zero)
       };
+      self.add_var_to_scope(loop_var.clone());
       let while_node = {        
         let condition = {
           let it = self.node(e, Reference{ name: it_var.name.clone(), refers_to: Some(it_var.id) });
