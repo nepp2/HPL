@@ -179,9 +179,9 @@ pub fn to_nodes(
 }
 
 impl <'l> NodeConverter<'l> {
-  fn node(&mut self, expr : &Expr, content : Content) -> NodeId {
+  fn node<Loc : Into<TextLocation>>(&mut self, loc : Loc, content : Content) -> NodeId {
     let id = self.uid_generator.next().into();
-    let n = Node { id, content, loc: expr.loc };
+    let n = Node { id, content, loc: loc.into() };
     self.nodes.insert(id, n);
     id
   }
@@ -372,16 +372,13 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         Ok(self.node(expr, c))
       }
       ("while", [condition_expr, body_expr]) => {
-        let label = LabelId(self.t.uid_generator.next());
         // Add label to scope in case the loop breaks
-        self.labels_in_scope.push(label);
-        let condition = self.to_node(condition_expr)?;
-        let body = self.to_node(body_expr)?;
-        let while_node = self.node(expr, While{ condition, body });
-        let labelled_while = self.node(expr, Label{ label, body: while_node });
-        // Remove label
-        self.labels_in_scope.pop();
-        Ok(labelled_while)
+        self.labelled_node(expr, |fc| {
+          let condition = fc.to_node(condition_expr)?;
+          let body = fc.to_node(body_expr)?;
+          let while_node = fc.node(expr, While{ condition, body });
+          Ok(while_node)
+        })
       }
       ("for", [range_expr, body_expr]) => {
         self.for_loop(expr, range_expr, body_expr)
@@ -402,9 +399,9 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         }
       }
       ("block", exprs) => {
-        self.block_scope.push(vec![]);
-        let nodes = exprs.iter().map(|e| self.to_node(e)).collect::<Result<Vec<NodeId>, Error>>()?;
-        self.block_scope.pop();
+        let nodes = self.new_block_scope(|fc| {
+          exprs.iter().map(|e| fc.to_node(e)).collect::<Result<Vec<NodeId>, Error>>()
+        })?;
         Ok(self.node(expr, Block(nodes)))
       }
       ("cbind", [e]) => {
@@ -532,12 +529,33 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     if self.labels_in_scope.len() != 0 {
       panic!("labels_in_scope in invalid state");
     }
+    self.labelled_node(expr, |fc| {
+      fc.to_node(expr)
+    })
+  }
+
+  fn labelled_node<Loc, F>(&mut self, loc : Loc, f : F)
+    -> Result<NodeId, Error>
+    where
+      Loc : Into<TextLocation>,
+      F : Fn(&mut FunctionConverter) -> Result<NodeId, Error>
+  {
     let label = LabelId(self.t.uid_generator.next());
     self.labels_in_scope.push(label);
-    let body = self.to_node(expr)?;
+    let body = f(self);
     self.labels_in_scope.pop();
-    let c = Label{ label, body };
-    Ok(self.node(expr, c))
+    Ok(self.t.node(loc, Label{ label, body: body? }))
+  }
+
+  fn new_block_scope<T, F>(&mut self, f : F)
+    -> Result<T, Error>
+    where
+      F : Fn(&mut FunctionConverter) -> Result<T, Error>
+  {
+    self.block_scope.push(vec![]);
+    let t = f(self);
+    self.block_scope.pop();
+    Ok(t?)
   }
 
   fn loc_struct(&mut self, expr : &Expr, loc_name : RefStr, marker_name : RefStr) -> NodeId {
@@ -578,47 +596,43 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     self.node(expr, TypeConstructor{ name, field_values })
   }
 
-  /// TODO: some very brittle logic is duplicated in this function, from
-  /// while loops and variable declaration. Particularly the manipulation
-  /// of label scope and block scope. This can probably be improved.
-  /// Consider forcing scope manipulation through specific methods which
-  /// accept closures.
+  /// TODO: this is implemented entirely in terms of other constructs. It might be nice
+  /// to move it into an earlier part of the pipeline (such as an expression macro) to
+  /// limit logic duplication and make the code more maintainable.
   fn for_loop(&mut self, e : &Expr, range : &Expr, body : &Expr) -> Result<NodeId, Error> {
     if let Some(("in", [var, range])) = range.try_construct() {
-      let label = LabelId(self.t.uid_generator.next());
-      self.labels_in_scope.push(label);
-      self.block_scope.push(vec![]);
-      let it_var = self.t.symbol("@range_var", e);
-      let loop_var = self.expr_to_symbol(var)?;
-      let let_it_node = {
-        let range = self.to_node(range)?;
-        let iter = self.function_call(e, "iter", vec![range]);
-        let iter_ref = self.function_call(e, "&", vec![iter]);
-        self.let_var(e, it_var.clone(), iter_ref)
-      };
-      let let_loop_node = {
-        let zero = self.int_literal(e, 0); // this value will be overwritten
-        self.let_var(e, loop_var.clone(), zero)
-      };
-      self.add_var_to_scope(loop_var.clone());
-      let while_node = {        
-        let condition = {
-          let it = self.node(e, Reference{ name: it_var.name.clone(), refers_to: Some(it_var.id) });
-          let var_ref = {
-            let var = self.node(e, Reference{ name: loop_var.name.clone(), refers_to: Some(loop_var.id) });
-            self.function_call(e, "&", vec![var])
+      let n = self.labelled_node(e.loc, |fc| {
+        fc.new_block_scope(|fc| {
+          let it_var = fc.t.symbol("@range_var", e);
+          let loop_var = fc.expr_to_symbol(var)?;
+          let let_it_node = {
+            let range = fc.to_node(range)?;
+            let iter = fc.function_call(e, "iter", vec![range]);
+            let iter_ref = fc.function_call(e, "&", vec![iter]);
+            fc.let_var(e, it_var.clone(), iter_ref)
           };
-          self.function_call(e, "next", vec![it, var_ref])
-        };
-        let body = self.to_node(body)?;
-        self.node(e, While { condition, body })
-      };
-      let nodes = vec![let_it_node, let_loop_node, while_node];
-      self.block_scope.pop();
-      let block = self.node(e, Block(nodes));
-      let labelled_block = self.node(e, Label{ label, body: block });
-      self.labels_in_scope.pop();
-      return Ok(labelled_block);
+          let let_loop_node = {
+            let zero = fc.int_literal(e, 0); // this value will be overwritten
+            fc.let_var(e, loop_var.clone(), zero)
+          };
+          fc.add_var_to_scope(loop_var.clone());
+          let while_node = {        
+            let condition = {
+              let it = fc.node(e, Reference{ name: it_var.name.clone(), refers_to: Some(it_var.id) });
+              let var_ref = {
+                let var = fc.node(e, Reference{ name: loop_var.name.clone(), refers_to: Some(loop_var.id) });
+                fc.function_call(e, "&", vec![var])
+              };
+              fc.function_call(e, "next", vec![it, var_ref])
+            };
+            let body = fc.to_node(body)?;
+            fc.node(e, While { condition, body })
+          };
+          let nodes = vec![let_it_node, let_loop_node, while_node];
+          Ok(fc.node(e, Block(nodes)))  
+        })
+      })?;
+      return Ok(n);
     }
     error(e, "malformed for expression")
   }
