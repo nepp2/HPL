@@ -302,6 +302,30 @@ rusty_fork_test! {
     ";
     assert_result(b, Val::I64(13));
   }
+  
+  #[test]
+  fn test_for() {
+    let a = "
+      let x = 0
+      for i in range(0, 10) { x = x + i }
+      x
+    ";
+    assert_result(a, Val::I64(45));
+    let b = "
+      let total = 0
+      for x in range(0, 10000) {
+        for y in range(10, 20) {
+          total = total + x * y
+        }
+        if x >= 5 {
+          break
+        }
+      }
+      total    
+    ";
+    assert_result(b, Val::I64(2175));
+  }
+
 
   #[test]
   fn test_jit_module_variable_linking() {

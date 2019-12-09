@@ -1,4 +1,8 @@
 
+/// This type inference algorithm works by building a set of constraints and then
+/// incrementally unifying them. At the moment it is nondeterministic because it
+/// iterates over Rust's secure HashMaps.
+
 use std::fmt;
 use itertools::Itertools;
 
@@ -9,10 +13,9 @@ use crate::structure::{
   VarScope, GlobalType, Symbol, Nodes,
 };
 use crate::types::{
-  Type, TypeContent, PType, TypeInfo, TypeDefinition, ResolvedGlobal,
-  FunctionInit, GlobalDefinition, TypeDirectory, GlobalInit, GlobalId,
-  AbstractType, SignatureBuilder, unify_types,
-  incremental_unify, IncrementalUnifyResult
+  Type, TypeContent, PType, TypeInfo, TypeDefinition, FunctionInit,
+  GlobalDefinition, TypeDirectory, GlobalInit, GlobalId, AbstractType,
+  SignatureBuilder, unify_types, incremental_unify, IncrementalUnifyResult
 };
 use crate::modules::TypedModule;
 
@@ -195,15 +198,6 @@ impl <'a> Inference<'a> {
     self.cg.symbol_references.insert(node, def);
   }
 
-  fn find_global(&mut self, name : &str, t : &Type)
-    -> Option<ResolvedGlobal>
-  {
-    match self.t.find_global(name, t, self.gen) {
-      [g] => Some(g.clone()),
-      _ => None,
-    }
-  }
-
   fn process_constraint(&mut self, c : &Constraint) {
     use ConstraintContent::*;
     match &c.content  {
@@ -329,13 +323,17 @@ impl <'a> Inference<'a> {
       GlobalReference { node, name, result } => {
         let any = Type::any();
         let t = self.get_type(*result).cloned().unwrap_or(any);
-        if let Some(g) = self.find_global(&name, &t) {
-          self.register_def(*node, g.def);
-          self.update_type(*result, g.resolved_type);
-        }
-        else if t.is_concrete() {
-          let s = format!("no global '{}' has type '{}'", name, t);
-          self.errors.push(error_raw(self.loc(*result), s));          
+        match self.t.find_global(&name, &t, self.gen) {
+          [g] => {
+            let g = g.clone();
+            self.register_def(*node, g.def);
+            self.update_type(*result, g.resolved_type);
+          }
+          [] => {
+            let s = format!("no global '{}' matches type '{}'", name, t);
+            self.errors.push(error_raw(self.loc(*result), s));          
+          }
+          _ => (), // Multiple matches. Global can't be resolved yet.
         }
       }
       FieldAccess{ container, field, result } => {

@@ -578,8 +578,15 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     self.node(expr, TypeConstructor{ name, field_values })
   }
 
+  /// TODO: some very brittle logic is duplicated in this function, from
+  /// while loops and variable declaration. Particularly the manipulation
+  /// of label scope and block scope. This can probably be improved.
+  /// Consider forcing scope manipulation through specific methods which
+  /// accept closures.
   fn for_loop(&mut self, e : &Expr, range : &Expr, body : &Expr) -> Result<NodeId, Error> {
     if let Some(("in", [var, range])) = range.try_construct() {
+      let label = LabelId(self.t.uid_generator.next());
+      self.labels_in_scope.push(label);
       self.block_scope.push(vec![]);
       let it_var = self.t.symbol("@range_var", e);
       let loop_var = self.expr_to_symbol(var)?;
@@ -608,7 +615,10 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       };
       let nodes = vec![let_it_node, let_loop_node, while_node];
       self.block_scope.pop();
-      return Ok(self.node(e, Block(nodes)));
+      let block = self.node(e, Block(nodes));
+      let labelled_block = self.node(e, Label{ label, body: block });
+      self.labels_in_scope.pop();
+      return Ok(labelled_block);
     }
     error(e, "malformed for expression")
   }

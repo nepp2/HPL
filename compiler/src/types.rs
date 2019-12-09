@@ -489,13 +489,7 @@ impl TypeInfo {
     'outer: for def in self.poly_functions.iter() {
       if def.global.name.as_ref() == name {
         generics.clear();
-        let matched = generic_match(generics, t, &def.global.type_tag);
-        if matched && generics.len() == def.generics.len() {
-          for t in generics.values_mut() {
-            if let Err(()) = t.to_concrete() {
-              continue 'outer;
-            }
-          }
+        if generic_match(generics, t, &def.global.type_tag) {
           let mut resolved_type = def.global.type_tag.clone();
           generic_replace(generics, gen, &mut resolved_type);
           let def = def.global.clone();
@@ -512,7 +506,7 @@ impl TypeInfo {
 
 fn generic_replace(generics : &HashMap<GenericId, Type>, gen : &mut UIDGenerator, t : &mut Type) {
   if let Generic(gid) = &t.content {
-    *t = generics.get(&gid).unwrap().clone();
+    *t = generics.get(&gid).cloned().unwrap_or_else(||Type::any());
   }
   for t in t.children.iter_mut() {
     generic_replace(generics, gen, t);

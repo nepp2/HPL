@@ -1,29 +1,12 @@
 
-
-fun range(start, limit) {
-  range.new(start, limit)
-}
-
-struct range_iter {
-  val : i64
-  limit : i64
-}
-
-fun iter(r : range) {
-  range_iter.new(r.start, r.limit)
-}
-
-fun next(it : ptr(range_iter), i : ptr(i64)) {
-  if it.val < it.limit {
-    *i = it.val
-    it.val = it.val + 1
-    true
+let total = 0
+for x in range(0, 10000) {
+  for y in range(10, 20) {
+    total = total + x * y
   }
-  else { false }
+  if x >= 5 {
+    break
+  }
 }
-
-for i in range(0, 10) {
-  print(i); println()
-}
-
+total
 
