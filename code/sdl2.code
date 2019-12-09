@@ -65,56 +65,56 @@ struct sdl_rect {
   h : i32
 }
 
-let SDL_QUIT = 256
+static SDL_QUIT = 256
 
-let SDL_WINDOWEVENT = 512
+static SDL_WINDOWEVENT = 512
 
-let SDL_KEYDOWN = 768
-let SDL_KEYUP = 769
-let SDL_TEXTEDITING =  770
-let SDL_TEXTINPUT = 771
+static SDL_KEYDOWN = 768
+static SDL_KEYUP = 769
+static SDL_TEXTEDITING =  770
+static SDL_TEXTINPUT = 771
 
-let SDL_RENDERER_SOFTWARE = 1
-let SDL_RENDERER_ACCELERATED = 2
-let SDL_RENDERER_PRESENTVSYNC = 4
-let SDL_RENDERER_TARGETTEXTURE = 8
+static SDL_RENDERER_SOFTWARE = 1
+static SDL_RENDERER_ACCELERATED = 2
+static SDL_RENDERER_PRESENTVSYNC = 4
+static SDL_RENDERER_TARGETTEXTURE = 8
 
-let sdl2 = load_library(&"SDL2")
-let sdl_init = load_symbol(sdl2, &"SDL_Init") as fun(u32) => i32
+static sdl2 = load_library(&"SDL2")
+static sdl_init = load_symbol(sdl2, &"SDL_Init") as fun(u32) => i32
 
 struct sdl_window_handle { p : ptr(u8) }
 
 struct sdl_renderer_handle { p : ptr(u8) }
 
-let sdl_create_window =
-  load_symbol(sdl2, &"SDL_CreateWindow")
-    as fun(title: ptr(u8), x : i32, y : i32, w : i32, h : i32, flags : u32) => sdl_window_handle
+static sdl_create_window =
+  load_symbol(sdl2, &"SDL_CreateWindow") as
+    fun(title: ptr(u8), x : i32, y : i32, w : i32, h : i32, flags : u32) => sdl_window_handle
 
-let sdl_create_renderer =
-  load_symbol(sdl2, &"SDL_CreateRenderer")
-    as fun(window : sdl_window_handle, index : i32, flags : u32) => sdl_renderer_handle
+static sdl_create_renderer =
+  load_symbol(sdl2, &"SDL_CreateRenderer") as
+    fun(window : sdl_window_handle, index : i32, flags : u32) => sdl_renderer_handle
 
-let sdl_clear =
-  load_symbol(sdl2, &"SDL_RenderClear")
-    as fun(renderer : sdl_renderer_handle) => i32
+static sdl_clear =
+  load_symbol(sdl2, &"SDL_RenderClear") as
+    fun(renderer : sdl_renderer_handle) => i32
 
-let sdl_set_draw_color =
-  load_symbol(sdl2, &"SDL_SetRenderDrawColor")
-    as fun(renderer : sdl_renderer_handle, r : u8, g : u8, b : u8, a : u8) => i32
+static sdl_set_draw_color =
+  load_symbol(sdl2, &"SDL_SetRenderDrawColor") as
+    fun(renderer : sdl_renderer_handle, r : u8, g : u8, b : u8, a : u8) => i32
 
-let sdl_present =
-  load_symbol(sdl2, &"SDL_RenderPresent")
-    as fun(renderer : sdl_renderer_handle)
+static sdl_present =
+  load_symbol(sdl2, &"SDL_RenderPresent") as
+    fun(renderer : sdl_renderer_handle)
 
-let sdl_fill_rect =
-  load_symbol(sdl2, &"SDL_RenderFillRect")
-    as fun(renderer : sdl_renderer_handle, rect : ptr(sdl_rect))
+static sdl_fill_rect =
+  load_symbol(sdl2, &"SDL_RenderFillRect") as
+    fun(renderer : sdl_renderer_handle, rect : ptr(sdl_rect))
 
-let sdl_poll_event =
-  load_symbol(sdl2, &"SDL_PollEvent")
-    as fun(event : ptr(sdl_event)) => i32
+static sdl_poll_event =
+  load_symbol(sdl2, &"SDL_PollEvent") as
+    fun(event : ptr(sdl_event)) => i32
 
-let SDL_INIT_VIDEO = 32 as u32
-let SDL_WINDOWPOS_UNDEFINED = 536805376 as i32
-let SDL_WINDOW_OPENGL = 2 as u32
-let SDL_WINDOW_SHOWN = 4 as u32
+static SDL_INIT_VIDEO = 32 as u32
+static SDL_WINDOWPOS_UNDEFINED = 536805376 as i32
+static SDL_WINDOW_OPENGL = 2 as u32
+static SDL_WINDOW_SHOWN = 4 as u32

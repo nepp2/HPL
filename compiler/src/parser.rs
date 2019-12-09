@@ -124,6 +124,13 @@ impl <'l> ParseState<'l> {
     self.pos < self.tokens.len()
   }
 
+  fn prev(&self) -> Option<&Token> {
+    if self.pos > 0 {
+      return Some(&self.tokens[self.pos-1]);
+    }
+    None
+  }
+
   fn peek(&self) -> Result<&Token, Error> {
     if self.has_tokens() {
       Ok(&self.tokens[self.pos])
@@ -135,6 +142,15 @@ impl <'l> ParseState<'l> {
     else {
       error(TextLocation::zero(), EXPECTED_TOKEN_ERROR)
     }
+  }
+
+  fn peek_newline(&self) -> bool {
+    if let Some(prev) = self.prev() {
+      if let Ok(next) = self.peek() {
+        return prev.loc.end.line != next.loc.start.line;
+      }
+    }
+    false
   }
 
   fn peek_marker(&self) -> TextMarker {
@@ -238,13 +254,11 @@ fn pratt_parse(ps : &mut ParseState, precedence : i32) -> Result<Expr, Error> {
   let mut expr = parse_prefix(ps)?;
   while ps.has_tokens() {
     let t = ps.peek()?;
-    // TODO remove: println!("expr parsed: {}, precedence: {}, t: {}", expr, precedence, t.symbol);
     if contains(&ps.config.paren_terminators, t.symbol()) {
-      // TODO remove: println!("bumped into a {}", t.symbol);
       break;
     }
     // New lines are imlicitly semi-colons (except after an infix operator)
-    else if expr.loc.end.line != t.loc.start.line {
+    else if ps.peek_newline() {
       let next_precedence = *ps.config.expression_separators.get(";").unwrap();
       if next_precedence > precedence {
         expr = parse_list(ps, vec![expr], ";", "block".into())?;
@@ -374,17 +388,24 @@ fn parse_into_list(ps : &mut ParseState, list : &mut Vec<Expr>, separator : &str
     if !ps.has_tokens() {
       break;
     }
-    let t = ps.peek()?;
-    let implicit_separator = is_semicolon && {
-      let previous_line = list.last().unwrap().loc.end.line;
-      let next_line = t.loc.start.line;
-      previous_line != next_line
-    };
+    let implicit_separator = is_semicolon && ps.peek_newline();
     if !(implicit_separator || ps.accept(separator)) {
       break;
     }
   }
   Ok(())
+}
+
+fn peek_statement_terminated(ps : &ParseState) -> bool {
+  if let Ok(t) = ps.peek() {
+    let symbol = t.symbol();
+    contains(&ps.config.paren_terminators, symbol) ||
+      contains_key(&ps.config.expression_separators, symbol) ||
+      ps.peek_newline()
+  }
+  else {
+    true
+  }
 }
 
 fn parse_list(ps : &mut ParseState, mut list : Vec<Expr>, separator : &str, tag : String) -> Result<Expr, Error> {
@@ -520,14 +541,13 @@ fn try_parse_keyword_term(ps : &mut ParseState) -> Result<Option<Expr>, Error> {
     "return" => {
       let start = ps.peek_marker();
       ps.expect("return")?;
-      let mut list = vec![];
-      if ps.has_tokens() {
-        let t = ps.peek()?.symbol();
-        if !contains(&ps.config.paren_terminators, t) || !contains_key(&ps.config.expression_separators,t) {
-          list.push(pratt_parse(ps, kp)?);
-        }
+      if peek_statement_terminated(ps) {
+        ps.add_list("return", vec![], start)
       }
-      ps.add_list("return", list, start)
+      else {
+        let return_expr = pratt_parse(ps, kp)?;
+        ps.add_list("return", vec![return_expr], start)
+      }
     }
     _ => return Ok(None),
   };

@@ -90,22 +90,23 @@ extern {
 }
 
 #[no_mangle]
-pub extern "C" fn load_quote(c : *mut Compiler, s : SStr) -> *mut u8 {
+pub extern "C" fn load_expression(c : *mut Compiler, s : SStr) -> Box<Expr> {
   let code_path = format!("{}code/{}.code", ROOT, s.as_str());
   let mut f = File::open(code_path).expect("file not found");
   let mut code = String::new();
   f.read_to_string(&mut code).unwrap();
   let c = unsafe { &mut *c };
-  let expr = Box::new(c.parse(&code).unwrap());
-  Box::into_raw(expr) as *mut u8
+  Box::new(c.parse(&code).unwrap())
 }
 
 #[no_mangle]
 pub extern "C" fn build_module(c : *mut Compiler, e : &Expr) -> ModuleId {
   let c = unsafe { &mut *c };
   let imports = c.compiled_modules.keys().cloned().collect::<Vec<_>>();
-  let (module_id, _val) = c.load_module(imports.as_slice(), e).expect("failed to build the module");
-  module_id
+  match c.load_module(imports.as_slice(), e) {
+    Ok((module_id, _val)) => module_id,
+    Err(e) => panic!("failed to build module with error:\n{}", e),
+  }
 }
 
 // TODO: panics if there is more than one overload, because no argument types
@@ -277,10 +278,12 @@ impl CSymbols {
 
     sym.insert("template_quote".into(),  (template_quote as *const()) as usize);
     sym.insert("thread_sleep".into(), (thread_sleep as *const()) as usize);
-    sym.insert("load_quote".into(),  (load_quote as *const()) as usize);
+
+    sym.insert("expr_to_string".into(),  (expr_to_string as *const()) as usize);
+
+    sym.insert("load_expression".into(),  (load_expression as *const()) as usize);
     sym.insert("build_module".into(),  (build_module as *const()) as usize);
     sym.insert("get_function".into(),  (get_function as *const()) as usize);
-    sym.insert("expr_to_string".into(),  (expr_to_string as *const()) as usize);
 
     sym.insert("test_add".into(), (test_add as *const()) as usize);
     sym.insert("test_global".into(), (&TEST_GLOBAL as *const i64) as usize);
