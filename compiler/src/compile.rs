@@ -244,9 +244,7 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
       U64.into(), U32.into(), U16.into(), U8.into() ];
   let boolean : &Type = &Bool.into();
   for t in prim_number_types {
-    for &n in &["-"] {
-      add_intrinsic(cache, gen, module_id, &mut ti, n, &[t], t);
-    }
+    add_intrinsic(cache, gen, module_id, &mut ti, "-", &[t], t);
     for &n in &["+", "-", "*", "/"] {
       add_intrinsic(cache, gen, module_id, &mut ti, n, &[t, t], t);
     }
@@ -257,6 +255,8 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
   for &n in &["&&", "||"] {
     add_intrinsic(cache, gen, module_id, &mut ti, n, &[boolean, boolean], boolean);
   }
+  add_intrinsic(cache, gen, module_id, &mut ti, "!", &[boolean], boolean);
+
   for prim in &[I64.into(), I32.into(), U64.into(), U32.into()] {
     for container in &[Type::ptr_to, Type::array_of] {
       let gid : GenericId = gen.next().into();
