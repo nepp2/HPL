@@ -2,6 +2,7 @@
 cbind malloc : fun(size: u64) => ptr(u8)
 cbind free : fun(ptr: ptr(u8))
 cbind memcpy : fun(dest : ptr(u8), src : ptr(u8), length : u64) => ptr(u8)
+cbind panic : fun(s : ptr(string))
 
 struct range {
   start : i64

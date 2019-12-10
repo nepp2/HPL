@@ -523,6 +523,9 @@ fn try_parse_keyword_term(ps : &mut ParseState) -> Result<Option<Expr>, Error> {
         es.push(pratt_parse(ps, kp)?);
       }
       if is_full_definition {
+        if ps.accept("with") {
+          es.push(parse_list(ps, vec![], ",", "polytypes".into())?);
+        }
         // body
         es.push(parse_block_in_braces(ps)?);
       }

@@ -1,12 +1,36 @@
 
-let total = 0
-for x in range(0, 10000) {
-  for y in range(10, 20) {
-    total = total + x * y
-  }
-  if x >= 5 {
-    break
-  }
+struct list(T) {
+  len : u64
+  data : ptr(T)
+  capacity : u64
 }
-total
 
+fun add(list : list(T), item : T) with T {
+  let len = list.len
+  if list.capacity <= list.len {
+    let byte_capacity = list.capacity * sizeof(T)
+    let new_data = malloc(byte_capacity * 2)
+    memcpy(new_data, list.data as ptr(u8), byte_capacity)
+    free(list.data)
+    list.data = new_data as ptr(T)
+    list.capacity = list.capacity * 2
+  }
+  list.data[list.len] = item
+  list.len = list.len + 1
+}
+
+fun Index(list : list(T), i : Int) => T with T, Int {
+  let i = i as u64
+  if i >= list.len {
+    panic("list access out of bounds")
+  }
+  list.data[i]
+}
+
+let list = list()
+
+for x in range(0, 10) {
+  list.add(x)
+}
+
+println(list)

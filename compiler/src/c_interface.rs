@@ -90,6 +90,11 @@ extern {
 }
 
 #[no_mangle]
+pub extern "C" fn panic(s : SStr) {
+  panic!("{}", s.as_str())
+}
+
+#[no_mangle]
 pub extern "C" fn load_expression(c : *mut Compiler, s : SStr) -> Box<Expr> {
   let code_path = format!("{}code/{}.code", ROOT, s.as_str());
   let mut f = File::open(code_path).expect("file not found");
@@ -267,6 +272,7 @@ impl CSymbols {
     sym.insert("malloc".into(), (malloc as *const()) as usize);
     sym.insert("free".into(), (free as *const()) as usize);
     sym.insert("memcpy".into(), (memcpy as *const()) as usize);
+    sym.insert("panic".into(), (panic as *const()) as usize);
     
 
     sym.insert("print_string".into(), (print_string as *const()) as usize);

@@ -50,9 +50,9 @@ pub enum Content {
   Block(Vec<NodeId>),
   Quote(Box<Expr>),
   Reference { name: RefStr, refers_to: Option<SymbolId> },
-  FunctionDefinition{ name: RefStr, args: Vec<(Symbol, Option<Box<Expr>>)>, return_tag: Option<Box<Expr>>, body: NodeId },
+  FunctionDefinition{ name: RefStr, args: Vec<(Symbol, Option<Box<Expr>>)>, return_tag: Option<Box<Expr>>, polytypes : Vec<RefStr>, body: NodeId },
   CBind { name: RefStr, type_tag : Box<Expr> },
-  TypeDefinition{ name: RefStr, kind : TypeKind, fields: Vec<(Symbol, Option<Box<Expr>>)> },
+  TypeDefinition{ name: RefStr, kind : TypeKind, fields: Vec<(Symbol, Option<Box<Expr>>)>, polytypes : Vec<RefStr> },
   TypeConstructor{ name: RefStr, field_values: Vec<(Option<Symbol>, NodeId)> },
   FieldAccess{ container: NodeId, field: Symbol },
   ArrayLiteral(Vec<NodeId>),
@@ -413,7 +413,8 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         error(expr, "invalid cbind expression")
       }
       ("fun", exprs) => {
-        if let [name, args_expr, function_body] = exprs {
+        let mut exprs = exprs.iter();
+        if let (Some(name), Some(args_expr), Some(e)) = (exprs.next(), exprs.next(), exprs.next()) {
           let name = self.cached(name.unwrap_symbol()?);
           let args =
             args_expr.children().iter()
@@ -421,9 +422,19 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
             .collect::<Result<Vec<_>, Error>>()?;
           let arg_symbols =
             args.iter().map(|(s, _)| s.clone()).collect();
-          let mut function_checker = FunctionConverter::new(self.t, false, arg_symbols);
-          let body = function_checker.to_function_body(function_body)?;
-          return Ok(self.node(expr, FunctionDefinition{name, args, return_tag: None, body}));
+          let (polytypes, body) = {
+            if let Some(("polytypes", ts)) = e.try_construct() {
+              let polytypes : Result<Vec<_>, _> =
+                ts.iter().map(|e| { let s = self.cached(e.unwrap_symbol()?) ; Ok(s) }).collect();
+              (polytypes?, exprs.next())
+            }
+            else { (vec![], Some(e)) }
+          };
+          if let Some(body) = body {
+            let mut function_checker = FunctionConverter::new(self.t, false, arg_symbols);
+            let body = function_checker.to_function_body(body)?;
+            return Ok(self.node(expr, FunctionDefinition{name, args, polytypes, return_tag: None, body}));
+          }
         }
         error(expr, "malformed function definition")
       }
@@ -433,15 +444,27 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
           fields_expr.children().iter()
           .map(|e| self.typed_symbol(e))
           .collect::<Result<Vec<_>, Error>>()?;
-        Ok(self.node(expr, TypeDefinition{name, kind: TypeKind::Union, fields}))
+        let td = TypeDefinition{name, kind: TypeKind::Union, fields, polytypes: vec![] };
+        Ok(self.node(expr, td))
       }
       ("struct", [name, fields_expr]) => {
-        let name = self.cached(name.unwrap_symbol()?);
+        let (name, polytypes) = {
+          if let Some(("call", exprs)) = name.try_construct() {
+            let name = self.cached(exprs[0].unwrap_symbol()?);
+            let polytypes : Result<Vec<_>, _> =
+              exprs[1..].iter().map(|e| { let s = self.cached(e.unwrap_symbol()?) ; Ok(s) }).collect();
+            (name, polytypes?)
+          }
+          else {
+            let name = self.cached(name.unwrap_symbol()?);
+            (name, vec![])
+          }
+        };
         let fields =
           fields_expr.children().iter()
           .map(|e| self.typed_symbol(e))
           .collect::<Result<Vec<_>, Error>>()?;
-        Ok(self.node(expr, TypeDefinition{name, kind: TypeKind::Struct, fields}))
+        Ok(self.node(expr, TypeDefinition{name, kind: TypeKind::Struct, fields, polytypes }))
       }
       (".", [container_expr, field_expr]) => {
         let container = self.to_node(container_expr)?;
@@ -515,11 +538,12 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
   }
 
   fn top_level_expression(&mut self, expr : &Expr) -> Result<NodeId, Error> {
-    let c = Content::FunctionDefinition{
+    let c = Content::FunctionDefinition {
       name: self.cached(TOP_LEVEL_FUNCTION_NAME),
-      body: self.to_function_body(expr)?,
       args: vec![],
       return_tag: None,
+      polytypes: vec![],
+      body: self.to_function_body(expr)?,
     };
     let f = self.node(expr, c);
     Ok(f)

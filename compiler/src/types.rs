@@ -26,7 +26,6 @@ impl From<u64> for GlobalId { fn from(v : u64) -> Self { GlobalId(v) } }
 pub struct TypeInfo {
   pub type_defs : HashMap<RefStr, TypeDefinition>,
   pub globals : Vec<GlobalDefinition>,
-  pub poly_functions : Vec<PolyFunctionDef>,
   pub module_id : ModuleId,
 }
 
@@ -220,6 +219,7 @@ pub struct TypeDefinition {
   pub name : RefStr,
   pub fields : Vec<(Symbol, Type)>,
   pub kind : TypeKind,
+  pub polytypes : Vec<GenericId>,
   pub drop_function : Option<ResolvedGlobal>,
   pub clone_function : Option<ResolvedGlobal>,
   pub definition_location : TextLocation,
@@ -255,6 +255,7 @@ pub struct GlobalDefinition {
   pub name : RefStr,
   pub type_tag : Type,
   pub initialiser : GlobalInit,
+  pub polymorphic : bool,
   pub loc : TextLocation,
 }
 
@@ -266,12 +267,6 @@ impl GlobalDefinition {
       _ => None,
     }
   }
-}
-
-#[derive(Clone)]
-pub struct PolyFunctionDef {
-  pub global : GlobalDefinition,
-  pub generics : Vec<GenericId>,
 }
 
 impl  fmt::Display for GenericId {
@@ -467,7 +462,6 @@ impl TypeInfo {
     TypeInfo {
       type_defs: HashMap::new(),
       globals: vec![],
-      poly_functions: vec![],
       module_id,
     }
   }
@@ -481,19 +475,18 @@ impl TypeInfo {
     results : &mut Vec<ResolvedGlobal>) {
     for g in self.globals.iter() {
       if g.name.as_ref() == name {
-        if let Some(t) = unify_types(t, &g.type_tag) {
-          results.push(ResolvedGlobal { def: g.clone(), resolved_type: t });
+        if g.polymorphic {
+          generics.clear();
+          if generic_match(generics, t, &g.type_tag) {
+            let mut resolved_type = g.type_tag.clone();
+            generic_replace(generics, gen, &mut resolved_type);
+            results.push(ResolvedGlobal { def: g.clone(), resolved_type });
+          }
         }
-      }
-    }
-    'outer: for def in self.poly_functions.iter() {
-      if def.global.name.as_ref() == name {
-        generics.clear();
-        if generic_match(generics, t, &def.global.type_tag) {
-          let mut resolved_type = def.global.type_tag.clone();
-          generic_replace(generics, gen, &mut resolved_type);
-          let def = def.global.clone();
-          results.push(ResolvedGlobal { def, resolved_type });
+        else {
+          if let Some(t) = unify_types(t, &g.type_tag) {
+            results.push(ResolvedGlobal { def: g.clone(), resolved_type: t });
+          }
         }
       }
     }

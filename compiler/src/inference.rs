@@ -750,6 +750,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             name: name.name.clone(),
             type_tag: Type::any(),
             initialiser,
+            polymorphic: false,
             loc: node.loc,
           });
           self.constraint(GlobalDef{
@@ -805,7 +806,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           self.constraint(GlobalReference{ node: id, name: name.clone(), result: ts });
         }
       }
-      Content::FunctionDefinition{ name, args, return_tag, body } => {
+      Content::FunctionDefinition{ name, args, return_tag, polytypes, body } => {
         self.assert(ts, PType::Void);
         let global_id = self.gen.next().into();
         let body_ts = {
@@ -849,6 +850,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             name: name.clone(),
             type_tag: Type::any(),
             initialiser: GlobalInit::Function(f),
+            polymorphic: polytypes.len() > 0,
             loc: node.loc,
           }
         });
@@ -864,12 +866,13 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             name: name.clone(),
             initialiser: GlobalInit::CBind,
             type_tag: t,
+            polymorphic: false,
             loc: node.loc,
           };
           self.t.create_global(g);
         }
       }
-      Content::TypeDefinition{ name, kind, fields } => {
+      Content::TypeDefinition{ name, kind, fields, polytypes } => {
         self.assert(ts, PType::Void);
         if self.t.find_type_def(name.as_ref()).is_some() {
           let e = error_raw(node.loc, "type with this name already defined");
@@ -888,6 +891,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             name: name.clone(),
             fields: typed_fields,
             kind: *kind,
+            polytypes: polytypes.clone(),
             drop_function: None, clone_function: None,
             definition_location: node.loc,
           };
