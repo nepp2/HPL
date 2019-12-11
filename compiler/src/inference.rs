@@ -15,7 +15,8 @@ use crate::structure::{
 use crate::types::{
   Type, TypeContent, PType, TypeInfo, TypeDefinition, FunctionInit,
   GlobalDefinition, TypeDirectory, GlobalInit, GlobalId, AbstractType,
-  SignatureBuilder, unify_types, incremental_unify, IncrementalUnifyResult
+  SignatureBuilder, unify_types, incremental_unify, IncrementalUnifyResult,
+  GenericId,
 };
 use crate::modules::TypedModule;
 
@@ -202,7 +203,10 @@ impl <'a> Inference<'a> {
     use ConstraintContent::*;
     match &c.content  {
       Assert(ts, t) => {
-        self.update_type(*ts, t.clone());
+        match checked_clone(t, self.t, self.loc(*ts)) {
+          Ok(t) => self.update_type(*ts, t),
+          Err(e) => self.errors.push(e),
+        }
       }
       Equalivalent(a, b) => {
         if let Some(t) = self.get_type(*a) {
@@ -451,6 +455,42 @@ impl <'a> Inference<'a> {
   }
 }
 
+/// Clones a type while recursively checking that its type definitions
+/// actually exist. Instantiates any type parameters that it may have.
+/// Spits out errors if a type doesn't match the definition.
+fn checked_clone(t : &Type, td : &TypeDirectory, loc : TextLocation)
+  -> Result<Type, Error>
+{
+  if let Def(name) = &t.content {
+    if let Some(def) = td.find_type_def(name) {
+      let len = def.polytypes.len();
+      if t.children.len() != len && t.children.len() != 0 {
+        return error(loc, "incorrect number of type parameters provided");
+      }
+      let mut children = vec![];
+      for i in 0..len {
+        if let Some(c) = t.children.get(i) {
+          children.push(checked_clone(c, td, loc)?);
+        }
+        else {
+          children.push(Type::any());
+        }
+      }
+      return Ok(Type::new(t.content.clone(), children));
+    }
+    return error(loc, format!("type {} does not exist", name));
+  }
+  let content = match &t.content {
+    Generic(_) => Abstract(AbstractType::Any),
+    _ => t.content.clone(),
+  };
+  let mut children = vec![];
+  for c in t.children.iter() {
+    children.push(checked_clone(c, td, loc)?);
+  }
+  Ok(Type::new(content, children))
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct TypeSymbol(u64);
 
@@ -622,6 +662,7 @@ fn gather_constraints(
 
 struct GatherConstraints<'l, 't> {
   labels : HashMap<LabelId, TypeSymbol>,
+  polytype_ids : Vec<(RefStr, GenericId)>,
   t : &'l mut TypeDirectory<'t>,
   cg : &'l mut CodegenInfo,
   cache : &'l StringCache,
@@ -645,6 +686,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
   {
     GatherConstraints {
       labels: HashMap::new(),
+      polytype_ids : vec![],
       cache, t, cg, gen, c,
       errors, type_def_refs,
     }
@@ -723,7 +765,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           Bool(_) => PType::Bool.into(),
           Void => PType::Void.into(),
           String(_) => {
-            self.type_def(node.loc, self.cache.get("string"))
+            self.type_def(self.cache.get("string"), node.loc)
           }
         };
         self.assert_type(ts, t);
@@ -794,7 +836,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
         }
       }
       Content::Quote(_e) => {
-        let t = self.type_def(node.loc, self.cache.get("expr"));
+        let t = self.type_def(self.cache.get("expr"), node.loc);
         self.assert_type(ts, Type::ptr_to(t));
       }
       Content::Reference{ name, refers_to } => {
@@ -808,51 +850,53 @@ impl <'l, 't> GatherConstraints<'l, 't> {
       }
       Content::FunctionDefinition{ name, args, return_tag, polytypes, body } => {
         self.assert(ts, PType::Void);
-        let global_id = self.gen.next().into();
-        let body_ts = {
-          // Need new scope stack for new function
-          let mut gc = GatherConstraints::new(
-            self.t, self.cg, self.cache, self.gen,
-            self.c, self.errors, self.type_def_refs
-          );
-          gc.process_node(n, *body)
-        };
-        self.tagged_symbol(body_ts, return_tag);
-        let mut arg_types : Vec<TypeSymbol> = vec![];
-        let mut arg_names = vec!();
-        for (arg, type_tag) in args.iter() {
-          arg_names.push(arg.clone());
-          let arg_type_symbol = self.variable_to_type_symbol(arg);
-          self.tagged_symbol(arg_type_symbol, type_tag);
-          arg_types.push(arg_type_symbol);
-        }
-        let global_ts = self.type_symbol(node.loc);
-        self.constraint(Function {
-          function: global_ts,
-          args: arg_types,
-          return_type: body_ts,
-        });
-        self.constraint(GlobalDef {
-          global_id,
-          type_symbol: global_ts,
-        });
-        self.t.create_global({
-          let name_for_codegen =
-            self.cache.get(format!("{}.{}", name, self.gen.next()).as_str());
-          let f = FunctionInit {
-            body: *body,
-            name_for_codegen,
-            args: arg_names,
+        self.with_polytypes(polytypes.as_slice(), |gc, polytypes| {
+          let global_id = gc.gen.next().into();
+          let body_ts = {
+            // Need new scope stack for new function
+            let mut gc = GatherConstraints::new(
+              gc.t, gc.cg, gc.cache, gc.gen,
+              gc.c, gc.errors, gc.type_def_refs
+            );
+            gc.process_node(n, *body)
           };
-          GlobalDefinition {
-            id: global_id,
-            module_id: self.t.new_module_id(),
-            name: name.clone(),
-            type_tag: Type::any(),
-            initialiser: GlobalInit::Function(f),
-            polymorphic: polytypes.len() > 0,
-            loc: node.loc,
+          gc.tagged_symbol(body_ts, return_tag);
+          let mut arg_types : Vec<TypeSymbol> = vec![];
+          let mut arg_names = vec!();
+          for (arg, type_tag) in args.iter() {
+            arg_names.push(arg.clone());
+            let arg_type_symbol = gc.variable_to_type_symbol(arg);
+            gc.tagged_symbol(arg_type_symbol, type_tag);
+            arg_types.push(arg_type_symbol);
           }
+          let global_ts = gc.type_symbol(node.loc);
+          gc.constraint(Function {
+            function: global_ts,
+            args: arg_types,
+            return_type: body_ts,
+          });
+          gc.constraint(GlobalDef {
+            global_id,
+            type_symbol: global_ts,
+          });
+          gc.t.create_global({
+            let name_for_codegen =
+              gc.cache.get(format!("{}.{}", name, gc.gen.next()).as_str());
+            let f = FunctionInit {
+              body: *body,
+              name_for_codegen,
+              args: arg_names,
+            };
+            GlobalDefinition {
+              id: global_id,
+              module_id: gc.t.new_module_id(),
+              name: name.clone(),
+              type_tag: Type::any(),
+              initialiser: GlobalInit::Function(f),
+              polymorphic: polytypes.len() > 0,
+              loc: node.loc,
+            }
+          });
         });
       }
       Content::CBind { name, type_tag } => {
@@ -879,23 +923,24 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           self.errors.push(e)
         }
         else {
-          // TODO: check for duplicate fields?
-          let mut typed_fields = vec![];
-          for (field, type_tag) in fields.iter() {
-            if let Some(t) = self.try_expr_to_type(type_tag.as_ref().unwrap()) {
-              typed_fields.push((field.clone(), t));
+          self.with_polytypes(polytypes.as_slice(), |gc, polytypes| {
+            // TODO: check for duplicate fields?
+            let mut typed_fields = vec![];
+            for (field, type_tag) in fields.iter() {
+              if let Some(t) = gc.try_expr_to_type(type_tag.as_ref().unwrap()) {
+                typed_fields.push((field.clone(), t));
+              }
             }
-          }
-          // TODO: Generics?
-          let def = TypeDefinition {
-            name: name.clone(),
-            fields: typed_fields,
-            kind: *kind,
-            polytypes: polytypes.clone(),
-            drop_function: None, clone_function: None,
-            definition_location: node.loc,
-          };
-          self.t.create_type_def(def);
+            let def = TypeDefinition {
+              name: name.clone(),
+              fields: typed_fields,
+              kind: *kind,
+              polytypes,
+              drop_function: None, clone_function: None,
+              definition_location: node.loc,
+            };
+            gc.t.create_type_def(def);
+          });
         }
       }
       Content::TypeConstructor{ name, field_values } => {
@@ -906,7 +951,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           fields.push((field, field_type_symbol));
         }
         let tc = Constructor{ type_name: name.clone(), fields, result: ts };
-        let def_type = self.type_def(node.loc, name.clone());
+        let def_type = self.type_def(name.clone(), node.loc);
         self.assert_type(ts, def_type);
         self.constraint(tc);
       }
@@ -951,8 +996,8 @@ impl <'l, 't> GatherConstraints<'l, 't> {
         }
       }
       Content::SizeOf{ type_tag } => {
-        if let Some(tid) = self.try_expr_to_type(type_tag) {
-          self.cg.sizeof_info.insert(node.id, tid);
+        if let Some(t) = self.try_expr_to_type(type_tag) {
+          self.cg.sizeof_info.insert(node.id, t);
         }
         self.assert(ts, PType::U64);
       }
@@ -981,20 +1026,45 @@ impl <'l, 't> GatherConstraints<'l, 't> {
     self.log_error(r)
   }
 
-  fn type_def(&mut self, loc : TextLocation, name : RefStr) -> Type {
+  fn type_def(&mut self, name : RefStr, loc : TextLocation) -> Type {
     self.type_def_refs.push((name.clone(), loc));
     Type::def(name)
+  }
+
+  fn with_polytypes<F>(&mut self, polytypes : &[RefStr], f : F)
+    where F : Fn(&mut GatherConstraints, Vec<GenericId>)
+  {
+    let mut polytype_ids = vec![];
+    for pt in polytypes.iter() {
+      let id = self.gen.next().into();
+      polytype_ids.push(id);
+      self.polytype_ids.push((pt.clone(), id));
+    }
+    f(self, polytype_ids);
+    self.polytype_ids.drain((self.polytype_ids.len()-polytypes.len())..);
+  }
+
+  fn symbol_to_type(&mut self, loc : TextLocation, name : &str) -> Type {
+      // Check for polytypes
+      for (polytype_name, generic_id) in self.polytype_ids.iter() {
+        if polytype_name.as_ref() == name {
+          return (*generic_id).into();
+        }
+      }
+      // Assume type definition
+      let name = self.cache.get(name);
+      return self.type_def(name, loc);
   }
 
   /// Converts expression into type. Logs symbol error if definition references a type that hasn't been defined yet
   /// These symbol errors may be resolved later, when the rest of the module has been checked.
   fn expr_to_type(&mut self, expr : &Expr) -> Result<Type, Error> {
     if let Some(name) = expr.try_symbol() {
+      // Check for primitive types
       if let Some(t) = Type::from_string(name) {
         return Ok(t);
       }
-      let name = self.cache.get(name);
-      return Ok(self.type_def(expr.loc, name));
+      return Ok(self.symbol_to_type(expr.loc, name));
     }
     match expr.try_construct() {
       Some(("fun", es)) => {
@@ -1010,21 +1080,32 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           return Ok(sig.into());
         }
       }
-      Some(("call", [name, t])) => {
+      Some(("call", exprs)) => {
+        let name = &exprs[0];
         match name.unwrap_symbol()? {
           "ptr" => {
-            let t = self.expr_to_type(t)?;
-            return Ok(Type::ptr_to(t))
+            if let [t] = &exprs[1..] {
+              let t = self.expr_to_type(t)?;
+              return Ok(Type::ptr_to(t))
+            }
           }
           "array" => {
-            let t = self.expr_to_type(t)?;
-            return Ok(Type::array_of(t))
+            if let [t] = &exprs[1..] {
+              let t = self.expr_to_type(t)?;
+              return Ok(Type::array_of(t))
+            }
           }
-          _ => (),
+          name => {
+            let mut t = self.symbol_to_type(exprs[0].loc, name);
+            for e in &exprs[1..] {
+              t.children.push(self.expr_to_type(e)?);
+            }
+            return Ok(t);
+          }
         }
       }
       _ => ()
     }
-    error(expr, "invalid type expression")
+    error(expr, format!("invalid type expression {}", expr))
   }
 }

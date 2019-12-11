@@ -123,7 +123,7 @@ pub struct FunctionSignature<'a> {
 
 impl Type {
   
-  fn new(content : TypeContent, children : Vec<Type>) -> Self {
+  pub fn new(content : TypeContent, children : Vec<Type>) -> Self {
     Type { content, children }
   }
   
@@ -508,7 +508,6 @@ fn generic_replace(generics : &HashMap<GenericId, Type>, gen : &mut UIDGenerator
 
 fn generic_match(generics : &mut HashMap<GenericId, Type>, t : &Type, gt : &Type) -> bool {
   if let Generic(_) = &t.content { panic!("unexpected generic type") }
-  if let Abstract(_) = &gt.content { panic!("unexpected abstract type") }
   if let Generic(gid) = &gt.content {
     if let Some(bound_type) = generics.get(&gid) {
       if let Some(t) = unify_types(&t, bound_type) {
@@ -523,6 +522,7 @@ fn generic_match(generics : &mut HashMap<GenericId, Type>, t : &Type, gt : &Type
     }    
   }
   else if let Abstract(at) = &t.content { at.contains_type(gt) }
+  else if let Abstract(at) = &gt.content { at.contains_type(t) }
   else {
     if t.content != gt.content { return false }
     if t.children.len() != gt.children.len() { return false }
