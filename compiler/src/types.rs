@@ -13,16 +13,14 @@ use std::collections::HashMap;
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct ModuleId(u64);
 
-static AAA : () = (); // TODO: Rename GenericId and Generic to PolyTypeId and Poly
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct GenericId(u64);
+pub struct PolyTypeId(u64);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct GlobalId(u64);
 
 impl From<u64> for ModuleId { fn from(v : u64) -> Self { ModuleId(v) } }
-impl From<u64> for GenericId { fn from(v : u64) -> Self { GenericId(v) } }
+impl From<u64> for PolyTypeId { fn from(v : u64) -> Self { PolyTypeId(v) } }
 impl From<u64> for GlobalId { fn from(v : u64) -> Self { GlobalId(v) } }
 
 pub struct TypeInfo {
@@ -58,7 +56,7 @@ pub enum TypeContent {
   Array,
   Ptr,
   Abstract(AbstractType),
-  Generic(GenericId),
+  Polytype(PolyTypeId),
 }
 
 /// This wrapper indicates that the type is monomorphic (not polymorphic), and may be unified.
@@ -69,18 +67,30 @@ pub struct MonoType {
   inner : Type
 }
 
-pub enum MonoTypeError {
-  WrongNumberOfTypeParameters,
-  DefDoesNotExist(String),
-}
-
 impl MonoType {
+  fn new(inner : Type) -> Self {
+    MonoType { inner }
+  }
+
   pub fn any() -> Self {
-    MonoType { inner: Type::any() }
+    MonoType::new(Type::any())
   }
 
   pub fn as_type(&self) -> &Type {
     &self.inner
+  }
+
+  pub fn try_harden_literal(&self) -> Option<MonoType> {
+    if let Abstract(ab) = &self.inner.content {
+      if let Some(default) = ab.default_type() {
+        return Some(MonoType::new(default));
+      }
+    }
+    None
+  }
+
+  pub fn array_of(self) -> Self {
+    MonoType::new(self.inner.array_of())
   }
 
   pub fn sig_builder(&self) -> Option<SignatureBuilder<MonoType>> {
@@ -103,55 +113,51 @@ impl fmt::Display for MonoType {
   }
 }
 
-fn generic_replace(generics : &HashMap<GenericId, Type>, gen : &mut UIDGenerator, t : &mut Type) {
-  if let Generic(gid) = &t.content {
-    *t = generics.get(&gid).cloned().unwrap_or_else(||Type::any());
+fn polytype_replace(polytypes : &HashMap<PolyTypeId, MonoType>, pt : &Type) -> MonoType {
+  fn polytype_replace_internal(polytypes : &HashMap<PolyTypeId, MonoType>, t : &mut Type) {
+    if let Polytype(gid) = &t.content {
+      *t = polytypes.get(&gid).cloned().unwrap_or_else(||MonoType::any()).inner;
+    }
+    for t in t.children.iter_mut() {
+      polytype_replace_internal(polytypes, t);
+    }
   }
-  for t in t.children.iter_mut() {
-    generic_replace(generics, gen, t);
-  }
+  let mut pt = pt.clone();
+  polytype_replace_internal(polytypes, &mut pt);
+  MonoType{ inner: pt }
 }
 
-fn replace_polytypes(t : &Type, poly_map : &HashMap<GenericId, Type>) -> MonoType {
-  if let Generic(gid) = &t.content {
-    let t = poly_map.get(&gid).cloned().unwrap_or_else(||Type::any());
-    return MonoType { inner: t };
-  }
-  let content = t.content.clone();
-  let mut children = vec![];
-  for c in t.children.iter() {
-    children.push(replace_polytypes(c, poly_map).inner);
-  }
-  MonoType { inner: Type::new(content, children) }
-}
-  
-fn generic_match(generics : &mut HashMap<GenericId, Type>, t : &Type, gt : &Type) -> bool {
-  if let Generic(_) = &t.content { panic!("unexpected generic type") }
-  if let Generic(gid) = &gt.content {
-    if let Some(bound_type) = generics.get(&gid) {
-      if let Some(t) = unify_types_internal(&t, bound_type) {
-        generics.insert(*gid, t);
+/// `pt` may be a polytype. It will be treated like `Abstract(Any)`.
+fn polytype_match(polytypes : &mut HashMap<PolyTypeId, MonoType>, mt : &MonoType, pt : &Type) -> bool {
+  fn polytype_match_internal(polytypes : &mut HashMap<PolyTypeId, MonoType>, mt : &Type, pt : &Type) -> bool {
+    if let Polytype(_) = &mt.content { panic!("unexpected generic type") }
+    if let Polytype(gid) = &pt.content {
+      if let Some(bound_type) = polytypes.get(&gid) {
+        if let Some(mt) = unify_types_internal(bound_type, &mt) {
+          polytypes.insert(*gid, mt);
+          true
+        }
+        else { false }
+      }
+      else {
+        polytypes.insert(*gid, mt.to_monotype());
         true
-      }
-      else { false }
+      }    
     }
+    else if let Abstract(at) = &mt.content { at.contains_type(pt) }
+    else if let Abstract(at) = &pt.content { at.contains_type(mt) }
     else {
-      generics.insert(*gid, t.clone());
-      true
-    }    
-  }
-  else if let Abstract(at) = &t.content { at.contains_type(gt) }
-  else if let Abstract(at) = &gt.content { at.contains_type(t) }
-  else {
-    if t.content != gt.content { return false }
-    if t.children.len() != gt.children.len() { return false }
-    for (t, gt) in t.children.iter().zip(gt.children.iter()) {
-      if !generic_match(generics, t, gt) {
-        return false;
+      if mt.content != pt.content { return false }
+      if mt.children.len() != pt.children.len() { return false }
+      for (mt, pt) in mt.children.iter().zip(pt.children.iter()) {
+        if !polytype_match_internal(polytypes, mt, pt) {
+          return false;
+        }
       }
+      true
     }
-    true
   }
+  polytype_match_internal(polytypes, &mt.inner, pt)
 }
 
 use TypeContent::*;
@@ -168,9 +174,9 @@ impl Into<Type> for AbstractType {
   }
 }
 
-impl Into<Type> for GenericId {
+impl Into<Type> for PolyTypeId {
   fn into(self) -> Type {
-    Type::new(Generic(self), vec![])
+    Type::new(Polytype(self), vec![])
   }
 }
 
@@ -239,12 +245,12 @@ impl Type {
     else { None }
   }
 
-  pub fn def(s : RefStr) -> Type {
+  pub fn unresolved_def(s : RefStr) -> Type {
     Type::new(Abstract(AbstractType::Def(s)), vec![])
   }
 
-  pub fn ptr_to(t : Type) -> Self {
-    Type::new(Ptr, vec![t])
+  pub fn ptr_to(self) -> Self {
+    Type::new(Ptr, vec![self])
   }
 
   pub fn ptr(&self) -> Option<&Type> {
@@ -265,8 +271,8 @@ impl Type {
     None
   }
 
-  pub fn array_of(t : Type) -> Self {
-    Type { content: Array, children: vec![t]}
+  pub fn array_of(self) -> Self {
+    Type { content: Array, children: vec![self]}
   }
 
   pub fn children(&self) -> &[Type] {
@@ -275,7 +281,7 @@ impl Type {
 
   pub fn to_monotype(&self) -> MonoType {
     let content = match &self.content {
-      Generic(gid) => Abstract(AbstractType::Any),
+      Polytype(gid) => Abstract(AbstractType::Any),
       _ => self.content.clone(),
     };
     let mut children = vec![];
@@ -325,9 +331,10 @@ impl AbstractType {
 #[derive(Clone, Debug)]
 pub struct TypeDefinition {
   pub name : RefStr,
+  pub module_id : ModuleId,
   pub fields : Vec<(Symbol, Type)>,
   pub kind : TypeKind,
-  pub polytypes : Vec<GenericId>,
+  pub polytypes : Vec<PolyTypeId>,
   pub drop_function : Option<ResolvedGlobal>,
   pub clone_function : Option<ResolvedGlobal>,
   pub definition_location : TextLocation,
@@ -377,9 +384,9 @@ impl GlobalDefinition {
   }
 }
 
-impl  fmt::Display for GenericId {
+impl  fmt::Display for PolyTypeId {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let GenericId(id) = *self;
+    let PolyTypeId(id) = *self;
     write!(f, "{:X}", id)
   }
 }
@@ -405,7 +412,7 @@ impl  fmt::Display for Type {
       Array => write!(f, "array({})", self.array().unwrap()),
       Ptr => write!(f, "ptr({})", self.ptr().unwrap()),
       Prim(t) => write!(f, "{:?}", t),
-      Generic(id) => write!(f, "@Generic({})", id),
+      Polytype(id) => write!(f, "@Polytype({})", id),
       Abstract(abs) => write!(f, "{}", abs),
     }
   }
@@ -416,7 +423,7 @@ impl  Type {
   pub fn is_concrete(&self) -> bool {
     match self.content {
       Abstract(_) => return false,
-      Generic(_) => return false,
+      Polytype(_) => return false,
       _ => (),
     }
     for t in self.children.iter() {
@@ -435,7 +442,7 @@ impl  Type {
           return Err(());
         }
       }
-      Generic(_) => return Err(()),
+      Polytype(_) => return Err(()),
       _ => (),
     };
     for t in self.children.iter_mut() {
@@ -499,14 +506,15 @@ pub fn incremental_unify(old : &MonoType, new : &mut MonoType) -> IncrementalUni
 
 fn incremental_unify_internal(old : &Type, new : &mut Type) -> IncrementalUnifyResult {
   use IncrementalUnifyResult::*;
-  if let Generic(_) = &old.content { return Failure }
+  if let Polytype(_) = &old.content { return Failure }
+  if let Polytype(_) = &new.content { return Failure }
   if old.content != new.content {
     if let Abstract(abs_old) = &old.content {
       if abs_old.contains_type(new) { return ChangedOld }
     }
     if let Abstract(abs_new) = &new.content {
       if abs_new.contains_type(old) {
-        *new = old.clone();
+        *new = old.to_monotype().inner;
         return EqualOrSubsumedByOld;
       }
     }
@@ -525,17 +533,18 @@ fn incremental_unify_internal(old : &Type, new : &mut Type) -> IncrementalUnifyR
 }
 
 pub fn unify_types(a : &MonoType, b : &MonoType) -> Option<MonoType> {
-  unify_types_internal(&a.inner, &b.inner).map(|inner| MonoType { inner })
+  unify_types_internal(a, &b.inner)
 }
 
-fn unify_types_internal(a : &Type, b : &Type) -> Option<Type> {
-  match can_unify_types_internal(a, b) {
+/// Will explicitly convert b to a monotype if the types match
+fn unify_types_internal(mt : &MonoType, pt : &Type) -> Option<MonoType> {
+  match can_unify_types_internal(&mt.inner, pt) {
     CanUnifyResult::CanUnify => {
-      let mut t = b.clone();
-      if incremental_unify_internal(a, &mut t) == IncrementalUnifyResult::Failure {panic!("bug in unify_types")}
+      let mut t = pt.to_monotype();
+      if incremental_unify_internal(&mt.inner, &mut t.inner) == IncrementalUnifyResult::Failure {panic!("bug in unify_types")}
       Some(t)
     }
-    CanUnifyResult::AlreadyEqual => Some(a.clone()),
+    CanUnifyResult::AlreadyEqual => Some(mt.clone()),
     CanUnifyResult::CannotUnify => None,
   }
 }
@@ -555,7 +564,10 @@ pub fn can_unify_types(a : &MonoType, b : &MonoType) -> CanUnifyResult {
 
 fn can_unify_types_internal(u : &Type, t : &Type) -> CanUnifyResult {
   use CanUnifyResult::*;
-  if let Generic(_) = &u.content { return CannotUnify }
+  // Polytypes are assumed to behave like the Any type, but they must be explicitly
+  // converted to MonoTypes before unification actually happens!
+  if let Polytype(_) = &u.content { return CanUnify }
+  if let Polytype(_) = &t.content { return CanUnify }
   if u.content != t.content {
     if let Abstract(au) = &u.content {
       if au.contains_type(t) { return CanUnify }
@@ -589,10 +601,24 @@ impl TypeInfo {
   pub fn find_global<'a>(
     &'a self,
     name : &str,
-    results : &mut Vec<GlobalDefinition>) {
+    t : &MonoType,
+    gen : &mut UIDGenerator, 
+    polytypes : &mut HashMap<PolyTypeId, MonoType>,
+    results : &mut Vec<ResolvedGlobal>) {
     for g in self.globals.iter() {
       if g.name.as_ref() == name {
-        results.push(g.clone());
+        if g.polymorphic {
+          polytypes.clear();
+          if polytype_match(polytypes, t, &g.type_tag) {
+            let resolved_type = polytype_replace(polytypes, &g.type_tag);
+            results.push(ResolvedGlobal { def: g.clone(), resolved_type });
+          }
+        }
+        else {
+          if let Some(resolved_type) = unify_types_internal(&t, &g.type_tag) {
+            results.push(ResolvedGlobal { def: g.clone(), resolved_type });
+          }
+        }
       }
     }
   }
@@ -615,10 +641,8 @@ pub struct TypeDirectory<'a> {
   new_module_id : ModuleId,
   import_types : &'a [&'a TypeInfo],
   new_module : &'a mut TypeInfo,
-  generic_bindings : HashMap<GenericId, Type>,
-  global_results : Vec<GlobalDefinition>,
-  resolved_results : Vec<ResolvedGlobal>,
-  globals_cache : HashMap<RefStr, Vec<(GlobalDefinition, MonoType)>>,
+  polytype_bindings : HashMap<PolyTypeId, MonoType>,
+  global_results : Vec<ResolvedGlobal>,
 }
 
 // TODO: A lot of these functions are slow because they iterate through everything.
@@ -632,15 +656,17 @@ impl <'a> TypeDirectory<'a> {
   {
     TypeDirectory{
       new_module_id, import_types, new_module,
-      generic_bindings: HashMap::new(),
+      polytype_bindings: HashMap::new(),
       global_results: vec![],
-      resolved_results: vec![],
-      globals_cache: HashMap::new(),
     }
   }
 
   pub fn get_global(&mut self, id : GlobalId) -> &mut GlobalDefinition {
     self.new_module.globals.iter_mut().find(|def| def.id == id).unwrap()
+  }
+
+  pub fn get_type_def(&self, name : &str, module_id : ModuleId) -> &TypeDefinition {
+    self.find_module(module_id).find_type_def(name).unwrap()
   }
 
   pub fn create_type_def(&mut self, def : TypeDefinition) {
@@ -651,33 +677,6 @@ impl <'a> TypeDirectory<'a> {
     self.new_module.globals.push(def);
   }
 
-  fn resolve_global(
-    &mut self,
-    name : &str,
-    t : &MonoType,
-    gen : &mut UIDGenerator,
-    globals : &[(GlobalDefinition, MonoType)],
-  )
-      -> Result<&[ResolvedGlobal], MonoTypeError>
-  {
-    self.resolved_results.clear();
-    for (g, monotype) in globals {
-      if g.polymorphic {
-        self.generic_bindings.clear();
-        if generic_match(&mut self.generic_bindings, &t.inner, &g.type_tag) {
-          let resolved_type = replace_polytypes(&g.type_tag, &self.generic_bindings);
-          self.resolved_results.push(ResolvedGlobal { def: g.clone(), resolved_type });
-        }
-      }
-      else {
-        if let Some(t) = unify_types_internal(&t.inner, &g.type_tag) {
-          self.resolved_results.push(ResolvedGlobal { def: g.clone(), resolved_type: monotype.clone() });
-        }
-      }
-    }
-    Ok(self.resolved_results.as_slice())
-  }
-
   /// Returns a slice of all matching definitions
   pub fn find_global(
     &mut self,
@@ -685,24 +684,15 @@ impl <'a> TypeDirectory<'a> {
     t : &MonoType,
     gen : &mut UIDGenerator
   )
-    -> Result<&[ResolvedGlobal], MonoTypeError>
+    -> &[ResolvedGlobal]
   {
-    if let Some(globals) = self.globals_cache.get(name) {
-      self.resolve_global(name, t, gen, globals.as_slice())
+    self.polytype_bindings.clear();
+    self.global_results.clear();
+    self.new_module.find_global(name, t, gen, &mut self.polytype_bindings, &mut self.global_results);
+    for m in self.import_types.iter().rev() {
+      m.find_global(name, t, gen, &mut self.polytype_bindings, &mut self.global_results);
     }
-    else {
-      self.global_results.clear();
-      self.new_module.find_global(name, &mut self.global_results);
-      for m in self.import_types.iter().rev() {
-        m.find_global(name, &mut self.global_results);
-      }
-      let globals_cache = vec![];
-      for g in self.global_results.drain(..) {
-        globals_cache.push((g.clone(), g.type_tag.to_monotype()));
-        self.globals_cache.insert(name.into(), globals_cache);
-      }
-      self.resolve_global(name, t, gen, self.globals_cache.get(name).unwrap().as_slice())
-    }
+    self.global_results.as_slice()
   }
 
   pub fn find_type_def(&self, name : &str) -> Option<&TypeDefinition> {
@@ -714,7 +704,7 @@ impl <'a> TypeDirectory<'a> {
     self.new_module.module_id
   }
 
-  pub fn find_module(&self, module_id : ModuleId) -> &TypeInfo {
+  fn find_module(&self, module_id : ModuleId) -> &TypeInfo {
     [&*self.new_module].iter()
       .chain(self.import_types.iter().rev())
       .find(|t| t.module_id == module_id)

@@ -12,7 +12,7 @@ use crate::inference::CodegenInfo;
 use crate::types::{
   Type, TypeContent, PType, TypeInfo,
   ModuleId, SignatureBuilder, GlobalDefinition,
-  GenericId, GlobalInit,
+  PolyTypeId, GlobalInit,
 };
 use crate::codegen::{Gen, LlvmUnit, dump_module, CompileInfo};
 use crate::modules::{ CompiledModule, TypedModule };
@@ -258,7 +258,7 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
 
   for prim in &[I64.into(), I32.into(), U64.into(), U32.into()] {
     for container in &[Type::ptr_to, Type::array_of] {
-      let gid : GenericId = gen.next().into();
+      let gid : PolyTypeId = gen.next().into();
       let gt : Type = gid.into();
       let gcontainer = container(gt.clone());
       let args = &[&gcontainer, prim];
@@ -266,13 +266,13 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
     }
   }
   {
-    let gid : GenericId = gen.next().into();
+    let gid : PolyTypeId = gen.next().into();
     let gt : Type = gid.into();
     let gptr = Type::ptr_to(gt.clone());
     add_polymorphic_intrinsic(cache, gen, module_id, &mut ti, "*", &[&gptr], &gt);
   }
   {
-    let gid : GenericId = gen.next().into();
+    let gid : PolyTypeId = gen.next().into();
     let gt : Type = gid.into();
     let gptr = Type::ptr_to(gt.clone());
     add_polymorphic_intrinsic(cache, gen, module_id, &mut ti, "&", &[&gt], &gptr);

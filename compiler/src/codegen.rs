@@ -218,11 +218,12 @@ impl <'l> CompileInfo<'l> {
     TypedNode { info: self, node }
   }
 
-  fn find_type_def(&self, name : &str) -> Option<&TypeDefinition> {    
-    self.cg.type_def_references.get(name)
-    .or_else(|| 
-      self.t.find_type_def(name).or_else(||
-        self.compiled_modules.iter().rev().flat_map(|m| m.t.find_type_def(name)).next()))
+  fn find_type_def(&self, name : &str, module_id : ModuleId) -> Option<&TypeDefinition> {
+    if self.t.module_id == module_id { return self.t.find_type_def(name) }
+    for m in self.compiled_modules.iter() {
+      if m.id == module_id { return m.t.find_type_def(name) }
+    }
+    None
   }
 
   fn find_function_address(&self, module_id : ModuleId, name_for_codegen : &str) -> usize {
@@ -279,6 +280,13 @@ impl <'l> TypedNode<'l> {
 
   fn node_symbol_def(&self) -> Option<&GlobalDefinition> {
     self.info.cg.symbol_references.get(&self.node.id)
+  }
+
+  fn node_type_def(&self) -> Option<&TypeDefinition> {
+    if let TypeContent::Def(name, module_id) = &self.type_tag().content {
+      return self.info.find_type_def(name, *module_id);
+    }
+    None
   }
 
   fn is_intrinsic_function(&self) -> bool {
@@ -529,8 +537,8 @@ impl <'l> Gen<'l> {
         let t = self.to_function_type(info, sig.args.as_ref(), &sig.return_type);
         Some(t.ptr_type(AddressSpace::Generic).into())
       }
-      TypeContent::Def(name) => {
-        if let Some(def) = info.find_type_def(&name) {
+      TypeContent::Def(name, module_id) => {
+        if let Some(def) = info.find_type_def(name, *module_id) {
           Some(self.composite_type(info, &def).as_basic_type_enum())
         }
         else {
@@ -546,7 +554,7 @@ impl <'l> Gen<'l> {
         let bt = self.to_basic_type(info, t);
         Some(self.pointer_to_type(bt).into())
       }
-      TypeContent::Generic(_) => panic!(),
+      TypeContent::Polytype(_) => panic!(),
       TypeContent::Abstract(_) => panic!(),
     }
   }
@@ -1256,8 +1264,8 @@ impl <'l, 'a> GenFunction<'l, 'a> {
   }
 
   fn get_linked_drop_reference(&mut self, info : &CompileInfo, t : &Type) -> Option<FunctionValue> {
-    if let TypeContent::Def(name) = &t.content {
-      let def = info.find_type_def(&name).unwrap();
+    if let TypeContent::Def(name, module_id) = &t.content {
+      let def = info.find_type_def(name, *module_id).unwrap();
       if let Some(drop) = &def.drop_function {
         return Some(self.get_linked_function_reference(info, &drop.def));
       }
@@ -1266,8 +1274,8 @@ impl <'l, 'a> GenFunction<'l, 'a> {
   }
 
   fn get_linked_clone_reference(&mut self, info : &CompileInfo, t : &Type) -> Option<FunctionValue> {
-    if let TypeContent::Def(name) = &t.content {
-      let def = info.find_type_def(&name).unwrap();
+    if let TypeContent::Def(name, module_id) = &t.content {
+      let def = info.find_type_def(name, *module_id).unwrap();
       if let Some(clone) = &def.clone_function {
         return Some(self.get_linked_function_reference(info, &clone.def));
       }
@@ -1466,10 +1474,9 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         // compilation, or for any code passed between processes.
         let v = Box::into_raw(e.clone()) as u64;
         let v = self.gen.context.i64_type().const_int(v, false);
-        let def = info.find_type_def("expr").unwrap();
-        let bt = self.gen.composite_type(info, &def).into();
-        let t = self.gen.pointer_to_type(Some(bt));
-        reg(self.builder.build_int_to_ptr(v, t, "quote_expr").into())
+
+        let t = self.gen.to_basic_type(info, node.type_tag()).unwrap(); // should be pointer to expr
+        reg(self.builder.build_int_to_ptr(v, t.into_pointer_type(), "quote_expr").into())
       }
       Content::CBind{ .. } => {
         return Ok(Void);
@@ -1485,8 +1492,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         // TODO: log values that need to be dropped
         let a : Result<Vec<BasicValueEnum>, Error> =
           field_values.iter().map(|(_, a)| self.codegen_value(node.get(*a))).collect();
-        //let def = self.find_type_def(&self.gen.type_info, struct_name).unwrap();
-        let def = info.find_type_def(name).unwrap();
+        let def = node.node_type_def().unwrap();
         match def.kind {
           TypeKind::Struct => {
             self.codegen_struct_initialise(info, &def, a?.as_slice())
@@ -1506,8 +1512,8 @@ impl <'l, 'a> GenFunction<'l, 'a> {
           v = pointer(*ptr.as_pointer_value());
         }
         let def = match &ct.content {
-          TypeContent::Def(name) => {
-            info.find_type_def(&name).unwrap()
+          TypeContent::Def(name, module_id) => {
+            info.find_type_def(name, *module_id).unwrap()
           }
           _ => panic!(),
         };
@@ -1679,7 +1685,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
             let cast_to = self.gen.context.i8_type().ptr_type(AddressSpace::Generic);
             let string_pointer = self.builder.build_pointer_cast(ptr, cast_to, "string_pointer");
             let string_length = self.gen.context.i64_type().const_int(vs.len() as u64, false);
-            let def = info.find_type_def("string").unwrap();
+            let def = node.node_type_def().unwrap();
             self.codegen_struct_initialise(info, &def, &[string_pointer.into(), string_length.into()])
           }
           _ => reg(self.gen.codegen_static(node)?),

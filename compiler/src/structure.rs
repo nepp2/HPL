@@ -53,7 +53,7 @@ pub enum Content {
   FunctionDefinition{ name: RefStr, args: Vec<(Symbol, Option<Box<Expr>>)>, return_tag: Option<Box<Expr>>, polytypes : Vec<RefStr>, body: NodeId },
   CBind { name: RefStr, type_tag : Box<Expr> },
   TypeDefinition{ name: RefStr, kind : TypeKind, fields: Vec<(Symbol, Option<Box<Expr>>)>, polytypes : Vec<RefStr> },
-  TypeConstructor{ name: RefStr, field_values: Vec<(Option<Symbol>, NodeId)> },
+  TypeConstructor{ name: Symbol, field_values: Vec<(Option<Symbol>, NodeId)> },
   FieldAccess{ container: NodeId, field: Symbol },
   ArrayLiteral(Vec<NodeId>),
   FunctionCall{ function: NodeId, args: Vec<NodeId> },
@@ -263,10 +263,8 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     let main_quote = self.node(expr, Quote(Box::new(e.clone())));
     if template_args.len() > 0 {
       let mut coerced_args = vec![];
-      let loc_name = self.cached("text_location");
-      let marker_name = self.cached("text_marker");
       for n in template_args.into_iter() {
-        let loc = self.loc_struct(expr, loc_name.clone(), marker_name.clone());
+        let loc = self.loc_struct(expr);
         let expr_val = self.function_call(expr, "sym", vec![n, loc]);
         let arg = self.function_call(expr, "&", vec![expr_val]);
         coerced_args.push(arg);
@@ -285,7 +283,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     }
     let name_expr = &exprs[0];
     let field_exprs = &exprs[1..];
-    let name = self.cached(name_expr.unwrap_symbol()?);
+    let name = self.expr_to_symbol(name_expr)?;
     let field_values =
       field_exprs.iter().map(|e| {
         if let Some((":", [name, value])) = e.try_construct() {
@@ -582,18 +580,18 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     Ok(t?)
   }
 
-  fn loc_struct(&mut self, expr : &Expr, loc_name : RefStr, marker_name : RefStr) -> NodeId {
+  fn loc_struct(&mut self, expr : &Expr) -> NodeId {
     let start = {
       let col = self.int_literal(expr, expr.loc.start.col as i64);
       let line = self.int_literal(expr, expr.loc.start.line as i64);
-      self.type_constructor(expr, marker_name.clone(), vec![col, line])
+      self.type_constructor(expr, self.t.symbol("text_marker", expr), vec![col, line])
     };
     let end = {
       let col = self.int_literal(expr, expr.loc.end.col as i64);
       let line = self.int_literal(expr, expr.loc.end.line as i64);
-      self.type_constructor(expr, marker_name, vec![col, line])
+      self.type_constructor(expr, self.t.symbol("text_marker", expr), vec![col, line])
     };
-    self.type_constructor(expr, loc_name, vec![start, end])
+    self.type_constructor(expr, self.t.symbol("text_location", expr), vec![start, end])
   }
 
   fn let_var(&mut self, expr : &Expr, name : Symbol, val : NodeId) -> NodeId {
@@ -615,7 +613,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     self.node(expr, function_call)
   }
 
-  fn type_constructor(&mut self, expr : &Expr, name : RefStr, field_values : Vec<NodeId>) -> NodeId {
+  fn type_constructor(&mut self, expr : &Expr, name : Symbol, field_values : Vec<NodeId>) -> NodeId {
     let field_values = field_values.into_iter().map(|a| (None, a)).collect();
     self.node(expr, TypeConstructor{ name, field_values })
   }

@@ -16,7 +16,7 @@ use crate::types::{
   Type, TypeContent, PType, TypeInfo, TypeDefinition, FunctionInit,
   GlobalDefinition, TypeDirectory, GlobalInit, GlobalId, AbstractType,
   SignatureBuilder, unify_types, incremental_unify, IncrementalUnifyResult,
-  GenericId, MonoType, MonoTypeError,
+  PolyTypeId, MonoType,
 };
 use crate::modules::TypedModule;
 
@@ -166,11 +166,8 @@ impl <'a> Inference<'a> {
       Equalivalent(_a, _b) => return,
       // this error should always be accompanied by other unresolved constraints
       Function{ function:_, args:_, return_type:_ } => return,
-      Constructor { type_name, fields:_, result } => {
-        error_raw(self.loc(*result),
-          format!("constructor for '{}' not resolved", type_name))
-      }
-      Convert { val:_, into_type:_ } => return,
+      Constructor { def_ts:_ , fields:_ } => return,
+      Convert { val:_, into_type_ts:_ } => return,
       GlobalDef { global_id, type_symbol:_ } => {
         let def = self.t.get_global(*global_id);
         error_raw(def.loc,
@@ -199,16 +196,11 @@ impl <'a> Inference<'a> {
     self.cg.symbol_references.insert(node, def);
   }
 
-  fn to_monotype(&mut self, t : &Type, loc : TextLocation) -> MonoType {
-    to_monotype(t, &self.t, loc, &mut self.errors)
-  }
-
   fn process_constraint(&mut self, c : &Constraint) {
     use ConstraintContent::*;
     match &c.content  {
       Assert(ts, t) => {
-        let t = self.to_monotype(t, self.loc(*ts));
-        self.update_type(*ts, t);
+        self.update_type(*ts, t.to_monotype());
       }
       Equalivalent(a, b) => {
         if let Some(t) = self.get_type(*a) {
@@ -242,55 +234,58 @@ impl <'a> Inference<'a> {
           self.update_type(*function, sig.into());
         }
       }
-      Constructor { type_name, fields, result } => {
-        if let Some(def) = self.t.find_type_def(type_name) {
-          match def.kind {
-            TypeKind::Struct => {
-              if fields.len() == def.fields.len() {
-                let it = fields.iter().zip(def.fields.iter());
-                let mut arg_types = vec![];
-                for ((field_name, _), (expected_name, expected_type)) in it {
-                  if let Some(field_name) = field_name {
-                    if field_name.name != expected_name.name {
-                      self.errors.push(error_raw(field_name.loc, "incorrect field name"));
+      Constructor { def_ts, fields } => {
+        if let Some(t) = self.get_type(*def_ts) {
+          if let Def(name, module_id) = &t.as_type().content {
+            let def = self.t.get_type_def(name, *module_id);
+            match def.kind {
+              TypeKind::Struct => {
+                if fields.len() == def.fields.len() {
+                  let it = fields.iter().zip(def.fields.iter());
+                  let mut arg_types = vec![];
+                  for ((field_name, _), (expected_name, expected_type)) in it {
+                    if let Some(field_name) = field_name {
+                      if field_name.name != expected_name.name {
+                        self.errors.push(error_raw(field_name.loc, "incorrect field name"));
+                      }
                     }
+                    arg_types.push(expected_type.to_monotype());
                   }
-                  arg_types.push(
-                    to_monotype(expected_type, &self.t, expected_name.loc, &mut self.errors));
+                  for(i, t) in arg_types.into_iter().enumerate() {
+                    self.update_type(fields[i].1, t);
+                  }
                 }
-                for(i, t) in arg_types.into_iter().enumerate() {
-                  self.update_type(fields[i].1, t);
+                else{
+                  let e = error_raw(self.loc(*def_ts), "incorrect number of field arguments for struct");
+                  self.errors.push(e);
                 }
               }
-              else{
-                let e = error_raw(self.loc(*result), "incorrect number of field arguments for struct");
-                self.errors.push(e);
-              }
-            }
-            TypeKind::Union => {
-              if let [(Some(sym), ts)] = fields.as_slice() {
-                if let Some((_, t)) = def.fields.iter().find(|(n, _)| n.name == sym.name) {
-                  let t = self.to_monotype(t, sym.loc);
-                  self.update_type(*ts, t);
+              TypeKind::Union => {
+                if let [(Some(sym), ts)] = fields.as_slice() {
+                  if let Some((_, t)) = def.fields.iter().find(|(n, _)| n.name == sym.name) {
+                    let t = t.to_monotype();
+                    self.update_type(*ts, t);
+                  }
+                  else {
+                    self.errors.push(error_raw(sym.loc, "field does not exist in this union"));
+                  }
                 }
                 else {
-                  self.errors.push(error_raw(sym.loc, "field does not exist in this union"));
+                  let s = format!("incorrect number of field arguments for union '{}'", def.name);
+                  let e = error_raw(self.loc(*def_ts), s);
+                  self.errors.push(e);
                 }
-              }
-              else {
-                let s = format!("incorrect number of field arguments for union '{}'", type_name);
-                let e = error_raw(self.loc(*result), s);
-                self.errors.push(e);
               }
             }
           }
-          let monotype = self.to_monotype(&Type::def(type_name.clone()), self.loc(*result));
-          self.update_type(*result, monotype);
         }
       }
-      Convert { val, into_type } => {
-        if let Some(t) = self.get_type(*val) {
-          if t.as_type().is_concrete() {
+      Convert { val, into_type_ts } => {
+        let t = self.get_type(*val);
+        let into = self.get_type(*into_type_ts);
+        if let [Some(t), Some(into)] = &[t, into] {
+          if t.as_type().is_concrete() && into.as_type().is_concrete() {
+            let (t, into) = (t.as_type(), into.as_type());
             fn abstract_contains(t : &Type, into_type : &Type) -> bool {
               if let Abstract(abs_t) = &t.content {
                 return abs_t.contains_type(into_type);
@@ -298,13 +293,13 @@ impl <'a> Inference<'a> {
               false
             }
             let valid =
-              abstract_contains(t.as_type(), into_type) ||
-              (t.as_type().pointer() && into_type.pointer()) ||
-              (t.as_type().number() && into_type.number()) ||
-              (t.as_type().pointer() && into_type.unsigned_int()) ||
-              (t.as_type().unsigned_int() && into_type.pointer());
+              abstract_contains(t, into) ||
+              (t.pointer() && into.pointer()) ||
+              (t.number() && into.number()) ||
+              (t.pointer() && into.unsigned_int()) ||
+              (t.unsigned_int() && into.pointer());
             if !valid {
-              let s = format!("type conversion from {} into {} not supported", t, into_type);
+              let s = format!("type conversion from {} into {} not supported", t, into);
               self.errors.push(error_raw(self.loc(*val), s));
             }
           }
@@ -348,17 +343,19 @@ impl <'a> Inference<'a> {
         }
       }
       FieldAccess{ container, field, result } => {
-        let ct = self.get_type(*container);
-        if let Some(mut ct) = ct {
+        let container_type = self.get_type(*container);
+        if let Some(ct) = container_type {
+          let mut t = ct.as_type();
           // Dereference any pointers
-          while let Some(inner) = ct.ptr() {
-            ct = inner;
+          while let Some(inner) = t.ptr() {
+            t = inner;
           }
-          if let Def(name) = &ct.content {
+          if let Def(name, module_id) = &t.content {
             if let Some(def) = self.t.find_type_def(&name) {
               let f = def.fields.iter().find(|(n, _)| n.name == field.name);
-              if let Some((_, t)) = f.cloned() {
-                self.update_type(*result, t);
+              if let Some((_, t)) = f {
+                let mt = t.to_monotype();
+                self.update_type(*result, mt);
               }
               else {
                 let s = format!("type '{}' has no field '{}'", def.name, field.name);
@@ -369,15 +366,15 @@ impl <'a> Inference<'a> {
         }
       }
       Array{ array, element } => {
-        if let Some(array_type) = self.get_type(*array) {
-          if let Some(element_type) = array_type.array() {
-            let et = element_type.clone();
-            self.update_type(*element, et);
-          }
-        }
         if let Some(element_type) = self.get_type(*element) {
           let et = element_type.clone();
-          self.update_type(*array, Type::array_of(et));
+          self.update_type(*array, et.array_of());
+        }
+        else if let Some(array_type) = self.get_type(*array) {
+          if let Some(element_type) = array_type.as_type().array() {
+            let et = element_type.to_monotype();
+            self.update_type(*element, et);
+          }
         }
       }
     }
@@ -385,10 +382,8 @@ impl <'a> Inference<'a> {
 
   /// Tries to harden a type symbol into a concrete type
   fn try_harden_type_symbol(&mut self, ts : TypeSymbol) {
-    if let Abstract(ab) = &self.resolved.get(&ts).unwrap().content {
-      if let Some(default) = ab.default_type() {
-        self.update_type(ts, default);
-      }
+    if let Some(default) = self.resolved.get(&ts).unwrap().try_harden_literal() {
+      self.update_type(ts, default);
     }
   }
 
@@ -422,7 +417,7 @@ impl <'a> Inference<'a> {
     // Assign types to all of the nodes
     if self.errors.is_empty() {
       for (n, ts) in self.c.node_symbols.iter() {
-        let t = self.get_type(*ts).unwrap().clone();
+        let t = self.get_type(*ts).unwrap().as_type().clone();
         // Make sure the type isn't abstract
         if t.is_concrete() {
           self.cg.node_type.insert(*n, t);
@@ -434,7 +429,7 @@ impl <'a> Inference<'a> {
     let mut unresolved = 0;
     if self.errors.is_empty() {
       for (ts, _) in self.c.symbols.iter() {
-        if !self.resolved.get(ts).map(|t| t.is_concrete()).unwrap_or(false) {
+        if !self.resolved.get(ts).map(|t| t.as_type().is_concrete()).unwrap_or(false) {
           unresolved += 1;
           for c in self.dependency_map.ts_map.get(ts).unwrap() {
             active_edge_set.insert(c.id, c);
@@ -462,26 +457,6 @@ impl <'a> Inference<'a> {
   }
 }
 
-/// Clones a type while recursively checking that its type definitions
-/// actually exist. Instantiates any type parameters that it may have.
-/// Spits out errors if a type doesn't match the definition.
-fn to_monotype(t : &Type, td : &TypeDirectory, loc : TextLocation, errors : &mut Vec<Error>) -> MonoType {
-  match t.to_monotype(td) {
-    Ok(t) => t,
-    Err(e) => {
-      let e = match e {
-        MonoTypeError::DefDoesNotExist(name) =>
-          error_raw(loc, format!("type {} does not exist", name)),
-        MonoTypeError::WrongNumberOfTypeParameters =>
-          error_raw(loc, "incorrect number of type parameters provided"),
-      };
-      errors.push(e);
-      MonoType::any()
-    },
-  }
-}
-
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct TypeSymbol(u64);
 
@@ -499,21 +474,24 @@ pub enum ConstraintContent {
   Assert(TypeSymbol, Type),
   Equalivalent(TypeSymbol, TypeSymbol),
   Array{ array : TypeSymbol, element : TypeSymbol },
-  Convert{ val : TypeSymbol, into_type : Type },
+  Convert{ val : TypeSymbol, into_type_ts : TypeSymbol },
   FieldAccess {
     container : TypeSymbol,
     field : Symbol,
     result : TypeSymbol,
   },
   Constructor {
-    type_name : RefStr,
+    def_ts : TypeSymbol,
     fields : Vec<(Option<Symbol>, TypeSymbol)>,
-    result : TypeSymbol,
   },
   Function {
     function : TypeSymbol,
     args : Vec<TypeSymbol>,
     return_type : TypeSymbol,
+  },
+  TypeDef {
+    type_def_ts : TypeSymbol,
+    fields : Vec<TypeSymbol>,
   },
   GlobalDef {
     global_id: GlobalId,
@@ -563,14 +541,17 @@ impl <'a> ConstraintDependencyMap<'a> {
         self.ts(array, c);
         self.ts(element, c);
       },
-      Convert{ val, into_type:_ } => self.ts(val, c),
+      Convert{ val, into_type_ts } => {
+        self.ts(val, c);
+        self.ts(into_type_ts, c);
+      }
       FieldAccess { container, field:_, result } => {
         self.ts(container, c);
         self.ts(result, c);
       },
-      Constructor { type_name:_, fields, result } => {
+      Constructor { def_ts, fields } => {
+        self.ts(def_ts, c);
         for (_, ts) in fields { self.ts(ts, c) }
-        self.ts(result, c);
       },
       Function { function, args, return_type } => {
         self.ts(function, c);
@@ -593,9 +574,9 @@ impl  fmt::Display for Constraint {
       Assert(_, t) => write!(f, "Assert {}", t),
       Equalivalent(_, _) => write!(f, "Equalivalent"),
       Array{ .. } => write!(f, "Array"),
-      Convert{ into_type, .. } => write!(f, "Convert into {}", into_type),
+      Convert{ into_type_ts, .. } => write!(f, "Convert"),
       FieldAccess { field, .. } => write!(f, "FieldAccess {}", field.name),
-      Constructor { type_name, .. } => write!(f, "Constructor {}", type_name),
+      Constructor { .. } => write!(f, "Constructor"),
       Function { args, .. } =>
         write!(f, "FunctionCall ({} args)", args.len()),
       GlobalDef { .. } => write!(f, "GlobalDef"),
@@ -653,7 +634,7 @@ fn gather_constraints(
 
 struct GatherConstraints<'l, 't> {
   labels : HashMap<LabelId, TypeSymbol>,
-  polytype_ids : Vec<(RefStr, GenericId)>,
+  polytype_ids : Vec<(RefStr, PolyTypeId)>,
   t : &'l mut TypeDirectory<'t>,
   cg : &'l mut CodegenInfo,
   cache : &'l StringCache,
@@ -924,6 +905,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             }
             let def = TypeDefinition {
               name: name.clone(),
+              module_id: self.t.new_module_id(),
               fields: typed_fields,
               kind: *kind,
               polytypes,
@@ -941,9 +923,9 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           let field = field.clone();
           fields.push((field, field_type_symbol));
         }
-        let tc = Constructor{ type_name: name.clone(), fields, result: ts };
-        let def_type = self.type_def(name.clone(), node.loc);
+        let def_type = self.type_def(name.name.clone(), node.loc);
         self.assert_type(ts, def_type);
+        let tc = Constructor{ def_ts: ts, fields };
         self.constraint(tc);
       }
       Content::FieldAccess{ container, field } => {
@@ -982,7 +964,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
         let v = self.process_node(n, *from_value);
         if let Some(t) = self.try_expr_to_type(into_type) {
           self.assert_type(ts, t.clone());
-          let c = Convert { val: v, into_type: t };
+          let c = Convert { val: v, into_type_ts: ts };
           self.constraint(c);
         }
       }
@@ -1019,11 +1001,11 @@ impl <'l, 't> GatherConstraints<'l, 't> {
 
   fn type_def(&mut self, name : RefStr, loc : TextLocation) -> Type {
     self.type_def_refs.push((name.clone(), loc));
-    Type::def(name)
+    Type::unresolved_def(name)
   }
 
   fn with_polytypes<F>(&mut self, polytypes : &[RefStr], f : F)
-    where F : Fn(&mut GatherConstraints, Vec<GenericId>)
+    where F : Fn(&mut GatherConstraints, Vec<PolyTypeId>)
   {
     let mut polytype_ids = vec![];
     for pt in polytypes.iter() {
@@ -1077,13 +1059,13 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           "ptr" => {
             if let [t] = &exprs[1..] {
               let t = self.expr_to_type(t)?;
-              return Ok(Type::ptr_to(t))
+              return Ok(t.ptr_to())
             }
           }
           "array" => {
             if let [t] = &exprs[1..] {
               let t = self.expr_to_type(t)?;
-              return Ok(Type::array_of(t))
+              return Ok(t.array_of())
             }
           }
           name => {
