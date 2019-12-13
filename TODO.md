@@ -1,3 +1,15 @@
+# THOUGHTS - 13/12/2019
+
+There is a huge bug in the way types are resolved. Defs are resolved by looking up their name in the list of supplied modules, but this goes for all the defs in the supplied modules too. Since the modules passed in might reference different modules, this is very broken.
+
+## Solution
+1. A def should be an abstract type until it is resolved to a specific typedef id.
+  (what about a global reference?)
+
+2. The type directory has access to every single module loaded, so that it can look up all types referenced by the modules it uses.
+
+3. Monotype possibly stays, but just strips generic IDs and replaces them with the Any type
+
 # THOUGHTS - 06/12/2019
 
 Implementing polymorphic functions requires:
