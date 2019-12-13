@@ -54,7 +54,7 @@ pub enum TypeContent {
   /// Primitive type (e.g. int, float, bool, etc)
   Prim(PType),
   Fun,
-  Def(RefStr),
+  Def(RefStr, ModuleId),
   Array,
   Ptr,
   Abstract(AbstractType),
@@ -112,47 +112,17 @@ fn generic_replace(generics : &HashMap<GenericId, Type>, gen : &mut UIDGenerator
   }
 }
 
-fn to_mono_internal(t : &Type, td : &TypeDirectory) -> Result<MonoType, MonoTypeError> {
-  if let Def(name) = &t.content {
-    if let Some(def) = td.find_type_def(name) {
-      let len = def.polytypes.len();
-      if t.children.len() != len && t.children.len() != 0 {
-        return Err(MonoTypeError::WrongNumberOfTypeParameters);
-      }
-      let mut children = vec![];
-      for i in 0..len {
-        if let Some(c) = t.children.get(i) {
-          children.push(to_mono_internal(c, td)?.inner);
-        }
-        else {
-          children.push(Type::any());
-        }
-      }
-      return Ok(MonoType { inner: Type::new(t.content.clone(), children) });
-    }
-    return Err(MonoTypeError::DefDoesNotExist(name.as_ref().into()));
-  }
+fn replace_polytypes(t : &Type, poly_map : &HashMap<GenericId, Type>) -> MonoType {
   if let Generic(gid) = &t.content {
-    panic!("found unexpected polytype")
+    let t = poly_map.get(&gid).cloned().unwrap_or_else(||Type::any());
+    return MonoType { inner: t };
   }
   let content = t.content.clone();
   let mut children = vec![];
   for c in t.children.iter() {
-    children.push(to_mono_internal(c, td)?.inner);
+    children.push(replace_polytypes(c, poly_map).inner);
   }
-  Ok(MonoType { inner: Type::new(content, children) })
-}
-
-fn replace_polytypes(t : &Type, poly_map : &HashMap<GenericId, Type>) -> Type {
-  if let Generic(gid) = &t.content {
-    return poly_map.get(&gid).cloned().unwrap_or_else(||Type::any());
-  }
-  let content = t.content.clone();
-  let mut children = vec![];
-  for c in t.children.iter() {
-    children.push(replace_polytypes(c, poly_map));
-  }
-  Type::new(content, children)
+  MonoType { inner: Type::new(content, children) }
 }
   
 fn generic_match(generics : &mut HashMap<GenericId, Type>, t : &Type, gt : &Type) -> bool {
@@ -270,7 +240,7 @@ impl Type {
   }
 
   pub fn def(s : RefStr) -> Type {
-    Type::new(Def(s), vec![])
+    Type::new(Abstract(AbstractType::Def(s)), vec![])
   }
 
   pub fn ptr_to(t : Type) -> Self {
@@ -303,16 +273,25 @@ impl Type {
     self.children.as_slice()
   }
 
-  pub fn to_monotype(&self, td : &TypeDirectory) -> Result<MonoType, MonoTypeError> {
-    Ok(to_mono_internal(self, td)?)
+  pub fn to_monotype(&self) -> MonoType {
+    let content = match &self.content {
+      Generic(gid) => Abstract(AbstractType::Any),
+      _ => self.content.clone(),
+    };
+    let mut children = vec![];
+    for c in self.children.iter() {
+      children.push(c.to_monotype().inner);
+    }
+    MonoType { inner: Type::new(content, children) }
   }
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum AbstractType {
   Float,
   Integer,
   Any,
+  Def(RefStr),
 }
 
 impl AbstractType {
@@ -321,6 +300,7 @@ impl AbstractType {
       AbstractType::Float => t.float(),
       AbstractType::Integer => t.int(),
       AbstractType::Any => true,
+      AbstractType::Def(_) => panic!(),
     }
   }
 
@@ -421,7 +401,7 @@ impl  fmt::Display for Type {
         write!(f, "fun({}) => {}", 
           sig.args.iter().join(", "), sig.return_type)
       }
-      Def(name) => write!(f, "{}", name),
+      Def(name, _) => write!(f, "{}", name),
       Array => write!(f, "array({})", self.array().unwrap()),
       Ptr => write!(f, "ptr({})", self.ptr().unwrap()),
       Prim(t) => write!(f, "{:?}", t),
@@ -685,8 +665,7 @@ impl <'a> TypeDirectory<'a> {
       if g.polymorphic {
         self.generic_bindings.clear();
         if generic_match(&mut self.generic_bindings, &t.inner, &g.type_tag) {
-          let t = replace_polytypes(&g.type_tag, &self.generic_bindings);
-          let resolved_type = to_mono_internal(&t, self)?;
+          let resolved_type = replace_polytypes(&g.type_tag, &self.generic_bindings);
           self.resolved_results.push(ResolvedGlobal { def: g.clone(), resolved_type });
         }
       }
@@ -719,7 +698,7 @@ impl <'a> TypeDirectory<'a> {
       }
       let globals_cache = vec![];
       for g in self.global_results.drain(..) {
-        globals_cache.push((g.clone(), g.type_tag.to_monotype(self)?));
+        globals_cache.push((g.clone(), g.type_tag.to_monotype()));
         self.globals_cache.insert(name.into(), globals_cache);
       }
       self.resolve_global(name, t, gen, self.globals_cache.get(name).unwrap().as_slice())
