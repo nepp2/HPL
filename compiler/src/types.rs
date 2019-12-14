@@ -281,7 +281,7 @@ impl Type {
 
   pub fn to_monotype(&self) -> MonoType {
     let content = match &self.content {
-      Polytype(gid) => Abstract(AbstractType::Any),
+      Polytype(_) => Abstract(AbstractType::Any),
       _ => self.content.clone(),
     };
     let mut children = vec![];
@@ -301,29 +301,35 @@ pub enum AbstractType {
 }
 
 impl AbstractType {
-  pub fn contains_type(self, t : &Type) -> bool {
+  pub fn contains_type(&self, t : &Type) -> bool {
     match self {
       AbstractType::Float => t.float(),
       AbstractType::Integer => t.int(),
       AbstractType::Any => true,
-      AbstractType::Def(_) => panic!(),
+      AbstractType::Def(name) => {
+        if let Def(resolved_name, _) = &t.content {
+          return resolved_name == name;
+        }
+        false
+      }
     }
   }
 
-  pub fn matches_type(self, t : &Type) -> bool {
-    if let Abstract(a) = &t.content {
-      self == *a
-    }
-    else {
-      self.contains_type(t)
-    }
-  }
+  // pub fn matches_type(&self, t : &Type) -> bool {
+  //   if let Abstract(a) = &t.content {
+  //     self == a
+  //   }
+  //   else {
+  //     self.contains_type(t)
+  //   }
+  // }
 
-  pub fn default_type(self) -> Option<Type> {
+  pub fn default_type(&self) -> Option<Type> {
     match self {
       AbstractType::Float => Some(PType::F64.into()),
       AbstractType::Integer => Some(PType::I64.into()),
       AbstractType::Any => None,
+      AbstractType::Def(_) => None,
     }
   }
 }
@@ -433,7 +439,7 @@ impl  Type {
   }
 
   pub fn to_concrete(&mut self) -> Result<(), ()> {
-    match self.content {
+    match &self.content {
       Abstract(at) => {
         if let Some(t) = at.default_type() {
           *self = t;
@@ -602,7 +608,6 @@ impl TypeInfo {
     &'a self,
     name : &str,
     t : &MonoType,
-    gen : &mut UIDGenerator, 
     polytypes : &mut HashMap<PolyTypeId, MonoType>,
     results : &mut Vec<ResolvedGlobal>) {
     for g in self.globals.iter() {
@@ -682,15 +687,14 @@ impl <'a> TypeDirectory<'a> {
     &mut self,
     name : &str,
     t : &MonoType,
-    gen : &mut UIDGenerator
   )
     -> &[ResolvedGlobal]
   {
     self.polytype_bindings.clear();
     self.global_results.clear();
-    self.new_module.find_global(name, t, gen, &mut self.polytype_bindings, &mut self.global_results);
+    self.new_module.find_global(name, t, &mut self.polytype_bindings, &mut self.global_results);
     for m in self.import_types.iter().rev() {
-      m.find_global(name, t, gen, &mut self.polytype_bindings, &mut self.global_results);
+      m.find_global(name, t, &mut self.polytype_bindings, &mut self.global_results);
     }
     self.global_results.as_slice()
   }

@@ -168,6 +168,7 @@ impl <'a> Inference<'a> {
       Function{ function:_, args:_, return_type:_ } => return,
       Constructor { def_ts:_ , fields:_ } => return,
       Convert { val:_, into_type_ts:_ } => return,
+      TypeDef { .. } => return,
       GlobalDef { global_id, type_symbol:_ } => {
         let def = self.t.get_global(*global_id);
         error_raw(def.loc,
@@ -176,7 +177,7 @@ impl <'a> Inference<'a> {
       GlobalReference { node:_, name, result } => {
         let any = MonoType::any();
         let t = self.resolved.get(result).unwrap_or(&any);
-        let symbols = self.t.find_global(&name, t, self.gen);
+        let symbols = self.t.find_global(&name, t);
         let s = symbols.iter().map(|g| format!("      {} : {}", g.def.name, g.resolved_type)).join("\n");
         error_raw(self.loc(*result),
           format!("Reference '{}' of type '{}' not resolved\n   Symbols available:\n{}", name, t, s))
@@ -305,11 +306,14 @@ impl <'a> Inference<'a> {
           }
         }
       }
+      TypeDef { type_def_ts, fields } => {
+        panic!("not implemented")
+      }
       GlobalDef{ global_id, type_symbol } => {
         if let Some(t) = self.resolved.get(type_symbol) {
           let def = self.t.get_global(*global_id);
           if !def.polymorphic {
-            let monotype = self.to_monotype(&def.type_tag, self.loc(*type_symbol));
+            let monotype = def.type_tag.to_monotype();
             if let Some(unified_type) = unify_types(t, &monotype) {
               def.type_tag = unified_type.into();
               // Trigger any constraints looking for this name or type
@@ -329,7 +333,7 @@ impl <'a> Inference<'a> {
       GlobalReference { node, name, result } => {
         let any = MonoType::any();
         let t = self.get_type(*result).cloned().unwrap_or(any);
-        match self.t.find_global(&name, &t, self.gen) {
+        match self.t.find_global(&name, &t) {
           [g] => {
             let g = g.clone();
             self.register_def(*node, g.def);
@@ -351,16 +355,15 @@ impl <'a> Inference<'a> {
             t = inner;
           }
           if let Def(name, module_id) = &t.content {
-            if let Some(def) = self.t.find_type_def(&name) {
-              let f = def.fields.iter().find(|(n, _)| n.name == field.name);
-              if let Some((_, t)) = f {
-                let mt = t.to_monotype();
-                self.update_type(*result, mt);
-              }
-              else {
-                let s = format!("type '{}' has no field '{}'", def.name, field.name);
-                self.errors.push(error_raw(field.loc, s));
-              }
+            let def = self.t.get_type_def(&name, *module_id);
+            let f = def.fields.iter().find(|(n, _)| n.name == field.name);
+            if let Some((_, t)) = f {
+              let mt = t.to_monotype();
+              self.update_type(*result, mt);
+            }
+            else {
+              let s = format!("type '{}' has no field '{}'", def.name, field.name);
+              self.errors.push(error_raw(field.loc, s));
             }
           }
         }
@@ -558,6 +561,10 @@ impl <'a> ConstraintDependencyMap<'a> {
         for ts in args { self.ts(ts, c) }
         self.ts(return_type, c);
       },
+      TypeDef { type_def_ts, fields } => {
+        self.ts(type_def_ts, c);
+        for ts in fields { self.ts(ts, c) }
+      }
       GlobalDef { global_id:_, type_symbol } => self.ts(type_symbol, c),
       GlobalReference { node:_, name, result } => {
         self.global(name, c);
@@ -574,11 +581,12 @@ impl  fmt::Display for Constraint {
       Assert(_, t) => write!(f, "Assert {}", t),
       Equalivalent(_, _) => write!(f, "Equalivalent"),
       Array{ .. } => write!(f, "Array"),
-      Convert{ into_type_ts, .. } => write!(f, "Convert"),
+      Convert{ .. } => write!(f, "Convert"),
       FieldAccess { field, .. } => write!(f, "FieldAccess {}", field.name),
       Constructor { .. } => write!(f, "Constructor"),
       Function { args, .. } =>
         write!(f, "FunctionCall ({} args)", args.len()),
+      TypeDef { .. } => write!(f, "TypeDef"),  
       GlobalDef { .. } => write!(f, "GlobalDef"),
       GlobalReference { name, .. } => write!(f, "GlobalRef {}", name),
     }
@@ -712,11 +720,16 @@ impl <'l, 't> GatherConstraints<'l, 't> {
     self.constraint(ConstraintContent::Assert(ts, t));
   }
 
-  fn tagged_symbol(&mut self, ts : TypeSymbol, type_expr : &Option<Box<Expr>>) {
+  fn tag_symbol(&mut self, ts : TypeSymbol, type_expr : &Expr) {
+    let r = self.expr_to_type(type_expr);
+    if let Some(t) = self.log_error(r) {
+      self.assert_type(ts, t);
+    }
+  }
+
+  fn try_tag_symbol(&mut self, ts : TypeSymbol, type_expr : &Option<Box<Expr>>) {
     if let Some(type_expr) = type_expr {
-      if let Some(t) = self.try_expr_to_type(type_expr) {
-        self.assert_type(ts, t);
-      }
+      self.tag_symbol(ts, type_expr);
     }
   }
 
@@ -749,7 +762,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           VarScope::Local => self.variable_to_type_symbol(name),
           VarScope::Global(_) => self.type_symbol(name.loc),
         };
-        self.tagged_symbol(var_type_symbol, type_tag);
+        self.try_tag_symbol(var_type_symbol, type_tag);
         let vid = self.process_node(n, *value);
         self.equalivalent(var_type_symbol, vid);
         if let VarScope::Global(global_type) = *var_scope {
@@ -832,13 +845,13 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             );
             gc.process_node(n, *body)
           };
-          gc.tagged_symbol(body_ts, return_tag);
+          gc.try_tag_symbol(body_ts, return_tag);
           let mut arg_types : Vec<TypeSymbol> = vec![];
           let mut arg_names = vec!();
           for (arg, type_tag) in args.iter() {
             arg_names.push(arg.clone());
             let arg_type_symbol = gc.variable_to_type_symbol(arg);
-            gc.tagged_symbol(arg_type_symbol, type_tag);
+            gc.try_tag_symbol(arg_type_symbol, type_tag);
             arg_types.push(arg_type_symbol);
           }
           let global_ts = gc.type_symbol(node.loc);
@@ -905,7 +918,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             }
             let def = TypeDefinition {
               name: name.clone(),
-              module_id: self.t.new_module_id(),
+              module_id: gc.t.new_module_id(),
               fields: typed_fields,
               kind: *kind,
               polytypes,
@@ -962,11 +975,9 @@ impl <'l, 't> GatherConstraints<'l, 't> {
       }
       Content::Convert{ from_value, into_type } => {
         let v = self.process_node(n, *from_value);
-        if let Some(t) = self.try_expr_to_type(into_type) {
-          self.assert_type(ts, t.clone());
-          let c = Convert { val: v, into_type_ts: ts };
-          self.constraint(c);
-        }
+        self.tag_symbol(ts, into_type);
+        let c = Convert { val: v, into_type_ts: ts };
+        self.constraint(c);
       }
       Content::SizeOf{ type_tag } => {
         if let Some(t) = self.try_expr_to_type(type_tag) {
@@ -992,11 +1003,6 @@ impl <'l, 't> GatherConstraints<'l, 't> {
       }
     }
     ts
-  }
-
-  fn try_expr_to_type(&mut self, e : &Expr) -> Option<Type> {
-    let r = self.expr_to_type(e);
-    self.log_error(r)
   }
 
   fn type_def(&mut self, name : RefStr, loc : TextLocation) -> Type {
