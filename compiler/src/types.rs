@@ -3,7 +3,7 @@ use std::fmt;
 use itertools::Itertools;
 
 use crate::error::TextLocation;
-use crate::expr::{UIDGenerator, RefStr};
+use crate::expr::RefStr;
 use crate::structure::{
   NodeId, TypeKind, Symbol
 };
@@ -40,6 +40,25 @@ pub enum PType {
 }
 
 use PType::*;
+
+impl PType {
+  pub fn from_string(s : &str) -> Option<PType> {
+    let pt = match s {
+      "f64" => F64,
+      "f32" => F32,
+      "bool" => Bool,
+      "i64" => I64,
+      "u64" => U64,
+      "i32" => I32,
+      "u32" => U32,
+      "u16" => U16,
+      "u8" => U8,
+      "()" => Void,
+      _ => return None,
+    };
+    Some(pt)
+  }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Type {
@@ -315,15 +334,6 @@ impl AbstractType {
     }
   }
 
-  // pub fn matches_type(&self, t : &Type) -> bool {
-  //   if let Abstract(a) = &t.content {
-  //     self == a
-  //   }
-  //   else {
-  //     self.contains_type(t)
-  //   }
-  // }
-
   pub fn default_type(&self) -> Option<Type> {
     match self {
       AbstractType::Float => Some(PType::F64.into()),
@@ -458,20 +468,7 @@ impl  Type {
   }
 
   pub fn from_string(s : &str) -> Option<Type> {
-    let pt = match s {
-      "f64" => F64,
-      "f32" => F32,
-      "bool" => Bool,
-      "i64" => I64,
-      "u64" => U64,
-      "i32" => I32,
-      "u32" => U32,
-      "u16" => U16,
-      "u8" => U8,
-      "()" => Void,
-      _ => return None,
-    };
-    Some(pt.into())
+    PType::from_string(s).map(|pt| pt.into())
   }
 
   pub fn float(&self) -> bool {
@@ -674,6 +671,10 @@ impl <'a> TypeDirectory<'a> {
     self.find_module(module_id).find_type_def(name).unwrap()
   }
 
+  pub fn get_type_def_mut(&mut self, name : &str) -> &mut TypeDefinition {
+    self.new_module.type_defs.get_mut(name).unwrap()
+  }
+
   pub fn create_type_def(&mut self, def : TypeDefinition) {
     self.new_module.type_defs.insert(def.name.clone(), def);
   }
@@ -713,6 +714,27 @@ impl <'a> TypeDirectory<'a> {
       .chain(self.import_types.iter().rev())
       .find(|t| t.module_id == module_id)
       .expect("module not found")
+  }
+
+  pub fn resolve_abstract_defs<'l>(&mut self, t : &'l Type) -> Result<MonoType, &'l str> {
+    let mut children = vec![];
+    for c in t.children() {
+      let c = self.resolve_abstract_defs(c)?;
+      children.push(c.into())
+    }
+    let content = match &t.content {
+      Abstract(AbstractType::Def(name)) => {
+        if let Some(def) = self.find_type_def(name) {
+          Def(name.clone(), def.module_id)
+        }
+        else {
+          return Err(name.as_ref())
+        }
+      }
+      Polytype(_) => Abstract(AbstractType::Any),
+      _ => t.content.clone(),
+    };
+    Ok(MonoType{ inner: Type::new(content, children) })
   }
 }
 

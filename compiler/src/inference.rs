@@ -189,6 +189,9 @@ impl <'a> Inference<'a> {
       Array{ array, element:_ } => {
         error_raw(self.loc(*array), "array literal not resolved")
       }
+      SizeOf { node:_, ts } => {
+        error_raw(self.loc(*ts), "sizeof type not resolved")
+      }
     };
     self.errors.push(e);
   }
@@ -201,7 +204,15 @@ impl <'a> Inference<'a> {
     use ConstraintContent::*;
     match &c.content  {
       Assert(ts, t) => {
-        self.update_type(*ts, t.to_monotype());
+        match self.t.resolve_abstract_defs(t) {
+          Ok(t) =>
+            self.update_type(*ts, t),
+          Err(def_name) => {
+            let e = error_raw(self.loc(*ts),
+              format!("type definition '{}' was not found", def_name));
+            self.errors.push(e);
+          }
+        }
       }
       Equalivalent(a, b) => {
         if let Some(t) = self.get_type(*a) {
@@ -307,6 +318,19 @@ impl <'a> Inference<'a> {
         }
       }
       TypeDef { type_def_ts, fields } => {
+        if let Some(t) = self.resolved.get(type_def_ts) {
+          if let Def(name, _) = &t.as_type().content {
+            let field_types : Vec<_> =
+              fields.iter()
+                .map(|f| self.resolved.get(type_def_ts)
+                    .cloned().unwrap_or(MonoType::any()))
+                .collect();
+            let def = self.t.get_type_def_mut(name);
+            for (i, (_, field_type)) in def.fields.iter_mut().enumerate() {
+              self.update_type_mut(fields[i], field_type);
+            }
+          }
+        }
         panic!("not implemented")
       }
       GlobalDef{ global_id, type_symbol } => {
@@ -377,6 +401,14 @@ impl <'a> Inference<'a> {
           if let Some(element_type) = array_type.as_type().array() {
             let et = element_type.to_monotype();
             self.update_type(*element, et);
+          }
+        }
+      }
+      SizeOf { node, ts } => {
+        if let Some(t) = self.get_type(*ts) {
+          if t.as_type().is_concrete() {
+            let t = t.clone().into();
+            self.cg.sizeof_info.insert(*node, t);
           }
         }
       }
@@ -478,6 +510,7 @@ pub enum ConstraintContent {
   Equalivalent(TypeSymbol, TypeSymbol),
   Array{ array : TypeSymbol, element : TypeSymbol },
   Convert{ val : TypeSymbol, into_type_ts : TypeSymbol },
+  SizeOf{ node : NodeId, ts : TypeSymbol },
   FieldAccess {
     container : TypeSymbol,
     field : Symbol,
@@ -570,6 +603,9 @@ impl <'a> ConstraintDependencyMap<'a> {
         self.global(name, c);
         self.ts(result, c);
       }
+      SizeOf { node:_, ts } => {
+        self.ts(ts, c);
+      }
     }
   }
 }
@@ -589,6 +625,7 @@ impl  fmt::Display for Constraint {
       TypeDef { .. } => write!(f, "TypeDef"),  
       GlobalDef { .. } => write!(f, "GlobalDef"),
       GlobalReference { name, .. } => write!(f, "GlobalRef {}", name),
+      SizeOf{ .. } => write!(f, "SizeOf"),
     }
   }
 }
@@ -721,8 +758,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
   }
 
   fn tag_symbol(&mut self, ts : TypeSymbol, type_expr : &Expr) {
-    let r = self.expr_to_type(type_expr);
-    if let Some(t) = self.log_error(r) {
+    if let Some(t) = self.expr_to_type(type_expr) {
       self.assert_type(ts, t);
     }
   }
@@ -836,7 +872,6 @@ impl <'l, 't> GatherConstraints<'l, 't> {
       Content::FunctionDefinition{ name, args, return_tag, polytypes, body } => {
         self.assert(ts, PType::Void);
         self.with_polytypes(polytypes.as_slice(), |gc, polytypes| {
-          let global_id = gc.gen.next().into();
           let body_ts = {
             // Need new scope stack for new function
             let mut gc = GatherConstraints::new(
@@ -860,6 +895,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             args: arg_types,
             return_type: body_ts,
           });
+          let global_id = gc.gen.next().into();
           gc.constraint(GlobalDef {
             global_id,
             type_symbol: global_ts,
@@ -887,19 +923,23 @@ impl <'l, 't> GatherConstraints<'l, 't> {
       Content::CBind { name, type_tag } => {
         self.assert(ts, PType::Void);
         let cbind_ts = self.type_symbol(node.loc);
-        if let Some(t) = self.try_expr_to_type(type_tag) {
-          self.assert_type(cbind_ts, t.clone());
-          let g = GlobalDefinition {
-            id: self.gen.next().into(),
-            module_id: self.t.new_module_id(),
-            name: name.clone(),
-            initialiser: GlobalInit::CBind,
-            type_tag: t,
-            polymorphic: false,
-            loc: node.loc,
-          };
-          self.t.create_global(g);
+        if let Some(t) = self.expr_to_type(type_tag) {
+          self.assert_type(cbind_ts, t);
         }
+        let global_id = self.gen.next().into();
+        self.constraint(GlobalDef {
+          global_id,
+          type_symbol: cbind_ts,
+        });
+        self.t.create_global(GlobalDefinition {
+          id: self.gen.next().into(),
+          module_id: self.t.new_module_id(),
+          name: name.clone(),
+          initialiser: GlobalInit::CBind,
+          type_tag: Type::any(),
+          polymorphic: false,
+          loc: node.loc,
+        });
       }
       Content::TypeDefinition{ name, kind, fields, polytypes } => {
         self.assert(ts, PType::Void);
@@ -912,9 +952,9 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             // TODO: check for duplicate fields?
             let mut typed_fields = vec![];
             for (field, type_tag) in fields.iter() {
-              if let Some(t) = gc.try_expr_to_type(type_tag.as_ref().unwrap()) {
-                typed_fields.push((field.clone(), t));
-              }
+              let field_ts = gc.type_symbol(field.loc);
+              gc.try_tag_symbol(field_ts, type_tag);
+              typed_fields.push((field.clone(), Type::any()));
             }
             let def = TypeDefinition {
               name: name.clone(),
@@ -980,9 +1020,11 @@ impl <'l, 't> GatherConstraints<'l, 't> {
         self.constraint(c);
       }
       Content::SizeOf{ type_tag } => {
-        if let Some(t) = self.try_expr_to_type(type_tag) {
-          self.cg.sizeof_info.insert(node.id, t);
-        }
+        let size_ts = self.expr_to_type_symbol(type_tag);
+        self.constraint(SizeOf{
+          node: id,
+          ts : size_ts
+        });
         self.assert(ts, PType::U64);
       }
       Content::Label{ label, body } => {
@@ -1035,56 +1077,67 @@ impl <'l, 't> GatherConstraints<'l, 't> {
       return self.type_def(name, loc);
   }
 
-  /// Converts expression into type. Logs symbol error if definition references a type that hasn't been defined yet
-  /// These symbol errors may be resolved later, when the rest of the module has been checked.
-  fn expr_to_type(&mut self, expr : &Expr) -> Result<Type, Error> {
-    if let Some(name) = expr.try_symbol() {
-      // Check for primitive types
-      if let Some(t) = Type::from_string(name) {
-        return Ok(t);
-      }
-      return Ok(self.symbol_to_type(expr.loc, name));
+  fn expr_to_type_symbol(&mut self, expr : &Expr) -> TypeSymbol {
+    let ts = self.type_symbol(expr.loc);
+    if let Some(t) = self.expr_to_type(expr) {
+      self.assert_type(ts, t);
     }
-    match expr.try_construct() {
-      Some(("fun", es)) => {
-        if let Some(args) = es.get(0) {
-          let return_type = 
-            if let Some(t) = es.get(1) { self.expr_to_type(t)? }
-            else { PType::Void.into() };
-          let mut sig = SignatureBuilder::new(return_type);
-          for e in args.children().iter() {
-            let e = if let Some((":", [_name, tag])) = e.try_construct() {tag} else {e};
-            sig.append_arg(self.expr_to_type(e)?);
-          }
-          return Ok(sig.into());
+    ts
+  }
+
+  /// Converts expression into type.
+  fn expr_to_type(&mut self, expr : &Expr) -> Option<Type> {
+    fn expr_to_type_internal(gc: &mut GatherConstraints, expr : &Expr) -> Result<Type, Error> {
+      if let Some(name) = expr.try_symbol() {
+        // Check for primitive types
+        if let Some(t) = Type::from_string(name) {
+          return Ok(t);
         }
+        return Ok(gc.symbol_to_type(expr.loc, name));
       }
-      Some(("call", exprs)) => {
-        let name = &exprs[0];
-        match name.unwrap_symbol()? {
-          "ptr" => {
-            if let [t] = &exprs[1..] {
-              let t = self.expr_to_type(t)?;
-              return Ok(t.ptr_to())
+      match expr.try_construct() {
+        Some(("fun", es)) => {
+          if let Some(args) = es.get(0) {
+            let return_type = 
+              if let Some(t) = es.get(1) { expr_to_type_internal(gc, t)? }
+              else { PType::Void.into() };
+            let mut sig = SignatureBuilder::new(return_type);
+            for e in args.children().iter() {
+              let e = if let Some((":", [_name, tag])) = e.try_construct() {tag} else {e};
+              sig.append_arg(expr_to_type_internal(gc, e)?);
             }
-          }
-          "array" => {
-            if let [t] = &exprs[1..] {
-              let t = self.expr_to_type(t)?;
-              return Ok(t.array_of())
-            }
-          }
-          name => {
-            let mut t = self.symbol_to_type(exprs[0].loc, name);
-            for e in &exprs[1..] {
-              t.children.push(self.expr_to_type(e)?);
-            }
-            return Ok(t);
+            return Ok(sig.into());
           }
         }
+        Some(("call", exprs)) => {
+          let name = &exprs[0];
+          match name.unwrap_symbol()? {
+            "ptr" => {
+              if let [t] = &exprs[1..] {
+                let t = expr_to_type_internal(gc, t)?;
+                return Ok(t.ptr_to())
+              }
+            }
+            "array" => {
+              if let [t] = &exprs[1..] {
+                let t = expr_to_type_internal(gc, t)?;
+                return Ok(t.array_of())
+              }
+            }
+            name => {
+              let mut t = gc.symbol_to_type(exprs[0].loc, name);
+              for e in &exprs[1..] {
+                t.children.push(expr_to_type_internal(gc, e)?);
+              }
+              return Ok(t);
+            }
+          }
+        }
+        _ => ()
       }
-      _ => ()
+      error(expr, format!("invalid type expression {}", expr))
     }
-    error(expr, format!("invalid type expression {}", expr))
+    let r = expr_to_type_internal(self, expr);
+    self.log_error(r)
   }
 }

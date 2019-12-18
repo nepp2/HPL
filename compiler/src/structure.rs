@@ -584,14 +584,17 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     let start = {
       let col = self.int_literal(expr, expr.loc.start.col as i64);
       let line = self.int_literal(expr, expr.loc.start.line as i64);
-      self.type_constructor(expr, self.t.symbol("text_marker", expr), vec![col, line])
+      let text_marker = self.t.symbol("text_marker", expr);
+      self.type_constructor(expr, text_marker, vec![col, line])
     };
     let end = {
       let col = self.int_literal(expr, expr.loc.end.col as i64);
       let line = self.int_literal(expr, expr.loc.end.line as i64);
-      self.type_constructor(expr, self.t.symbol("text_marker", expr), vec![col, line])
+      let text_marker = self.t.symbol("text_marker", expr);
+      self.type_constructor(expr, text_marker, vec![col, line])
     };
-    self.type_constructor(expr, self.t.symbol("text_location", expr), vec![start, end])
+    let text_location = self.t.symbol("text_location", expr);
+    self.type_constructor(expr, text_location, vec![start, end])
   }
 
   fn let_var(&mut self, expr : &Expr, name : Symbol, val : NodeId) -> NodeId {
