@@ -496,43 +496,58 @@ impl  Type {
   }
 }
 
-#[derive(PartialEq)]
-pub enum IncrementalUnifyResult {
-  ChangedOld,
-  EqualOrSubsumedByOld,
-  Failure,
+//#[derive(PartialEq)]
+pub struct UnifyResult {
+  pub fully_unified : bool,
+  pub old_type_changed : bool,
+  pub new_type_changed : bool,
 }
 
-pub fn incremental_unify(old : &MonoType, new : &mut MonoType) -> IncrementalUnifyResult {
-  incremental_unify_internal(&old.inner, &mut new.inner)
+impl UnifyResult {
+  fn new() -> Self {
+    UnifyResult { fully_unified: false, old_type_changed: false, new_type_changed: false }
+  }
 }
 
-fn incremental_unify_internal(old : &Type, new : &mut Type) -> IncrementalUnifyResult {
-  use IncrementalUnifyResult::*;
-  if let Polytype(_) = &old.content { return Failure }
-  if let Polytype(_) = &new.content { return Failure }
-  if old.content != new.content {
-    if let Abstract(abs_old) = &old.content {
-      if abs_old.contains_type(new) { return ChangedOld }
-    }
-    if let Abstract(abs_new) = &new.content {
-      if abs_new.contains_type(old) {
-        *new = old.to_monotype().inner;
-        return EqualOrSubsumedByOld;
+pub fn incremental_unify_monomorphic(old : &MonoType, new : &mut MonoType) -> UnifyResult {
+  incremental_unify_polymorphic(old, &mut new.inner)
+}
+
+pub fn incremental_unify_polymorphic(old : &MonoType, new : &mut Type) -> UnifyResult {
+  let mut result = UnifyResult::new();
+  match incremental_unify_internal(old.as_type(), new, &mut result) {
+    Ok(()) => result.fully_unified = true,
+    Err(()) => (),
+  }
+  result
+}
+
+fn incremental_unify_internal(old_mono : &Type, new : &mut Type, result : &mut UnifyResult)
+  -> Result<(), ()>
+{
+  if let Polytype(_) = &new.content { return Ok(()) }
+  if let Polytype(_) = &old_mono.content { panic!("unexpected polytype") }
+  if old_mono.content != new.content {
+    if let Abstract(abs_old) = &old_mono.content {
+      if abs_old.contains_type(new) {
+        result.old_type_changed = true;
+        return Ok(());
       }
     }
-    return Failure;
-  }
-  if old.children.len() != new.children.len() { return Failure }
-  let mut changed_old_type = false;
-  for (i, old) in old.children.iter().enumerate() {
-    match incremental_unify_internal(old, &mut new.children[i]) {
-      ChangedOld => changed_old_type = true,
-      EqualOrSubsumedByOld => (),
-      Failure => return Failure,
+    if let Abstract(abs_new) = &new.content {
+      if abs_new.contains_type(old_mono) {
+        *new = old_mono.to_monotype().inner;
+        result.new_type_changed = true;
+        return Ok(());
+      }
     }
+    return Err(());
   }
-  if changed_old_type { ChangedOld } else { EqualOrSubsumedByOld }
+  if old_mono.children.len() != new.children.len() { return Err(()) }
+  for (i, old_mono) in old_mono.children.iter().enumerate() {
+    incremental_unify_internal(old_mono, &mut new.children[i], result)?;
+  }
+  Ok(())
 }
 
 pub fn unify_types(a : &MonoType, b : &MonoType) -> Option<MonoType> {
@@ -544,7 +559,9 @@ fn unify_types_internal(mt : &MonoType, pt : &Type) -> Option<MonoType> {
   match can_unify_types_internal(&mt.inner, pt) {
     CanUnifyResult::CanUnify => {
       let mut t = pt.to_monotype();
-      if incremental_unify_internal(&mt.inner, &mut t.inner) == IncrementalUnifyResult::Failure {panic!("bug in unify_types")}
+      if !incremental_unify_polymorphic(mt, &mut t.inner).fully_unified {
+        panic!("bug in unify_types")
+      }
       Some(t)
     }
     CanUnifyResult::AlreadyEqual => Some(mt.clone()),
@@ -717,15 +734,13 @@ impl <'a> TypeDirectory<'a> {
   }
 
   pub fn resolve_abstract_defs<'l>(&mut self, t : &'l Type) -> Result<MonoType, &'l str> {
-    let mut children = vec![];
-    for c in t.children() {
-      let c = self.resolve_abstract_defs(c)?;
-      children.push(c.into())
-    }
     let content = match &t.content {
       Abstract(AbstractType::Def(name)) => {
         if let Some(def) = self.find_type_def(name) {
-          Def(name.clone(), def.module_id)
+          let children = def.polytypes.iter().map(|_| Type::any()).collect();
+          let content = Def(name.clone(), def.module_id);
+          let inner = Type::new(content, children);
+          return Ok(MonoType{ inner });
         }
         else {
           return Err(name.as_ref())
@@ -734,6 +749,11 @@ impl <'a> TypeDirectory<'a> {
       Polytype(_) => Abstract(AbstractType::Any),
       _ => t.content.clone(),
     };
+    let mut children = vec![];
+    for c in t.children() {
+      let c = self.resolve_abstract_defs(c)?;
+      children.push(c.into())
+    }
     Ok(MonoType{ inner: Type::new(content, children) })
   }
 }

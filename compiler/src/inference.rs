@@ -15,8 +15,9 @@ use crate::structure::{
 use crate::types::{
   Type, TypeContent, PType, TypeInfo, TypeDefinition, FunctionInit,
   GlobalDefinition, TypeDirectory, GlobalInit, GlobalId, AbstractType,
-  SignatureBuilder, unify_types, incremental_unify, IncrementalUnifyResult,
-  PolyTypeId, MonoType,
+  SignatureBuilder, incremental_unify_monomorphic,
+  incremental_unify_polymorphic, UnifyResult, PolyTypeId,
+  MonoType,
 };
 use crate::modules::TypedModule;
 
@@ -73,6 +74,11 @@ impl CodegenInfo {
   }
 }
 
+struct TypeUnify<'a> {
+  errors : &'a mut Vec<Error>,
+  resolved : HashMap<TypeSymbol, MonoType>,
+}
+
 struct Inference<'a> {
   nodes : &'a Nodes,
   t : &'a mut TypeDirectory<'a>,
@@ -110,27 +116,6 @@ impl <'a> Inference<'a> {
     self.resolved.get(&ts)
   }
 
-  fn unify_mut(&mut self, ts : TypeSymbol, t : &mut MonoType) -> IncrementalUnifyResult {
-    if let Some(prev_t) = self.resolved.get(&ts) {
-      let r = incremental_unify(prev_t, t);
-      if r == IncrementalUnifyResult::Failure {
-        let e = error_raw(self.loc(ts), format!("conflicting types inferred; {} and {}.", t, prev_t));
-        self.errors.push(e);
-      }
-      r
-    }
-    else {
-      IncrementalUnifyResult::ChangedOld
-    }
-  }
-
-  fn unify(&mut self, ts : TypeSymbol, mut t : MonoType) -> Option<MonoType> {
-    if self.unify_mut(ts, &mut t) == IncrementalUnifyResult::ChangedOld {
-      return Some(t);
-    }
-    None
-  }
-
   fn type_updated(&mut self, ts : TypeSymbol) {
     if let Some(cs) = self.dependency_map.ts_map.get(&ts) {
       for &c in cs.iter() {
@@ -139,16 +124,30 @@ impl <'a> Inference<'a> {
     }
   }
 
-  fn update_type(&mut self, ts : TypeSymbol, t : MonoType) {
-    if let Some(t) = self.unify(ts, t) {
+  fn unify_mut_internal(&mut self, ts : TypeSymbol, new_type : &mut MonoType) -> UnifyResult {
+    if let Some(prev_t) = self.resolved.get(&ts) {
+      let r = incremental_unify_monomorphic(prev_t, new_type);
+      if !r.fully_unified {
+        let e = error_raw(self.loc(ts), format!("conflicting types inferred; {} and {}.", new_type, prev_t));
+        self.errors.push(e);
+      }
+      r
+    }
+    else {
+      UnifyResult { fully_unified: true, old_type_changed: true, new_type_changed: false }
+    }
+  }
+
+  fn update_type(&mut self, ts : TypeSymbol, mut t : MonoType) {
+    if self.unify_mut_internal(ts, &mut t).old_type_changed {
       self.resolved.insert(ts, t);
       self.type_updated(ts);
     }
   }
 
-  fn update_type_mut(&mut self, ts : TypeSymbol, t : &mut MonoType) -> IncrementalUnifyResult {
-    let r = self.unify_mut(ts, t);
-    if r == IncrementalUnifyResult::ChangedOld {
+  fn update_type_mut(&mut self, ts : TypeSymbol, t : &mut MonoType) -> UnifyResult {
+    let r = self.unify_mut_internal(ts, t);
+    if r.old_type_changed {
       self.resolved.insert(ts, t.clone());
       self.type_updated(ts);
     }
@@ -168,7 +167,7 @@ impl <'a> Inference<'a> {
       Function{ function:_, args:_, return_type:_ } => return,
       Constructor { def_ts:_ , fields:_ } => return,
       Convert { val:_, into_type_ts:_ } => return,
-      TypeDef { .. } => return,
+      TypeDefField { .. } => return,
       GlobalDef { global_id, type_symbol:_ } => {
         let def = self.t.get_global(*global_id);
         error_raw(def.loc,
@@ -317,33 +316,43 @@ impl <'a> Inference<'a> {
           }
         }
       }
-      TypeDef { type_def_ts, fields } => {
-        if let Some(t) = self.resolved.get(type_def_ts) {
-          if let Def(name, _) = &t.as_type().content {
-            let field_types : Vec<_> =
-              fields.iter()
-                .map(|f| self.resolved.get(type_def_ts)
-                    .cloned().unwrap_or(MonoType::any()))
-                .collect();
+      TypeDefField { container, field_index, field_type } => {
+        if let Some(ctype) = self.resolved.get(container) {
+          if let Def(name, _) = &ctype.as_type().content {
             let def = self.t.get_type_def_mut(name);
-            for (i, (_, field_type)) in def.fields.iter_mut().enumerate() {
-              self.update_type_mut(fields[i], field_type);
+            if let Some(inferred_type) = self.resolved.get(field_type) {
+              let t = &mut def.fields[*field_index].1;
+              let r = incremental_unify_polymorphic(inferred_type, t);
+              if r.new_type_changed {
+                // Trigger any constraints looking for this field
+                let field_name = def.fields[*field_index].0.name.as_ref();
+                if let Some(cs) = self.dependency_map.field_access_map.get(field_name) {
+                  for &c in cs.iter() {
+                    self.next_edge_set.insert(c.id, c);
+                  }
+                }
+              }
+              let aaa = (); // TODO: can a field type be updated by another constraint?
+              // if r.old_type_changed {
+              //   let t = t.to_monotype();
+              //   self.update_type(*field_type, t);
+              // }
             }
           }
         }
-        panic!("not implemented")
       }
       GlobalDef{ global_id, type_symbol } => {
         if let Some(t) = self.resolved.get(type_symbol) {
           let def = self.t.get_global(*global_id);
           if !def.polymorphic {
-            let monotype = def.type_tag.to_monotype();
-            if let Some(unified_type) = unify_types(t, &monotype) {
-              def.type_tag = unified_type.into();
-              // Trigger any constraints looking for this name or type
-              if let Some(cs) = self.dependency_map.global_map.get(&def.name) {
-                for &c in cs.iter() {
-                  self.next_edge_set.insert(c.id, c);
+            let r = incremental_unify_polymorphic(t, &mut def.type_tag);
+            if r.fully_unified {
+              if r.new_type_changed {
+                // Trigger any constraints looking for this name
+                if let Some(cs) = self.dependency_map.global_map.get(&def.name) {
+                  for &c in cs.iter() {
+                    self.next_edge_set.insert(c.id, c);
+                  }
                 }
               }
             }
@@ -525,9 +534,10 @@ pub enum ConstraintContent {
     args : Vec<TypeSymbol>,
     return_type : TypeSymbol,
   },
-  TypeDef {
-    type_def_ts : TypeSymbol,
-    fields : Vec<TypeSymbol>,
+  TypeDefField {
+    container : TypeSymbol,
+    field_index : usize,
+    field_type : TypeSymbol,
   },
   GlobalDef {
     global_id: GlobalId,
@@ -542,13 +552,17 @@ pub enum ConstraintContent {
 
 struct ConstraintDependencyMap<'a> {
   global_map : HashMap<RefStr, Vec<&'a Constraint>>,
+  field_access_map : HashMap<RefStr, Vec<&'a Constraint>>,
   ts_map : HashMap<TypeSymbol, Vec<&'a Constraint>>,
 }
 
 impl <'a> ConstraintDependencyMap<'a> {
 
   fn new() -> Self {
-    ConstraintDependencyMap { global_map: HashMap::new(), ts_map: HashMap::new() }
+    ConstraintDependencyMap {
+      global_map: HashMap::new(),
+      field_access_map: HashMap::new(),
+      ts_map: HashMap::new() }
   }
 
   fn clear(&mut self) {
@@ -563,6 +577,11 @@ impl <'a> ConstraintDependencyMap<'a> {
   fn global(&mut self, name : &RefStr, c : &'a Constraint) {
     if let Some(cs) = self.global_map.get_mut(name) { cs.push(c); }
     else { self.global_map.insert(name.clone(), vec![c]); }
+  }
+
+  fn field(&mut self, field_name : &RefStr, c : &'a Constraint) {
+    if let Some(cs) = self.field_access_map.get_mut(field_name) { cs.push(c); }
+    else { self.field_access_map.insert(field_name.clone(), vec![c]); }
   }
 
   fn populate_dependency_map(&mut self, c : &'a Constraint) {
@@ -594,9 +613,9 @@ impl <'a> ConstraintDependencyMap<'a> {
         for ts in args { self.ts(ts, c) }
         self.ts(return_type, c);
       },
-      TypeDef { type_def_ts, fields } => {
-        self.ts(type_def_ts, c);
-        for ts in fields { self.ts(ts, c) }
+      TypeDefField { container, field_index:_, field_type } => {
+        self.ts(container, c);
+        self.ts(field_type, c);
       }
       GlobalDef { global_id:_, type_symbol } => self.ts(type_symbol, c),
       GlobalReference { node:_, name, result } => {
@@ -622,7 +641,7 @@ impl  fmt::Display for Constraint {
       Constructor { .. } => write!(f, "Constructor"),
       Function { args, .. } =>
         write!(f, "FunctionCall ({} args)", args.len()),
-      TypeDef { .. } => write!(f, "TypeDef"),  
+      TypeDefField { .. } => write!(f, "TypeDefField"),  
       GlobalDef { .. } => write!(f, "GlobalDef"),
       GlobalReference { name, .. } => write!(f, "GlobalRef {}", name),
       SizeOf{ .. } => write!(f, "SizeOf"),
@@ -932,7 +951,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           type_symbol: cbind_ts,
         });
         self.t.create_global(GlobalDefinition {
-          id: self.gen.next().into(),
+          id: global_id,
           module_id: self.t.new_module_id(),
           name: name.clone(),
           initialiser: GlobalInit::CBind,

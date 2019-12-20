@@ -1,3 +1,21 @@
+# THOUGHTS - 18/12/2019
+
+I introduced a lot of changes at once:
+
+- Type definitions are now resolved in the inference stage, for reasons unclear.
+- Type definitions may be polymorphic.
+- Function bodies may be polymorphic.
+
+These are hard to actually implement because:
+
+- Typedef polytypes are quite different to function polytypes.
+  - Their type signature can't be incrementally resolved as a single type. But I could generate constraints for each field.
+
+- I can't overwrite a generic type with something more specific when unifying with the typedef or globaldef. I was doing this before.
+
+- I don't know how to inform a field reference that its type has been updated. A field access constraint has no dependency link to the typedef. This dependency isn't even known until later. They could be linked and triggered using the field string instead. (pretty gross, but oh well).
+
+
 # THOUGHTS - 13/12/2019
 
 There is a huge bug in the way types are resolved. Defs are resolved by looking up their name in the list of supplied modules, but this goes for all the defs in the supplied modules too. Since the modules passed in might reference different modules, this is very broken.
