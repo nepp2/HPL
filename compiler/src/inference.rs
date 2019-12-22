@@ -17,7 +17,7 @@ use crate::types::{
   GlobalDefinition, TypeDirectory, GlobalInit, GlobalId, AbstractType,
   SignatureBuilder, incremental_unify_monomorphic,
   incremental_unify_polymorphic, UnifyResult, PolyTypeId,
-  MonoType,
+  MonoType, ModuleId,
 };
 use crate::modules::TypedModule;
 
@@ -59,7 +59,7 @@ pub fn infer_types(
 pub struct CodegenInfo {
   pub node_type : HashMap<NodeId, Type>,
   pub sizeof_info : HashMap<NodeId, Type>,
-  pub symbol_references : HashMap<NodeId, GlobalDefinition>, // TODO: this is slow and stupid
+  pub symbol_references : HashMap<NodeId, GlobalDefinition>,
 }
 
 impl CodegenInfo {
@@ -85,6 +85,7 @@ struct Inference<'a> {
   cache : &'a StringCache,
   gen : &'a mut UIDGenerator,
   errors : &'a mut Vec<Error>,
+  symbol_references : HashMap<NodeId, (ModuleId, GlobalId)>,
   dependency_map : ConstraintDependencyMap<'a>,
   next_edge_set : HashMap<u64, &'a Constraint>,
   resolved : HashMap<TypeSymbol, MonoType>,
@@ -104,6 +105,7 @@ impl <'a> Inference<'a> {
   {
     Inference {
       nodes, t, cg, c, cache, gen, errors,
+      symbol_references: HashMap::new(),
       dependency_map: ConstraintDependencyMap::new(),
       next_edge_set: HashMap::new(),
       resolved: HashMap::new(),
@@ -193,8 +195,8 @@ impl <'a> Inference<'a> {
     self.errors.push(e);
   }
 
-  fn register_def(&mut self, node : NodeId, def : GlobalDefinition) {
-    self.cg.symbol_references.insert(node, def);
+  fn register_def(&mut self, node : NodeId, module_id : ModuleId, global_id : GlobalId) {
+    self.symbol_references.insert(node, (module_id, global_id));
   }
 
   fn process_constraint(&mut self, c : &'a Constraint) {
@@ -361,9 +363,10 @@ impl <'a> Inference<'a> {
         let t = self.get_type(*result).cloned().unwrap_or(any);
         match self.t.find_global(&name, &t) {
           [g] => {
-            let g = g.clone();
-            self.register_def(*node, g.def);
-            self.update_type(*result, g.resolved_type);
+            let resolved_type = g.resolved_type.clone();
+            let (mid, gid) = (g.def.module_id, g.def.id);
+            self.register_def(*node, mid, gid);
+            self.update_type(*result, resolved_type);
           }
           [] => {
             let s = format!("no global '{}' matches type '{}'", name, t);
@@ -490,6 +493,14 @@ impl <'a> Inference<'a> {
         println!("         {}", e);
       }
       println!();
+    }
+    // Assign global definitions
+    else {
+      let aaa = (); // TODO: this is slow and stupid and wastes memory
+      for (nid, (mid, gid)) in self.symbol_references.drain() {
+        let def = self.t.find_module(mid).globals.get(&gid).unwrap().clone();
+        self.cg.symbol_references.insert(nid, def);
+      }
     }
   }
 }

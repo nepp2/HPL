@@ -222,7 +222,7 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
     name : &str, args : &[&Type], return_type : &Type)
   {
     let g = create_definition(cache, gen, module_id, name, args, return_type, false);
-    t.globals.push(g);
+    t.globals.insert(g.id, g);
   }
   
   fn add_polymorphic_intrinsic(
@@ -230,7 +230,7 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
     name : &str, args : &[&Type], return_type : &Type)
   {
     let g = create_definition(cache, gen, module_id, name, args, return_type, true);
-    t.globals.push(g);
+    t.globals.insert(g.id, g);
   }
 
   let expr = parse(cache, "").unwrap();
@@ -299,7 +299,7 @@ fn run_top_level(m : &CompiledModule) -> Result<Val, Error> {
   use TypeContent::*;
   use PType::*;
   let f = TOP_LEVEL_FUNCTION_NAME;
-  let def = m.t.globals.iter().find(|def| def.name.as_ref() == f).unwrap();
+  let def = m.t.globals.values().find(|def| def.name.as_ref() == f).unwrap();
   let f = def.codegen_name().unwrap();
   let sig = if let Some(sig) = def.type_tag.sig() {sig} else {panic!()};
   let lu = &m.llvm_unit;

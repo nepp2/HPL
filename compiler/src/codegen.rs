@@ -8,7 +8,7 @@ use crate::structure::{
   Node, NodeId, Nodes, Content, PrimitiveVal, TypeKind, SymbolId,
   LabelId, NodeValueType, VarScope, Symbol };
 use crate::types::{
-  Type, PType, TypeDefinition, GlobalInit,
+  Type, PType, TypeDefinition, GlobalInit, GlobalId,
   ModuleId, GlobalDefinition, TypeInfo, TypeContent };
 use crate::inference::CodegenInfo;
 use crate::modules::CompiledModule;
@@ -243,6 +243,20 @@ impl <'l> CompileInfo<'l> {
         .expect("global pointer was null"))
       .next().expect("global address not found") as usize
   }
+
+  fn get_global_def(&self, module_id : ModuleId, global_id : GlobalId) -> Option<&GlobalDefinition> {
+    if self.t.module_id == module_id {
+      return self.t.globals.get(&global_id);
+    }
+    else {
+      for m in self.compiled_modules.iter().cloned() {
+        if m.t.module_id == module_id {
+          return m.t.globals.get(&global_id);
+        }
+      }
+    }
+    None
+  }
 }
 
 #[derive(Clone, Copy)]
@@ -290,7 +304,7 @@ impl <'l> TypedNode<'l> {
   }
 
   fn is_intrinsic_function(&self) -> bool {
-    self.info.cg.symbol_references.get(&self.node.id)
+    self.node_symbol_def()
     .map(|def| if let GlobalInit::Intrinsic = def.initialiser { true } else { false })
     .unwrap_or(false)
   }
@@ -334,7 +348,7 @@ impl <'l> Gen<'l> {
   pub fn codegen_module(mut self, info : &'l CompileInfo) -> Result<(), Error> {
     // declare the globals and functions
     let mut functions_to_codegen = vec!();
-    for def in info.t.globals.iter() {
+    for def in info.t.globals.values() {
       let t = self.to_basic_type(info, &def.type_tag).unwrap();
       match &def.initialiser {
         GlobalInit::CBind => {
@@ -1488,7 +1502,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         // TODO: is nothing required here?
         return Ok(Void);
       }
-      Content::TypeConstructor{ name, field_values } => {
+      Content::TypeConstructor{ name:_, field_values } => {
         // TODO: log values that need to be dropped
         let a : Result<Vec<BasicValueEnum>, Error> =
           field_values.iter().map(|(_, a)| self.codegen_value(node.get(*a))).collect();
@@ -1627,7 +1641,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         }
         return Ok(Void);
       }
-      Content::Reference { name: _, refers_to } => {
+      Content::Reference { name, refers_to } => {
         if let Some(ptr) = refers_to.as_ref().and_then(|sid| self.variables.get(sid)) {
           pointer(*ptr)
         }
@@ -1635,7 +1649,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
           self.get_linked_global_value(info, &def)
         }
         else {
-          panic!("no value found for reference!");
+          panic!("no value found for reference '{}'!", name);
         }
       }
       Content::BreakToLabel{ label, return_value } => {

@@ -25,7 +25,7 @@ impl From<u64> for GlobalId { fn from(v : u64) -> Self { GlobalId(v) } }
 
 pub struct TypeInfo {
   pub type_defs : HashMap<RefStr, TypeDefinition>,
-  pub globals : Vec<GlobalDefinition>,
+  pub globals : HashMap<GlobalId, GlobalDefinition>,
   pub module_id : ModuleId,
 }
 
@@ -613,7 +613,7 @@ impl TypeInfo {
   pub fn new(module_id : ModuleId) -> TypeInfo {
     TypeInfo {
       type_defs: HashMap::new(),
-      globals: vec![],
+      globals: HashMap::new(),
       module_id,
     }
   }
@@ -624,7 +624,7 @@ impl TypeInfo {
     t : &MonoType,
     polytypes : &mut HashMap<PolyTypeId, MonoType>,
     results : &mut Vec<ResolvedGlobal>) {
-    for g in self.globals.iter() {
+    for g in self.globals.values() {
       if g.name.as_ref() == name {
         if g.polymorphic {
           polytypes.clear();
@@ -681,7 +681,7 @@ impl <'a> TypeDirectory<'a> {
   }
 
   pub fn get_global(&mut self, id : GlobalId) -> &mut GlobalDefinition {
-    self.new_module.globals.iter_mut().find(|def| def.id == id).unwrap()
+    self.new_module.globals.get_mut(&id).unwrap()
   }
 
   pub fn get_type_def(&self, name : &str, module_id : ModuleId) -> &TypeDefinition {
@@ -697,7 +697,7 @@ impl <'a> TypeDirectory<'a> {
   }
 
   pub fn create_global(&mut self, def : GlobalDefinition) {
-    self.new_module.globals.push(def);
+    self.new_module.globals.insert(def.id, def);
   }
 
   /// Returns a slice of all matching definitions
@@ -726,7 +726,7 @@ impl <'a> TypeDirectory<'a> {
     self.new_module.module_id
   }
 
-  fn find_module(&self, module_id : ModuleId) -> &TypeInfo {
+  pub fn find_module(&self, module_id : ModuleId) -> &TypeInfo {
     [&*self.new_module].iter()
       .chain(self.import_types.iter().rev())
       .find(|t| t.module_id == module_id)
