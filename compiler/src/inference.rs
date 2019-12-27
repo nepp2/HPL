@@ -499,6 +499,10 @@ impl <'a> Inference<'a> {
       let aaa = (); // TODO: this is slow and stupid and wastes memory
       for (nid, (mid, gid)) in self.symbol_references.drain() {
         let def = self.t.find_module(mid).globals.get(&gid).unwrap().clone();
+        if def.polymorphic {
+          let t = self.cg.node_type.get(&nid).unwrap();
+          println!("polymorphic def '{}', {} - {}", def.name, def.type_tag, t);
+        }
         self.cg.symbol_references.insert(nid, def);
       }
     }
@@ -888,12 +892,17 @@ impl <'l, 't> GatherConstraints<'l, 't> {
         self.assert(ts, PType::Void);
         self.with_polytypes(polytypes.as_slice(), |gc, polytypes| {
           let body_ts = {
-            // Need new scope stack for new function
-            let mut gc = GatherConstraints::new(
-              gc.t, gc.cg, gc.cache, gc.gen,
-              gc.c, gc.errors
-            );
-            gc.process_node(n, *body)
+            if polytypes.is_empty() {
+              // Need new scope stack for new function
+              let mut gc = GatherConstraints::new(
+                gc.t, gc.cg, gc.cache, gc.gen,
+                gc.c, gc.errors
+              );
+              gc.process_node(n, *body)
+            }
+            else {
+              gc.type_symbol(node.loc)
+            }
           };
           gc.try_tag_symbol(body_ts, return_tag);
           let mut arg_types : Vec<TypeSymbol> = vec![];
