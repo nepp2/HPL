@@ -420,10 +420,12 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
             .collect::<Result<Vec<_>, Error>>()?;
           let arg_symbols =
             args.iter().map(|(s, _)| s.clone()).collect();
+          println!("fun: {}", expr);
           let (polytypes, body) = {
             if let Some(("polytypes", ts)) = e.try_construct() {
               let polytypes : Result<Vec<_>, _> =
                 ts.iter().map(|e| { let s = self.cached(e.unwrap_symbol()?) ; Ok(s) }).collect();
+              println!("polytypes: {:?}", polytypes);
               (polytypes?, exprs.next())
             }
             else { (vec![], Some(e)) }

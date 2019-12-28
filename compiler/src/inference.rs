@@ -890,6 +890,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
       }
       Content::FunctionDefinition{ name, args, return_tag, polytypes, body } => {
         self.assert(ts, PType::Void);
+        println!("Function Definition {} with {:?}", name, polytypes);
         self.with_polytypes(polytypes.as_slice(), |gc, polytypes| {
           let body_ts = {
             if polytypes.is_empty() {
@@ -1091,12 +1092,16 @@ impl <'l, 't> GatherConstraints<'l, 't> {
   }
 
   fn symbol_to_type(&mut self, name : &str) -> Type {
+      println!("Checking for type {}", name);
       // Check for polytypes
       for (polytype_name, generic_id) in self.polytype_ids.iter() {
+        println!("   Comparing to {}", polytype_name);
         if polytype_name.as_ref() == name {
+          println!("Found generic {}", name);
           return (*generic_id).into();
         }
       }
+      println!("Assume def {}", name);
       // Assume type definition
       let name = self.cache.get(name);
       return Type::unresolved_def(name);
