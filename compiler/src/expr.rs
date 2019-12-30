@@ -147,6 +147,7 @@ impl <'l> Into<TextLocation> for &'l Expr {
 }
 
 impl Expr {
+
   pub fn try_construct(&self) -> Option<(&str, &[Expr])> {
     match &self.content {
       ExprContent::List(s, children) => Some((s.as_str(), children.as_slice())),

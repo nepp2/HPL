@@ -299,6 +299,44 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     Ok(self.node(expr, c))
   }
 
+  fn function_def_to_node(
+    &mut self,
+    expr : &Expr,
+    name : &Expr,
+    args : &Expr,
+    return_tag : Option<&Expr>,
+    polytypes : Option<&Expr>,
+    body : &Expr,
+  )
+    -> Result<NodeId, Error>
+  {
+    let name = self.cached(name.unwrap_symbol()?);
+    let args =
+      args.children().iter()
+      .map(|e| self.typed_symbol(e))
+      .collect::<Result<Vec<_>, Error>>()?;
+    let arg_symbols =
+      args.iter().map(|(s, _)| s.clone()).collect();
+    let return_tag = {
+      if let Some(t) = return_tag {
+        Some(Box::new(t.clone()))
+      }
+      else { None }
+    };
+    let polytypes = {
+      if let Some(("polytypes", ts)) = polytypes.and_then(|e| e.try_construct()) {
+        let polytypes =
+          ts.iter().map(|e| { let s = self.cached(e.unwrap_symbol()?) ; Ok(s) })
+          .collect::<Result<Vec<_>, _>>()?;
+        polytypes
+      }
+      else { vec![] }
+    };
+    let mut function_checker = FunctionConverter::new(self.t, false, arg_symbols);
+    let body = function_checker.to_function_body(body)?;
+    return Ok(self.node(expr, FunctionDefinition{name, args, polytypes, return_tag, body}));
+  }
+
   fn construct_to_node(&mut self, expr : &Expr) -> Result<NodeId, Error> {
     let (instr, children) = expr.unwrap_construct()?;
     match (instr, children) {
@@ -411,32 +449,28 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         error(expr, "invalid cbind expression")
       }
       ("fun", exprs) => {
-        let mut exprs = exprs.iter();
-        if let (Some(name), Some(args_expr), Some(e)) = (exprs.next(), exprs.next(), exprs.next()) {
-          let name = self.cached(name.unwrap_symbol()?);
-          let args =
-            args_expr.children().iter()
-            .map(|e| self.typed_symbol(e))
-            .collect::<Result<Vec<_>, Error>>()?;
-          let arg_symbols =
-            args.iter().map(|(s, _)| s.clone()).collect();
-          println!("fun: {}", expr);
-          let (polytypes, body) = {
-            if let Some(("polytypes", ts)) = e.try_construct() {
-              let polytypes : Result<Vec<_>, _> =
-                ts.iter().map(|e| { let s = self.cached(e.unwrap_symbol()?) ; Ok(s) }).collect();
-              println!("polytypes: {:?}", polytypes);
-              (polytypes?, exprs.next())
+        // slightly ugly hack to work out which subexpression is which.
+        // the return type tag is easily mixed up with the polytypes expression.
+        match exprs {
+          [name, args, body] =>
+            self.function_def_to_node(expr, name, args, None, None, body),
+          [name, args, return_tag, polytypes, body] =>
+            self.function_def_to_node(
+              expr, name, args, Some(return_tag), Some(polytypes), body),
+          [name, args, unknown, body] => {
+            if let Some(("polytypes", _)) = unknown.try_construct() {
+              self.function_def_to_node(
+                expr, name, args, None, Some(unknown), body)
             }
-            else { (vec![], Some(e)) }
-          };
-          if let Some(body) = body {
-            let mut function_checker = FunctionConverter::new(self.t, false, arg_symbols);
-            let body = function_checker.to_function_body(body)?;
-            return Ok(self.node(expr, FunctionDefinition{name, args, polytypes, return_tag: None, body}));
+            else {
+              self.function_def_to_node(
+                expr, name, args, Some(unknown), None, body)
+            }
+          }
+          _ => {
+            error(expr, "malformed function definition")
           }
         }
-        error(expr, "malformed function definition")
       }
       ("union", [name, fields_expr]) => {
         let name = self.cached(name.unwrap_symbol()?);
