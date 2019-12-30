@@ -1,7 +1,6 @@
 
 use crate::types::{TypeInfo, ModuleId};
-use crate::codegen::LlvmUnit;
-use crate::inference::CodegenInfo;
+use crate::codegen::{LlvmUnit, CodegenInfo};
 use crate::structure::Nodes;
 
 pub struct TypedModule {

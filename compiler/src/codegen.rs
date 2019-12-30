@@ -10,7 +10,6 @@ use crate::structure::{
 use crate::types::{
   Type, PType, TypeDefinition, GlobalInit, GlobalId,
   ModuleId, GlobalDefinition, TypeInfo, TypeContent };
-use crate::inference::CodegenInfo;
 use crate::modules::CompiledModule;
 
 use std::collections::HashMap;
@@ -133,6 +132,22 @@ pub struct LlvmUnit {
   pub module_id : ModuleId,
   pub ee : ExecutionEngine,
   pub llvm_module : Module,
+}
+
+pub struct CodegenInfo {
+  pub node_type : HashMap<NodeId, Type>,
+  pub sizeof_info : HashMap<NodeId, Type>,
+  pub symbol_references : HashMap<NodeId, GlobalDefinition>,
+}
+
+impl CodegenInfo {
+  pub fn new() -> Self {
+    CodegenInfo {
+      node_type: HashMap::new(),
+      sizeof_info: HashMap::new(),
+      symbol_references: HashMap::new(),
+    }
+  }
 }
 
 /// Code generates a module

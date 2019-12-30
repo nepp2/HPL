@@ -7,14 +7,13 @@ use crate::parser;
 use crate::c_interface::CSymbols;
 use crate::structure;
 use crate::structure::TOP_LEVEL_FUNCTION_NAME;
-use crate::inference;
-use crate::inference::CodegenInfo;
+use crate::inference_solver;
 use crate::types::{
   Type, TypeContent, PType, TypeInfo,
   ModuleId, SignatureBuilder, GlobalDefinition,
   PolyTypeId, GlobalInit,
 };
-use crate::codegen::{Gen, LlvmUnit, dump_module, CompileInfo};
+use crate::codegen::{Gen, LlvmUnit, dump_module, CompileInfo, CodegenInfo};
 use crate::modules::{ CompiledModule, TypedModule };
 
 use std::collections::HashMap;
@@ -124,7 +123,7 @@ impl Compiler {
     import_types.extend(imports.iter().map(|m| &m.t));
 
     let typed_module =
-      inference::infer_types(nodes, import_types.as_slice(), &self.cache, &mut self.gen)
+      inference_solver::infer_types(nodes, import_types.as_slice(), &self.cache, &mut self.gen)
       .map_err(|es| error_raw(expr, ErrorContent::InnerErrors("type errors".into(), es)))?;
 
     let module_name = format!("{:?}", typed_module.id);
