@@ -2,7 +2,7 @@
 use std::fmt;
 
 use crate::error::{Error, error, error_raw, TextLocation};
-use crate::expr::{Expr, UIDGenerator, RefStr, StringCache};
+use crate::expr::{Expr, ExprContent, UIDGenerator, RefStr, StringCache};
 use crate::structure::{
   Node, NodeId, SymbolId, Content, PrimitiveVal, LabelId,
   VarScope, GlobalType, Symbol, Nodes,
@@ -10,8 +10,8 @@ use crate::structure::{
 use crate::codegen::CodegenInfo;
 use crate::types::{
   Type, PType, TypeDefinition, FunctionInit, GlobalDefinition,
-  TypeDirectory, GlobalInit, GlobalId, AbstractType,
-  SignatureBuilder, PolyTypeId,
+  TypeDirectory, GlobalInit, GlobalId, AbstractType, PolyTypeId,
+  SignatureBuilder,
 };
 use std::collections::HashMap;
 
@@ -314,8 +314,19 @@ impl <'l, 't> GatherConstraints<'l, 't> {
       Content::FunctionDefinition{ name, args, return_tag, polytypes, body } => {
         self.assert(ts, PType::Void);
         self.with_polytypes(polytypes.as_slice(), |gc, polytypes| {
+          let is_polymorphic_def = !polytypes.is_empty();
           let body_ts = {
-            if polytypes.is_empty() {
+            if is_polymorphic_def {
+              // Check that all arg tags are explicit
+              for (arg, tag) in args.iter() {
+                if !tag.is_some() {
+                  let e = error_raw(arg.loc, "argument types must be explicit in polymorphic function definitions");
+                  gc.errors.push(e);
+                }
+              }
+              gc.type_symbol(node.loc)
+            }
+            else {
               // Need new scope stack for new function
               let mut gc = GatherConstraints::new(
                 gc.t, gc.cg, gc.cache, gc.gen,
@@ -323,11 +334,13 @@ impl <'l, 't> GatherConstraints<'l, 't> {
               );
               gc.process_node(n, *body)
             }
-            else {
-              gc.type_symbol(node.loc)
-            }
           };
-          gc.try_tag_symbol(body_ts, return_tag);
+          if let Some(return_tag) = return_tag {
+            gc.tag_symbol(body_ts, return_tag);
+          }
+          else if is_polymorphic_def {
+            gc.assert(body_ts, PType::Void);
+          }
           let mut arg_types : Vec<TypeSymbol> = vec![];
           let mut arg_names = vec!();
           for (arg, type_tag) in args.iter() {
@@ -536,6 +549,9 @@ impl <'l, 't> GatherConstraints<'l, 't> {
   /// Converts expression into type.
   fn expr_to_type(&mut self, expr : &Expr) -> Option<Type> {
     fn expr_to_type_internal(gc: &mut GatherConstraints, expr : &Expr) -> Result<Type, Error> {
+      if let ExprContent::LiteralUnit = &expr.content {
+        return Ok(PType::Void.into());
+      }
       if let Some(name) = expr.try_symbol() {
         // Check for primitive types
         if let Some(t) = Type::from_string(name) {

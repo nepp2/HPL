@@ -1,7 +1,9 @@
 
 /// This type inference algorithm works by building a set of constraints and then
-/// incrementally unifying them. At the moment it is nondeterministic because it
-/// iterates over Rust's secure HashMaps.
+/// incrementally unifying them. At the moment the error reporting for incorrect
+/// programs is nondeterministic due to iteration over Rust's secure, randomised
+/// HashMaps. This should be fixed at some point so that the most useful error
+/// messages are reliably shown to users.
 
 use itertools::Itertools;
 
@@ -440,18 +442,7 @@ impl <'a> Inference<'a> {
     println!("Unique constraints: {}\n", self.c.constraints.len());
     println!("Constraints processed (including duplicates): {}\n", total_constraints_processed);
 
-    // Assign types to all of the nodes
-    if self.errors.is_empty() {
-      for (n, ts) in self.c.node_symbols.iter() {
-        let t = self.get_type(*ts).unwrap().as_type().clone();
-        // Make sure the type isn't abstract
-        if t.is_concrete() {
-          self.cg.node_type.insert(*n, t);
-        }
-      }
-    }
-
-    // Generate errors if program has unresolved symbols contain errors
+    // Generate errors if program has unresolved symbols
     let mut unresolved = 0;
     if self.errors.is_empty() {
       for (ts, _) in self.c.symbols.iter() {
@@ -470,6 +461,17 @@ impl <'a> Inference<'a> {
 
     if self.errors.is_empty() && unresolved > 0 {
       panic!("Unresolved types found, but no errors generated!");
+    }
+
+    // Assign types to all of the nodes
+    if self.errors.is_empty() {
+      for (n, ts) in self.c.node_symbols.iter() {
+        let t = self.get_type(*ts).unwrap().as_type().clone();
+        // Make sure the type isn't abstract
+        if t.is_concrete() {
+          self.cg.node_type.insert(*n, t);
+        }
+      }
     }
 
     // Print errors (if there are any)
