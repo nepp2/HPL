@@ -1,3 +1,11 @@
+# TODO - 30/12/2019
+
+- ~~Polymorphic type checking code doesn't work yet~~
+  - ~~Stupid problem with the AST's handling of explicit return types.~~
+- The `list` type I created isn't resolved currently, for whatever reason.
+- I don't have any solution for generating polymorphic variants yet.
+  - Can just make do a lazy bodge job for now. Don't worry about duplication or reloading modules.
+
 # THOUGHTS - 18/12/2019
 
 I introduced a lot of changes at once:
