@@ -159,7 +159,7 @@ fn polytype_match(polytypes : &mut HashMap<PolyTypeId, MonoType>, mt : &MonoType
         else { false }
       }
       else {
-        polytypes.insert(*gid, mt.to_monotype());
+        polytypes.insert(*gid, mt.clone().to_monotype());
         true
       }    
     }
@@ -298,16 +298,19 @@ impl Type {
     self.children.as_slice()
   }
 
-  pub fn to_monotype(&self) -> MonoType {
-    let content = match &self.content {
-      Polytype(_) => Abstract(AbstractType::Any),
-      _ => self.content.clone(),
+  pub fn to_monotype(mut self) -> MonoType {
+    self.strip_polytypes();
+    MonoType { inner: self }
+  }
+
+  fn strip_polytypes(&mut self) {
+    match &self.content {
+      Polytype(_) => self.content = Abstract(AbstractType::Any),
+      _ => (),
     };
-    let mut children = vec![];
-    for c in self.children.iter() {
-      children.push(c.to_monotype().inner);
+    for c in self.children.iter_mut() {
+      c.strip_polytypes();
     }
-    MonoType { inner: Type::new(content, children) }
   }
 }
 
@@ -536,7 +539,7 @@ fn incremental_unify_internal(old_mono : &Type, new : &mut Type, result : &mut U
     }
     if let Abstract(abs_new) = &new.content {
       if abs_new.contains_type(old_mono) {
-        *new = old_mono.to_monotype().inner;
+        *new = old_mono.clone().to_monotype().inner;
         result.new_type_changed = true;
         return Ok(());
       }
@@ -558,7 +561,7 @@ pub fn unify_types(a : &MonoType, b : &MonoType) -> Option<MonoType> {
 fn unify_types_internal(mt : &MonoType, pt : &Type) -> Option<MonoType> {
   match can_unify_types_internal(&mt.inner, pt) {
     CanUnifyResult::CanUnify => {
-      let mut t = pt.to_monotype();
+      let mut t = pt.clone().to_monotype();
       if !incremental_unify_polymorphic(mt, &mut t.inner).fully_unified {
         panic!("bug in unify_types")
       }
@@ -680,7 +683,7 @@ impl <'a> TypeDirectory<'a> {
     }
   }
 
-  pub fn get_global(&mut self, id : GlobalId) -> &mut GlobalDefinition {
+  pub fn get_global_mut(&mut self, id : GlobalId) -> &mut GlobalDefinition {
     self.new_module.globals.get_mut(&id).unwrap()
   }
 
@@ -731,30 +734,6 @@ impl <'a> TypeDirectory<'a> {
       .chain(self.import_types.iter().rev())
       .find(|t| t.module_id == module_id)
       .expect("module not found")
-  }
-
-  pub fn resolve_abstract_defs<'l>(&mut self, t : &'l Type) -> Result<MonoType, &'l str> {
-    let content = match &t.content {
-      Abstract(AbstractType::Def(name)) => {
-        if let Some(def) = self.find_type_def(name) {
-          let children = def.polytypes.iter().map(|_| Type::any()).collect();
-          let content = Def(name.clone(), def.module_id);
-          let inner = Type::new(content, children);
-          return Ok(MonoType{ inner });
-        }
-        else {
-          return Err(name.as_ref())
-        }
-      }
-      Polytype(_) => Abstract(AbstractType::Any),
-      _ => t.content.clone(),
-    };
-    let mut children = vec![];
-    for c in t.children() {
-      let c = self.resolve_abstract_defs(c)?;
-      children.push(c.into())
-    }
-    Ok(MonoType{ inner: Type::new(content, children) })
   }
 }
 

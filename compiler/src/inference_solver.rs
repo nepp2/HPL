@@ -7,7 +7,7 @@
 
 use itertools::Itertools;
 
-use crate::error::{Error, error_raw, TextLocation};
+use crate::error::{Error, error, error_raw, TextLocation};
 use crate::expr::{UIDGenerator, RefStr, StringCache};
 use crate::structure::{
   NodeId, TypeKind, Nodes,
@@ -16,11 +16,11 @@ use crate::types::{
   Type, TypeContent, TypeInfo, TypeDirectory, GlobalId,
   SignatureBuilder, incremental_unify_monomorphic,
   incremental_unify_polymorphic, UnifyResult,
-  MonoType, ModuleId,
+  MonoType, ModuleId, AbstractType,
 };
 use crate::inference_constraints::{
   gather_constraints, Constraint, ConstraintContent,
-  Constraints, TypeSymbol,
+  Constraints, TypeSymbol, Assertion,
 };
 use crate::modules::TypedModule;
 use crate::codegen::CodegenInfo;
@@ -149,15 +149,13 @@ impl <'a> Inference<'a> {
   fn unresolved_constraint_error(&mut self, c : &Constraint) {
     use ConstraintContent::*;
     let e = match &c.content  {
-      Assert(_ts, _t) => return,
       Equalivalent(_a, _b) => return,
       // this error should always be accompanied by other unresolved constraints
       Function{ function:_, args:_, return_type:_ } => return,
       Constructor { def_ts:_ , fields:_ } => return,
       Convert { val:_, into_type_ts:_ } => return,
-      TypeDefField { .. } => return,
       GlobalDef { global_id, type_symbol:_ } => {
-        let def = self.t.get_global(*global_id);
+        let def = self.t.get_global_mut(*global_id);
         error_raw(def.loc,
           format!("Global definition '{}' not resolved. Inferred type {}.", def.name, def.type_tag))
       }
@@ -187,20 +185,85 @@ impl <'a> Inference<'a> {
     self.symbol_references.insert(node, (module_id, global_id));
   }
 
-  fn process_constraint(&mut self, c : &'a Constraint) {
-    use ConstraintContent::*;
-    match &c.content  {
-      Assert(ts, t) => {
-        match self.t.resolve_abstract_defs(t) {
-          Ok(t) =>
-            self.update_type(*ts, t),
-          Err(def_name) => {
-            let e = error_raw(self.loc(*ts),
-              format!("type definition '{}' was not found", def_name));
+  fn resolve_abstract_defs<'l>(&self, loc : TextLocation, t : &'l Type)
+    -> Result<Type, Error> 
+  {
+    let content = match &t.content {
+      Abstract(AbstractType::Def(name)) => {
+        if let Some(def) = self.t.find_type_def(name) {
+          let children = if t.children.len() == 0 {
+            def.polytypes.iter().map(|_| Type::any()).collect()
+          }
+          else if t.children.len() != def.polytypes.len() {
+            return error(loc, "incorrect number of type arguments");
+          }
+          else {
+            t.children.iter().map(|c| self.resolve_abstract_defs(loc, c))
+              .collect::<Result<Vec<_>, Error>>()?
+          };
+          let content = Def(name.clone(), def.module_id);
+          return Ok(Type::new(content, children));
+        }
+        else {
+          return error(loc, format!("type definition '{}' was not found", name));
+        }
+      }
+      _ => t.content.clone(),
+    };
+    let mut children = vec![];
+    for c in t.children() {
+      let c = self.resolve_abstract_defs(loc, c)?;
+      children.push(c.into())
+    }
+    Ok(Type::new(content, children))
+  }
+
+  fn process_assertion(&mut self, a : &'a Assertion) {
+    fn to_resolved(i : &mut Inference, t : &Option<(Type, TextLocation)>) -> Type {
+      if let Some((t, loc)) = t.as_ref() {
+        match i.resolve_abstract_defs(*loc, t) {
+          Ok(t) => return t,
+          Err(e) => i.errors.push(e),
+        }
+      }
+      Type::any()
+    }
+    match a {
+      Assertion::Assert(ts, t) => {
+        let loc = self.loc(*ts);
+        match self.resolve_abstract_defs(loc, t) {
+          Ok(t) => {
+            self.resolved.insert(*ts, t.to_monotype());
+          }
+          Err(e) => {
             self.errors.push(e);
           }
         }
       }
+      Assertion::AssertFunctionDef{id, args, return_type} => {
+        let mut sig = SignatureBuilder::new(to_resolved(self, return_type));
+        for a in args {
+          sig.append_arg(to_resolved(self, a));
+        }
+        let def = self.t.get_global_mut(*id);
+        def.type_tag = sig.into();
+      }
+      Assertion::AssertTypeDef{ typename, fields } => {
+        let mut fs = vec![];
+        for f in fields {
+          fs.push(to_resolved(self, f));
+        }
+        let def = self.t.get_type_def_mut(typename);
+        for (i, t) in fs.into_iter().enumerate() {
+          def.fields[i].1 = t;
+        }
+      }
+    }
+  }
+
+  fn process_constraint(&mut self, c : &'a Constraint) {
+    use ConstraintContent::*;
+    match &c.content  {
       Equalivalent(a, b) => {
         if let Some(t) = self.get_type(*a) {
           let t = t.clone();
@@ -249,7 +312,7 @@ impl <'a> Inference<'a> {
                         self.errors.push(error_raw(field_name.loc, "incorrect field name"));
                       }
                     }
-                    arg_types.push(expected_type.to_monotype());
+                    arg_types.push(expected_type.clone().to_monotype());
                   }
                   for(i, t) in arg_types.into_iter().enumerate() {
                     self.update_type(fields[i].1, t);
@@ -263,7 +326,7 @@ impl <'a> Inference<'a> {
               TypeKind::Union => {
                 if let [(Some(sym), ts)] = fields.as_slice() {
                   if let Some((_, t)) = def.fields.iter().find(|(n, _)| n.name == sym.name) {
-                    let t = t.to_monotype();
+                    let t = t.clone().to_monotype();
                     self.update_type(*ts, t);
                   }
                   else {
@@ -305,28 +368,29 @@ impl <'a> Inference<'a> {
           }
         }
       }
-      TypeDefField { container, field_index, field_type } => {
-        if let Some(ctype) = self.resolved.get(container) {
-          if let Def(name, _) = &ctype.as_type().content {
-            let def = self.t.get_type_def_mut(name);
-            if let Some(inferred_type) = self.resolved.get(field_type) {
-              let t = &mut def.fields[*field_index].1;
-              let r = incremental_unify_polymorphic(inferred_type, t);
-              if r.new_type_changed {
-                // Trigger any constraints looking for this def
-                if let Some(cs) = self.dependency_map.typedef_map.get(name) {
-                  for &c in cs.values() {
-                    self.next_edge_set.insert(c.id, c);
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
+      // TODO: improve this and make it work again
+      // TypeDefField { container, field_index, field_type } => {
+      //   if let Some(ctype) = self.resolved.get(container) {
+      //     if let Def(name, _) = &ctype.as_type().content {
+      //       let def = self.t.get_type_def_mut(name);
+      //       if let Some(inferred_type) = self.resolved.get(field_type) {
+      //         let t = &mut def.fields[*field_index].1;
+      //         let r = incremental_unify_polymorphic(inferred_type, t);
+      //         if r.new_type_changed {
+      //           // Trigger any constraints looking for this def
+      //           if let Some(cs) = self.dependency_map.typedef_map.get(name) {
+      //             for &c in cs.values() {
+      //               self.next_edge_set.insert(c.id, c);
+      //             }
+      //           }
+      //         }
+      //       }
+      //     }
+      //   }
+      // }
       GlobalDef{ global_id, type_symbol } => {
         if let Some(t) = self.resolved.get(type_symbol) {
-          let def = self.t.get_global(*global_id);
+          let def = self.t.get_global_mut(*global_id);
           if !def.polymorphic {
             let r = incremental_unify_polymorphic(t, &mut def.type_tag);
             if r.fully_unified {
@@ -376,7 +440,7 @@ impl <'a> Inference<'a> {
             let def = self.t.get_type_def(&name, *module_id);
             let f = def.fields.iter().find(|(n, _)| n.name == field.name);
             if let Some((_, t)) = f {
-              let mt = t.to_monotype();
+              let mt = t.clone().to_monotype();
               self.update_type(*result, mt);
             }
             else {
@@ -393,7 +457,7 @@ impl <'a> Inference<'a> {
         }
         else if let Some(array_type) = self.get_type(*array) {
           if let Some(element_type) = array_type.as_type().array() {
-            let et = element_type.to_monotype();
+            let et = element_type.clone().to_monotype();
             self.update_type(*element, et);
           }
         }
@@ -418,6 +482,9 @@ impl <'a> Inference<'a> {
 
   fn infer(&mut self) {
     println!("To resolve: {}", self.c.symbols.len());
+    for a in self.c.assertions.iter() {
+      self.process_assertion(a);
+    }
     for c in self.c.constraints.iter() {
       self.dependency_map.populate_dependency_map(c);
       self.next_edge_set.insert(c.id, c);
@@ -535,10 +602,6 @@ impl <'a> ConstraintDependencyMap<'a> {
   fn populate_dependency_map(&mut self, c : &'a Constraint) {
     use ConstraintContent::*;
     match &c.content {
-      Assert(_ts, _t) => {
-        // asserts only need to run once, so there's no point
-        // in registering them to be triggered again.
-      }
       Equalivalent(a, b) => {
         self.ts(a, c);
         self.ts(b, c);
@@ -564,10 +627,6 @@ impl <'a> ConstraintDependencyMap<'a> {
         for ts in args { self.ts(ts, c) }
         self.ts(return_type, c);
       },
-      TypeDefField { container, field_index:_, field_type } => {
-        self.ts(container, c);
-        self.ts(field_type, c);
-      }
       GlobalDef { global_id:_, type_symbol } => self.ts(type_symbol, c),
       GlobalReference { node:_, name, result } => {
         self.global(name, c);

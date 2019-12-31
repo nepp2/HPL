@@ -31,9 +31,17 @@ pub fn gather_constraints(
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct TypeSymbol(u64);
 
-pub enum Function {
-  Value(TypeSymbol),
-  Name(Symbol),
+pub enum Assertion {
+  Assert(TypeSymbol, Type),
+  AssertTypeDef {
+    typename: RefStr,
+    fields : Vec<Option<(Type, TextLocation)>>,
+  },
+  AssertFunctionDef {
+    id : GlobalId,
+    args : Vec<Option<(Type, TextLocation)>>,
+    return_type : Option<(Type, TextLocation)>,
+  },
 }
 
 pub struct Constraint {
@@ -42,7 +50,6 @@ pub struct Constraint {
 }
 
 pub enum ConstraintContent {
-  Assert(TypeSymbol, Type),
   Equalivalent(TypeSymbol, TypeSymbol),
   Array{ array : TypeSymbol, element : TypeSymbol },
   Convert{ val : TypeSymbol, into_type_ts : TypeSymbol },
@@ -61,11 +68,6 @@ pub enum ConstraintContent {
     args : Vec<TypeSymbol>,
     return_type : TypeSymbol,
   },
-  TypeDefField {
-    container : TypeSymbol,
-    field_index : usize,
-    field_type : TypeSymbol,
-  },
   GlobalDef {
     global_id: GlobalId,
     type_symbol: TypeSymbol,
@@ -77,11 +79,15 @@ pub enum ConstraintContent {
   },
 }
 
+pub enum Function {
+  Value(TypeSymbol),
+  Name(Symbol),
+}
+
 impl  fmt::Display for Constraint {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     use ConstraintContent::*;
     match &self.content {
-      Assert(_, t) => write!(f, "Assert {}", t),
       Equalivalent(_, _) => write!(f, "Equalivalent"),
       Array{ .. } => write!(f, "Array"),
       Convert{ .. } => write!(f, "Convert"),
@@ -89,7 +95,6 @@ impl  fmt::Display for Constraint {
       Constructor { .. } => write!(f, "Constructor"),
       Function { args, .. } =>
         write!(f, "FunctionCall ({} args)", args.len()),
-      TypeDefField { .. } => write!(f, "TypeDefField"),  
       GlobalDef { .. } => write!(f, "GlobalDef"),
       GlobalReference { name, .. } => write!(f, "GlobalRef {}", name),
       SizeOf{ .. } => write!(f, "SizeOf"),
@@ -103,6 +108,7 @@ pub struct Constraints {
   pub literals : Vec<NodeId>,
   pub variable_symbols : HashMap<SymbolId, TypeSymbol>,
   pub constraints : Vec<Constraint>,
+  pub assertions : Vec<Assertion>,
 }
 
 impl Constraints {
@@ -113,6 +119,7 @@ impl Constraints {
       literals: vec![],
       variable_symbols: HashMap::new(),
       constraints: vec![],
+      assertions: vec![],
     }
   }
 
@@ -191,23 +198,21 @@ impl <'l, 't> GatherConstraints<'l, 't> {
     self.constraint(ConstraintContent::Equalivalent(a, b));
   }
 
-  fn assert(&mut self, ts : TypeSymbol, t : PType) {
-    self.constraint(ConstraintContent::Assert(ts, t.into()));
+  fn assertion(&mut self, a : Assertion) {
+    self.c.assertions.push(a);
   }
 
   fn assert_type(&mut self, ts : TypeSymbol, t : Type) {
-    self.constraint(ConstraintContent::Assert(ts, t));
+    self.assertion(Assertion::Assert(ts, t));
+  }
+
+  fn assert(&mut self, ts : TypeSymbol, t : PType) {
+    self.assert_type(ts, t.into());
   }
 
   fn tag_symbol(&mut self, ts : TypeSymbol, type_expr : &Expr) {
     if let Some(t) = self.expr_to_type(type_expr) {
       self.assert_type(ts, t);
-    }
-  }
-
-  fn try_tag_symbol(&mut self, ts : TypeSymbol, type_expr : &Option<Box<Expr>>) {
-    if let Some(type_expr) = type_expr {
-      self.tag_symbol(ts, type_expr);
     }
   }
 
@@ -240,7 +245,9 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           VarScope::Local => self.variable_to_type_symbol(name),
           VarScope::Global(_) => self.type_symbol(name.loc),
         };
-        self.try_tag_symbol(var_type_symbol, type_tag);
+        if let Some(t) = type_tag {
+          self.tag_symbol(var_type_symbol, t);
+        }
         let vid = self.process_node(n, *value);
         self.equalivalent(var_type_symbol, vid);
         if let VarScope::Global(global_type) = *var_scope {
@@ -304,6 +311,8 @@ impl <'l, 't> GatherConstraints<'l, 't> {
       }
       Content::Reference{ name, refers_to } => {
         if let Some(refers_to) = refers_to {
+          println!("Reference to {} is {} at {}",
+            name, self.c.variable_symbols.contains_key(refers_to), node.loc);
           let var_type = self.variable_to_type_symbol(n.symbol(*refers_to));
           self.equalivalent(ts, var_type);
         }
@@ -314,48 +323,61 @@ impl <'l, 't> GatherConstraints<'l, 't> {
       Content::FunctionDefinition{ name, args, return_tag, polytypes, body } => {
         self.assert(ts, PType::Void);
         self.with_polytypes(polytypes.as_slice(), |gc, polytypes| {
-          let is_polymorphic_def = !polytypes.is_empty();
-          let body_ts = {
-            if is_polymorphic_def {
-              // Check that all arg tags are explicit
-              for (arg, tag) in args.iter() {
-                if !tag.is_some() {
-                  let e = error_raw(arg.loc, "argument types must be explicit in polymorphic function definitions");
-                  gc.errors.push(e);
-                }
-              }
-              gc.type_symbol(node.loc)
+          let is_polymorphic_def = polytypes.len() > 0;
+          // Process argument types
+          let mut arg_names = vec!();
+          let mut arg_type_symbols = vec![];
+          let mut arg_types = vec![];
+          for (arg, type_tag) in args.iter() {
+            arg_names.push(arg.clone());
+            arg_type_symbols.push(gc.variable_to_type_symbol(arg));
+            arg_types.push(
+              type_tag.as_ref()
+                .and_then(|e| gc.expr_to_type(e).map(|t|(t, e.loc)))
+            );
+          }
+          let return_type = {
+            if is_polymorphic_def && return_tag.is_none() {
+              Some((PType::Void.into(), TextLocation::zero()))
             }
             else {
+              return_tag.as_ref()
+                .and_then(|e| gc.expr_to_type(e).map(|t| (t, e.loc)))
+            }
+          };
+          let global_id = gc.gen.next().into();
+          // Assert any explicit type tags
+          gc.assertion(Assertion::AssertFunctionDef{
+            id: global_id, args: arg_types, return_type
+          });
+          // Polymorphic definitions must have explicit argument types
+          // (the return type is assumed to be void if left blank)
+          if is_polymorphic_def {
+            for (arg, tag) in args.iter() {
+              if !tag.is_some() {
+                let e = error_raw(arg.loc, "argument types must be explicit in polymorphic function definitions");
+                gc.errors.push(e);
+              }
+            }
+          }
+          let global_ts = gc.type_symbol(node.loc);
+          if !is_polymorphic_def {
+            // Process the body of the function. The arguments MUST be processed
+            // first so that their type symbols are available to the body. 
+            let body_ts = {
               // Need new scope stack for new function
               let mut gc = GatherConstraints::new(
                 gc.t, gc.cg, gc.cache, gc.gen,
                 gc.c, gc.errors
               );
               gc.process_node(n, *body)
-            }
-          };
-          if let Some(return_tag) = return_tag {
-            gc.tag_symbol(body_ts, return_tag);
+            };
+            gc.constraint(Function {
+              function: global_ts,
+              args: arg_type_symbols,
+              return_type: body_ts,
+            });
           }
-          else if is_polymorphic_def {
-            gc.assert(body_ts, PType::Void);
-          }
-          let mut arg_types : Vec<TypeSymbol> = vec![];
-          let mut arg_names = vec!();
-          for (arg, type_tag) in args.iter() {
-            arg_names.push(arg.clone());
-            let arg_type_symbol = gc.variable_to_type_symbol(arg);
-            gc.try_tag_symbol(arg_type_symbol, type_tag);
-            arg_types.push(arg_type_symbol);
-          }
-          let global_ts = gc.type_symbol(node.loc);
-          gc.constraint(Function {
-            function: global_ts,
-            args: arg_types,
-            return_type: body_ts,
-          });
-          let global_id = gc.gen.next().into();
           gc.constraint(GlobalDef {
             global_id,
             type_symbol: global_ts,
@@ -413,19 +435,20 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             let container = gc.type_symbol(node.loc);
             gc.assert_type(container, def_type);
             // TODO: check for duplicate fields?
-            let mut typed_fields = vec![];
-            for (i, (field, type_tag)) in fields.iter().enumerate() {
-              let field_ts = gc.type_symbol(field.loc);
-              gc.try_tag_symbol(field_ts, type_tag);
-              gc.constraint(TypeDefField {
-                container, field_index: i, field_type: field_ts,
-              });
-              typed_fields.push((field.clone(), Type::any()));
+            let mut field_types = vec![];
+            for (_, type_tag) in fields.iter() {
+              field_types.push(
+                type_tag.as_ref()
+                  .and_then(|e| gc.expr_to_type(e).map(|t| (t, e.loc)))
+              );
             }
+            gc.assertion(Assertion::AssertTypeDef {
+              typename: name.clone(), fields: field_types,
+            });
             let def = TypeDefinition {
               name: name.clone(),
               module_id: gc.t.new_module_id(),
-              fields: typed_fields,
+              fields: fields.iter().map(|(f, _)| (f.clone(), Type::any())).collect(),
               kind: *kind,
               polytypes,
               drop_function: None, clone_function: None,
@@ -486,7 +509,8 @@ impl <'l, 't> GatherConstraints<'l, 't> {
         self.constraint(c);
       }
       Content::SizeOf{ type_tag } => {
-        let size_ts = self.expr_to_type_symbol(type_tag);
+        let size_ts = self.type_symbol(type_tag.loc);
+        self.tag_symbol(size_ts, type_tag);
         self.constraint(SizeOf{
           node: id,
           ts : size_ts
@@ -536,14 +560,6 @@ impl <'l, 't> GatherConstraints<'l, 't> {
       // Assume type definition
       let name = self.cache.get(name);
       return Type::unresolved_def(name);
-  }
-
-  fn expr_to_type_symbol(&mut self, expr : &Expr) -> TypeSymbol {
-    let ts = self.type_symbol(expr.loc);
-    if let Some(t) = self.expr_to_type(expr) {
-      self.assert_type(ts, t);
-    }
-    ts
   }
 
   /// Converts expression into type.
