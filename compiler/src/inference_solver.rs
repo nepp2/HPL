@@ -16,7 +16,7 @@ use crate::types::{
   Type, TypeContent, TypeInfo, TypeDirectory, GlobalId,
   SignatureBuilder, incremental_unify_monomorphic,
   incremental_unify_polymorphic, UnifyResult,
-  MonoType, ModuleId, AbstractType,
+  MonoType, ModuleId, AbstractType, GlobalInit,
 };
 use crate::inference_constraints::{
   gather_constraints, Constraint, ConstraintContent,
@@ -389,24 +389,24 @@ impl <'a> Inference<'a> {
       //   }
       // }
       GlobalDef{ global_id, type_symbol } => {
-        if let Some(t) = self.resolved.get(type_symbol) {
-          let def = self.t.get_global_mut(*global_id);
-          if !def.polymorphic {
-            let r = incremental_unify_polymorphic(t, &mut def.type_tag);
-            if r.fully_unified {
-              if r.new_type_changed {
-                // Trigger any constraints looking for this name
-                if let Some(cs) = self.dependency_map.global_map.get(&def.name) {
-                  for &c in cs.iter() {
-                    self.next_edge_set.insert(c.id, c);
-                  }
+        let mut t = self.t.get_global_mut(*global_id).type_tag.clone().to_monotype();
+        self.update_type_mut(*type_symbol, &mut t);
+        let def = self.t.get_global_mut(*global_id);
+        if !def.polymorphic {
+          let r = incremental_unify_polymorphic(&t, &mut def.type_tag);
+          if r.fully_unified {
+            if r.new_type_changed {
+              // Trigger any constraints looking for this name
+              if let Some(cs) = self.dependency_map.global_map.get(&def.name) {
+                for &c in cs.iter() {
+                  self.next_edge_set.insert(c.id, c);
                 }
               }
             }
-            else {
-              let e = error_raw(def.loc, format!("conflicting types inferred; {} and {}.", t, def.type_tag));
-              self.errors.push(e);
-            }
+          }
+          else {
+            let e = error_raw(def.loc, format!("conflicting types inferred; {} and {}.", t, def.type_tag));
+            self.errors.push(e);
           }
         }
       }
@@ -515,8 +515,10 @@ impl <'a> Inference<'a> {
       for (ts, _) in self.c.symbols.iter() {
         if !self.resolved.get(ts).map(|t| t.as_type().is_concrete()).unwrap_or(false) {
           unresolved += 1;
-          for c in self.dependency_map.ts_map.get(ts).unwrap() {
-            active_edge_set.insert(c.id, c);
+          if let Some(cs) = self.dependency_map.ts_map.get(ts) {
+            for c in cs {
+              active_edge_set.insert(c.id, c);
+            }
           }
         }
       }
@@ -555,8 +557,10 @@ impl <'a> Inference<'a> {
       for (nid, (mid, gid)) in self.symbol_references.drain() {
         let def = self.t.find_module(mid).globals.get(&gid).unwrap().clone();
         if def.polymorphic {
-          let t = self.cg.node_type.get(&nid).unwrap();
-          println!("polymorphic def '{}', {} - {}", def.name, def.type_tag, t);
+          if let GlobalInit::Function(_) = def.initialiser {
+            let t = self.cg.node_type.get(&nid).unwrap();
+            println!("polymorphic def '{}', {} - {}", def.name, def.type_tag, t);
+          }
         }
         self.cg.symbol_references.insert(nid, def);
       }

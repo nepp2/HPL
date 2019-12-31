@@ -1,44 +1,43 @@
 
-// struct list(T) {
-//   len : u64
-//   data : ptr(T)
-//   capacity : u64
-// }
+struct list(T) {
+  len : u64
+  data : ptr(T)
+  capacity : u64
+}
 
-// fun list() => list(T) with T {
-//   list.new(0, 0 as ptr(T), 0)
-// }
+fun list() => list(T) with T {
+  list.new(0, 0 as ptr(T), 0)
+}
 
-// fun add(list : list(T), item : T) with T {
-//   let len = list.len
-//   if list.capacity <= list.len {
-//     let next_capacity = {
-//       if list.capacity == 0 { 1 }
-//       else { list.capacity * 2 }
-//     }
-//     let new_data = malloc(next_capacity * sizeof(T))
-//     memcpy(new_data, list.data as ptr(u8), list.capacity * sizeof(T))
-//     if list.data as u64 != 0 { free(list.data) }
-//     list.data = new_data as ptr(T)
-//     list.capacity = list.capacity * 2
-//   }
-//   list.data[list.len] = item
-//   list.len = list.len + 1
-// }
+fun add(list : list(T), item : T) with T {
+  let len = list.len
+  if list.capacity <= list.len {
+    let next_capacity = {
+      if list.capacity == 0 { 1 }
+      else { list.capacity * 2 }
+    }
+    let new_data = malloc(next_capacity * sizeof(T))
+    memcpy(new_data, list.data as ptr(u8), list.capacity * sizeof(T))
+    if list.data as u64 != 0 { free(list.data) }
+    list.data = new_data as ptr(T)
+    list.capacity = list.capacity * 2
+  }
+  list.data[list.len] = item
+  list.len = list.len + 1
+}
 
-// fun Index(list : list(T), i : Int) => T with T, Int {
-//   let i = i as u64
-//   if i >= list.len {
-//     panic("list access out of bounds")
-//   }
-//   list.data[i]
-// }
+fun Index(list : list(T), i : Int) => T with T, Int {
+  let i = i as u64
+  if i >= list.len {
+    panic("list access out of bounds")
+  }
+  list.data[i]
+}
 
-// let list = list()
+let list = list()
 
-// for x in range(0, 10) {
-//   list.add(x)
-// }
+for x in range(0, 10) {
+  list.add(x)
+}
 
-// println(list)
-3
+println(list)

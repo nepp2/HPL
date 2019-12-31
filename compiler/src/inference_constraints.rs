@@ -311,8 +311,6 @@ impl <'l, 't> GatherConstraints<'l, 't> {
       }
       Content::Reference{ name, refers_to } => {
         if let Some(refers_to) = refers_to {
-          println!("Reference to {} is {} at {}",
-            name, self.c.variable_symbols.contains_key(refers_to), node.loc);
           let var_type = self.variable_to_type_symbol(n.symbol(*refers_to));
           self.equalivalent(ts, var_type);
         }
