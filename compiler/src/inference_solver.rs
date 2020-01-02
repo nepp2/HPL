@@ -14,9 +14,8 @@ use crate::structure::{
 };
 use crate::types::{
   Type, TypeContent, TypeInfo, TypeDirectory, GlobalId,
-  SignatureBuilder, incremental_unify_monomorphic,
-  incremental_unify_polymorphic, UnifyResult,
-  MonoType, ModuleId, AbstractType, GlobalInit,
+  SignatureBuilder, incremental_unify,
+  UnifyResult, ModuleId, AbstractType, GlobalInit,
 };
 use crate::inference_constraints::{
   gather_constraints, Constraint, ConstraintContent,
@@ -62,7 +61,7 @@ pub fn infer_types(
 
 struct TypeUnify<'a> {
   errors : &'a mut Vec<Error>,
-  resolved : HashMap<TypeSymbol, MonoType>,
+  resolved : HashMap<TypeSymbol, Type>,
 }
 
 struct Inference<'a> {
@@ -76,7 +75,7 @@ struct Inference<'a> {
   symbol_references : HashMap<NodeId, (ModuleId, GlobalId)>,
   dependency_map : ConstraintDependencyMap<'a>,
   next_edge_set : HashMap<u64, &'a Constraint>,
-  resolved : HashMap<TypeSymbol, MonoType>,
+  resolved : HashMap<TypeSymbol, Type>,
 }
 
 impl <'a> Inference<'a> {
@@ -100,7 +99,7 @@ impl <'a> Inference<'a> {
     }
   }
 
-  fn get_type(&self, ts : TypeSymbol) -> Option<&MonoType> {
+  fn get_type(&self, ts : TypeSymbol) -> Option<&Type> {
     self.resolved.get(&ts)
   }
 
@@ -112,9 +111,9 @@ impl <'a> Inference<'a> {
     }
   }
 
-  fn unify_mut_internal(&mut self, ts : TypeSymbol, new_type : &mut MonoType) -> UnifyResult {
+  fn unify_mut_internal(&mut self, ts : TypeSymbol, new_type : &mut Type) -> UnifyResult {
     if let Some(prev_t) = self.resolved.get(&ts) {
-      let r = incremental_unify_monomorphic(prev_t, new_type);
+      let r = incremental_unify(prev_t, new_type);
       if !r.unify_success {
         let e = error_raw(self.loc(ts), format!("conflicting types inferred; {} and {}.", new_type, prev_t));
         self.errors.push(e);
@@ -126,14 +125,14 @@ impl <'a> Inference<'a> {
     }
   }
 
-  fn update_type(&mut self, ts : TypeSymbol, mut t : MonoType) {
+  fn update_type(&mut self, ts : TypeSymbol, mut t : Type) {
     if self.unify_mut_internal(ts, &mut t).old_type_changed {
       self.resolved.insert(ts, t);
       self.type_updated(ts);
     }
   }
 
-  fn update_type_mut(&mut self, ts : TypeSymbol, t : &mut MonoType) -> UnifyResult {
+  fn update_type_mut(&mut self, ts : TypeSymbol, t : &mut Type) -> UnifyResult {
     let r = self.unify_mut_internal(ts, t);
     if r.old_type_changed {
       self.resolved.insert(ts, t.clone());
@@ -160,7 +159,7 @@ impl <'a> Inference<'a> {
           format!("Global definition '{}' not resolved. Inferred type {}.", def.name, def.type_tag))
       }
       GlobalReference { node:_, name, result } => {
-        let any = MonoType::any();
+        let any = Type::any();
         let t = self.resolved.get(result).unwrap_or(&any);
         let symbols = self.t.find_global(&name, t);
         let s = symbols.iter().map(|g| format!("      {} : {}", g.def.name, g.resolved_type)).join("\n");
@@ -233,7 +232,7 @@ impl <'a> Inference<'a> {
         let loc = self.loc(*ts);
         match self.resolve_abstract_defs(loc, t) {
           Ok(t) => {
-            self.resolved.insert(*ts, t.to_monotype());
+            self.resolved.insert(*ts, t);
           }
           Err(e) => {
             self.errors.push(e);
@@ -286,7 +285,7 @@ impl <'a> Inference<'a> {
           }
         }
         else {
-          let any = MonoType::any();
+          let any = Type::any();
           let return_type = self.get_type(*return_type).cloned().unwrap_or(any.clone());
           let mut sig = SignatureBuilder::new(return_type.into());
           for &arg in args {
@@ -298,7 +297,7 @@ impl <'a> Inference<'a> {
       }
       Constructor { def_ts, fields } => {
         if let Some(t) = self.resolved.get(def_ts) {
-          if let Def(name, module_id) = &t.as_type().content {
+          if let Def(name, module_id) = &t.content {
             self.dependency_map.register_typedef(name, c);
             let def = self.t.get_type_def(name, *module_id);
             match def.kind {
@@ -312,7 +311,7 @@ impl <'a> Inference<'a> {
                         self.errors.push(error_raw(field_name.loc, "incorrect field name"));
                       }
                     }
-                    arg_types.push(expected_type.clone().to_monotype());
+                    arg_types.push(expected_type.clone());
                   }
                   for(i, t) in arg_types.into_iter().enumerate() {
                     self.update_type(fields[i].1, t);
@@ -326,7 +325,7 @@ impl <'a> Inference<'a> {
               TypeKind::Union => {
                 if let [(Some(sym), ts)] = fields.as_slice() {
                   if let Some((_, t)) = def.fields.iter().find(|(n, _)| n.name == sym.name) {
-                    let t = t.clone().to_monotype();
+                    let t = t.clone();
                     self.update_type(*ts, t);
                   }
                   else {
@@ -347,8 +346,7 @@ impl <'a> Inference<'a> {
         let t = self.get_type(*val);
         let into = self.get_type(*into_type_ts);
         if let [Some(t), Some(into)] = &[t, into] {
-          if t.as_type().is_concrete() && into.as_type().is_concrete() {
-            let (t, into) = (t.as_type(), into.as_type());
+          if t.is_concrete() && into.is_concrete() {
             fn abstract_contains(t : &Type, into_type : &Type) -> bool {
               if let Abstract(abs_t) = &t.content {
                 return abs_t.contains_type(into_type);
@@ -389,13 +387,15 @@ impl <'a> Inference<'a> {
       //   }
       // }
       GlobalDef{ global_id, type_symbol } => {
+        let aaa = (); // TODO: check that polytypes are resolved properly here
+
         // Use global def to update the type symbol
-        let mut t = self.t.get_global_mut(*global_id).type_tag.clone().to_monotype();
+        let mut t = self.t.get_global_mut(*global_id).type_tag.clone();
         self.update_type_mut(*type_symbol, &mut t);
         // Use the type symbol to update the global def
         let def = self.t.get_global_mut(*global_id);
         if !def.polymorphic {
-          let r = incremental_unify_polymorphic(&t, &mut def.type_tag);
+          let r = incremental_unify(&t, &mut def.type_tag);
           if r.unify_success {
             if r.new_type_changed {
               // Trigger any constraints looking for this name
@@ -413,7 +413,7 @@ impl <'a> Inference<'a> {
         }
       }
       GlobalReference { node, name, result } => {
-        let any = MonoType::any();
+        let any = Type::any();
         let t = self.get_type(*result).cloned().unwrap_or(any);
         match self.t.find_global(&name, &t) {
           [g] => {
@@ -433,7 +433,7 @@ impl <'a> Inference<'a> {
       FieldAccess{ container, field, result } => {
         let container_type = self.resolved.get(container);
         if let Some(ct) = container_type {
-          let mut t = ct.as_type();
+          let mut t = ct;
           // Dereference any pointers
           while let Some(inner) = t.ptr() {
             t = inner;
@@ -443,7 +443,7 @@ impl <'a> Inference<'a> {
             let def = self.t.get_type_def(&name, *module_id);
             let f = def.fields.iter().find(|(n, _)| n.name == field.name);
             if let Some((_, t)) = f {
-              let mt = t.clone().to_monotype();
+              let mt = t.clone();
               self.update_type(*result, mt);
             }
             else {
@@ -459,15 +459,15 @@ impl <'a> Inference<'a> {
           self.update_type(*array, et.array_of());
         }
         else if let Some(array_type) = self.get_type(*array) {
-          if let Some(element_type) = array_type.as_type().array() {
-            let et = element_type.clone().to_monotype();
+          if let Some(element_type) = array_type.array() {
+            let et = element_type.clone();
             self.update_type(*element, et);
           }
         }
       }
       SizeOf { node, ts } => {
         if let Some(t) = self.get_type(*ts) {
-          if t.as_type().is_concrete() {
+          if t.is_concrete() {
             let t = t.clone().into();
             self.cg.sizeof_info.insert(*node, t);
           }
@@ -516,7 +516,7 @@ impl <'a> Inference<'a> {
     let mut unresolved = 0;
     if self.errors.is_empty() {
       for (ts, _) in self.c.symbols.iter() {
-        if !self.resolved.get(ts).map(|t| t.as_type().is_concrete()).unwrap_or(false) {
+        if !self.resolved.get(ts).map(|t| t.is_concrete()).unwrap_or(false) {
           unresolved += 1;
           if let Some(cs) = self.dependency_map.ts_map.get(ts) {
             for c in cs {
@@ -538,7 +538,7 @@ impl <'a> Inference<'a> {
     // Assign types to all of the nodes
     if self.errors.is_empty() {
       for (n, ts) in self.c.node_symbols.iter() {
-        let t = self.get_type(*ts).unwrap().as_type().clone();
+        let t = self.get_type(*ts).unwrap().clone();
         // Make sure the type isn't abstract
         if t.is_concrete() {
           self.cg.node_type.insert(*n, t);
