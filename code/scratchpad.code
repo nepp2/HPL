@@ -34,6 +34,14 @@ fun Index(list : list(T), i : Int) => T with T, Int {
   list.data[i]
 }
 
+fun println(list : list(T)) with T {
+  print("[")
+  for x in range(0, list.len) {
+    print(x) ; print(", ")
+  }
+  print("]")
+}
+
 let list = list()
 
 for x in range(0, 10) {

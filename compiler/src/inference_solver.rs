@@ -115,14 +115,14 @@ impl <'a> Inference<'a> {
   fn unify_mut_internal(&mut self, ts : TypeSymbol, new_type : &mut MonoType) -> UnifyResult {
     if let Some(prev_t) = self.resolved.get(&ts) {
       let r = incremental_unify_monomorphic(prev_t, new_type);
-      if !r.fully_unified {
+      if !r.unify_success {
         let e = error_raw(self.loc(ts), format!("conflicting types inferred; {} and {}.", new_type, prev_t));
         self.errors.push(e);
       }
       r
     }
     else {
-      UnifyResult { fully_unified: true, old_type_changed: true, new_type_changed: false }
+      UnifyResult { unify_success: true, old_type_changed: true, new_type_changed: false }
     }
   }
 
@@ -389,12 +389,14 @@ impl <'a> Inference<'a> {
       //   }
       // }
       GlobalDef{ global_id, type_symbol } => {
+        // Use global def to update the type symbol
         let mut t = self.t.get_global_mut(*global_id).type_tag.clone().to_monotype();
         self.update_type_mut(*type_symbol, &mut t);
+        // Use the type symbol to update the global def
         let def = self.t.get_global_mut(*global_id);
         if !def.polymorphic {
           let r = incremental_unify_polymorphic(&t, &mut def.type_tag);
-          if r.fully_unified {
+          if r.unify_success {
             if r.new_type_changed {
               // Trigger any constraints looking for this name
               if let Some(cs) = self.dependency_map.global_map.get(&def.name) {
@@ -421,8 +423,9 @@ impl <'a> Inference<'a> {
             self.update_type(*result, resolved_type);
           }
           [] => {
-            let s = format!("no global '{}' matches type '{}'", name, t);
-            self.errors.push(error_raw(self.loc(*result), s));          
+            let aaa = (); // TODO: this will definitely fail. But if an error is generated here it may be recorded several times.
+            // let s = format!("no global '{}' matches type '{}'", name, t);
+            // self.errors.push(error_raw(self.loc(*result), s));
           }
           _ => (), // Multiple matches. Global can't be resolved yet.
         }

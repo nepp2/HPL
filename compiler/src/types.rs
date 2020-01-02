@@ -442,7 +442,6 @@ impl  Type {
   pub fn is_concrete(&self) -> bool {
     match self.content {
       Abstract(_) => return false,
-      Polytype(_) => return false,
       _ => (),
     }
     for t in self.children.iter() {
@@ -501,14 +500,14 @@ impl  Type {
 
 //#[derive(PartialEq)]
 pub struct UnifyResult {
-  pub fully_unified : bool,
+  pub unify_success : bool,
   pub old_type_changed : bool,
   pub new_type_changed : bool,
 }
 
 impl UnifyResult {
   fn new() -> Self {
-    UnifyResult { fully_unified: false, old_type_changed: false, new_type_changed: false }
+    UnifyResult { unify_success: false, old_type_changed: false, new_type_changed: false }
   }
 }
 
@@ -519,7 +518,7 @@ pub fn incremental_unify_monomorphic(old : &MonoType, new : &mut MonoType) -> Un
 pub fn incremental_unify_polymorphic(old : &MonoType, new : &mut Type) -> UnifyResult {
   let mut result = UnifyResult::new();
   match incremental_unify_internal(old.as_type(), new, &mut result) {
-    Ok(()) => result.fully_unified = true,
+    Ok(()) => result.unify_success = true,
     Err(()) => (),
   }
   result
@@ -562,7 +561,7 @@ fn unify_types_internal(mt : &MonoType, pt : &Type) -> Option<MonoType> {
   match can_unify_types_internal(&mt.inner, pt) {
     CanUnifyResult::CanUnify => {
       let mut t = pt.clone().to_monotype();
-      if !incremental_unify_polymorphic(mt, &mut t.inner).fully_unified {
+      if !incremental_unify_polymorphic(mt, &mut t.inner).unify_success {
         panic!("bug in unify_types")
       }
       Some(t)
