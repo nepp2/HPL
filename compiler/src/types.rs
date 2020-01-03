@@ -492,13 +492,13 @@ impl  Type {
 //#[derive(PartialEq)]
 pub struct UnifyResult {
   pub unify_success : bool,
-  pub old_type_changed : bool,
-  pub new_type_changed : bool,
+  pub immutable_type_changed : bool,
+  pub mutable_type_changed : bool,
 }
 
 impl UnifyResult {
   fn new() -> Self {
-    UnifyResult { unify_success: false, old_type_changed: false, new_type_changed: false }
+    UnifyResult { unify_success: false, immutable_type_changed: false, mutable_type_changed: false }
   }
 }
 
@@ -515,18 +515,18 @@ fn incremental_unify_internal(old_mono : &Type, new : &mut Type, result : &mut U
   -> Result<(), ()>
 {
   if let Polytype(_) = &new.content { return Ok(()) }
-  if let Polytype(_) = &old_mono.content { panic!("unexpected polytype") }
+  if let Polytype(_) = &old_mono.content { return Ok(()) }
   if old_mono.content != new.content {
     if let Abstract(abs_old) = &old_mono.content {
       if abs_old.contains_type(new) {
-        result.old_type_changed = true;
+        result.immutable_type_changed = true;
         return Ok(());
       }
     }
     if let Abstract(abs_new) = &new.content {
       if abs_new.contains_type(old_mono) {
         *new = old_mono.clone();
-        result.new_type_changed = true;
+        result.mutable_type_changed = true;
         return Ok(());
       }
     }
@@ -568,8 +568,7 @@ pub fn can_unify_types(a : &MonoType, b : &MonoType) -> CanUnifyResult {
 
 fn can_unify_types_internal(u : &Type, t : &Type) -> CanUnifyResult {
   use CanUnifyResult::*;
-  // Polytypes are assumed to behave like the Any type, but they must be explicitly
-  // converted to MonoTypes before unification actually happens!
+  // Polytypes are assumed to behave like the Any type
   if let Polytype(_) = &u.content { return CanUnify }
   if let Polytype(_) = &t.content { return CanUnify }
   if u.content != t.content {

@@ -111,35 +111,67 @@ impl <'a> Inference<'a> {
     }
   }
 
-  fn unify_mut_internal(&mut self, ts : TypeSymbol, new_type : &mut Type) -> UnifyResult {
-    if let Some(prev_t) = self.resolved.get(&ts) {
-      let r = incremental_unify(prev_t, new_type);
-      if !r.unify_success {
-        let e = error_raw(self.loc(ts), format!("conflicting types inferred; {} and {}.", new_type, prev_t));
-        self.errors.push(e);
-      }
-      r
+  // fn unify_mut_internal(&mut self, ts : TypeSymbol, new_type : &mut Type) -> UnifyResult {
+  //   if let Some(prev_t) = self.resolved.get(&ts) {
+  //     let r = incremental_unify(prev_t, new_type);
+  //     if !r.unify_success {
+  //       let e = error_raw(self.loc(ts), format!("conflicting types inferred; {} and {}.", new_type, prev_t));
+  //       self.errors.push(e);
+  //     }
+  //     r
+  //   }
+  //   else {
+  //     UnifyResult { unify_success: true, old_type_changed: true, new_type_changed: false }
+  //   }
+  // }
+
+  fn update_type(&mut self, ts : TypeSymbol, t : &Type) -> UnifyResult {
+    let ts_type = if let Some(t) = self.resolved.get_mut(&ts) {
+      t
     }
     else {
-      UnifyResult { unify_success: true, old_type_changed: true, new_type_changed: false }
+      self.resolved.entry(ts).or_insert(Type::any())
+    };
+    let r = incremental_unify(t, ts_type);
+    if !r.unify_success {
+      let s = format!("conflicting types inferred; {} and {}.", t, ts_type);
+      let e = error_raw(self.loc(ts), s);
+      self.errors.push(e);
     }
-  }
-
-  fn update_type(&mut self, ts : TypeSymbol, mut t : Type) {
-    if self.unify_mut_internal(ts, &mut t).old_type_changed {
-      self.resolved.insert(ts, t);
-      self.type_updated(ts);
-    }
-  }
-
-  fn update_type_mut(&mut self, ts : TypeSymbol, t : &mut Type) -> UnifyResult {
-    let r = self.unify_mut_internal(ts, t);
-    if r.old_type_changed {
-      self.resolved.insert(ts, t.clone());
+    if r.mutable_type_changed {
       self.type_updated(ts);
     }
     r
   }
+
+  /// returns true if the input type `t` was mutated
+  fn update_type_mut(&mut self, ts : TypeSymbol, t : &mut Type) -> bool {
+    let r = self.update_type(ts, t);
+    if r.immutable_type_changed && r.unify_success {
+      let r = incremental_unify(self.resolved.get(&ts).unwrap(), t);
+      if !r.unify_success { panic!("unification is not commutable!") }
+      true
+    }
+    else {
+      false
+    }
+  }
+
+  // fn update_type(&mut self, ts : TypeSymbol, mut t : Type) {
+  //   if self.unify_mut_internal(ts, &mut t).old_type_changed {
+  //     self.resolved.insert(ts, t);
+  //     self.type_updated(ts);
+  //   }
+  // }
+
+  // fn update_type_mut(&mut self, ts : TypeSymbol, t : &mut Type) -> UnifyResult {
+  //   let r = self.unify_mut_internal(ts, t);
+  //   if r.old_type_changed {
+  //     self.resolved.insert(ts, t.clone());
+  //     self.type_updated(ts);
+  //   }
+  //   r
+  // }
 
   fn loc(&self, ts : TypeSymbol) -> TextLocation {
     *self.c.symbols.get(&ts).unwrap()
@@ -239,14 +271,6 @@ impl <'a> Inference<'a> {
           }
         }
       }
-      Assertion::AssertFunctionDef{id, args, return_type} => {
-        let mut sig = SignatureBuilder::new(to_resolved(self, return_type));
-        for a in args {
-          sig.append_arg(to_resolved(self, a));
-        }
-        let def = self.t.get_global_mut(*id);
-        def.type_tag = sig.into();
-      }
       Assertion::AssertTypeDef{ typename, fields } => {
         let mut fs = vec![];
         for f in fields {
@@ -266,11 +290,11 @@ impl <'a> Inference<'a> {
       Equalivalent(a, b) => {
         if let Some(t) = self.get_type(*a) {
           let t = t.clone();
-          self.update_type(*b, t);
+          self.update_type(*b, &t);
         }
         if let Some(t) = self.get_type(*b) {
           let t = t.clone();
-          self.update_type(*a, t);
+          self.update_type(*a, &t);
         }
       }
       Function{ function, args, return_type } => {
@@ -281,7 +305,7 @@ impl <'a> Inference<'a> {
             }
             let rt = sig.return_type();
             self.update_type_mut(*return_type, rt);
-            self.update_type(*function, sig.into());
+            self.update_type(*function, &sig.into());
           }
         }
         else {
@@ -292,7 +316,7 @@ impl <'a> Inference<'a> {
             let arg = self.get_type(arg).cloned().unwrap_or(any.clone());
             sig.append_arg(arg);
           }
-          self.update_type(*function, sig.into());
+          self.update_type(*function, &sig.into());
         }
       }
       Constructor { def_ts, fields } => {
@@ -314,7 +338,7 @@ impl <'a> Inference<'a> {
                     arg_types.push(expected_type.clone());
                   }
                   for(i, t) in arg_types.into_iter().enumerate() {
-                    self.update_type(fields[i].1, t);
+                    self.update_type(fields[i].1, &t);
                   }
                 }
                 else{
@@ -326,7 +350,7 @@ impl <'a> Inference<'a> {
                 if let [(Some(sym), ts)] = fields.as_slice() {
                   if let Some((_, t)) = def.fields.iter().find(|(n, _)| n.name == sym.name) {
                     let t = t.clone();
-                    self.update_type(*ts, t);
+                    self.update_type(*ts, &t);
                   }
                   else {
                     self.errors.push(error_raw(sym.loc, "field does not exist in this union"));
@@ -388,27 +412,18 @@ impl <'a> Inference<'a> {
       // }
       GlobalDef{ global_id, type_symbol } => {
         let aaa = (); // TODO: check that polytypes are resolved properly here
-
         // Use global def to update the type symbol
         let mut t = self.t.get_global_mut(*global_id).type_tag.clone();
-        self.update_type_mut(*type_symbol, &mut t);
+        let def_type_changed = self.update_type_mut(*type_symbol, &mut t);
         // Use the type symbol to update the global def
-        let def = self.t.get_global_mut(*global_id);
-        if !def.polymorphic {
-          let r = incremental_unify(&t, &mut def.type_tag);
-          if r.unify_success {
-            if r.new_type_changed {
-              // Trigger any constraints looking for this name
-              if let Some(cs) = self.dependency_map.global_map.get(&def.name) {
-                for &c in cs.iter() {
-                  self.next_edge_set.insert(c.id, c);
-                }
-              }
+        if def_type_changed {
+          let def = self.t.get_global_mut(*global_id);
+          def.type_tag = t;
+          // Trigger any constraints looking for this name
+          if let Some(cs) = self.dependency_map.global_map.get(&def.name) {
+            for &c in cs.iter() {
+              self.next_edge_set.insert(c.id, c);
             }
-          }
-          else {
-            let e = error_raw(def.loc, format!("conflicting types inferred; {} and {}.", t, def.type_tag));
-            self.errors.push(e);
           }
         }
       }
@@ -420,7 +435,7 @@ impl <'a> Inference<'a> {
             let resolved_type = g.resolved_type.clone();
             let (mid, gid) = (g.def.module_id, g.def.id);
             self.register_def(*node, mid, gid);
-            self.update_type(*result, resolved_type);
+            self.update_type(*result, &resolved_type);
           }
           [] => {
             let aaa = (); // TODO: this will definitely fail. But if an error is generated here it may be recorded several times.
@@ -444,7 +459,7 @@ impl <'a> Inference<'a> {
             let f = def.fields.iter().find(|(n, _)| n.name == field.name);
             if let Some((_, t)) = f {
               let mt = t.clone();
-              self.update_type(*result, mt);
+              self.update_type(*result, &mt);
             }
             else {
               let s = format!("type '{}' has no field '{}'", def.name, field.name);
@@ -456,12 +471,12 @@ impl <'a> Inference<'a> {
       Array{ array, element } => {
         if let Some(element_type) = self.get_type(*element) {
           let et = element_type.clone();
-          self.update_type(*array, et.array_of());
+          self.update_type(*array, &et.array_of());
         }
         else if let Some(array_type) = self.get_type(*array) {
           if let Some(element_type) = array_type.array() {
             let et = element_type.clone();
-            self.update_type(*element, et);
+            self.update_type(*element, &et);
           }
         }
       }
@@ -479,7 +494,7 @@ impl <'a> Inference<'a> {
   /// Tries to harden a type symbol into a concrete type
   fn try_harden_type_symbol(&mut self, ts : TypeSymbol) {
     if let Some(default) = self.resolved.get(&ts).unwrap().try_harden_literal() {
-      self.update_type(ts, default);
+      self.update_type(ts, &default);
     }
   }
 
@@ -519,15 +534,17 @@ impl <'a> Inference<'a> {
         if !self.resolved.get(ts).map(|t| t.is_concrete()).unwrap_or(false) {
           unresolved += 1;
           if let Some(cs) = self.dependency_map.ts_map.get(ts) {
-            for c in cs {
-              active_edge_set.insert(c.id, c);
-            }
+            for c in cs { active_edge_set.insert(c.id, c); }
+          }
+          // Generate errors for unresolved constraints
+          let error_count = self.errors.len();
+          for (_, c) in active_edge_set.drain() {
+            self.unresolved_constraint_error(c);
+          }
+          if error_count == self.errors.len() {
+            self.errors.push(error_raw(self.loc(*ts), "unresolved type"));
           }
         }
-      }
-      // Generate errors for unresolved constraints
-      for (_, c) in active_edge_set.drain() {
-        self.unresolved_constraint_error(c);
       }
     }
 

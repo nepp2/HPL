@@ -37,11 +37,6 @@ pub enum Assertion {
     typename: RefStr,
     fields : Vec<Option<(Type, TextLocation)>>,
   },
-  AssertFunctionDef {
-    id : GlobalId,
-    args : Vec<Option<(Type, TextLocation)>>,
-    return_type : Option<(Type, TextLocation)>,
-  },
 }
 
 pub struct Constraint {
@@ -322,67 +317,57 @@ impl <'l, 't> GatherConstraints<'l, 't> {
         self.assert(ts, PType::Void);
         self.with_polytypes(polytypes.as_slice(), |gc, polytypes| {
           let is_polymorphic_def = polytypes.len() > 0;
-          // Process argument types
-          let mut arg_names = vec!();
-          let mut arg_type_symbols = vec![];
-          let mut arg_types = vec![];
-          for (arg, type_tag) in args.iter() {
-            arg_names.push(arg.clone());
-            arg_type_symbols.push(gc.variable_to_type_symbol(arg));
-            arg_types.push(
-              type_tag.as_ref()
-                .and_then(|e| gc.expr_to_type(e).map(|t|(t, e.loc)))
-            );
-          }
-          let return_type = {
-            if is_polymorphic_def && return_tag.is_none() {
-              Some((PType::Void.into(), TextLocation::zero()))
+          // Determine return type
+          let return_type : Type = {
+            if let Some(rt) = return_tag.as_ref().and_then(|e| gc.expr_to_type(e)) {
+              rt
+            }
+            // Polymorphic defs assume no explicit return type means void. Monomorphic defs can infer it from the body.
+            else if is_polymorphic_def {
+              PType::Void.into()
             }
             else {
-              return_tag.as_ref()
-                .and_then(|e| gc.expr_to_type(e).map(|t| (t, e.loc)))
+              Type::any()
             }
           };
-          let global_id = gc.gen.next().into();
-          // Assert any explicit type tags
-          gc.assertion(Assertion::AssertFunctionDef{
-            id: global_id, args: arg_types, return_type
-          });
-          // Polymorphic definitions must have explicit argument types
-          // (the return type is assumed to be void if left blank)
-          if is_polymorphic_def {
-            for (arg, tag) in args.iter() {
-              if !tag.is_some() {
-                let e = error_raw(arg.loc, "argument types must be explicit in polymorphic function definitions");
-                gc.errors.push(e);
-              }
+          // Build initial function signature
+          let mut sig = SignatureBuilder::new(return_type);
+          let mut arg_names = vec!();
+          for (arg, type_tag) in args.iter() {
+            arg_names.push(arg.clone());
+            if let Some(t) = type_tag.as_ref().and_then(|e| gc.expr_to_type(e)) {
+              sig.append_arg(t);
+            }
+            else {
+              sig.append_arg(Type::any());
             }
           }
+          // Assert type of the global
           let global_ts = gc.type_symbol(node.loc);
+          gc.assert_type(global_ts, sig.into());
+          // Process the body
           if !is_polymorphic_def {
-            // Process the body of the function. The arguments MUST be processed
-            // first so that their type symbols are available to the body. 
-            let body_ts = {
-              // Need new scope stack for new function
-              let mut gc = GatherConstraints::new(
-                gc.t, gc.cg, gc.cache, gc.gen,
-                gc.c, gc.errors
-              );
-              gc.process_node(n, *body)
-            };
+            // Register argument types. MUST happen before gathering the body constraints.
+            let args = args.iter().map(|(arg, _)| gc.variable_to_type_symbol(arg)).collect();
+            // Need new scope stack for new function body.
+            let mut gc = GatherConstraints::new(
+              gc.t, gc.cg, gc.cache, gc.gen,
+              gc.c, gc.errors
+            );
+            // Gather constraints for the body of the function. The arguments MUST be processed
+            // first so that their type symbols are available.
+            let body_ts = gc.process_node(n, *body);
             gc.constraint(Function {
               function: global_ts,
-              args: arg_type_symbols,
+              args,
               return_type: body_ts,
             });
           }
-          gc.constraint(GlobalDef {
-            global_id,
-            type_symbol: global_ts,
-          });
+          // Register the global definition
+          let global_id = gc.gen.next().into();
           gc.t.create_global({
             let name_for_codegen =
-              gc.cache.get(format!("{}.{}", name, gc.gen.next()).as_str());
+            gc.cache.get(format!("{}.{}", name, gc.gen.next()).as_str());
             let f = FunctionInit {
               body: *body,
               name_for_codegen,
@@ -397,6 +382,11 @@ impl <'l, 't> GatherConstraints<'l, 't> {
               polymorphic: polytypes.len() > 0,
               loc: node.loc,
             }
+          });
+          // Bind the global definition to its type symbol
+          gc.constraint(GlobalDef {
+            global_id,
+            type_symbol: global_ts,
           });
         });
       }
@@ -430,7 +420,11 @@ impl <'l, 't> GatherConstraints<'l, 't> {
         else {
           self.with_polytypes(polytypes.as_slice(), |gc, polytypes| {
             let def_type = Type::unresolved_def(name.clone());
-            let container = gc.type_symbol(node.loc);
+            let container = {
+              let aaa = (); // TODO: THE ERROR IS COMING FROM HERE
+              let loc = TextLocation::new(node.loc.start, node.loc.start);
+              gc.type_symbol(loc)
+            };
             gc.assert_type(container, def_type);
             // TODO: check for duplicate fields?
             let mut field_types = vec![];
