@@ -411,7 +411,6 @@ impl <'a> Inference<'a> {
       //   }
       // }
       GlobalDef{ global_id, type_symbol } => {
-        let aaa = (); // TODO: check that polytypes are resolved properly here
         // Use global def to update the type symbol
         let mut t = self.t.get_global_mut(*global_id).type_tag.clone();
         let def_type_changed = self.update_type_mut(*type_symbol, &mut t);
@@ -438,9 +437,8 @@ impl <'a> Inference<'a> {
             self.update_type(*result, &resolved_type);
           }
           [] => {
-            let aaa = (); // TODO: this will definitely fail. But if an error is generated here it may be recorded several times.
-            // let s = format!("no global '{}' matches type '{}'", name, t);
-            // self.errors.push(error_raw(self.loc(*result), s));
+            // Global will never be resolved, but if an error is generated
+            // here it may be recorded several times.
           }
           _ => (), // Multiple matches. Global can't be resolved yet.
         }
@@ -573,7 +571,6 @@ impl <'a> Inference<'a> {
     }
     // Assign global definitions
     else {
-      let aaa = (); // TODO: this is slow and stupid and wastes memory
       for (nid, (mid, gid)) in self.symbol_references.drain() {
         let def = self.t.find_module(mid).globals.get(&gid).unwrap().clone();
         if def.polymorphic {
@@ -582,6 +579,7 @@ impl <'a> Inference<'a> {
             println!("polymorphic def '{}', {} - {}", def.name, def.type_tag, t);
           }
         }
+        let aaa = (); // TODO: this seems like a waste of time and memory
         self.cg.symbol_references.insert(nid, def);
       }
     }

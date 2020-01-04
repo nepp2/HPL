@@ -419,13 +419,6 @@ impl <'l, 't> GatherConstraints<'l, 't> {
         }
         else {
           self.with_polytypes(polytypes.as_slice(), |gc, polytypes| {
-            let def_type = Type::unresolved_def(name.clone());
-            let container = {
-              let aaa = (); // TODO: THE ERROR IS COMING FROM HERE
-              let loc = TextLocation::new(node.loc.start, node.loc.start);
-              gc.type_symbol(loc)
-            };
-            gc.assert_type(container, def_type);
             // TODO: check for duplicate fields?
             let mut field_types = vec![];
             for (_, type_tag) in fields.iter() {
