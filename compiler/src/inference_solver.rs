@@ -511,7 +511,7 @@ impl <'a> Inference<'a> {
     }
     let mut total_constraints_processed = 0;
     let mut active_edge_set = HashMap::new();
-    while self.next_edge_set.len() > 0 || literals.len() > 0 {
+    while (self.next_edge_set.len() > 0 || literals.len() > 0) && self.errors.len() == 0 {
       std::mem::swap(&mut self.next_edge_set, &mut active_edge_set);
       for (_, c) in active_edge_set.drain() {
         total_constraints_processed += 1;
@@ -527,6 +527,7 @@ impl <'a> Inference<'a> {
 
     // Generate errors if program has unresolved symbols
     let mut unresolved = 0;
+    active_edge_set.clear();
     if self.errors.is_empty() {
       for (ts, _) in self.c.symbols.iter() {
         if !self.resolved.get(ts).map(|t| t.is_concrete()).unwrap_or(false) {
@@ -561,16 +562,8 @@ impl <'a> Inference<'a> {
       }
     }
 
-    // Print errors (if there are any)
-    if self.errors.len() > 0 {
-      println!("\nErrors:");
-      for e in self.errors.iter() {
-        println!("         {}", e);
-      }
-      println!();
-    }
     // Assign global definitions
-    else {
+    if self.errors.is_empty() {
       for (nid, (mid, gid)) in self.symbol_references.drain() {
         let def = self.t.find_module(mid).globals.get(&gid).unwrap().clone();
         if def.polymorphic {

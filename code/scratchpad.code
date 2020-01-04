@@ -42,10 +42,13 @@ fun println(list : list(T)) with T {
   print("]")
 }
 
-let list = list()
+let nums = list()
 
 for x in range(0, 10) {
-  list.add(x)
+  nums.add(x)
 }
 
-println(list)
+println(nums)
+
+let strings = list()
+strings.add("hello")

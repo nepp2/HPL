@@ -404,7 +404,7 @@ impl  fmt::Display for PolyTypeId {
 impl  fmt::Display for AbstractType {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
-      AbstractType::Any => write!(f, "@Unknown"),
+      AbstractType::Any => write!(f, "Any"),
       _ => write!(f, "{:?}", self),
     }
   }
@@ -418,7 +418,17 @@ impl  fmt::Display for Type {
         write!(f, "fun({}) => {}", 
           sig.args.iter().join(", "), sig.return_type)
       }
-      Def(name, _) => write!(f, "{}", name),
+      Def(name, _) => {
+        write!(f, "{}", name)?;
+        if self.children.len() > 0 {
+          write!(f, "({}", self.children[0])?;
+          for t in &self.children[1..] {
+            write!(f, ", {}", t)?;
+          }
+          write!(f, ")")?;
+        }
+        Ok(())
+      },
       Array => write!(f, "array({})", self.array().unwrap()),
       Ptr => write!(f, "ptr({})", self.ptr().unwrap()),
       Prim(t) => write!(f, "{:?}", t),
