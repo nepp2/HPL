@@ -1,3 +1,11 @@
+# THOUGHTS - 06/01/2020
+
+A consistent theme to my many realisations over the past 4 years is that freeform expression in programming languages is important. Having the space to commit acts of great programmatic foolishness is valuable. Whenever we suppose that perhaps we curtail this freedom in some particular way, such as by imposing a limitation on the shape of our data structures, or how we can update them, or what we can do with them, we are incurring a huge cost in usability. And yet, these limitations can provide invaluable properties, such as referential transparency, memory safety, data-race freedom or cache coherence.
+
+I have realised that both of these things can often be achieved as long as the freedom can be bounded in some way. Garbage collection, for example, is great as long as it happens in local heaps, can be controlled, and can be totally bypassed by dropping the heap. Shared mutability is fine as long as you know that no references can escape from the bounded data structure; so from a zoomed out level the graph can be thought of as a single mutable node.
+
+Many of these ideas are realised in the Pony programming language. However, this programming language is designed around the actor model, which involves a system of asynchronous message passing and queues. I'm not sure if synchronous calls are possible between actors. If they are not, the actor model is perhaps more heavyweight than what I need for this project. However, the Pony type system and much of its runtime could surely be adapted for a simpler, synchronous model of programming.
+
 # TODO - 30/12/2019
 
 - Polymorphic type checking code doesn't work yet
