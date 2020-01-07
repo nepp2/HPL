@@ -1,3 +1,35 @@
+# THOUGHTS - 07/01/2020
+
+Think about having some kind of central code database. This would track:
+- module origin
+  - might be a file path
+  - might have been loaded _by_ a particular file
+- module source code
+- module types
+- compiled modules
+- dependencies between modules
+- monomorphised functions
+
+When is a module invalidated? How is it reloaded? Should this be automatic, or should the database just have some kind of API? What happens if a module tries to unload itself while it is in use?
+
+What if modules can only call their own functions, and are automatically unloaded when their own lexical scope ends?
+
+Alternatively, modules could be introduced to lexical scope by a function call that informs the code database, so it can increment a counter. Then it knows whether they need to be loaded, or whether it needs to crash because they aren't available, or whatever. The problem with this is that it means the outer module actually depends on the inner module, which is not a useful relationship for reloading. What is a useful relationship for reloading?
+
+The key is that we have static types, so we need to specify an interface that the reloadable module conforms to.
+
+e.g.
+
+```rust
+  fun hello() {
+    println("hello world")
+  }
+
+  reload run_stuff(e : Event) {
+    hello()
+  }
+```
+
 # THOUGHTS - 06/01/2020
 
 A consistent theme to my many realisations over the past 4 years is that freeform expression in programming languages is important. Having the space to commit acts of great programmatic foolishness is valuable. Whenever we suppose that perhaps we curtail this freedom in some particular way, such as by imposing a limitation on the shape of our data structures, or how we can update them, or what we can do with them, we are incurring a huge cost in usability. And yet, these limitations can provide invaluable properties, such as referential transparency, memory safety, data-race freedom or cache coherence.
