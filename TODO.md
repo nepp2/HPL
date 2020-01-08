@@ -1,3 +1,33 @@
+# THOUGHTS - 08/01/2020
+
+The important thing is that the host module imposes a concrete type interface, and the loaded module returns an error if it does not conform to it.
+
+Some syntax is required to express this interface. The interface is a set of symbols with types defined by the host module. This could be retrieved just as a struct; e.g.
+
+```rust
+  struct my_interface {
+    init : fun() => State
+    update : fun(State)
+    render : fun(render_view, State)
+  }
+
+  let m = load_module("game.code")
+  // this function has a polymorphic return type, but it's sort of acting like a typed macro...
+  let i : my_interface = m.load_interface()
+
+  let state = i.init()
+  i.update(state)
+  i.render(render_view, state)
+```
+
+The `State` type can't be defined by the child module, even if it was only ever referenced in the parent using a pointer. The problem is that there's nothing really stopping the parent module from holding onto these pointers indefinitely, despite the fact that the State type may change, making old values invalid. So it seems as though it is fundamentally broken to have an interface including any types defined by the loaded module.
+
+So then how do you build tetris in a way that permits live modification of state? I suppose the answer is that the child module holds state, and the parent just passes it events, the types of which the parent can confidently define. The parent may receive module events from the child module handle, indicating that it should be reloaded (or whatever).
+
+Module state should probably be separated from the module's code, so it's not just a bunch of globals.
+
+It also seems that module dependencies should eventually be managed automatically, instead of being managed manually in response to module handles and module events. But this would require a standardised and extremely flexible module graph interface, which I am not yet sure on the design for.
+
 # THOUGHTS - 07/01/2020
 
 Think about having some kind of central code database. This would track:
