@@ -3,7 +3,7 @@
 
 I'm still trying to implement polymorphism. I got stuck when I started thinking about how to integrate it with a system of hotloadable modules. Now I'm not sure how this system should work.
 
-I discovered the Scopes programming language and I feel as though I have overcomplicated things. It has a similar design, but I believe it has far fewer features in the core language. I am also wondering whether I really could make the whole language somewhat REPL-based. What core commands are needed?
+I discovered the Scopes programming language and I feel as though I have overcomplicated things. It has a similar design, but I believe it has far fewer features in the core language. I am also wondering whether I really could make the whole language somewhat REPL-based. What core commands are needed? Why did I steer away from using a REPL?
 
 - Bind value to symbol
 - Create function value
@@ -13,13 +13,38 @@ I discovered the Scopes programming language and I feel as though I have overcom
 
 ## Language primitives
 
-- numbers
+- bool, i64, i32, u64, u32, u16 and u8
+- pointers
 - arrays
 - tuples
 
+What is the type of a type? That needs to be an extensible system, and every type needs to be a runtime value.
+
+```rust
+  struct Type {
+    name : String
+    primitive_shape : Primitive
+  }
+```
+
+## Primitive operations
+
+def symbol = expression
+run expression
+
+macro(expr, expr, expr) -> expr
+
+def struct = macro(name : expr, fields : array(expr)) {
+  def(name)
+}
+
 ## Structs
 
-How would you implement structs? A struct is a tuple of values, where each index has a name.
+How would you implement structs? A struct is a tuple of values, where each index has a name. What cases need to be handled?
+
+- Initialise the struct
+- Dereference a field
+- Typecheck the struct
 
 ```rust
   struct blah {
