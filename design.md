@@ -92,6 +92,44 @@ How would you implement structs? A struct is a tuple of values, where each index
 This is a little complicated, because the `def`s are constant values that must be evaluated before the rest of the file can be type-checked. The `env` construct creates a new namespace, which is returned as a constant. I'm not sure what can happen inside there.
 
 
-# Idea
+# Other thoughts
+
+## 1
 
 All defs are constant and evaluated separately. Types are defs that match a particular interface?
+
+## 2
+
+How can a language have an extensible type system? How does Terra do it? Terra might be a red herring, because it can rely on the highly-dynamic features of Lua. Though it would still be illuminating to know. And using a base of dynamism could be valid. Are there any languages which statically compile to dynamic semantics? I presume C# can.
+
+Types would be extensible if they are represented as S-Expressions. They might also be slower. Is this strictly worse than just using *dynamic objects*? (Basically supporting symbol dictionaries). I suppose this could be the `any` type.
+
+## 4
+
+What is the smallest core of my current language?
+
+- Numbers, bools, pointers, strings
+- If, While, For, Break, Return
+- Structs, Unions
+- Arrays
+- Functions
+- Polymorphic functions
+- Polymorphic structs
+
+What could be replaced, and how?
+
+- For
+  - Could be implemented in terms of While, or an even simpler `loop` primitive
+  - Only if there is some kind of *syntactic macro system* and *extensible syntax*
+- Unions
+  - These are just a group of auto-generated structs with tags on the front
+- Structs
+  - Could perhaps be replaced with *tuples*
+  - With *named tuples*
+  - With a combination of *names* and *tuples*?
+    - e.g. Name("Point", Tuple(Name("x", I64), Name("y", U32)))
+- Polymorphic functions
+  - A polymorphic function can't be monomorphised until type information is available. In the Scopes model all functions are polymorphic and type information is always passed forwards. Function evaluation is like a memoized macro call which returns a reference to the monomorphised, callable function.
+  - Polymorphism has special support partly for the sake of type inference. So if it was implemented as an extension, would type inference have to be as well?
+
+The problem with making a language out of crazy scheme-style macros is that compile times might be quite high. Particularly because all these macros are being JIT-compiled, in my case.
