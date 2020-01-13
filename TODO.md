@@ -1,3 +1,15 @@
+# THOUGHTS - 13/01/2020
+
+I was thinking about supporting template-style macros which can be nested within each other to code-generate a module.
+
+Probably the first thing to do is just to make polymorphic code generation work and then go from there. I like the idea that macros should be typed functions. Although it doesn't really make sense because the execution is then in the wrong phase. So really I want compile-time constexpr expansion instead of macros? Should it be memoised? How is purity enforced? Perhaps all functions marked (or inferred) as pure are eligible as macros. But there should be syntax to indicate that an expression is being evaluated into an embedded `expr`. I suppose this comes back to the `$` syntax used for existing macros.
+
+There is a note in the Scopes devblog about compile-time const evaluation being deprecated because it slowed down compilation. I'm not sure that applies to this project as much because live compilation will be supported, and compile-time evaluation isn't being done by an interpreter. However, using a JIT is a big up-front cost.
+
+I'm also not sure whether macro-expansion style code generation should be necessary, given the dynamic code-loading model of the whole language. This is another reason to delay this feature until module loading is properly worked-out.
+
+Is polymorphism really required for simple module loading functionality? Or possibly it's just needed to make tetris in a sensible way.
+
 # THOUGHTS - 08/01/2020
 
 The important thing is that the host module imposes a concrete type interface, and the loaded module returns an error if it does not conform to it.
