@@ -46,10 +46,9 @@ pub fn infer_types(
   gather_constraints(
     &mut type_directory, &mut cg, cache,
     gen, &mut c, &mut errors, &nodes);
-  let mut i = 
-    Inference::new(
-      &nodes, &mut type_directory,
-      &mut cg, &c, cache, gen, &mut errors);
+  let i = Inference::new(
+    &nodes, &mut type_directory,
+    &mut cg, &c, cache, gen, &mut errors);
   i.infer();
   if errors.len() > 0 {
     Err(errors)
@@ -496,7 +495,7 @@ impl <'a> Inference<'a> {
     }
   }
 
-  fn infer(&mut self) {
+  fn infer(mut self) {
     println!("To resolve: {}", self.c.symbols.len());
     for a in self.c.assertions.iter() {
       self.process_assertion(a);

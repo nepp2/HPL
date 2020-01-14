@@ -1,5 +1,58 @@
 # THOUGHTS - 13/01/2020
 
+## A list of requirements for live-edited Tetris
+
+Core:
+  - Expressive enough language
+    - Finish polymorphism
+      - Not strictly required, but painful without
+      - Interesting to explore later
+      - Introduces a lot of code complexity
+  - Can load & replace modules dynamically
+    - Maybe just DLL style?
+
+Nice to have:
+  - A module hotloading system that is memory safe and preserves soundness
+  - Powerful metaprogramming system (for extending the language more easily, in the Lisp style)
+  - Proper windows C ABI support
+    - Currently just kludging it manually in each type signature, which is both horrififying and effective
+
+Not currently on the list:
+  - Memory safety
+  - Region system
+    - Data structures with isolated heaps
+    - Heap-local garbage collection
+  - Visual node graph
+
+## Breakdown of core tasks
+
+- Finish polymorphism
+  - ~~Typecheck generic signatures~~
+  - Find set of functions to monomorphise
+  - Add a new code database that processes a queue to typecheck and codegen modules
+  - Typecheck the monomorphised functions
+  - Codegen the monomorphised functions
+  - _Don't_ try to codegen the polymorphic versions
+  - Dump all the generated functions into the new module (dumb, temporary solution)
+- Load and replace modules in basic DLL style
+  - Load & codegen modules dynamically
+    - May work already
+  - Retrieve function pointers from loaded modules
+    - May work already
+  - Fix module unloading if necessary
+    - Might not be required. Depends how quickly memory leakage becomes a problem.
+  - Update old tetris code
+
+## Problem
+
+To typecheck & generate a new implementation of `list` (for example), the type-checking has to happen in the context of the prelude's imports. The current structure of the compiler makes this pretty difficult. Managing imports and references to types & functions has been one of the uglier parts of the compiler for a while now.
+
+I should simplify this somehow. There needs to be some data structure storing all module dependencies. Monomorphised functions could be added as individual modules. But sharing them between different modules will require some special support as well. Type checking and code generation could happen in response to a queue. So a module will queue functions to be monomorphised, and then the consumer will either find an existing implementation or typecheck and codegen a new one.
+
+So I need a code database type thing, in charge of generating code and finding definitions and so-on.
+
+# THOUGHTS - 13/01/2020
+
 I was thinking about supporting template-style macros which can be nested within each other to code-generate a module.
 
 Probably the first thing to do is just to make polymorphic code generation work and then go from there. I like the idea that macros should be typed functions. Although it doesn't really make sense because the execution is then in the wrong phase. So really I want compile-time constexpr expansion instead of macros? Should it be memoised? How is purity enforced? Perhaps all functions marked (or inferred) as pure are eligible as macros. But there should be syntax to indicate that an expression is being evaluated into an embedded `expr`. I suppose this comes back to the `$` syntax used for existing macros.
