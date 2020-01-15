@@ -28,7 +28,7 @@ Not currently on the list:
 
 - Finish polymorphism
   - ~~Typecheck generic signatures~~
-  - Find set of functions to monomorphise
+  - ~~Find set of functions to monomorphise~~
   - Add a new code database that processes a queue to typecheck and codegen modules
   - Typecheck the monomorphised functions
   - Codegen the monomorphised functions

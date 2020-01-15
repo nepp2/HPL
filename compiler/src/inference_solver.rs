@@ -13,9 +13,9 @@ use crate::structure::{
   NodeId, TypeKind, Nodes,
 };
 use crate::types::{
-  Type, TypeContent, TypeInfo, TypeDirectory, GlobalId,
+  Type, TypeContent, TypeInfo, TypeDirectory, SymbolId,
   SignatureBuilder, incremental_unify,
-  UnifyResult, ModuleId, AbstractType, GlobalInit,
+  UnifyResult, ModuleId, AbstractType, SymbolInit,
 };
 use crate::inference_constraints::{
   gather_constraints, Constraint, ConstraintContent,
@@ -71,7 +71,7 @@ struct Inference<'a> {
   cache : &'a StringCache,
   gen : &'a mut UIDGenerator,
   errors : &'a mut Vec<Error>,
-  symbol_references : HashMap<NodeId, (ModuleId, GlobalId)>,
+  symbol_references : HashMap<NodeId, (ModuleId, SymbolId)>,
   dependency_map : ConstraintDependencyMap<'a>,
   next_edge_set : HashMap<u64, &'a Constraint>,
   resolved : HashMap<TypeSymbol, Type>,
@@ -184,15 +184,15 @@ impl <'a> Inference<'a> {
       Function{ function:_, args:_, return_type:_ } => return,
       Constructor { def_ts:_ , fields:_ } => return,
       Convert { val:_, into_type_ts:_ } => return,
-      GlobalDef { global_id, type_symbol:_ } => {
-        let def = self.t.get_global_mut(*global_id);
+      SymbolDef { symbol_id, type_symbol:_ } => {
+        let def = self.t.get_global_mut(*symbol_id);
         error_raw(def.loc,
           format!("Global definition '{}' not resolved. Inferred type {}.", def.name, def.type_tag))
       }
       GlobalReference { node:_, name, result } => {
         let any = Type::any();
         let t = self.resolved.get(result).unwrap_or(&any);
-        let symbols = self.t.find_global(&name, t);
+        let symbols = self.t.find_symbol(&name, t);
         let s = symbols.iter().map(|g| format!("      {} : {}", g.def.name, g.resolved_type)).join("\n");
         error_raw(self.loc(*result),
           format!("Reference '{}' of type '{}' not resolved\n   Symbols available:\n{}", name, t, s))
@@ -211,8 +211,8 @@ impl <'a> Inference<'a> {
     self.errors.push(e);
   }
 
-  fn register_def(&mut self, node : NodeId, module_id : ModuleId, global_id : GlobalId) {
-    self.symbol_references.insert(node, (module_id, global_id));
+  fn register_def(&mut self, node : NodeId, module_id : ModuleId, symbol_id : SymbolId) {
+    self.symbol_references.insert(node, (module_id, symbol_id));
   }
 
   fn resolve_abstract_defs<'l>(&self, loc : TextLocation, t : &'l Type)
@@ -409,13 +409,13 @@ impl <'a> Inference<'a> {
       //     }
       //   }
       // }
-      GlobalDef{ global_id, type_symbol } => {
+      SymbolDef{ symbol_id, type_symbol } => {
         // Use global def to update the type symbol
-        let mut t = self.t.get_global_mut(*global_id).type_tag.clone();
+        let mut t = self.t.get_global_mut(*symbol_id).type_tag.clone();
         let def_type_changed = self.update_type_mut(*type_symbol, &mut t);
         // Use the type symbol to update the global def
         if def_type_changed {
-          let def = self.t.get_global_mut(*global_id);
+          let def = self.t.get_global_mut(*symbol_id);
           def.type_tag = t;
           // Trigger any constraints looking for this name
           if let Some(cs) = self.dependency_map.global_map.get(&def.name) {
@@ -428,7 +428,7 @@ impl <'a> Inference<'a> {
       GlobalReference { node, name, result } => {
         let any = Type::any();
         let t = self.get_type(*result).cloned().unwrap_or(any);
-        match self.t.find_global(&name, &t) {
+        match self.t.find_symbol(&name, &t) {
           [g] => {
             let resolved_type = g.resolved_type.clone();
             let (mid, gid) = (g.def.module_id, g.def.id);
@@ -561,12 +561,12 @@ impl <'a> Inference<'a> {
       }
     }
 
-    // Assign global definitions
+    // Assign symbol definitions
     if self.errors.is_empty() {
       for (nid, (mid, gid)) in self.symbol_references.drain() {
-        let def = self.t.find_module(mid).globals.get(&gid).unwrap().clone();
+        let def = self.t.find_module(mid).symbols.get(&gid).unwrap().clone();
         if def.polymorphic {
-          if let GlobalInit::Function(_) = def.initialiser {
+          if let SymbolInit::Function(_) = def.initialiser {
             let t = self.cg.node_type.get(&nid).unwrap();
             println!("polymorphic def '{}', {} - {}", def.name, def.type_tag, t);
           }
@@ -641,7 +641,7 @@ impl <'a> ConstraintDependencyMap<'a> {
         for ts in args { self.ts(ts, c) }
         self.ts(return_type, c);
       },
-      GlobalDef { global_id:_, type_symbol } => self.ts(type_symbol, c),
+      SymbolDef { symbol_id:_, type_symbol } => self.ts(type_symbol, c),
       GlobalReference { node:_, name, result } => {
         self.global(name, c);
         self.ts(result, c);

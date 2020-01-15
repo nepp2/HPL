@@ -14,6 +14,7 @@ pub mod expr;
 pub mod watcher;
 pub mod structure;
 pub mod types;
+pub mod code_store;
 pub mod inference_constraints;
 pub mod inference_solver;
 pub mod modules;

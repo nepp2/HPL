@@ -10,8 +10,8 @@ use crate::structure::TOP_LEVEL_FUNCTION_NAME;
 use crate::inference_solver;
 use crate::types::{
   Type, TypeContent, PType, TypeInfo,
-  ModuleId, SignatureBuilder, GlobalDefinition,
-  PolyTypeId, GlobalInit,
+  ModuleId, SignatureBuilder, SymbolDefinition,
+  PolyTypeId, SymbolInit,
 };
 use crate::codegen::{Gen, LlvmUnit, dump_module, CompileInfo, CodegenInfo};
 use crate::modules::{ CompiledModule, TypedModule };
@@ -200,17 +200,17 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
   fn create_definition(
     cache : &StringCache, gen : &mut UIDGenerator, module_id : ModuleId, name : &str,
     args : &[&Type], return_type : &Type, polymorphic : bool)
-      -> GlobalDefinition
+      -> SymbolDefinition
   {
     let mut sig = SignatureBuilder::new(return_type.clone());
     for &a in args {
       sig.append_arg(a.clone());
     }
-    GlobalDefinition {
+    SymbolDefinition {
       id: gen.next().into(), module_id,
       name: cache.get(name),
       type_tag: sig.into(),
-      initialiser: GlobalInit::Intrinsic,
+      initialiser: SymbolInit::Intrinsic,
       polymorphic,
       loc: TextLocation::zero(),
     }
@@ -221,7 +221,7 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
     name : &str, args : &[&Type], return_type : &Type)
   {
     let g = create_definition(cache, gen, module_id, name, args, return_type, false);
-    t.globals.insert(g.id, g);
+    t.symbols.insert(g.id, g);
   }
   
   fn add_polymorphic_intrinsic(
@@ -229,7 +229,7 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
     name : &str, args : &[&Type], return_type : &Type)
   {
     let g = create_definition(cache, gen, module_id, name, args, return_type, true);
-    t.globals.insert(g.id, g);
+    t.symbols.insert(g.id, g);
   }
 
   let expr = parse(cache, "").unwrap();
@@ -298,7 +298,7 @@ fn run_top_level(m : &CompiledModule) -> Result<Val, Error> {
   use TypeContent::*;
   use PType::*;
   let f = TOP_LEVEL_FUNCTION_NAME;
-  let def = m.t.globals.values().find(|def| def.name.as_ref() == f).unwrap();
+  let def = m.t.symbols.values().find(|def| def.name.as_ref() == f).unwrap();
   let f = def.codegen_name().unwrap();
   let sig = if let Some(sig) = def.type_tag.sig() {sig} else {panic!()};
   let lu = &m.llvm_unit;

@@ -19,7 +19,7 @@ pub enum PrimitiveVal {
 pub struct LabelId(u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SymbolId(u64);
+pub struct ReferenceId(u64);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TypeKind {
@@ -27,8 +27,8 @@ pub enum TypeKind {
 }
 
 #[derive(Debug, Clone)]
-pub struct Symbol {
-  pub id : SymbolId,
+pub struct Reference {
+  pub id : ReferenceId,
   pub name : RefStr,
   pub loc : TextLocation,
 }
@@ -43,18 +43,18 @@ pub enum VarScope { Local, Global(GlobalType) }
 #[derive(Debug)]
 pub enum Content {
   Literal(PrimitiveVal),
-  VariableInitialise{ name: Symbol, type_tag: Option<Box<Expr>>, value: NodeId, var_scope : VarScope },
+  VariableInitialise{ name: Reference, type_tag: Option<Box<Expr>>, value: NodeId, var_scope : VarScope },
   Assignment{ assignee: NodeId , value: NodeId },
   IfThen{ condition: NodeId, then_branch: NodeId },
   IfThenElse{ condition: NodeId, then_branch: NodeId, else_branch: NodeId },
   Block(Vec<NodeId>),
   Quote(Box<Expr>),
-  Reference { name: RefStr, refers_to: Option<SymbolId> },
-  FunctionDefinition{ name: RefStr, args: Vec<(Symbol, Option<Box<Expr>>)>, return_tag: Option<Box<Expr>>, polytypes : Vec<RefStr>, body: NodeId },
+  Reference { name: RefStr, refers_to: Option<ReferenceId> },
+  FunctionDefinition{ name: RefStr, args: Vec<(Reference, Option<Box<Expr>>)>, return_tag: Option<Box<Expr>>, polytypes : Vec<RefStr>, body: NodeId },
   CBind { name: RefStr, type_tag : Box<Expr> },
-  TypeDefinition{ name: RefStr, kind : TypeKind, fields: Vec<(Symbol, Option<Box<Expr>>)>, polytypes : Vec<RefStr> },
-  TypeConstructor{ name: Symbol, field_values: Vec<(Option<Symbol>, NodeId)> },
-  FieldAccess{ container: NodeId, field: Symbol },
+  TypeDefinition{ name: RefStr, kind : TypeKind, fields: Vec<(Reference, Option<Box<Expr>>)>, polytypes : Vec<RefStr> },
+  TypeConstructor{ name: Reference, field_values: Vec<(Option<Reference>, NodeId)> },
+  FieldAccess{ container: NodeId, field: Reference },
   ArrayLiteral(Vec<NodeId>),
   FunctionCall{ function: NodeId, args: Vec<NodeId> },
   While{ condition: NodeId, body: NodeId },
@@ -68,9 +68,9 @@ pub enum Content {
 impl Content {
   pub fn node_value_type(&self) -> NodeValueType {
     match self {
-      FieldAccess{..} | Reference{..} |
+      FieldAccess{..} | Content::Reference{..} |
       Literal(_) | Quote(_)
-        => NodeValueType::Ref,
+        => NodeValueType::Reference,
       Block(_) | FunctionCall{..} |
       IfThenElse{..} | TypeConstructor{..}
         => NodeValueType::Owned,
@@ -87,7 +87,7 @@ use Content::*;
 #[derive(Debug, PartialEq)]
 pub enum NodeValueType {
   Owned,
-  Ref,
+  Reference,
   Mut,
   Nil,
 }
@@ -109,7 +109,7 @@ pub struct NodeConverter<'l> {
 
   nodes : HashMap<NodeId, Node>,
 
-  symbols : HashMap<SymbolId, Symbol>,
+  symbols : HashMap<ReferenceId, Reference>,
 
   cache: &'l StringCache,
 }
@@ -118,12 +118,12 @@ pub struct FunctionConverter<'l, 'lt> {
   t : &'l mut NodeConverter<'lt>,
   is_top_level : bool,
   labels_in_scope : Vec<LabelId>,
-  block_scope : Vec<Vec<Symbol>>,
+  block_scope : Vec<Vec<Reference>>,
 }
 
 pub struct Nodes {
   pub nodes : HashMap<NodeId, Node>,
-  pub symbols : HashMap<SymbolId, Symbol>,
+  pub symbols : HashMap<ReferenceId, Reference>,
   pub root : NodeId,
 }
 
@@ -132,7 +132,7 @@ impl Nodes {
     self.nodes.get(&id).unwrap()
   }
 
-  pub fn symbol(&self, id : SymbolId) -> &Symbol {
+  pub fn symbol(&self, id : ReferenceId) -> &Reference {
     self.symbols.get(&id).unwrap()
   }
 
@@ -186,10 +186,10 @@ impl <'l> NodeConverter<'l> {
     id
   }
 
-  fn symbol<Loc : Into<TextLocation>>(&mut self, name : &str, loc : Loc) -> Symbol {
+  fn symbol<Loc : Into<TextLocation>>(&mut self, name : &str, loc : Loc) -> Reference {
     let name = self.cache.get(name);
-    let id = SymbolId(self.uid_generator.next());
-    let s = Symbol { id, name, loc: loc.into() };
+    let id = ReferenceId(self.uid_generator.next());
+    let s = Reference { id, name, loc: loc.into() };
     self.symbols.insert(id, s.clone());
     s
   }
@@ -197,30 +197,30 @@ impl <'l> NodeConverter<'l> {
 
 impl <'l, 'lt> FunctionConverter<'l, 'lt> {
 
-  pub fn new(t : &'l mut NodeConverter<'lt>, is_top_level : bool, args : Vec<Symbol>)
+  pub fn new(t : &'l mut NodeConverter<'lt>, is_top_level : bool, args : Vec<Reference>)
    -> FunctionConverter<'l, 'lt>
   {
     FunctionConverter { t, is_top_level, labels_in_scope : vec![], block_scope: vec![args] }
   }
 
-  fn add_var_to_scope(&mut self, var : Symbol) {
+  fn add_var_to_scope(&mut self, var : Reference) {
     let scope = self.block_scope.last_mut().unwrap();
     scope.push(var);
   }
 
-  fn find_var(&self, name : &str) -> Option<&Symbol> {
+  fn find_var(&self, name : &str) -> Option<&Reference> {
     for var in self.block_scope.iter().flat_map(|i| i.iter()).rev() {
       if name == var.name.as_ref() { return Some(var) }
     }
     None
   }
 
-  fn expr_to_symbol(&mut self, e : &Expr) -> Result<Symbol, Error> {
+  fn expr_to_symbol(&mut self, e : &Expr) -> Result<Reference, Error> {
     let name = e.unwrap_symbol()?;
     Ok(self.t.symbol(name, e.loc))
   }
 
-  fn typed_symbol(&mut self, e : &Expr) -> Result<(Symbol, Option<Box<Expr>>), Error> {
+  fn typed_symbol(&mut self, e : &Expr) -> Result<(Reference, Option<Box<Expr>>), Error> {
     if let Some((":", [s, t])) = e.try_construct() {
       let symbol = self.expr_to_symbol(s)?;
       let type_tag = t.clone().into();
@@ -294,7 +294,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
           Ok((None, self.to_node(e)?))
         }
       })
-      .collect::<Result<Vec<(Option<Symbol>, NodeId)>, Error>>()?;
+      .collect::<Result<Vec<(Option<Reference>, NodeId)>, Error>>()?;
     let c = TypeConstructor{ name, field_values };
     Ok(self.node(expr, c))
   }
@@ -544,9 +544,9 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         let name = self.cached(s);
         if let Some(var) = self.find_var(&s) {
           let id = var.id;
-          return Ok(self.node(expr, Reference{ name, refers_to: Some(id) }));
+          return Ok(self.node(expr, Content::Reference{ name, refers_to: Some(id) }));
         }
-        return Ok(self.node(expr, Reference{ name, refers_to: None}));
+        return Ok(self.node(expr, Content::Reference{ name, refers_to: None}));
       }
       ExprContent::LiteralString(s) => {
         let v = PrimitiveVal::String(s.as_str().to_string());
@@ -633,7 +633,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     self.type_constructor(expr, text_location, vec![start, end])
   }
 
-  fn let_var(&mut self, expr : &Expr, name : Symbol, val : NodeId) -> NodeId {
+  fn let_var(&mut self, expr : &Expr, name : Reference, val : NodeId) -> NodeId {
     self.node(expr, VariableInitialise{ name, type_tag: None, value: val, var_scope : VarScope::Local })
   }
 
@@ -652,7 +652,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
     self.node(expr, function_call)
   }
 
-  fn type_constructor(&mut self, expr : &Expr, name : Symbol, field_values : Vec<NodeId>) -> NodeId {
+  fn type_constructor(&mut self, expr : &Expr, name : Reference, field_values : Vec<NodeId>) -> NodeId {
     let field_values = field_values.into_iter().map(|a| (None, a)).collect();
     self.node(expr, TypeConstructor{ name, field_values })
   }
@@ -679,9 +679,9 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
           fc.add_var_to_scope(loop_var.clone());
           let while_node = {        
             let condition = {
-              let it = fc.node(e, Reference{ name: it_var.name.clone(), refers_to: Some(it_var.id) });
+              let it = fc.node(e, Content::Reference{ name: it_var.name.clone(), refers_to: Some(it_var.id) });
               let var_ref = {
-                let var = fc.node(e, Reference{ name: loop_var.name.clone(), refers_to: Some(loop_var.id) });
+                let var = fc.node(e, Content::Reference{ name: loop_var.name.clone(), refers_to: Some(loop_var.id) });
                 fc.function_call(e, "&", vec![var])
               };
               fc.function_call(e, "next", vec![it, var_ref])

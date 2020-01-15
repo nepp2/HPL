@@ -5,7 +5,7 @@ use itertools::Itertools;
 use crate::error::TextLocation;
 use crate::expr::RefStr;
 use crate::structure::{
-  NodeId, TypeKind, Symbol
+  NodeId, TypeKind, Reference
 };
 
 use std::collections::HashMap;
@@ -17,15 +17,15 @@ pub struct ModuleId(u64);
 pub struct PolyTypeId(u64);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct GlobalId(u64);
+pub struct SymbolId(u64);
 
 impl From<u64> for ModuleId { fn from(v : u64) -> Self { ModuleId(v) } }
 impl From<u64> for PolyTypeId { fn from(v : u64) -> Self { PolyTypeId(v) } }
-impl From<u64> for GlobalId { fn from(v : u64) -> Self { GlobalId(v) } }
+impl From<u64> for SymbolId { fn from(v : u64) -> Self { SymbolId(v) } }
 
 pub struct TypeInfo {
   pub type_defs : HashMap<RefStr, TypeDefinition>,
-  pub globals : HashMap<GlobalId, GlobalDefinition>,
+  pub symbols : HashMap<SymbolId, SymbolDefinition>,
   pub module_id : ModuleId,
 }
 
@@ -342,24 +342,24 @@ impl AbstractType {
 pub struct TypeDefinition {
   pub name : RefStr,
   pub module_id : ModuleId,
-  pub fields : Vec<(Symbol, Type)>,
+  pub fields : Vec<(Reference, Type)>,
   pub kind : TypeKind,
   pub polytypes : Vec<PolyTypeId>,
-  pub drop_function : Option<ResolvedGlobal>,
-  pub clone_function : Option<ResolvedGlobal>,
+  pub drop_function : Option<ResolvedSymbol>,
+  pub clone_function : Option<ResolvedSymbol>,
   pub definition_location : TextLocation,
 }
 
 #[derive(Debug, Clone)]
 pub enum FunctionImplementation {
-  Normal{body: NodeId, name_for_codegen: RefStr, args : Vec<Symbol> },
+  Normal{body: NodeId, name_for_codegen: RefStr, args : Vec<Reference> },
   CFunction,
   Intrinsic,
 }
 
-/// The initialiser for the global
+/// The initialiser for the symbol
 #[derive(Debug, Clone)]
-pub enum GlobalInit {
+pub enum SymbolInit {
   Function(FunctionInit),
   Expression(NodeId),
   Intrinsic,
@@ -370,25 +370,25 @@ pub enum GlobalInit {
 pub struct FunctionInit {
   pub body: NodeId,
   pub name_for_codegen: RefStr,
-  pub args : Vec<Symbol>,
+  pub args : Vec<Reference>,
 }
 
 #[derive(Clone, Debug)]
-pub struct GlobalDefinition {
-  pub id : GlobalId,
+pub struct SymbolDefinition {
+  pub id : SymbolId,
   pub module_id : ModuleId,
   pub name : RefStr,
   pub type_tag : Type,
-  pub initialiser : GlobalInit,
+  pub initialiser : SymbolInit,
   pub polymorphic : bool,
   pub loc : TextLocation,
 }
 
-impl GlobalDefinition {
+impl SymbolDefinition {
   pub fn codegen_name(&self) -> Option<&str> {
     match &self.initialiser {
-      GlobalInit::Function(f) => Some(&f.name_for_codegen),
-      GlobalInit::CBind | GlobalInit::Expression(_) => Some(&self.name),
+      SymbolInit::Function(f) => Some(&f.name_for_codegen),
+      SymbolInit::CBind | SymbolInit::Expression(_) => Some(&self.name),
       _ => None,
     }
   }
@@ -606,29 +606,29 @@ impl TypeInfo {
   pub fn new(module_id : ModuleId) -> TypeInfo {
     TypeInfo {
       type_defs: HashMap::new(),
-      globals: HashMap::new(),
+      symbols: HashMap::new(),
       module_id,
     }
   }
 
-  pub fn find_global<'a>(
+  pub fn find_symbol<'a>(
     &'a self,
     name : &str,
     t : &Type,
     polytypes : &mut HashMap<PolyTypeId, Type>,
-    results : &mut Vec<ResolvedGlobal>) {
-    for g in self.globals.values() {
+    results : &mut Vec<ResolvedSymbol>) {
+    for g in self.symbols.values() {
       if g.name.as_ref() == name {
         if g.polymorphic {
           polytypes.clear();
           if polytype_match(polytypes, t, &g.type_tag) {
             let resolved_type = polytype_replace(polytypes, &g.type_tag);
-            results.push(ResolvedGlobal { def: g.clone(), resolved_type });
+            results.push(ResolvedSymbol { def: g.clone(), resolved_type });
           }
         }
         else {
           if let Some(resolved_type) = unify_types(&t, &g.type_tag) {
-            results.push(ResolvedGlobal { def: g.clone(), resolved_type });
+            results.push(ResolvedSymbol { def: g.clone(), resolved_type });
           }
         }
       }
@@ -641,9 +641,9 @@ impl TypeInfo {
 }
 
 #[derive(Clone, Debug)]
-pub struct ResolvedGlobal {
+pub struct ResolvedSymbol {
   /// TODO: this is very inefficient, because these are searched for and returned repeatedly
-  pub def : GlobalDefinition,
+  pub def : SymbolDefinition,
   pub resolved_type : Type,
 }
 
@@ -654,7 +654,7 @@ pub struct TypeDirectory<'a> {
   import_types : &'a [&'a TypeInfo],
   new_module : &'a mut TypeInfo,
   polytype_bindings : HashMap<PolyTypeId, Type>,
-  global_results : Vec<ResolvedGlobal>,
+  symbol_results : Vec<ResolvedSymbol>,
 }
 
 // TODO: A lot of these functions are slow because they iterate through everything.
@@ -669,12 +669,12 @@ impl <'a> TypeDirectory<'a> {
     TypeDirectory{
       new_module_id, import_types, new_module,
       polytype_bindings: HashMap::new(),
-      global_results: vec![],
+      symbol_results: vec![],
     }
   }
 
-  pub fn get_global_mut(&mut self, id : GlobalId) -> &mut GlobalDefinition {
-    self.new_module.globals.get_mut(&id).unwrap()
+  pub fn get_global_mut(&mut self, id : SymbolId) -> &mut SymbolDefinition {
+    self.new_module.symbols.get_mut(&id).unwrap()
   }
 
   pub fn get_type_def(&self, name : &str, module_id : ModuleId) -> &TypeDefinition {
@@ -689,25 +689,25 @@ impl <'a> TypeDirectory<'a> {
     self.new_module.type_defs.insert(def.name.clone(), def);
   }
 
-  pub fn create_global(&mut self, def : GlobalDefinition) {
-    self.new_module.globals.insert(def.id, def);
+  pub fn create_global(&mut self, def : SymbolDefinition) {
+    self.new_module.symbols.insert(def.id, def);
   }
 
   /// Returns a slice of all matching definitions
-  pub fn find_global(
+  pub fn find_symbol(
     &mut self,
     name : &str,
     t : &Type,
   )
-    -> &[ResolvedGlobal]
+    -> &[ResolvedSymbol]
   {
     self.polytype_bindings.clear();
-    self.global_results.clear();
-    self.new_module.find_global(name, t, &mut self.polytype_bindings, &mut self.global_results);
+    self.symbol_results.clear();
+    self.new_module.find_symbol(name, t, &mut self.polytype_bindings, &mut self.symbol_results);
     for m in self.import_types.iter().rev() {
-      m.find_global(name, t, &mut self.polytype_bindings, &mut self.global_results);
+      m.find_symbol(name, t, &mut self.polytype_bindings, &mut self.symbol_results);
     }
-    self.global_results.as_slice()
+    self.symbol_results.as_slice()
   }
 
   pub fn find_type_def(&self, name : &str) -> Option<&TypeDefinition> {

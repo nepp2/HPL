@@ -4,13 +4,13 @@ use std::fmt;
 use crate::error::{Error, error, error_raw, TextLocation};
 use crate::expr::{Expr, ExprContent, UIDGenerator, RefStr, StringCache};
 use crate::structure::{
-  Node, NodeId, SymbolId, Content, PrimitiveVal, LabelId,
-  VarScope, GlobalType, Symbol, Nodes,
+  Node, NodeId, ReferenceId, Content, PrimitiveVal, LabelId,
+  VarScope, GlobalType, Reference, Nodes,
 };
 use crate::codegen::CodegenInfo;
 use crate::types::{
-  Type, PType, TypeDefinition, FunctionInit, GlobalDefinition,
-  TypeDirectory, GlobalInit, GlobalId, AbstractType, PolyTypeId,
+  Type, PType, TypeDefinition, FunctionInit, SymbolDefinition,
+  TypeDirectory, SymbolInit, SymbolId, AbstractType, PolyTypeId,
   SignatureBuilder,
 };
 use std::collections::HashMap;
@@ -51,20 +51,20 @@ pub enum ConstraintContent {
   SizeOf{ node : NodeId, ts : TypeSymbol },
   FieldAccess {
     container : TypeSymbol,
-    field : Symbol,
+    field : Reference,
     result : TypeSymbol,
   },
   Constructor {
     def_ts : TypeSymbol,
-    fields : Vec<(Option<Symbol>, TypeSymbol)>,
+    fields : Vec<(Option<Reference>, TypeSymbol)>,
   },
   Function {
     function : TypeSymbol,
     args : Vec<TypeSymbol>,
     return_type : TypeSymbol,
   },
-  GlobalDef {
-    global_id: GlobalId,
+  SymbolDef {
+    symbol_id: SymbolId,
     type_symbol: TypeSymbol,
   },
   GlobalReference {
@@ -76,7 +76,7 @@ pub enum ConstraintContent {
 
 pub enum Function {
   Value(TypeSymbol),
-  Name(Symbol),
+  Name(Reference),
 }
 
 impl  fmt::Display for Constraint {
@@ -90,7 +90,7 @@ impl  fmt::Display for Constraint {
       Constructor { .. } => write!(f, "Constructor"),
       Function { args, .. } =>
         write!(f, "FunctionCall ({} args)", args.len()),
-      GlobalDef { .. } => write!(f, "GlobalDef"),
+      SymbolDef { .. } => write!(f, "SymbolDef"),
       GlobalReference { name, .. } => write!(f, "GlobalRef {}", name),
       SizeOf{ .. } => write!(f, "SizeOf"),
     }
@@ -101,7 +101,7 @@ pub struct Constraints {
   pub symbols : HashMap<TypeSymbol, TextLocation>,
   pub node_symbols : HashMap<NodeId, TypeSymbol>,
   pub literals : Vec<NodeId>,
-  pub variable_symbols : HashMap<SymbolId, TypeSymbol>,
+  pub variable_symbols : HashMap<ReferenceId, TypeSymbol>,
   pub constraints : Vec<Constraint>,
   pub assertions : Vec<Assertion>,
 }
@@ -175,7 +175,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
     }
   }
 
-  fn variable_to_type_symbol(&mut self, v : &Symbol) -> TypeSymbol {
+  fn variable_to_type_symbol(&mut self, v : &Reference) -> TypeSymbol {
     if let Some(ts) = self.c.variable_symbols.get(&v.id) { *ts }
     else {
       let ts = self.type_symbol(v.loc);
@@ -247,12 +247,12 @@ impl <'l, 't> GatherConstraints<'l, 't> {
         self.equalivalent(var_type_symbol, vid);
         if let VarScope::Global(global_type) = *var_scope {
           let initialiser = match global_type {
-            GlobalType::CBind => GlobalInit::CBind,
-            GlobalType::Normal => GlobalInit::Expression(*value),
+            GlobalType::CBind => SymbolInit::CBind,
+            GlobalType::Normal => SymbolInit::Expression(*value),
           };
-          let global_id = self.gen.next().into();
-          self.t.create_global(GlobalDefinition {
-            id: global_id,
+          let symbol_id = self.gen.next().into();
+          self.t.create_global(SymbolDefinition {
+            id: symbol_id,
             module_id: self.t.new_module_id(),
             name: name.name.clone(),
             type_tag: Type::any(),
@@ -260,8 +260,8 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             polymorphic: false,
             loc: node.loc,
           });
-          self.constraint(GlobalDef{
-            global_id,
+          self.constraint(SymbolDef{
+            symbol_id,
             type_symbol: var_type_symbol,
           });          
         }
@@ -364,7 +364,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             });
           }
           // Register the global definition
-          let global_id = gc.gen.next().into();
+          let symbol_id = gc.gen.next().into();
           gc.t.create_global({
             let name_for_codegen =
             gc.cache.get(format!("{}.{}", name, gc.gen.next()).as_str());
@@ -373,19 +373,19 @@ impl <'l, 't> GatherConstraints<'l, 't> {
               name_for_codegen,
               args: arg_names,
             };
-            GlobalDefinition {
-              id: global_id,
+            SymbolDefinition {
+              id: symbol_id,
               module_id: gc.t.new_module_id(),
               name: name.clone(),
               type_tag: Type::any(),
-              initialiser: GlobalInit::Function(f),
+              initialiser: SymbolInit::Function(f),
               polymorphic: polytypes.len() > 0,
               loc: node.loc,
             }
           });
           // Bind the global definition to its type symbol
-          gc.constraint(GlobalDef {
-            global_id,
+          gc.constraint(SymbolDef {
+            symbol_id,
             type_symbol: global_ts,
           });
         });
@@ -396,16 +396,16 @@ impl <'l, 't> GatherConstraints<'l, 't> {
         if let Some(t) = self.expr_to_type(type_tag) {
           self.assert_type(cbind_ts, t);
         }
-        let global_id = self.gen.next().into();
-        self.constraint(GlobalDef {
-          global_id,
+        let symbol_id = self.gen.next().into();
+        self.constraint(SymbolDef {
+          symbol_id,
           type_symbol: cbind_ts,
         });
-        self.t.create_global(GlobalDefinition {
-          id: global_id,
+        self.t.create_global(SymbolDefinition {
+          id: symbol_id,
           module_id: self.t.new_module_id(),
           name: name.clone(),
-          initialiser: GlobalInit::CBind,
+          initialiser: SymbolInit::CBind,
           type_tag: Type::any(),
           polymorphic: false,
           loc: node.loc,
