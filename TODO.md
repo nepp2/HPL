@@ -27,7 +27,7 @@ Not currently on the list:
 ## Breakdown of core tasks
 
 - Finish polymorphism
-  - ~~Typecheck generic signatures~~
+  - ~~Typecheck generic functions and structs~~
   - ~~Find set of functions to monomorphise~~
   - Add a new code database that processes a queue to typecheck and codegen modules
   - Typecheck the monomorphised functions
