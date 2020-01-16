@@ -33,7 +33,6 @@ Not currently on the list:
   - Typecheck the monomorphised functions
   - Codegen the monomorphised functions
   - _Don't_ try to codegen the polymorphic versions
-  - Dump all the generated functions into the new module (dumb, temporary solution)
 - Load and replace modules in basic DLL style
   - Load & codegen modules dynamically
     - May work already
@@ -41,7 +40,7 @@ Not currently on the list:
     - May work already
   - Fix module unloading if necessary
     - Might not be required. Depends how quickly memory leakage becomes a problem.
-  - Update old tetris code
+- Update old tetris code
 
 ## Problem
 
