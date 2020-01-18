@@ -10,10 +10,10 @@ use crate::structure::TOP_LEVEL_FUNCTION_NAME;
 use crate::inference_solver;
 use crate::types::{
   Type, TypeContent, PType, TypeInfo,
-  ModuleId, SignatureBuilder, SymbolDefinition,
+  UnitId, SignatureBuilder, SymbolDefinition,
   PolyTypeId, SymbolInit, TypeMapping,
 };
-use crate::codegen::{Gen, LlvmUnit, dump_module, CompileInfo };
+use crate::llvm_codegen::{Gen, LlvmUnit, dump_module, CompileInfo };
 use crate::modules::{ CompiledModule, TypedModule };
 
 use std::collections::HashMap;
@@ -57,7 +57,7 @@ pub struct Compiler {
   pub cache : StringCache,
   pub c_symbols : CSymbols,
   pub intrinsics : TypedModule,
-  pub compiled_modules : HashMap<ModuleId, CompiledModule>,
+  pub compiled_modules : HashMap<UnitId, CompiledModule>,
 }
 
 impl Compiler {
@@ -98,16 +98,16 @@ impl Compiler {
     parse(&self.cache, code)
   }
 
-  pub fn load_module(&mut self, imports : &[ModuleId], expr : &Expr)
-    -> Result<(ModuleId, Val), Error>
+  pub fn load_module(&mut self, imports : &[UnitId], expr : &Expr)
+    -> Result<(UnitId, Val), Error>
   {
     let id = self.compile_module(imports, &expr)?;
     let val = run_top_level(self.compiled_modules.get(&id).unwrap())?;
     Ok((id, val))
   }
 
-  fn compile_module(&mut self, import_ids : &[ModuleId], expr : &Expr)
-    -> Result<ModuleId, Error>
+  fn compile_module(&mut self, import_ids : &[UnitId], expr : &Expr)
+    -> Result<UnitId, Error>
   {
     if DEBUG_PRINTING_EXPRS {
       println!("{}", expr);
@@ -178,11 +178,11 @@ impl Compiler {
     // TODO: is this needed?
     ee.run_static_constructors();
 
-    let lu = LlvmUnit { module_id: typed_module.id, ee, llvm_module };
+    let lu = LlvmUnit { unit_id: typed_module.id, ee, llvm_module };
     let cm = typed_module.to_compiled(lu);
-    let module_id = cm.id;
-    self.compiled_modules.insert(module_id, cm);
-    Ok(module_id)
+    let unit_id = cm.id;
+    self.compiled_modules.insert(unit_id, cm);
+    Ok(unit_id)
   }
 }
 
@@ -198,7 +198,7 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
   use PType::*;
 
   fn create_definition(
-    cache : &StringCache, gen : &mut UIDGenerator, module_id : ModuleId, name : &str,
+    cache : &StringCache, gen : &mut UIDGenerator, unit_id : UnitId, name : &str,
     args : &[&Type], return_type : &Type, polymorphic : bool)
       -> SymbolDefinition
   {
@@ -207,7 +207,7 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
       sig.append_arg(a.clone());
     }
     SymbolDefinition {
-      id: gen.next().into(), module_id,
+      id: gen.next().into(), unit_id,
       name: cache.get(name),
       type_tag: sig.into(),
       initialiser: SymbolInit::Intrinsic,
@@ -217,43 +217,43 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
   }
 
   fn add_intrinsic(
-    cache : &StringCache, gen : &mut UIDGenerator, module_id : ModuleId, t : &mut TypeInfo,
+    cache : &StringCache, gen : &mut UIDGenerator, unit_id : UnitId, t : &mut TypeInfo,
     name : &str, args : &[&Type], return_type : &Type)
   {
-    let g = create_definition(cache, gen, module_id, name, args, return_type, false);
+    let g = create_definition(cache, gen, unit_id, name, args, return_type, false);
     t.symbols.insert(g.id, g);
   }
   
   fn add_polymorphic_intrinsic(
-    cache : &StringCache, gen : &mut UIDGenerator, module_id : ModuleId, t : &mut TypeInfo,
+    cache : &StringCache, gen : &mut UIDGenerator, unit_id : UnitId, t : &mut TypeInfo,
     name : &str, args : &[&Type], return_type : &Type)
   {
-    let g = create_definition(cache, gen, module_id, name, args, return_type, true);
+    let g = create_definition(cache, gen, unit_id, name, args, return_type, true);
     t.symbols.insert(g.id, g);
   }
 
   let expr = parse(cache, "").unwrap();
   let nodes = structure::to_nodes(gen, cache, &expr).unwrap();
 
-  let module_id = gen.next().into();
-  let mut ti = TypeInfo::new(module_id);
+  let unit_id = gen.next().into();
+  let mut ti = TypeInfo::new(unit_id);
   let prim_number_types : &[Type] =
     &[I64.into(), I32.into(), F32.into(), F64.into(),
       U64.into(), U32.into(), U16.into(), U8.into() ];
   let boolean : &Type = &Bool.into();
   for t in prim_number_types {
-    add_intrinsic(cache, gen, module_id, &mut ti, "-", &[t], t);
+    add_intrinsic(cache, gen, unit_id, &mut ti, "-", &[t], t);
     for &n in &["+", "-", "*", "/"] {
-      add_intrinsic(cache, gen, module_id, &mut ti, n, &[t, t], t);
+      add_intrinsic(cache, gen, unit_id, &mut ti, n, &[t, t], t);
     }
     for &n in &["==", ">", "<", ">=", "<=", "!="] {
-      add_intrinsic(cache, gen, module_id, &mut ti, n, &[t, t], boolean);
+      add_intrinsic(cache, gen, unit_id, &mut ti, n, &[t, t], boolean);
     }
   }
   for &n in &["&&", "||"] {
-    add_intrinsic(cache, gen, module_id, &mut ti, n, &[boolean, boolean], boolean);
+    add_intrinsic(cache, gen, unit_id, &mut ti, n, &[boolean, boolean], boolean);
   }
-  add_intrinsic(cache, gen, module_id, &mut ti, "!", &[boolean], boolean);
+  add_intrinsic(cache, gen, unit_id, &mut ti, "!", &[boolean], boolean);
 
   for prim in &[I64.into(), I32.into(), U64.into(), U32.into()] {
     for container in &[Type::ptr_to, Type::array_of] {
@@ -261,22 +261,22 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
       let gt : Type = gid.into();
       let gcontainer = container(gt.clone());
       let args = &[&gcontainer, prim];
-      add_polymorphic_intrinsic(cache, gen, module_id, &mut ti, "Index", args, &gt);
+      add_polymorphic_intrinsic(cache, gen, unit_id, &mut ti, "Index", args, &gt);
     }
   }
   {
     let gid : PolyTypeId = gen.next().into();
     let gt : Type = gid.into();
     let gptr = Type::ptr_to(gt.clone());
-    add_polymorphic_intrinsic(cache, gen, module_id, &mut ti, "*", &[&gptr], &gt);
+    add_polymorphic_intrinsic(cache, gen, unit_id, &mut ti, "*", &[&gptr], &gt);
   }
   {
     let gid : PolyTypeId = gen.next().into();
     let gt : Type = gid.into();
     let gptr = Type::ptr_to(gt.clone());
-    add_polymorphic_intrinsic(cache, gen, module_id, &mut ti, "&", &[&gt], &gptr);
+    add_polymorphic_intrinsic(cache, gen, unit_id, &mut ti, "&", &[&gt], &gptr);
   }
-  TypedModule::new(module_id, nodes, ti, TypeMapping::new())
+  TypedModule::new(unit_id, nodes, ti, TypeMapping::new())
 }
 
 #[derive(Clone, PartialEq, Debug)]

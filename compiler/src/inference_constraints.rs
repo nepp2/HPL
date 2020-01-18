@@ -252,7 +252,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           let symbol_id = self.gen.next().into();
           self.t.create_global(SymbolDefinition {
             id: symbol_id,
-            module_id: self.t.new_module_id(),
+            unit_id: self.t.new_module_id(),
             name: name.name.clone(),
             type_tag: Type::any(),
             initialiser,
@@ -374,7 +374,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             };
             SymbolDefinition {
               id: symbol_id,
-              module_id: gc.t.new_module_id(),
+              unit_id: gc.t.new_module_id(),
               name: name.clone(),
               type_tag: Type::any(),
               initialiser: SymbolInit::Function(f),
@@ -402,7 +402,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
         });
         self.t.create_global(SymbolDefinition {
           id: symbol_id,
-          module_id: self.t.new_module_id(),
+          unit_id: self.t.new_module_id(),
           name: name.clone(),
           initialiser: SymbolInit::CBind,
           type_tag: Type::any(),
@@ -431,7 +431,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             });
             let def = TypeDefinition {
               name: name.clone(),
-              module_id: gc.t.new_module_id(),
+              unit_id: gc.t.new_module_id(),
               fields: fields.iter().map(|(f, _)| (f.clone(), Type::any())).collect(),
               kind: *kind,
               polytypes,

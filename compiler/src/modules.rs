@@ -1,10 +1,10 @@
 
-use crate::types::{TypeInfo, ModuleId, TypeMapping};
-use crate::codegen::LlvmUnit;
+use crate::types::{TypeInfo, UnitId, TypeMapping};
+use crate::llvm_codegen::LlvmUnit;
 use crate::structure::Nodes;
 
 pub struct TypedModule {
-  pub id : ModuleId,
+  pub id : UnitId,
   pub nodes : Nodes,
   pub t : TypeInfo,
   pub cg : TypeMapping,
@@ -12,7 +12,7 @@ pub struct TypedModule {
 
 impl TypedModule {
   pub fn new(
-    id : ModuleId,
+    id : UnitId,
     nodes : Nodes,
     t : TypeInfo,
     cg : TypeMapping,
@@ -32,7 +32,7 @@ impl TypedModule {
 }
 
 pub struct CompiledModule {
-  pub id : ModuleId,
+  pub id : UnitId,
   pub nodes : Nodes,
   pub t : TypeInfo,
   pub llvm_unit : LlvmUnit,

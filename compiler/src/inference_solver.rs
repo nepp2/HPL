@@ -15,7 +15,7 @@ use crate::structure::{
 use crate::types::{
   Type, TypeContent, TypeInfo, TypeDirectory, SymbolId,
   SignatureBuilder, incremental_unify, TypeMapping,
-  UnifyResult, ModuleId, AbstractType, SymbolInit,
+  UnifyResult, UnitId, AbstractType, SymbolInit,
 };
 use crate::inference_constraints::{
   gather_constraints, Constraint, ConstraintContent,
@@ -38,10 +38,10 @@ pub fn infer_types(
   let mut c = Constraints::new();
   let mut cg = TypeMapping::new();
   let mut errors = vec![];
-  let module_id = gen.next().into();
-  let mut new_types = TypeInfo::new(module_id);
+  let unit_id = gen.next().into();
+  let mut new_types = TypeInfo::new(unit_id);
   let mut type_directory =
-  TypeDirectory::new(module_id, imports, &mut new_types);
+  TypeDirectory::new(unit_id, imports, &mut new_types);
   gather_constraints(
     &mut type_directory, &mut cg, cache,
     gen, &mut c, &mut errors, &nodes);
@@ -53,7 +53,7 @@ pub fn infer_types(
     Err(errors)
   }
   else {
-    Ok(TypedModule::new(module_id, nodes, new_types, cg))
+    Ok(TypedModule::new(unit_id, nodes, new_types, cg))
   }
 }
 
@@ -68,10 +68,10 @@ pub fn infer_types2(
   let mut c = Constraints::new();
   let mut cg = TypeMapping::new();
   let mut errors = vec![];
-  let module_id = gen.next().into();
-  let mut new_types = TypeInfo::new(module_id);
+  let unit_id = gen.next().into();
+  let mut new_types = TypeInfo::new(unit_id);
   let mut type_directory =
-  TypeDirectory::new(module_id, imports, &mut new_types);
+  TypeDirectory::new(unit_id, imports, &mut new_types);
   gather_constraints(
     &mut type_directory, &mut cg, cache,
     gen, &mut c, &mut errors, &nodes);
@@ -95,7 +95,7 @@ struct Inference<'a> {
   cache : &'a StringCache,
   gen : &'a mut UIDGenerator,
   errors : &'a mut Vec<Error>,
-  symbol_references : HashMap<NodeId, (ModuleId, SymbolId)>,
+  symbol_references : HashMap<NodeId, (UnitId, SymbolId)>,
   dependency_map : ConstraintDependencyMap<'a>,
   next_edge_set : HashMap<u64, &'a Constraint>,
   resolved : HashMap<TypeSymbol, Type>,
@@ -235,8 +235,8 @@ impl <'a> Inference<'a> {
     self.errors.push(e);
   }
 
-  fn register_def(&mut self, node : NodeId, module_id : ModuleId, symbol_id : SymbolId) {
-    self.symbol_references.insert(node, (module_id, symbol_id));
+  fn register_def(&mut self, node : NodeId, unit_id : UnitId, symbol_id : SymbolId) {
+    self.symbol_references.insert(node, (unit_id, symbol_id));
   }
 
   fn resolve_abstract_defs<'l>(&self, loc : TextLocation, t : &'l Type)
@@ -255,7 +255,7 @@ impl <'a> Inference<'a> {
             t.children.iter().map(|c| self.resolve_abstract_defs(loc, c))
               .collect::<Result<Vec<_>, Error>>()?
           };
-          let content = Def(name.clone(), def.module_id);
+          let content = Def(name.clone(), def.unit_id);
           return Ok(Type::new(content, children));
         }
         else {
@@ -344,9 +344,9 @@ impl <'a> Inference<'a> {
       }
       Constructor { def_ts, fields } => {
         if let Some(t) = self.resolved.get(def_ts) {
-          if let Def(name, module_id) = &t.content {
+          if let Def(name, unit_id) = &t.content {
             self.dependency_map.register_typedef(name, c);
-            let def = self.t.get_type_def(name, *module_id);
+            let def = self.t.get_type_def(name, *unit_id);
             match def.kind {
               TypeKind::Struct => {
                 if fields.len() == def.fields.len() {
@@ -455,7 +455,7 @@ impl <'a> Inference<'a> {
         match self.t.find_symbol(&name, &t) {
           [g] => {
             let resolved_type = g.resolved_type.clone();
-            let (mid, gid) = (g.def.module_id, g.def.id);
+            let (mid, gid) = (g.def.unit_id, g.def.id);
             self.register_def(*node, mid, gid);
             self.update_type(*result, &resolved_type);
           }
@@ -474,9 +474,9 @@ impl <'a> Inference<'a> {
           while let Some(inner) = t.ptr() {
             t = inner;
           }
-          if let Def(name, module_id) = &t.content {
+          if let Def(name, unit_id) = &t.content {
             self.dependency_map.register_typedef(name, c);
-            let def = self.t.get_type_def(&name, *module_id);
+            let def = self.t.get_type_def(&name, *unit_id);
             let f = def.fields.iter().find(|(n, _)| n.name == field.name);
             if let Some((_, t)) = f {
               let mt = t.clone();

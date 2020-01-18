@@ -1,7 +1,7 @@
 // external C interface for the compiler (so that the language can use it)
 
-use crate::compile::Compiler;
-use crate::types::ModuleId;
+use crate::compiler::Compiler;
+use crate::types::UnitId;
 use crate::expr::{RefStr, Expr, ExprContent};
 
 use std::fs::File;
@@ -105,11 +105,11 @@ pub extern "C" fn load_expression(c : *mut Compiler, s : SStr) -> Box<Expr> {
 }
 
 #[no_mangle]
-pub extern "C" fn build_module(c : *mut Compiler, e : &Expr) -> ModuleId {
+pub extern "C" fn build_module(c : *mut Compiler, e : &Expr) -> UnitId {
   let c = unsafe { &mut *c };
   let imports = c.compiled_modules.keys().cloned().collect::<Vec<_>>();
   match c.load_module(imports.as_slice(), e) {
-    Ok((module_id, _val)) => module_id,
+    Ok((unit_id, _val)) => unit_id,
     Err(e) => panic!("failed to build module with error:\n{}", e),
   }
 }
@@ -120,13 +120,13 @@ pub extern "C" fn build_module(c : *mut Compiler, e : &Expr) -> ModuleId {
 #[no_mangle]
 pub extern "C" fn get_function(
   c : *mut Compiler,
-  module_id : ModuleId,
+  unit_id : UnitId,
   name : SStr,
 )
     -> *mut u8
 {
   let c = unsafe { &mut *c };
-  let cm = c.compiled_modules.get(&module_id).unwrap();
+  let cm = c.compiled_modules.get(&unit_id).unwrap();
   let name = name.as_str();
   let mut i = cm.t.symbols.values()
     .filter(|def| def.name.as_ref() == name && def.type_tag.sig().is_some())

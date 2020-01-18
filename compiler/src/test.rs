@@ -2,7 +2,7 @@
 use crate::error::Error;
 use crate::interpret::{Interpreter, interpreter};
 use crate::structure::TOP_LEVEL_FUNCTION_NAME;
-use crate::compile::Val;
+use crate::compiler::Val;
 use crate::c_interface::SStr;
 
 fn result_string(r : Result<Val, Error>) -> String {

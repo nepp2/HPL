@@ -11,7 +11,7 @@ use crate::structure::{
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct ModuleId(u64);
+pub struct UnitId(u64);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct PolyTypeId(u64);
@@ -19,15 +19,15 @@ pub struct PolyTypeId(u64);
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct SymbolId(u64);
 
-impl From<u64> for ModuleId { fn from(v : u64) -> Self { ModuleId(v) } }
+impl From<u64> for UnitId { fn from(v : u64) -> Self { UnitId(v) } }
 impl From<u64> for PolyTypeId { fn from(v : u64) -> Self { PolyTypeId(v) } }
 impl From<u64> for SymbolId { fn from(v : u64) -> Self { SymbolId(v) } }
 
-/// Provides all the type definitions for a particular module
+/// Provides all the type definitions for a particular unit
 pub struct TypeInfo {
   pub type_defs : HashMap<RefStr, TypeDefinition>,
   pub symbols : HashMap<SymbolId, SymbolDefinition>,
-  pub module_id : ModuleId,
+  pub unit_id : UnitId,
 }
 
 /// Provides type information about nodes
@@ -89,7 +89,7 @@ pub enum TypeContent {
   /// Primitive type (e.g. int, float, bool, etc)
   Prim(PType),
   Fun,
-  Def(RefStr, ModuleId),
+  Def(RefStr, UnitId),
   Array,
   Ptr,
   Abstract(AbstractType),
@@ -359,7 +359,7 @@ impl AbstractType {
 #[derive(Clone, Debug)]
 pub struct TypeDefinition {
   pub name : RefStr,
-  pub module_id : ModuleId,
+  pub unit_id : UnitId,
   pub fields : Vec<(Reference, Type)>,
   pub kind : TypeKind,
   pub polytypes : Vec<PolyTypeId>,
@@ -394,7 +394,7 @@ pub struct FunctionInit {
 #[derive(Clone, Debug)]
 pub struct SymbolDefinition {
   pub id : SymbolId,
-  pub module_id : ModuleId,
+  pub unit_id : UnitId,
   pub name : RefStr,
   pub type_tag : Type,
   pub initialiser : SymbolInit,
@@ -621,11 +621,11 @@ fn can_unify_types_internal(u : &Type, t : &Type) -> CanUnifyResult {
 }
 
 impl TypeInfo {
-  pub fn new(module_id : ModuleId) -> TypeInfo {
+  pub fn new(unit_id : UnitId) -> TypeInfo {
     TypeInfo {
       type_defs: HashMap::new(),
       symbols: HashMap::new(),
-      module_id,
+      unit_id,
     }
   }
 
@@ -668,7 +668,7 @@ pub struct ResolvedSymbol {
 /// Utility type for finding definitions either in the module being constructed,
 /// or in the other modules in scope.
 pub struct TypeDirectory<'a> {
-  new_module_id : ModuleId,
+  new_module_id : UnitId,
   import_types : &'a [&'a TypeInfo],
   new_module : &'a mut TypeInfo,
   polytype_bindings : HashMap<PolyTypeId, Type>,
@@ -680,7 +680,7 @@ pub struct TypeDirectory<'a> {
 // be wary of new symbols being added.
 impl <'a> TypeDirectory<'a> {
   pub fn new(
-    new_module_id : ModuleId,
+    new_module_id : UnitId,
     import_types : &'a [&'a TypeInfo],
     new_module : &'a mut TypeInfo) -> Self
   {
@@ -695,8 +695,8 @@ impl <'a> TypeDirectory<'a> {
     self.new_module.symbols.get_mut(&id).unwrap()
   }
 
-  pub fn get_type_def(&self, name : &str, module_id : ModuleId) -> &TypeDefinition {
-    self.find_module(module_id).find_type_def(name).unwrap()
+  pub fn get_type_def(&self, name : &str, unit_id : UnitId) -> &TypeDefinition {
+    self.find_module(unit_id).find_type_def(name).unwrap()
   }
 
   pub fn get_type_def_mut(&mut self, name : &str) -> &mut TypeDefinition {
@@ -733,14 +733,14 @@ impl <'a> TypeDirectory<'a> {
       self.import_types.iter().rev().flat_map(|m| m.find_type_def(name)).next())
   }
 
-  pub fn new_module_id(&self) -> ModuleId {
-    self.new_module.module_id
+  pub fn new_module_id(&self) -> UnitId {
+    self.new_module.unit_id
   }
 
-  pub fn find_module(&self, module_id : ModuleId) -> &TypeInfo {
+  pub fn find_module(&self, unit_id : UnitId) -> &TypeInfo {
     [&*self.new_module].iter()
       .chain(self.import_types.iter().rev())
-      .find(|t| t.module_id == module_id)
+      .find(|t| t.unit_id == unit_id)
       .expect("module not found")
   }
 }

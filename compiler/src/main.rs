@@ -14,12 +14,14 @@ pub mod expr;
 pub mod watcher;
 pub mod structure;
 pub mod types;
+pub mod intrinsics;
 pub mod code_store;
 pub mod inference_constraints;
 pub mod inference_solver;
 pub mod modules;
-pub mod codegen;
-pub mod compile;
+pub mod llvm_codegen;
+pub mod llvm_compile;
+pub mod compiler;
 pub mod interpret;
 pub mod repl;
 pub mod c_interface;
@@ -33,7 +35,7 @@ use std::path::PathBuf;
 use std::env;
 
 use crate::interpret::interpreter;
-use crate::compile::Val;
+use crate::compiler::Val;
 use crate::error::Error;
 
 pub fn print_result(r : Result<Val, Error>) -> String {
@@ -71,7 +73,7 @@ fn main(){
     ["run", f] => load_and_run(f),
     ["infer"] => {
       let code = load("code/prelude.code");
-      compile::run_program(&code).expect("infer failed");
+      compiler::run_program(&code).expect("infer failed");
     }
     _ => load_and_run("code/scratchpad.code"),
   }

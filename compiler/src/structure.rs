@@ -132,6 +132,10 @@ impl Nodes {
     self.nodes.get(&id).unwrap()
   }
 
+  pub fn root(&self) -> &Node {
+    self.nodes.get(&self.root).unwrap()
+  }
+
   pub fn symbol(&self, id : ReferenceId) -> &Reference {
     self.symbols.get(&id).unwrap()
   }
