@@ -11,9 +11,9 @@ use crate::inference_solver;
 use crate::types::{
   Type, TypeContent, PType, TypeInfo,
   ModuleId, SignatureBuilder, SymbolDefinition,
-  PolyTypeId, SymbolInit,
+  PolyTypeId, SymbolInit, TypeMapping,
 };
-use crate::codegen::{Gen, LlvmUnit, dump_module, CompileInfo, CodegenInfo};
+use crate::codegen::{Gen, LlvmUnit, dump_module, CompileInfo };
 use crate::modules::{ CompiledModule, TypedModule };
 
 use std::collections::HashMap;
@@ -276,7 +276,7 @@ fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypedModule 
     let gptr = Type::ptr_to(gt.clone());
     add_polymorphic_intrinsic(cache, gen, module_id, &mut ti, "&", &[&gt], &gptr);
   }
-  TypedModule::new(module_id, nodes, ti, CodegenInfo::new())
+  TypedModule::new(module_id, nodes, ti, TypeMapping::new())
 }
 
 #[derive(Clone, PartialEq, Debug)]

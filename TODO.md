@@ -1,3 +1,23 @@
+# THOUGHTS - 17/01/2020
+
+It could be a goal that hotloaded programs can also compile into static binaries, without any extra effort. This is not the case when modules are loaded with dynamic, runtime code, such as a `load_module` function. This could potentially be fixed by providing a clear distinction between code that runs at compile time and code that runs at runtime.
+
+Ultimately there needs to be some kind of declarative structure to the relationships between modules. However, if we initially support a totally dynamic module loading system, the declarative system can be built on top of it as a library within the language.
+
+I may just be able to use static-style imports already:
+
+- `main` imports (prelude, events, game)
+- `events` imports (prelude)
+- `game` imports (prelude, events)
+
+Where `events` stores a history of events as global state. This is ugly because it uses global state, and it's not very general; it's hard to see how to build a node graph system based on this, especially if you wanted to have many instances of a node (or node graph) without superfluous code generation.
+
+However, explicit imports are also a desirable feature for usability. This should probably be separated from the idea of hotloading. Instead it is like an assert which changes the visible namespace.
+
+For now, a module should just import whatever it's told to by its parent (recursively). This means modules will need knowledge of their own `UnitId`. These are effectively self references.
+
+I'm trying to create something akin to a synchronous actor, which also provides guarantees about which types it can see. When it is reloaded, every instance would need to be replaced. Any graph processing system would need a graph of compile-time evaluated code modules, as well as a graph of data and events. These modules should be data, then. Code must be very strictly wired together according to the type system. So really it just needs to be possible to query a module's dependencies.
+
 # THOUGHTS - 13/01/2020
 
 ## A list of requirements for live-edited Tetris

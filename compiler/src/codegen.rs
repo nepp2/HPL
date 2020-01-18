@@ -8,7 +8,7 @@ use crate::structure::{
   Node, NodeId, Nodes, Content, PrimitiveVal, TypeKind, ReferenceId,
   LabelId, NodeValueType, VarScope, Reference };
 use crate::types::{
-  Type, PType, TypeDefinition, SymbolInit, SymbolId,
+  Type, PType, TypeDefinition, SymbolInit, SymbolId, TypeMapping,
   ModuleId, SymbolDefinition, TypeInfo, TypeContent };
 use crate::modules::CompiledModule;
 
@@ -134,22 +134,6 @@ pub struct LlvmUnit {
   pub llvm_module : Module,
 }
 
-pub struct CodegenInfo {
-  pub node_type : HashMap<NodeId, Type>,
-  pub sizeof_info : HashMap<NodeId, Type>,
-  pub symbol_references : HashMap<NodeId, SymbolDefinition>,
-}
-
-impl CodegenInfo {
-  pub fn new() -> Self {
-    CodegenInfo {
-      node_type: HashMap::new(),
-      sizeof_info: HashMap::new(),
-      symbol_references: HashMap::new(),
-    }
-  }
-}
-
 /// Code generates a module
 pub struct Gen<'l> {
   context: &'l mut Context,
@@ -212,7 +196,7 @@ pub struct CompileInfo<'l> {
   compiled_modules : &'l [&'l CompiledModule],
   t : &'l TypeInfo,
   nodes : &'l Nodes,
-  cg : &'l CodegenInfo,
+  cg : &'l TypeMapping,
 }
 
 impl <'l> CompileInfo<'l> {
@@ -221,7 +205,7 @@ impl <'l> CompileInfo<'l> {
     compiled_modules : &'l [&'l CompiledModule],
     t : &'l TypeInfo,
     nodes : &'l Nodes,
-    cg : &'l CodegenInfo,
+    cg : &'l TypeMapping,
   )
       -> Self 
   {

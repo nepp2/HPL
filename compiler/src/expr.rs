@@ -243,6 +243,8 @@ impl fmt::Display for Expr {
 
 /// This cache uses internal mutability to cache strings. It should be safe,
 /// because the strings themselves are immutable.
+/// It's not threadsafe, but I think RefCell should prevent it from being
+/// passed to multiple threads.
 #[derive(Default, Clone)]
 pub struct StringCache {
   symbols : RefCell<HashSet<RefStr>>,

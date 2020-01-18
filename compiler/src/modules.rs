@@ -1,13 +1,13 @@
 
-use crate::types::{TypeInfo, ModuleId};
-use crate::codegen::{LlvmUnit, CodegenInfo};
+use crate::types::{TypeInfo, ModuleId, TypeMapping};
+use crate::codegen::LlvmUnit;
 use crate::structure::Nodes;
 
 pub struct TypedModule {
   pub id : ModuleId,
   pub nodes : Nodes,
   pub t : TypeInfo,
-  pub cg : CodegenInfo,
+  pub cg : TypeMapping,
 }
 
 impl TypedModule {
@@ -15,7 +15,7 @@ impl TypedModule {
     id : ModuleId,
     nodes : Nodes,
     t : TypeInfo,
-    cg : CodegenInfo,
+    cg : TypeMapping,
   ) -> Self 
   {
     TypedModule { id, nodes, t, cg }

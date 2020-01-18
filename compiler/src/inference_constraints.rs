@@ -7,17 +7,16 @@ use crate::structure::{
   Node, NodeId, ReferenceId, Content, PrimitiveVal, LabelId,
   VarScope, GlobalType, Reference, Nodes,
 };
-use crate::codegen::CodegenInfo;
 use crate::types::{
   Type, PType, TypeDefinition, FunctionInit, SymbolDefinition,
   TypeDirectory, SymbolInit, SymbolId, AbstractType, PolyTypeId,
-  SignatureBuilder,
+  SignatureBuilder, TypeMapping,
 };
 use std::collections::HashMap;
 
 pub fn gather_constraints(
   t : &mut TypeDirectory,
-  cg : &mut CodegenInfo,
+  cg : &mut TypeMapping,
   cache : &StringCache,
   gen : &mut UIDGenerator,
   c : &mut Constraints,
@@ -127,7 +126,7 @@ struct GatherConstraints<'l, 't> {
   labels : HashMap<LabelId, TypeSymbol>,
   polytype_ids : Vec<(RefStr, PolyTypeId)>,
   t : &'l mut TypeDirectory<'t>,
-  cg : &'l mut CodegenInfo,
+  cg : &'l mut TypeMapping,
   cache : &'l StringCache,
   gen : &'l mut UIDGenerator,
   c : &'l mut Constraints,
@@ -138,7 +137,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
 
   fn new(
     t : &'l mut TypeDirectory<'t>,
-    cg : &'l mut CodegenInfo,
+    cg : &'l mut TypeMapping,
     cache : &'l StringCache,
     gen : &'l mut UIDGenerator,
     c : &'l mut Constraints,

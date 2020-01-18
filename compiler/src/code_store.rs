@@ -5,7 +5,8 @@ use crate::expr::{Expr, RefStr, UIDGenerator, StringCache};
 use crate::lexer;
 use crate::parser;
 use crate::structure;
-use crate::error::Error;
+use crate::inference_solver;
+use crate::error::{Error, ErrorContent, error_raw};
 
 use structure::{NodeId, Nodes};
 
@@ -59,6 +60,7 @@ struct CodeStore {
   exprs : HashMap<UnitId, Expr>,
   nodes : HashMap<UnitId, Nodes>,
   types : HashMap<UnitId, TypeInfo>,
+  type_mappings : HashMap<UnitId, TypeMappings>,
   dependencies : HashMap<UnitId, Vec<UnitId>>,
   llvm : HashMap<UnitId, LlvmUnit>,
   poly_functions : HashMap<SymbolId, PolyFunction>,
@@ -76,14 +78,33 @@ impl CodeStore {
             lexer::lex(&code, &self.cache)
             .map_err(|mut es| es.remove(0))?;
           let expr = parser::parse(tokens, &self.cache)?;
-          job_queue.push_back(Job::Structure(expr));
+          let unit_id = UnitId(self.gen.next());
+          self.exprs.insert(unit_id, expr);
+          job_queue.push_back(Job::Structure(unit_id));
         }
-        Job::Structure(expr) => {
+        Job::Structure(unit_id) => {
+          let expr = self.exprs.get(&unit_id).unwrap();
           let nodes = structure::to_nodes(&mut self.gen, &self.cache, &expr)?;
-          job_queue.push_back(Job::Typecheck(expr, nodes));
+          self.nodes.insert(unit_id, nodes);
+          job_queue.push_back(Job::Typecheck(unit_id));
         }
-        Job::Typecheck(expr, nodes) => {
+        Job::Typecheck(unit_id) => {
           // TODO: typecheck
+          let nodes = self.nodes.get(&unit_id).unwrap();
+          /// TODO: import every single module for now. but that means adding the
+          /// intrinsics and the prelude. At some point a module will need to be
+          /// able to specify which other files it is including.
+          let import_types = vec![];
+          let (types, mapping) =
+            inference_solver::infer_types2(
+              nodes, import_types.as_slice(), &self.cache, &mut self.gen)
+            .map_err(|es| {
+              let c = ErrorContent::InnerErrors("type errors".into(), es);
+              let root = nodes.node(nodes.root);
+              error_raw(root.loc, c)
+            })?;
+          self.types.insert(unit_id, types);
+          self.type_mappings.insert(unit_id, mapping);
         }
         _ => panic!("doesn't work"),
       }

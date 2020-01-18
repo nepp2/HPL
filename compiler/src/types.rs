@@ -23,10 +23,28 @@ impl From<u64> for ModuleId { fn from(v : u64) -> Self { ModuleId(v) } }
 impl From<u64> for PolyTypeId { fn from(v : u64) -> Self { PolyTypeId(v) } }
 impl From<u64> for SymbolId { fn from(v : u64) -> Self { SymbolId(v) } }
 
+/// Provides all the type definitions for a particular module
 pub struct TypeInfo {
   pub type_defs : HashMap<RefStr, TypeDefinition>,
   pub symbols : HashMap<SymbolId, SymbolDefinition>,
   pub module_id : ModuleId,
+}
+
+/// Provides type information about nodes
+pub struct TypeMapping {
+  pub node_type : HashMap<NodeId, Type>,
+  pub sizeof_info : HashMap<NodeId, Type>,
+  pub symbol_references : HashMap<NodeId, SymbolDefinition>,
+}
+
+impl TypeMapping {
+  pub fn new() -> Self {
+    TypeMapping {
+      node_type: HashMap::new(),
+      sizeof_info: HashMap::new(),
+      symbol_references: HashMap::new(),
+    }
+  }
 }
 
 /// Primitive type

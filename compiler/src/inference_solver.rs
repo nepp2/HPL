@@ -14,7 +14,7 @@ use crate::structure::{
 };
 use crate::types::{
   Type, TypeContent, TypeInfo, TypeDirectory, SymbolId,
-  SignatureBuilder, incremental_unify,
+  SignatureBuilder, incremental_unify, TypeMapping,
   UnifyResult, ModuleId, AbstractType, SymbolInit,
 };
 use crate::inference_constraints::{
@@ -22,7 +22,6 @@ use crate::inference_constraints::{
   Constraints, TypeSymbol, Assertion,
 };
 use crate::modules::TypedModule;
-use crate::codegen::CodegenInfo;
 
 use std::collections::{HashMap, VecDeque};
 
@@ -37,12 +36,12 @@ pub fn infer_types(
   -> Result<TypedModule, Vec<Error>>
 {
   let mut c = Constraints::new();
-  let mut cg = CodegenInfo::new();
+  let mut cg = TypeMapping::new();
   let mut errors = vec![];
   let module_id = gen.next().into();
-  let mut new_module = TypeInfo::new(module_id);
+  let mut new_types = TypeInfo::new(module_id);
   let mut type_directory =
-  TypeDirectory::new(module_id, imports, &mut new_module);
+  TypeDirectory::new(module_id, imports, &mut new_types);
   gather_constraints(
     &mut type_directory, &mut cg, cache,
     gen, &mut c, &mut errors, &nodes);
@@ -54,19 +53,44 @@ pub fn infer_types(
     Err(errors)
   }
   else {
-    Ok(TypedModule::new(module_id, nodes, new_module, cg))
+    Ok(TypedModule::new(module_id, nodes, new_types, cg))
   }
 }
 
-struct TypeUnify<'a> {
-  errors : &'a mut Vec<Error>,
-  resolved : HashMap<TypeSymbol, Type>,
+pub fn infer_types2(
+  nodes : &Nodes,
+  imports : &[&TypeInfo],
+  cache : &StringCache,
+  gen : &mut UIDGenerator,
+)
+  -> Result<(TypeInfo, TypeMapping), Vec<Error>>
+{
+  let mut c = Constraints::new();
+  let mut cg = TypeMapping::new();
+  let mut errors = vec![];
+  let module_id = gen.next().into();
+  let mut new_types = TypeInfo::new(module_id);
+  let mut type_directory =
+  TypeDirectory::new(module_id, imports, &mut new_types);
+  gather_constraints(
+    &mut type_directory, &mut cg, cache,
+    gen, &mut c, &mut errors, &nodes);
+  let i = Inference::new(
+    &nodes, &mut type_directory,
+    &mut cg, &c, cache, gen, &mut errors);
+  i.infer();
+  if errors.len() > 0 {
+    Err(errors)
+  }
+  else {
+    Ok((new_types, cg))
+  }
 }
 
 struct Inference<'a> {
   nodes : &'a Nodes,
   t : &'a mut TypeDirectory<'a>,
-  cg : &'a mut CodegenInfo,
+  cg : &'a mut TypeMapping,
   c : &'a Constraints,
   cache : &'a StringCache,
   gen : &'a mut UIDGenerator,
@@ -82,7 +106,7 @@ impl <'a> Inference<'a> {
   fn new(
     nodes : &'a Nodes,
     t : &'a mut TypeDirectory<'a>,
-    cg : &'a mut CodegenInfo,
+    cg : &'a mut TypeMapping,
     c : &'a Constraints,
     cache : &'a StringCache,
     gen : &'a mut UIDGenerator,
