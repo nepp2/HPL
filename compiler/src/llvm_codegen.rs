@@ -29,7 +29,6 @@ use inkwell::values::{
   FunctionValue, PointerValue, GlobalValue };
 use inkwell::{FloatPredicate, IntPredicate};
 use inkwell::targets::TargetData;
-use inkwell::execution_engine::ExecutionEngine;
 
 pub fn dump_module(module : &Module) {
   println!("{}", module.print_to_string().to_string())
@@ -128,15 +127,9 @@ fn name_basic_type(t : &BasicValueEnum, s : &str) {
 #[derive(Copy, Clone)]
 enum ShortCircuitOp { And, Or }
 
-pub struct LlvmUnit {
-  pub unit_id : UnitId,
-  pub ee : ExecutionEngine,
-  pub llvm_module : Module,
-}
-
 /// Code generates a module
 pub struct Gen<'l> {
-  context: &'l mut Context,
+  context: &'l Context,
   module : &'l mut Module,
   target_data : &'l TargetData,
   c_symbol_table : &'l HashMap<RefStr, usize>,
@@ -219,42 +212,32 @@ impl <'l> CompileInfo<'l> {
 
   fn find_type_def(&self, name : &str, unit_id : UnitId) -> Option<&TypeDefinition> {
     if self.t.unit_id == unit_id { return self.t.find_type_def(name) }
-    for m in self.compiled_modules.iter() {
-      if m.id == unit_id { return m.t.find_type_def(name) }
-    }
-    None
+    self.code_store.types(unit_id).find_type_def(name)
   }
 
   fn find_function_address(&self, unit_id : UnitId, name_for_codegen : &str) -> usize {
-    self.compiled_modules.iter()
-      .filter(|&m| m.id == unit_id)
-      .map(|m|
-        unsafe { m.llvm_unit.ee.get_function_address(name_for_codegen) }
-        .expect("function pointer was null"))
-      .next().expect("function address not found") as usize
+    unsafe {
+      self.code_store.llvm_unit(unit_id)
+        .ee.get_function_address(name_for_codegen)
+        .expect("function pointer was null") as usize
+    }
   }
 
   fn find_global_address(&self, unit_id : UnitId, name : &str) -> usize {
-    self.compiled_modules.iter()
-      .filter(|m| m.id == unit_id)
-      .map(|m|
-        unsafe { m.llvm_unit.ee.get_global_address(name) }
-        .expect("global pointer was null"))
-      .next().expect("global address not found") as usize
+    unsafe {
+      self.code_store.llvm_unit(unit_id)
+        .ee.get_global_address(name)
+        .expect("global pointer was null") as usize
+    }
   }
 
   fn get_global_def(&self, unit_id : UnitId, global_id : SymbolId) -> Option<&SymbolDefinition> {
     if self.t.unit_id == unit_id {
-      return self.t.symbols.get(&global_id);
+      self.t.symbols.get(&global_id)
     }
     else {
-      for m in self.compiled_modules.iter().cloned() {
-        if m.t.unit_id == unit_id {
-          return m.t.symbols.get(&global_id);
-        }
-      }
+      self.code_store.types(unit_id).symbols.get(&global_id)
     }
-    None
   }
 }
 
@@ -312,7 +295,7 @@ impl <'l> TypedNode<'l> {
 impl <'l> Gen<'l> {
 
   pub fn new(
-    context: &'l mut Context,
+    context: &'l Context,
     module : &'l mut Module,
     target_data : &'l TargetData,
     c_symbol_table : &'l HashMap<RefStr, usize>,

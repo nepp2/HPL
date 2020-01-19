@@ -4,7 +4,7 @@ use crate::error::{Error, ErrorContent, TextLocation, TextMarker, error};
 use std::collections::{HashSet, HashMap};
 use std::str::FromStr;
 
-static EXPECTED_TOKEN_ERROR : &str = "Expected token. Found nothing.";
+pub static EXPECTED_TOKEN_ERROR : &str = "Expected token. Found nothing.";
 
 struct ParseConfig {
   next_precedence : i32,
@@ -637,37 +637,13 @@ fn parse_top_level(ps : &mut ParseState) -> Result<Expr, Error> {
   parse_list(ps, vec![], ";", "block".into())
 }
 
-pub fn parse(tokens : Vec<Token>, symbols : &StringCache) -> Result<Expr, Error> {
+pub fn parse(tokens : Vec<Token>, cache : &StringCache) -> Result<Expr, Error> {
   let config = parse_config();
-  let mut ps = ParseState::new(tokens, &config, symbols);
+  let mut ps = ParseState::new(tokens, &config, cache);
   let e = parse_top_level(&mut ps)?;
   if ps.has_tokens() {
     let t = ps.peek()?;
     return error(t.loc, format!("Unexpected token '{}' of type '{:?}'", t.to_string(), t.token_type));
   }
   return Ok(e);
-}
-
-pub enum ReplParseResult {
-  Complete(Expr),
-  Incomplete,
-}
-
-pub fn repl_parse(tokens : Vec<Token>, symbols : &mut StringCache) -> Result<ReplParseResult, Error> {
-  use ReplParseResult::*;
-  let config = parse_config();
-  let mut ps = ParseState::new(tokens, &config, symbols);
-  match parse_top_level(&mut ps) {
-    Ok(e) => {
-      return Ok(Complete(e));
-    }
-    Err(e) => {
-      if let ErrorContent::Message(m) = &e.message {
-        if m.as_str() == EXPECTED_TOKEN_ERROR {
-          return Ok(Incomplete);
-        }
-      }
-      return Err(e);
-    }
-  }
 }

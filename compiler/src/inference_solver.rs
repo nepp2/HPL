@@ -21,43 +21,12 @@ use crate::inference_constraints::{
   gather_constraints, Constraint, ConstraintContent,
   Constraints, TypeSymbol, Assertion,
 };
-use crate::modules::TypedModule;
 
 use std::collections::{HashMap, VecDeque};
 
 use TypeContent::*;
 
 pub fn infer_types(
-  nodes : Nodes,
-  imports : &[&TypeInfo],
-  cache : &StringCache,
-  gen : &mut UIDGenerator,
-)
-  -> Result<TypedModule, Vec<Error>>
-{
-  let mut c = Constraints::new();
-  let mut cg = TypeMapping::new();
-  let mut errors = vec![];
-  let unit_id = gen.next().into();
-  let mut new_types = TypeInfo::new(unit_id);
-  let mut type_directory =
-  TypeDirectory::new(unit_id, imports, &mut new_types);
-  gather_constraints(
-    &mut type_directory, &mut cg, cache,
-    gen, &mut c, &mut errors, &nodes);
-  let i = Inference::new(
-    &nodes, &mut type_directory,
-    &mut cg, &c, cache, gen, &mut errors);
-  i.infer();
-  if errors.len() > 0 {
-    Err(errors)
-  }
-  else {
-    Ok(TypedModule::new(unit_id, nodes, new_types, cg))
-  }
-}
-
-pub fn infer_types2(
   nodes : &Nodes,
   imports : &[&TypeInfo],
   cache : &StringCache,

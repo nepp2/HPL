@@ -1,5 +1,6 @@
 // external C interface for the compiler (so that the language can use it)
 
+use crate::{lexer, parser};
 use crate::compiler::Compiler;
 use crate::types::UnitId;
 use crate::expr::{RefStr, Expr, ExprContent};
@@ -101,14 +102,15 @@ pub extern "C" fn load_expression(c : *mut Compiler, s : SStr) -> Box<Expr> {
   let mut code = String::new();
   f.read_to_string(&mut code).unwrap();
   let c = unsafe { &mut *c };
-  Box::new(c.parse(&code).unwrap())
+  let tokens = lexer::lex(&code, &c.cache).unwrap();
+  let expr = parser::parse(tokens, &c.cache).unwrap();
+  Box::new(expr)
 }
 
 #[no_mangle]
 pub extern "C" fn build_module(c : *mut Compiler, e : &Expr) -> UnitId {
   let c = unsafe { &mut *c };
-  let imports = c.compiled_modules.keys().cloned().collect::<Vec<_>>();
-  match c.load_module(imports.as_slice(), e) {
+  match c.load_expr_as_module(e) {
     Ok((unit_id, _val)) => unit_id,
     Err(e) => panic!("failed to build module with error:\n{}", e),
   }
@@ -126,14 +128,15 @@ pub extern "C" fn get_function(
     -> *mut u8
 {
   let c = unsafe { &mut *c };
-  let cm = c.compiled_modules.get(&unit_id).unwrap();
+  let types = c.code_store.types(unit_id);
   let name = name.as_str();
-  let mut i = cm.t.symbols.values()
+  let mut i = types.symbols.values()
     .filter(|def| def.name.as_ref() == name && def.type_tag.sig().is_some())
     .flat_map(|def| def.codegen_name());
+  let lu = c.code_store.llvm_unit(unit_id);
   let address =
     i.next().and_then(|codegen_name|
-      unsafe { cm.llvm_unit.ee.get_function_address(codegen_name) })
+      unsafe { lu.ee.get_function_address(codegen_name) })
     .expect("could not find function address");
   if i.next().is_some() {
     panic!("two matching overloads for '{}' in get_function_address", name);
@@ -252,20 +255,18 @@ pub extern "C" fn load_symbol(lib_handle : usize, symbol_name : SStr) -> usize {
 
 pub struct CSymbols {
   pub local_symbol_table : HashMap<RefStr, usize>,
-  pub shared_libraries : HashMap<usize, (RefStr, Library)>,
-  pub lib_handle_counter : usize,
 }
 
 impl CSymbols {
-  pub fn new() -> CSymbols {
-    CSymbols {
+  pub fn new_populated() -> CSymbols {
+    let mut cs = CSymbols {
       local_symbol_table: HashMap::new(),
-      shared_libraries: HashMap::new(),
-      lib_handle_counter: 0,
-    }
+    };
+    cs.populate();
+    cs
   }
 
-  pub fn populate(&mut self) {
+  fn populate(&mut self) {
     let sym = &mut self.local_symbol_table;
     sym.insert("load_library".into(), (load_library_c as *const()) as usize);
     sym.insert("load_symbol".into(), (load_symbol as *const()) as usize);

@@ -18,7 +18,6 @@ pub mod intrinsics;
 pub mod code_store;
 pub mod inference_constraints;
 pub mod inference_solver;
-pub mod modules;
 pub mod llvm_codegen;
 pub mod llvm_compile;
 pub mod compiler;

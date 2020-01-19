@@ -1,12 +1,16 @@
 
-use crate::types::{TypeInfo, SymbolId, Type, TypeMapping, UnitId};
-use crate::llvm_codegen::LlvmUnit;
-use crate::llvm_compile::LlvmCompiler;
-use crate::expr::{Expr, RefStr, UIDGenerator, StringCache};
-use crate::{lexer, parser, structure, inference_solver, intrinsics};
-use crate::error::{Error, ErrorContent, error_raw};
-
-use structure::{NodeId, Nodes};
+use crate::{
+  error, expr, c_interface, structure,
+  lexer, parser, llvm_compile, types,
+  compiler, intrinsics, inference_solver,
+};
+use error::{Error, error, ErrorContent, error_raw};
+use expr::{StringCache, Expr, UIDGenerator, RefStr};
+use c_interface::CSymbols;
+use types::{TypeContent, PType, UnitId, TypeInfo, SymbolId, Type, TypeMapping};
+use llvm_compile::{LlvmCompiler, execute_function, LlvmUnit};
+use compiler::Val;
+use structure::{NodeId, Nodes, TOP_LEVEL_FUNCTION_NAME};
 
 use std::collections::{HashMap, VecDeque};
 
@@ -14,7 +18,7 @@ use std::collections::{HashMap, VecDeque};
 pub struct SourceId(u64);
 
 enum Job {
-  Parse(SourceId, UnitId, RefStr),
+  Parse(SourceId, UnitId),
   Structure(UnitId),
   Typecheck(UnitId),
   Codegen(UnitId),
@@ -34,7 +38,8 @@ pub struct CodeStore {
   types : HashMap<UnitId, TypeInfo>,
   type_mappings : HashMap<UnitId, TypeMapping>,
   dependencies : HashMap<UnitId, Vec<UnitId>>,
-  llvm : HashMap<UnitId, LlvmUnit>,
+  llvm_units : HashMap<UnitId, LlvmUnit>,
+  vals : HashMap<UnitId, Val>,
   poly_functions : HashMap<SymbolId, PolyFunction>,
   poly_variations : HashMap<UnitId, (Type, SymbolId)>,
 }
@@ -49,20 +54,26 @@ impl CodeStore {
     cs
   }
 
-  pub fn name(&self, unit_id : UnitId) -> &str {
-    panic!()
+  pub fn name(&self, unit_id : UnitId) -> RefStr {
+    let aaa = (); // TODO store names based on files (or something)
+    format!("module_{:?}", unit_id).into()
   }
 
   pub fn nodes(&self, unit_id : UnitId) -> &Nodes {
-    panic!()
+    self.nodes.get(&unit_id).unwrap()
+  }
+
+  pub fn llvm_unit(&self, unit_id : UnitId) -> &LlvmUnit {
+    self.llvm_units.get(&unit_id).unwrap()
   }  
 
   pub fn types(&self, unit_id : UnitId) -> &TypeInfo {
-    panic!()
+    println!("Getting types for {}", self.exprs.get(&unit_id).unwrap());
+    self.types.get(&unit_id).unwrap()
   }
 
   pub fn type_mapping(&self, unit_id : UnitId) -> &TypeMapping {
-    panic!()
+    self.type_mappings.get(&unit_id).unwrap()
   }
 
   fn process_job_queue(
@@ -70,12 +81,13 @@ impl CodeStore {
     job_queue : &mut VecDeque<Job>,
     llvm_compiler : &LlvmCompiler,
     gen : &mut UIDGenerator, cache : &StringCache,
+    c_symbols : &CSymbols,
   ) -> Result<(), Error>
   {
     while let Some(job) = job_queue.pop_front() {
       match job {
-        Job::Parse(id, unit_id, code) => {
-          self.code.insert(id, code.clone());
+        Job::Parse(source_id, unit_id) => {
+          let code = self.code.get(&source_id).unwrap();
           let tokens =
             lexer::lex(&code, &cache)
             .map_err(|mut es| es.remove(0))?;
@@ -94,7 +106,7 @@ impl CodeStore {
           let nodes = self.nodes.get(&unit_id).unwrap();
           let import_types : Vec<_> = self.types.values().collect();
           let (types, mapping) =
-            inference_solver::infer_types2(
+            inference_solver::infer_types(
               nodes, import_types.as_slice(), cache, gen)
             .map_err(|es| {
               let c = ErrorContent::InnerErrors("type errors".into(), es);
@@ -103,28 +115,81 @@ impl CodeStore {
             })?;
           self.types.insert(unit_id, types);
           self.type_mappings.insert(unit_id, mapping);
+          job_queue.push_back(Job::Codegen(unit_id));
         }
         Job::Codegen(unit_id) => {
-          let llvm_unit = llvm_compiler.compile_unit(unit_id, self, gen, cache)?;
-          // TODO: CALL INITIALISER FUNCTIO AND ADD LLVM UNIT TO SELF
+          let llvm_unit = llvm_compiler.compile_unit(unit_id, self, c_symbols)?;
+          self.llvm_units.insert(unit_id, llvm_unit);
+          let val = self.run_top_level(unit_id)?;
+          self.vals.insert(unit_id, val);
         }
       }
     }
     Ok(())
   }
 
-  pub fn load(
+  pub fn load_expr(
+    &mut self,
+    llvm_compiler : &LlvmCompiler,
+    expr : Expr,
+    gen : &mut UIDGenerator, cache : &StringCache,
+    c_symbols : &CSymbols,
+  ) -> Result<(UnitId, Val), Error>
+  {
+    let mut job_queue = VecDeque::new();
+    let unit_id = gen.next().into();
+    self.exprs.insert(unit_id, expr);
+    job_queue.push_back(Job::Structure(unit_id));
+    self.process_job_queue(&mut job_queue, llvm_compiler, gen, cache, c_symbols)?;
+    let val = self.vals.get(&unit_id).unwrap().clone();
+    Ok((unit_id, val))
+  }
+
+  pub fn load_module(
     &mut self,
     llvm_compiler : &LlvmCompiler,
     code : RefStr,
-    gen : &mut UIDGenerator, cache : &StringCache
-  ) -> Result<UnitId, Error>
+    gen : &mut UIDGenerator, cache : &StringCache,
+    c_symbols : &CSymbols,
+  ) -> Result<(UnitId, Val), Error>
   {
     let mut job_queue = VecDeque::new();
     let source_id = SourceId(gen.next());
+    self.code.insert(source_id, code);
     let unit_id = gen.next().into();
-    job_queue.push_back(Job::Parse(source_id, unit_id, code));
-    self.process_job_queue(&mut job_queue, llvm_compiler, gen, cache)?;
-    Ok(unit_id)
+    job_queue.push_back(Job::Parse(source_id, unit_id));
+    self.process_job_queue(&mut job_queue, llvm_compiler, gen, cache, c_symbols)?;
+    let val = self.vals.get(&unit_id).unwrap().clone();
+    Ok((unit_id, val))
+  }
+  
+  fn run_top_level(&self, unit_id : UnitId) -> Result<Val, Error> {
+    use TypeContent::*;
+    use PType::*;
+    let f = TOP_LEVEL_FUNCTION_NAME;
+    let types = self.types(unit_id);
+    let def = types.symbols.values().find(|def| def.name.as_ref() == f).unwrap();
+    let f = def.codegen_name().unwrap();
+    let sig = if let Some(sig) = def.type_tag.sig() {sig} else {panic!()};
+    let lu = self.llvm_unit(unit_id);
+    let value = match &sig.return_type.content {
+      Prim(Bool) => Val::Bool(execute_function(f, lu)),
+      Prim(F64) => Val::F64(execute_function(f, lu)),
+      Prim(F32) => Val::F32(execute_function(f, lu)),
+      Prim(I64) => Val::I64(execute_function(f, lu)),
+      Prim(I32) => Val::I32(execute_function(f, lu)),
+      Prim(U64) => Val::U64(execute_function(f, lu)),
+      Prim(U32) => Val::U32(execute_function(f, lu)),
+      Prim(U16) => Val::U16(execute_function(f, lu)),
+      Prim(U8) => Val::U8(execute_function(f, lu)),
+      Prim(Void) => {
+        execute_function::<()>(f, lu);
+        Val::Void
+      }
+      t => {
+        return error(def.loc, format!("can't return value of type {:?} from a top-level function", t));
+      }
+    };
+    Ok(value)
   }
 }

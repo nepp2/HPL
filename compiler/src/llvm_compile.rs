@@ -8,13 +8,16 @@ use expr::{StringCache, UIDGenerator};
 use c_interface::CSymbols;
 use types::UnitId;
 use code_store::CodeStore;
-use llvm_codegen::{Gen, LlvmUnit, dump_module, CompileInfo };
+use llvm_codegen::{Gen, dump_module, CompileInfo };
 
 use inkwell::context::{Context};
 use inkwell::passes::PassManager;
 use inkwell::values::{FunctionValue, GlobalValue};
 use inkwell::OptimizationLevel;
 use inkwell::targets::{InitializationConfig, Target };
+
+use inkwell::execution_engine::ExecutionEngine;
+use inkwell::module::Module;
 
 use llvm_sys::support::LLVMLoadLibraryPermanently;
 
@@ -25,6 +28,12 @@ static mut LOADED_SYMBOLS : bool = false;
 static DEBUG_PRINTING_EXPRS : bool = false;
 static DEBUG_PRINTING_IR : bool = false;
 static ENABLE_IR_OPTIMISATION : bool = false;
+
+pub struct LlvmUnit {
+  pub unit_id : UnitId,
+  pub ee : ExecutionEngine,
+  pub llvm_module : Module,
+}
 
 pub fn execute_function<T>(function_name : &str, llvm_unit : &LlvmUnit) -> T {
   unsafe {
@@ -37,11 +46,11 @@ pub fn execute_function<T>(function_name : &str, llvm_unit : &LlvmUnit) -> T {
 
 pub struct LlvmCompiler {
   pub context : Context,
-  pub c_symbols : CSymbols,
 }
 
 impl LlvmCompiler {
   pub fn new() -> LlvmCompiler {
+    let aaa = (); // TODO: is this weird symbol loading step needed? Run tests without it.
     unsafe {
       if !LOADED_SYMBOLS {
         // TODO: delete?
@@ -56,20 +65,14 @@ impl LlvmCompiler {
         LOADED_SYMBOLS = true;
       }
     }
-  
-    let context = Context::create();
-    let mut c_symbols = CSymbols::new();
-    c_symbols.populate();
-
-    LlvmCompiler { context, c_symbols }
+    LlvmCompiler { context: Context::create() }
   }
 
   pub fn compile_unit(
-    &mut self,
+    &self,
     unit_id : UnitId,
     code_store : &CodeStore,
-    gen : &mut UIDGenerator,
-    cache : &StringCache,
+    c_symbols : &CSymbols
   ) -> Result<LlvmUnit, Error>
   {
     let name = code_store.name(unit_id);
@@ -77,7 +80,7 @@ impl LlvmCompiler {
     let types = code_store.types(unit_id);
     let mapping = code_store.type_mapping(unit_id);
 
-    let mut llvm_module = self.context.create_module(name);
+    let mut llvm_module = self.context.create_module(&name);
 
     let ee =
       llvm_module.create_jit_execution_engine(OptimizationLevel::None)
@@ -101,8 +104,8 @@ impl LlvmCompiler {
     {
       //let type_directory
       let gen = Gen::new(
-        &mut self.context, &mut llvm_module, &mut ee.get_target_data(),
-        &self.c_symbols.local_symbol_table, &mut globals_to_link,
+        &self.context, &mut llvm_module, &mut ee.get_target_data(),
+        &c_symbols.local_symbol_table, &mut globals_to_link,
         &mut functions_to_link, &pm);
       let info = CompileInfo::new(code_store, types, nodes, mapping);
       gen.codegen_module(&info)?
