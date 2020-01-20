@@ -7,28 +7,31 @@
 
 use itertools::Itertools;
 
-use crate::error::{Error, error, error_raw, TextLocation};
-use crate::expr::{UIDGenerator, RefStr, StringCache};
-use crate::structure::{
+use crate::{error, expr, structure, types, inference_constraints, code_store};
+
+use error::{Error, error, error_raw, TextLocation};
+use expr::{UIDGenerator, RefStr, StringCache};
+use structure::{
   NodeId, TypeKind, Nodes,
 };
-use crate::types::{
+use types::{
   Type, TypeContent, TypeInfo, TypeDirectory, SymbolId,
   SignatureBuilder, incremental_unify, TypeMapping,
   UnifyResult, UnitId, AbstractType, SymbolInit,
 };
-use crate::inference_constraints::{
+use inference_constraints::{
   gather_constraints, Constraint, ConstraintContent,
   Constraints, TypeSymbol, Assertion,
 };
+use code_store::CodeStore;
 
 use std::collections::{HashMap, VecDeque};
 
 use TypeContent::*;
 
 pub fn infer_types(
-  nodes : &Nodes,
-  imports : &[&TypeInfo],
+  unit_id : UnitId,
+  code_store : &CodeStore,
   cache : &StringCache,
   gen : &mut UIDGenerator,
 )
@@ -37,10 +40,12 @@ pub fn infer_types(
   let mut c = Constraints::new();
   let mut cg = TypeMapping::new();
   let mut errors = vec![];
-  let unit_id = gen.next().into();
   let mut new_types = TypeInfo::new(unit_id);
+  let imports : Vec<_> =
+    code_store.types.values().collect();
   let mut type_directory =
-  TypeDirectory::new(unit_id, imports, &mut new_types);
+    TypeDirectory::new(unit_id, imports.as_slice(), &mut new_types);
+  let nodes = code_store.nodes(unit_id);
   gather_constraints(
     &mut type_directory, &mut cg, cache,
     gen, &mut c, &mut errors, &nodes);
@@ -103,20 +108,6 @@ impl <'a> Inference<'a> {
     }
   }
 
-  // fn unify_mut_internal(&mut self, ts : TypeSymbol, new_type : &mut Type) -> UnifyResult {
-  //   if let Some(prev_t) = self.resolved.get(&ts) {
-  //     let r = incremental_unify(prev_t, new_type);
-  //     if !r.unify_success {
-  //       let e = error_raw(self.loc(ts), format!("conflicting types inferred; {} and {}.", new_type, prev_t));
-  //       self.errors.push(e);
-  //     }
-  //     r
-  //   }
-  //   else {
-  //     UnifyResult { unify_success: true, old_type_changed: true, new_type_changed: false }
-  //   }
-  // }
-
   fn update_type(&mut self, ts : TypeSymbol, t : &Type) -> UnifyResult {
     let ts_type = if let Some(t) = self.resolved.get_mut(&ts) {
       t
@@ -148,22 +139,6 @@ impl <'a> Inference<'a> {
       false
     }
   }
-
-  // fn update_type(&mut self, ts : TypeSymbol, mut t : Type) {
-  //   if self.unify_mut_internal(ts, &mut t).old_type_changed {
-  //     self.resolved.insert(ts, t);
-  //     self.type_updated(ts);
-  //   }
-  // }
-
-  // fn update_type_mut(&mut self, ts : TypeSymbol, t : &mut Type) -> UnifyResult {
-  //   let r = self.unify_mut_internal(ts, t);
-  //   if r.old_type_changed {
-  //     self.resolved.insert(ts, t.clone());
-  //     self.type_updated(ts);
-  //   }
-  //   r
-  // }
 
   fn loc(&self, ts : TypeSymbol) -> TextLocation {
     *self.c.symbols.get(&ts).unwrap()

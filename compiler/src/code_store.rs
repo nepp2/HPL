@@ -24,7 +24,7 @@ enum Job {
   Codegen(UnitId),
 }
 
-struct PolyFunction {
+pub struct PolyFunction {
   symbol : SymbolId,
   source_unit : UnitId,
   source_node : NodeId,
@@ -32,16 +32,16 @@ struct PolyFunction {
 
 #[derive(Default)]
 pub struct CodeStore {
-  code : HashMap<SourceId, RefStr>,
-  exprs : HashMap<UnitId, Expr>,
-  nodes : HashMap<UnitId, Nodes>,
-  types : HashMap<UnitId, TypeInfo>,
-  type_mappings : HashMap<UnitId, TypeMapping>,
-  dependencies : HashMap<UnitId, Vec<UnitId>>,
-  llvm_units : HashMap<UnitId, LlvmUnit>,
-  vals : HashMap<UnitId, Val>,
-  poly_functions : HashMap<SymbolId, PolyFunction>,
-  poly_variations : HashMap<UnitId, (Type, SymbolId)>,
+  pub code : HashMap<SourceId, RefStr>,
+  pub exprs : HashMap<UnitId, Expr>,
+  pub nodes : HashMap<UnitId, Nodes>,
+  pub types : HashMap<UnitId, TypeInfo>,
+  pub type_mappings : HashMap<UnitId, TypeMapping>,
+  pub dependencies : HashMap<UnitId, Vec<UnitId>>,
+  pub llvm_units : HashMap<UnitId, LlvmUnit>,
+  pub vals : HashMap<UnitId, Val>,
+  pub poly_functions : HashMap<SymbolId, PolyFunction>,
+  pub poly_variations : HashMap<UnitId, (Type, SymbolId)>,
 }
 
 impl CodeStore {
@@ -49,8 +49,7 @@ impl CodeStore {
   pub fn new_with_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> Self {
     let mut cs : Self = Default::default();
     let i_types = intrinsics::get_intrinsics(gen, cache);
-    let unit_id = gen.next().into();
-    cs.types.insert(unit_id, i_types);
+    cs.types.insert(i_types.unit_id, i_types);
     cs
   }
 
@@ -68,7 +67,7 @@ impl CodeStore {
   }  
 
   pub fn types(&self, unit_id : UnitId) -> &TypeInfo {
-    println!("Getting types for {}", self.exprs.get(&unit_id).unwrap());
+    println!("Getting types for {:?}", unit_id);
     self.types.get(&unit_id).unwrap()
   }
 
@@ -87,6 +86,7 @@ impl CodeStore {
     while let Some(job) = job_queue.pop_front() {
       match job {
         Job::Parse(source_id, unit_id) => {
+          println!("Parsing {:?}", unit_id);
           let code = self.code.get(&source_id).unwrap();
           let tokens =
             lexer::lex(&code, &cache)
@@ -96,28 +96,28 @@ impl CodeStore {
           job_queue.push_back(Job::Structure(unit_id));
         }
         Job::Structure(unit_id) => {
+          println!("Structuring {:?}", unit_id);
           let expr = self.exprs.get(&unit_id).unwrap();
           let nodes = structure::to_nodes(gen, cache, &expr)?;
           self.nodes.insert(unit_id, nodes);
           job_queue.push_back(Job::Typecheck(unit_id));
         }
         Job::Typecheck(unit_id) => {
-          // TODO: typecheck
-          let nodes = self.nodes.get(&unit_id).unwrap();
-          let import_types : Vec<_> = self.types.values().collect();
+          println!("Type checking {:?}", unit_id);
           let (types, mapping) =
             inference_solver::infer_types(
-              nodes, import_types.as_slice(), cache, gen)
+              unit_id, self, cache, gen)
             .map_err(|es| {
               let c = ErrorContent::InnerErrors("type errors".into(), es);
-              let root = nodes.node(nodes.root);
-              error_raw(root.loc, c)
+              let nodes = self.nodes(unit_id);
+              error_raw(nodes.root().loc, c)
             })?;
           self.types.insert(unit_id, types);
           self.type_mappings.insert(unit_id, mapping);
           job_queue.push_back(Job::Codegen(unit_id));
         }
         Job::Codegen(unit_id) => {
+          println!("Code generating {:?}", unit_id);
           let llvm_unit = llvm_compiler.compile_unit(unit_id, self, c_symbols)?;
           self.llvm_units.insert(unit_id, llvm_unit);
           let val = self.run_top_level(unit_id)?;
