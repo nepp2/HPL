@@ -1,10 +1,9 @@
 
 use crate::{
-  error, expr, c_interface, types, llvm_codegen, code_store,
+  error, c_interface, types, llvm_codegen, code_store,
 };
 
 use error::{Error, error_raw};
-use expr::{StringCache, UIDGenerator};
 use c_interface::CSymbols;
 use types::UnitId;
 use code_store::CodeStore;
@@ -14,12 +13,8 @@ use inkwell::context::{Context};
 use inkwell::passes::PassManager;
 use inkwell::values::{FunctionValue, GlobalValue};
 use inkwell::OptimizationLevel;
-use inkwell::targets::{InitializationConfig, Target };
-
 use inkwell::execution_engine::ExecutionEngine;
 use inkwell::module::Module;
-
-use llvm_sys::support::LLVMLoadLibraryPermanently;
 
 // TODO: Get rid of this static mut?
 static mut LOADED_SYMBOLS : bool = false;
@@ -50,21 +45,6 @@ pub struct LlvmCompiler {
 
 impl LlvmCompiler {
   pub fn new() -> LlvmCompiler {
-    let aaa = (); // TODO: is this weird symbol loading step needed? Run tests without it.
-    unsafe {
-      if !LOADED_SYMBOLS {
-        // TODO: delete?
-        Target::initialize_native(&InitializationConfig::default())
-          .expect("Failed to initialize native target");
-  
-        // This makes sure that any symbols in the main executable can be
-        // linked to the code we generate with the JIT. This includes any
-        // DLLs used by the main exe.
-        LLVMLoadLibraryPermanently(std::ptr::null());
-  
-        LOADED_SYMBOLS = true;
-      }
-    }
     LlvmCompiler { context: Context::create() }
   }
 
