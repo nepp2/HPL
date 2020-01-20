@@ -34,7 +34,7 @@ pub struct TypeInfo {
 pub struct TypeMapping {
   pub node_type : HashMap<NodeId, Type>,
   pub sizeof_info : HashMap<NodeId, Type>,
-  pub symbol_references : HashMap<NodeId, SymbolDefinition>,
+  pub symbol_references : HashMap<NodeId, (UnitId, SymbolId)>,
 }
 
 impl TypeMapping {
@@ -94,51 +94,6 @@ pub enum TypeContent {
   Ptr,
   Abstract(AbstractType),
   Polytype(PolyTypeId),
-}
-
-/// This wrapper indicates that the type is monomorphic (not polymorphic), and may be unified.
-/// The type may be abstract. Unresolved polymorphic elements should be converted
-/// into abstract types before resolution.
-#[derive(Clone, Debug, PartialEq)]
-pub struct MonoType {
-  inner : Type
-}
-
-impl MonoType {
-  fn new(inner : Type) -> Self {
-    MonoType { inner }
-  }
-
-  pub fn any() -> Self {
-    MonoType::new(Type::any())
-  }
-
-  pub fn as_type(&self) -> &Type {
-    &self.inner
-  }
-
-  pub fn array_of(self) -> Self {
-    MonoType::new(self.inner.array_of())
-  }
-
-  pub fn sig_builder(&self) -> Option<SignatureBuilder<MonoType>> {
-    if self.inner.content == Fun {
-      Some(SignatureBuilder{types: self.inner.children.iter().cloned().map(|t| MonoType{ inner: t }).collect()})
-    }
-    else { None }
-  }
-}
-
-impl Into<Type> for MonoType {
-  fn into(self) -> Type {
-    self.inner
-  }
-}
-
-impl fmt::Display for MonoType {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "{}", self.inner)
-  }
 }
 
 fn polytype_replace(polytypes : &HashMap<PolyTypeId, Type>, polytype : &Type) -> Type {
@@ -208,44 +163,37 @@ impl Into<Type> for PolyTypeId {
   }
 }
 
-pub struct SignatureBuilder<T> {
-  types : Vec<T>,
+pub struct SignatureBuilder {
+  types : Vec<Type>,
 }
 
-impl <T : Into<Type>> SignatureBuilder<T> {
-  pub fn new(return_type : T) -> Self {
-    let aaa = (); // TODO: remove generic support for monotype
+impl SignatureBuilder {
+  pub fn new(return_type : Type) -> Self {
     SignatureBuilder { types: vec![return_type] }
   }
 
-  pub fn append_arg(&mut self, arg : T) {
+  pub fn append_arg(&mut self, arg : Type) {
     self.types.push(arg);
   }
 
-  pub fn set_arg(&mut self, i : usize, t : T) {
+  pub fn set_arg(&mut self, i : usize, t : Type) {
     self.types[1 + i] = t;
   }
 
-  pub fn set_return(&mut self, t : T) {
+  pub fn set_return(&mut self, t : Type) {
     self.types[0] = t;
   }
 
-  pub fn args(&mut self) -> &mut [T] {
+  pub fn args(&mut self) -> &mut [Type] {
     &mut self.types[1..]
   }
 
-  pub fn return_type(&mut self) -> &mut T {
+  pub fn return_type(&mut self) -> &mut Type {
     &mut self.types[0]
   }
 }
 
-impl Into<MonoType> for SignatureBuilder<MonoType> {
-  fn into(self) -> MonoType {
-    MonoType { inner: Type::new(Fun, self.types.into_iter().map(|t| t.into()).collect()) }
-  }
-}
-
-impl Into<Type> for SignatureBuilder<Type> {
+impl Into<Type> for SignatureBuilder {
   fn into(self) -> Type {
     Type::new(Fun, self.types)
   }
@@ -285,7 +233,7 @@ impl Type {
     None
   }
 
-  pub fn sig_builder(&self) -> Option<SignatureBuilder<Type>> {
+  pub fn sig_builder(&self) -> Option<SignatureBuilder> {
     if self.content == Fun {
       Some(SignatureBuilder{types: self.children.iter().cloned().collect()})
     }
@@ -568,6 +516,36 @@ fn incremental_unify_internal(old_mono : &Type, new : &mut Type, result : &mut U
 }
 
 pub fn unify_types(a : &Type, b : &Type) -> Option<Type> {
+  #[derive(Clone, Copy, PartialEq)]
+  enum CanUnifyResult {
+    CanUnify, AlreadyEqual, CannotUnify
+  }
+
+  fn can_unify_types_internal(u : &Type, t : &Type) -> CanUnifyResult {
+    use CanUnifyResult::*;
+    // Polytypes are assumed to behave like the Any type
+    if let Polytype(_) = &u.content { return CanUnify }
+    if let Polytype(_) = &t.content { return CanUnify }
+    if u.content != t.content {
+      if let Abstract(au) = &u.content {
+        if au.contains_type(t) { return CanUnify }
+      }
+      if let Abstract(at) = &t.content {
+        if at.contains_type(u) { return CanUnify }
+      }
+      return CannotUnify;
+    }
+    if u.children.len() != t.children.len() { return CannotUnify }
+    let mut unification_required = false;
+    for (u, t) in u.children.iter().zip(t.children.iter()) {
+      match can_unify_types_internal(u, t) {
+        CanUnify => unification_required = true,
+        CannotUnify => return CannotUnify,
+        AlreadyEqual => (),
+      }
+    }
+    if unification_required { CanUnify } else { AlreadyEqual }
+  }
   match can_unify_types_internal(a, b) {
     CanUnifyResult::CanUnify => {
       let mut b = b.clone();
@@ -579,45 +557,6 @@ pub fn unify_types(a : &Type, b : &Type) -> Option<Type> {
     CanUnifyResult::AlreadyEqual => Some(a.clone()),
     CanUnifyResult::CannotUnify => None,
   }
-}
-
-#[derive(Clone, Copy, PartialEq)]
-pub enum CanUnifyResult {
-  CanUnify, AlreadyEqual, CannotUnify
-}
-
-impl CanUnifyResult {
-  pub fn success(self) -> bool { self != CanUnifyResult::CannotUnify }
-}
-
-pub fn can_unify_types(a : &MonoType, b : &MonoType) -> CanUnifyResult {
-  can_unify_types_internal(&a.inner, &b.inner)
-}
-
-fn can_unify_types_internal(u : &Type, t : &Type) -> CanUnifyResult {
-  use CanUnifyResult::*;
-  // Polytypes are assumed to behave like the Any type
-  if let Polytype(_) = &u.content { return CanUnify }
-  if let Polytype(_) = &t.content { return CanUnify }
-  if u.content != t.content {
-    if let Abstract(au) = &u.content {
-      if au.contains_type(t) { return CanUnify }
-    }
-    if let Abstract(at) = &t.content {
-      if at.contains_type(u) { return CanUnify }
-    }
-    return CannotUnify;
-  }
-  if u.children.len() != t.children.len() { return CannotUnify }
-  let mut unification_required = false;
-  for (u, t) in u.children.iter().zip(t.children.iter()) {
-    match can_unify_types_internal(u, t) {
-      CanUnify => unification_required = true,
-      CannotUnify => return CannotUnify,
-      AlreadyEqual => (),
-    }
-  }
-  if unification_required { CanUnify } else { AlreadyEqual }
 }
 
 impl TypeInfo {

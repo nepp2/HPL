@@ -38,7 +38,7 @@ pub fn infer_types(
   -> Result<(TypeInfo, TypeMapping), Vec<Error>>
 {
   let mut c = Constraints::new();
-  let mut cg = TypeMapping::new();
+  let mut mapping = TypeMapping::new();
   let mut errors = vec![];
   let mut new_types = TypeInfo::new(unit_id);
   let imports : Vec<_> =
@@ -47,29 +47,28 @@ pub fn infer_types(
     TypeDirectory::new(unit_id, imports.as_slice(), &mut new_types);
   let nodes = code_store.nodes(unit_id);
   gather_constraints(
-    &mut type_directory, &mut cg, cache,
+    &mut type_directory, &mut mapping, cache,
     gen, &mut c, &mut errors, &nodes);
   let i = Inference::new(
     &nodes, &mut type_directory,
-    &mut cg, &c, cache, gen, &mut errors);
+    &mut mapping, &c, cache, gen, &mut errors);
   i.infer();
   if errors.len() > 0 {
     Err(errors)
   }
   else {
-    Ok((new_types, cg))
+    Ok((new_types, mapping))
   }
 }
 
 struct Inference<'a> {
   nodes : &'a Nodes,
   t : &'a mut TypeDirectory<'a>,
-  cg : &'a mut TypeMapping,
+  mapping : &'a mut TypeMapping,
   c : &'a Constraints,
   cache : &'a StringCache,
   gen : &'a mut UIDGenerator,
   errors : &'a mut Vec<Error>,
-  symbol_references : HashMap<NodeId, (UnitId, SymbolId)>,
   dependency_map : ConstraintDependencyMap<'a>,
   next_edge_set : HashMap<u64, &'a Constraint>,
   resolved : HashMap<TypeSymbol, Type>,
@@ -80,7 +79,7 @@ impl <'a> Inference<'a> {
   fn new(
     nodes : &'a Nodes,
     t : &'a mut TypeDirectory<'a>,
-    cg : &'a mut TypeMapping,
+    mapping : &'a mut TypeMapping,
     c : &'a Constraints,
     cache : &'a StringCache,
     gen : &'a mut UIDGenerator,
@@ -88,8 +87,7 @@ impl <'a> Inference<'a> {
       -> Self
   {
     Inference {
-      nodes, t, cg, c, cache, gen, errors,
-      symbol_references: HashMap::new(),
+      nodes, t, mapping, c, cache, gen, errors,
       dependency_map: ConstraintDependencyMap::new(),
       next_edge_set: HashMap::new(),
       resolved: HashMap::new(),
@@ -180,7 +178,7 @@ impl <'a> Inference<'a> {
   }
 
   fn register_def(&mut self, node : NodeId, unit_id : UnitId, symbol_id : SymbolId) {
-    self.symbol_references.insert(node, (unit_id, symbol_id));
+    self.mapping.symbol_references.insert(node, (unit_id, symbol_id));
   }
 
   fn resolve_abstract_defs<'l>(&self, loc : TextLocation, t : &'l Type)
@@ -449,7 +447,7 @@ impl <'a> Inference<'a> {
         if let Some(t) = self.get_type(*ts) {
           if t.is_concrete() {
             let t = t.clone().into();
-            self.cg.sizeof_info.insert(*node, t);
+            self.mapping.sizeof_info.insert(*node, t);
           }
         }
       }
@@ -524,23 +522,21 @@ impl <'a> Inference<'a> {
         let t = self.get_type(*ts).unwrap().clone();
         // Make sure the type isn't abstract
         if t.is_concrete() {
-          self.cg.node_type.insert(*n, t);
+          self.mapping.node_type.insert(*n, t);
         }
       }
     }
 
-    // Assign symbol definitions
+    // Find polymorphic definitions
     if self.errors.is_empty() {
-      for (nid, (mid, gid)) in self.symbol_references.drain() {
-        let def = self.t.find_module(mid).symbols.get(&gid).unwrap().clone();
+      for (nid, (mid, gid)) in self.mapping.symbol_references.iter() {
+        let def = self.t.find_module(*mid).symbols.get(gid).unwrap().clone();
         if def.polymorphic {
           if let SymbolInit::Function(_) = def.initialiser {
-            let t = self.cg.node_type.get(&nid).unwrap();
+            let t = self.mapping.node_type.get(nid).unwrap();
             println!("polymorphic def '{}', {} - {}", def.name, def.type_tag, t);
           }
         }
-        let aaa = (); // TODO: this seems like a waste of time and memory
-        self.cg.symbol_references.insert(nid, def);
       }
     }
   }

@@ -1,6 +1,6 @@
 use crate::lexer::{Token, TokenType};
 use crate::expr::{StringCache, Expr, ExprContent, RefStr};
-use crate::error::{Error, ErrorContent, TextLocation, TextMarker, error};
+use crate::error::{Error, TextLocation, TextMarker, error};
 use std::collections::{HashSet, HashMap};
 use std::str::FromStr;
 

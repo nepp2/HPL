@@ -275,7 +275,11 @@ impl <'l> TypedNode<'l> {
   }
 
   fn node_symbol_def(&self) -> Option<&SymbolDefinition> {
-    self.info.cg.symbol_references.get(&self.node.id)
+    if let Some((unit_id, symbol_id)) = self.info.cg.symbol_references.get(&self.node.id) {
+      let types = self.info.code_store.types(*unit_id);
+      return types.symbols.get(symbol_id);
+    }
+    None
   }
 
   fn node_type_def(&self) -> Option<&TypeDefinition> {

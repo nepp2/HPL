@@ -7,22 +7,22 @@
 // #[macro_use] extern crate lazy_static;
 // #[macro_use] extern crate maplit;
 
-pub mod error;
-pub mod lexer;
-pub mod parser;
-pub mod expr;
-pub mod watcher;
-pub mod structure;
-pub mod types;
-pub mod intrinsics;
-pub mod code_store;
-pub mod inference_constraints;
-pub mod inference_solver;
-pub mod llvm_codegen;
-pub mod llvm_compile;
-pub mod compiler;
-pub mod interpret;
-pub mod repl;
+mod error;
+mod lexer;
+mod parser;
+mod expr;
+mod watcher;
+mod structure;
+mod types;
+mod intrinsics;
+mod code_store;
+mod inference_constraints;
+mod inference_solver;
+mod llvm_codegen;
+mod llvm_compile;
+mod compiler;
+mod interpret;
+mod repl;
 pub mod c_interface;
 
 #[cfg(test)]
