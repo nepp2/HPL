@@ -331,35 +331,37 @@ impl <'l> Gen<'l> {
     // declare the globals and functions
     let mut functions_to_codegen = vec!();
     for def in info.t.symbols.values() {
-      let t = self.to_basic_type(info, &def.type_tag).unwrap();
-      match &def.initialiser {
-        SymbolInit::CBind => {
-          if let Some(sig) = def.type_tag.sig() {
-            let f = self.codegen_prototype(info, def.name.as_ref(), sig.return_type, None, sig.args);
-            let address = self.get_c_symbol_address(def.loc, &def.name)?;
-            self.functions_to_link.push((f, address));
+      if !def.polymorphic {
+        let t = self.to_basic_type(info, &def.type_tag).unwrap();
+        match &def.initialiser {
+          SymbolInit::CBind => {
+            if let Some(sig) = def.type_tag.sig() {
+              let f = self.codegen_prototype(info, def.name.as_ref(), sig.return_type, None, sig.args);
+              let address = self.get_c_symbol_address(def.loc, &def.name)?;
+              self.functions_to_link.push((f, address));
+            }
+            else {
+              let gv = self.module.add_global(t, Some(AddressSpace::Generic), &def.name);
+              let address = self.get_c_symbol_address(def.loc, &def.name)?;
+              self.globals_to_link.push((gv, address));
+            }
           }
-          else {
-            let gv = self.module.add_global(t, Some(AddressSpace::Generic), &def.name);
-            let address = self.get_c_symbol_address(def.loc, &def.name)?;
-            self.globals_to_link.push((gv, address));
+          SymbolInit::Expression(_node) => {
+            self.add_global(const_zero(t), false, &def.name);
+            let aaa = (); // Do static initialisation where possible
+            // let v = self.codegen_static(info.typed_node(node_id))?;
+            // self.add_global(v, false, &name);
           }
+          SymbolInit::Function(init) => {
+            let sig = def.type_tag.sig().unwrap();
+            let f =
+              self.codegen_prototype(
+                info, init.name_for_codegen.as_ref(), sig.return_type,
+                Some(&init.args), sig.args);
+            functions_to_codegen.push((f, init.args.as_slice(), init.body));
+          }
+          SymbolInit::Intrinsic => (),
         }
-        SymbolInit::Expression(_node) => {
-          self.add_global(const_zero(t), false, &def.name);
-          let aaa = (); // Do static initialisation where possible
-          // let v = self.codegen_static(info.typed_node(node_id))?;
-          // self.add_global(v, false, &name);
-        }
-        SymbolInit::Function(init) => {
-          let sig = def.type_tag.sig().unwrap();
-          let f =
-            self.codegen_prototype(
-              info, init.name_for_codegen.as_ref(), sig.return_type,
-              Some(&init.args), sig.args);
-          functions_to_codegen.push((f, init.args.as_slice(), init.body));
-        }
-        SymbolInit::Intrinsic => (),
       }
     }
 

@@ -1,3 +1,12 @@
+# TODO - 20/01/2020
+
+- ~~Stop trying to codegen the polymorphic functions~~
+- Typecheck the monomorphised functions
+- Codegen the monomorphised functions
+- Check that they link
+
+The monomorphised functions can't be generated before their parent modules, because they might refer to other stuff in those modules. So any that are called inside their parent should be generated inside them.
+
 # THOUGHTS - 17/01/2020
 
 It could be a goal that hotloaded programs can also compile into static binaries, without any extra effort. This is not the case when modules are loaded with dynamic, runtime code, such as a `load_module` function. This could potentially be fixed by providing a clear distinction between code that runs at compile time and code that runs at runtime.
