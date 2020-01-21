@@ -5,23 +5,16 @@ use crate::{
 };
 use expr::{StringCache, Expr, UIDGenerator};
 use c_interface::CSymbols;
-use code_store::{CodeStore, SourceId, LlvmUnitId};
+use code_store::{CodeStore, SourceId};
 use types::{TypeContent, PType, UnitId};
 use llvm_compile::{LlvmCompiler, execute_function};
 use error::{Error, error, ErrorContent, error_raw};
 use structure::TOP_LEVEL_FUNCTION_NAME;
 
 // TODO: Put these options somewhere more sensible
-static DEBUG_PRINTING_EXPRS : bool = false;
-static DEBUG_PRINTING_IR : bool = false;
-static ENABLE_IR_OPTIMISATION : bool = false;
-
-enum Job {
-  Parse(SourceId, UnitId),
-  Structure(UnitId),
-  Typecheck(UnitId),
-  Codegen(LlvmUnitId),
-}
+pub static DEBUG_PRINTING_EXPRS : bool = false;
+pub static DEBUG_PRINTING_IR : bool = false;
+pub static ENABLE_IR_OPTIMISATION : bool = false;
 
 pub struct Compiler {
   pub code_store : CodeStore,
@@ -53,7 +46,7 @@ impl Compiler {
     self.code_store.exprs.insert(unit_id, expr.clone());
     self.structure(unit_id)?;
     self.typecheck(unit_id)?;
-    self.codegen(&[unit_id])?;
+    self.codegen(unit_id, &[])?;
     self.initialise(unit_id)?;
     let val = self.code_store.vals.get(&unit_id).unwrap().clone();
     Ok((unit_id, val))
@@ -68,7 +61,7 @@ impl Compiler {
     self.parse(source_id, unit_id)?;
     self.structure(unit_id)?;
     self.typecheck(unit_id)?;
-    self.codegen(&[unit_id])?;
+    self.codegen(unit_id, &[])?;
     self.initialise(unit_id)?;
     let val = self.code_store.vals.get(&unit_id).unwrap().clone();
     Ok((unit_id, val))
@@ -105,13 +98,12 @@ impl Compiler {
     Ok(())
   }
 
-  fn codegen(&mut self, unit_ids : &[UnitId]) -> Result<(), Error> {
-    let llvm_unit_id = self.gen.next().into();
-    for &unit_id in unit_ids {
-       self.code_store.llvm_unit_mapping.insert(unit_id, llvm_unit_id);
+  fn codegen(&mut self, unit_id : UnitId, subunits : &[UnitId]) -> Result<(), Error> {
+    for &subunit_id in subunits {
+       self.code_store.subunit_parent.insert(subunit_id, unit_id);
     }
-    let llvm_unit = self.llvm_compiler.compile_unit(unit_ids[0], &self.code_store, &self.c_symbols)?;
-    self.code_store.llvm_units.insert(llvm_unit_id, llvm_unit);
+    let llvm_unit = self.llvm_compiler.compile_unit(unit_id, subunits, &self.code_store, &self.c_symbols)?;
+    self.code_store.llvm_units.insert(unit_id, llvm_unit);
     Ok(())
   }
 

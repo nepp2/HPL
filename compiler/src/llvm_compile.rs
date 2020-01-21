@@ -1,6 +1,6 @@
 
 use crate::{
-  error, c_interface, types, llvm_codegen, code_store,
+  error, c_interface, types, llvm_codegen, code_store, compiler
 };
 
 use error::{Error, error_raw};
@@ -18,11 +18,6 @@ use inkwell::module::Module;
 
 // TODO: Get rid of this static mut?
 static mut LOADED_SYMBOLS : bool = false;
-
-// TODO: Put these options somewhere more sensible
-static DEBUG_PRINTING_EXPRS : bool = false;
-static DEBUG_PRINTING_IR : bool = false;
-static ENABLE_IR_OPTIMISATION : bool = false;
 
 pub struct LlvmUnit {
   pub unit_id : UnitId,
@@ -51,6 +46,7 @@ impl LlvmCompiler {
   pub fn compile_unit(
     &self,
     unit_id : UnitId,
+    subunits : &[UnitId],
     code_store : &CodeStore,
     c_symbols : &CSymbols
   ) -> Result<LlvmUnit, Error>
@@ -67,7 +63,7 @@ impl LlvmCompiler {
       .map_err(|e| error_raw(nodes.root().loc, e.to_string()))?;
 
     let pm = PassManager::create(&llvm_module);
-    if ENABLE_IR_OPTIMISATION {
+    if compiler::ENABLE_IR_OPTIMISATION {
       pm.add_instruction_combining_pass();
       pm.add_reassociate_pass();
       pm.add_gvn_pass();
@@ -91,7 +87,7 @@ impl LlvmCompiler {
       gen.codegen_module(&info)?
     };
 
-    if DEBUG_PRINTING_IR {
+    if compiler::DEBUG_PRINTING_IR {
       dump_module(&llvm_module);
     }
 

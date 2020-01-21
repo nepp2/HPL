@@ -15,11 +15,7 @@ use std::collections::HashMap;
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct SourceId(u64);
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct LlvmUnitId(u64);
-
 impl From<u64> for SourceId { fn from(v : u64) -> Self { SourceId(v) } }
-impl From<u64> for LlvmUnitId { fn from(v : u64) -> Self { LlvmUnitId(v) } }
 
 pub struct PolyFunction {
   source_unit : UnitId,
@@ -33,8 +29,8 @@ pub struct CodeStore {
   pub nodes : HashMap<UnitId, Nodes>,
   pub types : HashMap<UnitId, TypeInfo>,
   pub type_mappings : HashMap<UnitId, TypeMapping>,
-  pub llvm_unit_mapping : HashMap<UnitId, LlvmUnitId>,
-  pub llvm_units : HashMap<LlvmUnitId, LlvmUnit>,
+  pub subunit_parent : HashMap<UnitId, UnitId>,
+  pub llvm_units : HashMap<UnitId, LlvmUnit>,
   pub vals : HashMap<UnitId, Val>,
   pub poly_functions : HashMap<SymbolId, PolyFunction>,
   pub poly_variations : HashMap<UnitId, (Type, SymbolId)>,
@@ -59,8 +55,7 @@ impl CodeStore {
   }
 
   pub fn llvm_unit(&self, unit_id : UnitId) -> &LlvmUnit {
-    let id = self.llvm_unit_mapping.get(&unit_id).unwrap();
-    self.llvm_units.get(id).unwrap()
+    self.llvm_units.get(&unit_id).unwrap()
   }  
 
   pub fn types(&self, unit_id : UnitId) -> &TypeInfo {
