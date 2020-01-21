@@ -24,7 +24,6 @@ pub fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypeInfo
       type_tag: sig.into(),
       initialiser: SymbolInit::Intrinsic,
       polymorphic,
-      loc: TextLocation::zero(),
     }
   }
 

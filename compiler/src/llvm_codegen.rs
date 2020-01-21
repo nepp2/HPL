@@ -210,6 +210,12 @@ impl <'l> CompileInfo<'l> {
     TypedNode { info: self, node }
   }
 
+  fn symbol_node(&self, unit_id : UnitId, symbol_id : SymbolId) -> &Node {
+    let mapping  = self.code_store.type_mapping(unit_id);
+    let node_id = *mapping.symbol_def_nodes.get(&symbol_id).unwrap();
+    self.code_store.nodes(unit_id).node(node_id)
+  }
+
   fn find_type_def(&self, name : &str, unit_id : UnitId) -> Option<&TypeDefinition> {
     if self.t.unit_id == unit_id { return self.t.find_type_def(name) }
     self.code_store.types(unit_id).find_type_def(name)
@@ -339,14 +345,15 @@ impl <'l> Gen<'l> {
         let t = self.to_basic_type(info, &def.type_tag).unwrap();
         match &def.initialiser {
           SymbolInit::CBind => {
+            let loc = info.symbol_node(def.unit_id, def.id).loc;
             if let Some(sig) = def.type_tag.sig() {
               let f = self.codegen_prototype(info, def.name.as_ref(), sig.return_type, None, sig.args);
-              let address = self.get_c_symbol_address(def.loc, &def.name)?;
+              let address = self.get_c_symbol_address(loc, &def.name)?;
               self.functions_to_link.push((f, address));
             }
             else {
               let gv = self.module.add_global(t, Some(AddressSpace::Generic), &def.name);
-              let address = self.get_c_symbol_address(def.loc, &def.name)?;
+              let address = self.get_c_symbol_address(loc, &def.name)?;
               self.globals_to_link.push((gv, address));
             }
           }
@@ -1177,7 +1184,8 @@ impl <'l, 'a> GenFunction<'l, 'a> {
           }
           else {
             let f = self.gen.codegen_prototype(info, &def.name, sig.return_type, None, sig.args);
-            let address = self.gen.get_c_symbol_address(def.loc, &def.name).unwrap();
+            let loc = info.symbol_node(def.unit_id, def.id).loc;
+            let address = self.gen.get_c_symbol_address(loc, &def.name).unwrap();
             self.gen.functions_to_link.push((f, address));
             f
           };

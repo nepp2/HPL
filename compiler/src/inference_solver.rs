@@ -152,7 +152,9 @@ impl <'a> Inference<'a> {
       Convert { val:_, into_type_ts:_ } => return,
       SymbolDef { symbol_id, type_symbol:_ } => {
         let def = self.t.get_global_mut(*symbol_id);
-        error_raw(def.loc,
+        let node_id = *self.mapping.symbol_def_nodes.get(symbol_id).unwrap();
+        let loc = self.nodes.node(node_id).loc;
+        error_raw(loc,
           format!("Global definition '{}' not resolved. Inferred type {}.", def.name, def.type_tag))
       }
       GlobalReference { node:_, name, result } => {

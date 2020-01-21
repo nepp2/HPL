@@ -16,14 +16,14 @@ use std::collections::HashMap;
 
 pub fn gather_constraints(
   t : &mut TypeDirectory,
-  cg : &mut TypeMapping,
+  mapping : &mut TypeMapping,
   cache : &StringCache,
   gen : &mut UIDGenerator,
   c : &mut Constraints,
   errors : &mut Vec<Error>,
   n : &Nodes)
 {
-  let mut gc = GatherConstraints::new(t, cg, cache, gen, c, errors);
+  let mut gc = GatherConstraints::new(t, mapping, cache, gen, c, errors);
   gc.process_node(n, n.root);
 }
 
@@ -126,7 +126,7 @@ struct GatherConstraints<'l, 't> {
   labels : HashMap<LabelId, TypeSymbol>,
   polytype_ids : Vec<(RefStr, PolyTypeId)>,
   t : &'l mut TypeDirectory<'t>,
-  cg : &'l mut TypeMapping,
+  mapping : &'l mut TypeMapping,
   cache : &'l StringCache,
   gen : &'l mut UIDGenerator,
   c : &'l mut Constraints,
@@ -137,7 +137,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
 
   fn new(
     t : &'l mut TypeDirectory<'t>,
-    cg : &'l mut TypeMapping,
+    mapping : &'l mut TypeMapping,
     cache : &'l StringCache,
     gen : &'l mut UIDGenerator,
     c : &'l mut Constraints,
@@ -147,7 +147,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
     GatherConstraints {
       labels: HashMap::new(),
       polytype_ids : vec![],
-      cache, t, cg, gen, c,
+      cache, t, mapping, gen, c,
       errors,
     }
   }
@@ -210,6 +210,12 @@ impl <'l, 't> GatherConstraints<'l, 't> {
     }
   }
 
+  fn create_symbol_id(&mut self, node_id : NodeId) -> SymbolId {
+    let symbol_id = self.gen.next().into();
+    self.mapping.symbol_def_nodes.insert(symbol_id, node_id);
+    symbol_id
+  }
+
   fn process_node(&mut self, n : &Nodes, id : NodeId)-> TypeSymbol {
     use ConstraintContent::*;
     let node = n.node(id);
@@ -249,7 +255,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             GlobalType::CBind => SymbolInit::CBind,
             GlobalType::Normal => SymbolInit::Expression(*value),
           };
-          let symbol_id = self.gen.next().into();
+          let symbol_id = self.create_symbol_id(id);
           self.t.create_global(SymbolDefinition {
             id: symbol_id,
             unit_id: self.t.new_module_id(),
@@ -257,7 +263,6 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             type_tag: Type::any(),
             initialiser,
             polymorphic: false,
-            loc: node.loc,
           });
           self.constraint(SymbolDef{
             symbol_id,
@@ -350,7 +355,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             let args = args.iter().map(|(arg, _)| gc.variable_to_type_symbol(arg)).collect();
             // Need new scope stack for new function body.
             let mut gc = GatherConstraints::new(
-              gc.t, gc.cg, gc.cache, gc.gen,
+              gc.t, gc.mapping, gc.cache, gc.gen,
               gc.c, gc.errors
             );
             // Gather constraints for the body of the function. The arguments MUST be processed
@@ -363,7 +368,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             });
           }
           // Register the global definition
-          let symbol_id = gc.gen.next().into();
+          let symbol_id = gc.create_symbol_id(id);
           gc.t.create_global({
             let name_for_codegen =
             gc.cache.get(format!("{}.{}", name, gc.gen.next()).as_str());
@@ -379,7 +384,6 @@ impl <'l, 't> GatherConstraints<'l, 't> {
               type_tag: Type::any(),
               initialiser: SymbolInit::Function(f),
               polymorphic: polytypes.len() > 0,
-              loc: node.loc,
             }
           });
           // Bind the global definition to its type symbol
@@ -395,7 +399,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
         if let Some(t) = self.expr_to_type(type_tag) {
           self.assert_type(cbind_ts, t);
         }
-        let symbol_id = self.gen.next().into();
+        let symbol_id = self.create_symbol_id(id);
         self.constraint(SymbolDef {
           symbol_id,
           type_symbol: cbind_ts,
@@ -407,7 +411,6 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           initialiser: SymbolInit::CBind,
           type_tag: Type::any(),
           polymorphic: false,
-          loc: node.loc,
         });
       }
       Content::TypeDefinition{ name, kind, fields, polytypes } => {
@@ -436,8 +439,8 @@ impl <'l, 't> GatherConstraints<'l, 't> {
               kind: *kind,
               polytypes,
               drop_function: None, clone_function: None,
-              definition_location: node.loc,
             };
+            gc.mapping.type_def_nodes.insert(name.clone(), id);
             gc.t.create_type_def(def);
           });
         }

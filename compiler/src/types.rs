@@ -31,22 +31,18 @@ pub struct TypeInfo {
 }
 
 /// Provides type information about nodes
+#[derive(Default)]
 pub struct TypeMapping {
   pub node_type : HashMap<NodeId, Type>,
   pub sizeof_info : HashMap<NodeId, Type>,
   pub symbol_references : HashMap<NodeId, (UnitId, SymbolId)>,
   pub polymorphic_references : HashSet<(UnitId, SymbolId, Type)>,
+  pub symbol_def_nodes : HashMap<SymbolId, NodeId>,
+  pub type_def_nodes : HashMap<RefStr, NodeId>,
 }
 
 impl TypeMapping {
-  pub fn new() -> Self {
-    TypeMapping {
-      node_type: HashMap::new(),
-      sizeof_info: HashMap::new(),
-      symbol_references: HashMap::new(),
-      polymorphic_references: HashSet::new(),
-    }
-  }
+  pub fn new() -> Self { Default::default() }
 }
 
 /// Primitive type
@@ -315,7 +311,6 @@ pub struct TypeDefinition {
   pub polytypes : Vec<PolyTypeId>,
   pub drop_function : Option<ResolvedSymbol>,
   pub clone_function : Option<ResolvedSymbol>,
-  pub definition_location : TextLocation,
 }
 
 #[derive(Debug, Clone)]
@@ -349,7 +344,6 @@ pub struct SymbolDefinition {
   pub type_tag : Type,
   pub initialiser : SymbolInit,
   pub polymorphic : bool,
-  pub loc : TextLocation,
 }
 
 impl SymbolDefinition {

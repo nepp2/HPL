@@ -5,11 +5,13 @@ use crate::{
 };
 use expr::{StringCache, Expr, UIDGenerator};
 use c_interface::CSymbols;
-use code_store::{CodeStore, SourceId};
+use code_store::{CodeStore, SourceId, PolyFunction};
 use types::{TypeContent, PType, UnitId};
 use llvm_compile::{LlvmCompiler, execute_function};
 use error::{Error, error, ErrorContent, error_raw};
 use structure::TOP_LEVEL_FUNCTION_NAME;
+
+use std::collections::HashMap;
 
 // TODO: Put these options somewhere more sensible
 pub static DEBUG_PRINTING_EXPRS : bool = false;
@@ -44,10 +46,7 @@ impl Compiler {
   {
     let unit_id = self.gen.next().into();
     self.code_store.exprs.insert(unit_id, expr.clone());
-    self.structure(unit_id)?;
-    self.typecheck(unit_id)?;
-    self.codegen(unit_id, &[])?;
-    self.initialise(unit_id)?;
+    self.load_module_from_expr_internal(unit_id)?;
     let val = self.code_store.vals.get(&unit_id).unwrap().clone();
     Ok((unit_id, val))
   }
@@ -59,10 +58,7 @@ impl Compiler {
     self.code_store.code.insert(source_id, code.into());
     let unit_id = self.gen.next().into();
     self.parse(source_id, unit_id)?;
-    self.structure(unit_id)?;
-    self.typecheck(unit_id)?;
-    self.codegen(unit_id, &[])?;
-    self.initialise(unit_id)?;
+    self.load_module_from_expr_internal(unit_id)?;
     let val = self.code_store.vals.get(&unit_id).unwrap().clone();
     Ok((unit_id, val))
   }
@@ -74,6 +70,23 @@ impl Compiler {
       .map_err(|mut es| es.remove(0))?;
     let expr = parser::parse(tokens, &self.cache)?;
     self.code_store.exprs.insert(unit_id, expr);
+    Ok(())
+  }
+
+  fn load_module_from_expr_internal(&mut self, unit_id : UnitId) -> Result<(), Error> {
+    self.structure(unit_id)?;
+    self.typecheck(unit_id)?;
+    let mapping = self.code_store.type_mapping(unit_id);
+    for (unit_id, symbol_id, type_tag) in mapping.polymorphic_references.iter() {
+      if let Some(pf) = self.code_store.poly_functions.get(symbol_id) {
+        if !pf.instances.contains_key(type_tag) {
+          // Do something here to create a new instance and typecheck it
+        }
+      }
+    }
+
+    self.codegen(unit_id, &[])?;
+    self.initialise(unit_id)?;
     Ok(())
   }
 
@@ -93,17 +106,27 @@ impl Compiler {
         let nodes = self.code_store.nodes(unit_id);
         error_raw(nodes.root().loc, c)
       })?;
+    for def in types.symbols.values() {
+      if def.polymorphic {
+        let pf = PolyFunction {
+          source_unit: def.unit_id,
+          source_node: *mapping.symbol_def_nodes.get(&def.id).unwrap(),
+          instances: HashMap::new(),
+        };
+        self.code_store.poly_functions.insert(def.id, pf);
+      }
+    }
     self.code_store.types.insert(unit_id, types);
     self.code_store.type_mappings.insert(unit_id, mapping);
     Ok(())
   }
 
   fn codegen(&mut self, unit_id : UnitId, subunits : &[UnitId]) -> Result<(), Error> {
-    for &subunit_id in subunits {
-       self.code_store.subunit_parent.insert(subunit_id, unit_id);
-    }
     let llvm_unit = self.llvm_compiler.compile_unit(unit_id, subunits, &self.code_store, &self.c_symbols)?;
     self.code_store.llvm_units.insert(unit_id, llvm_unit);
+    for &subunit_id in subunits {
+      self.code_store.subunit_parent.insert(subunit_id, unit_id);
+    }
     Ok(())
   }
 
@@ -137,7 +160,8 @@ impl Compiler {
         Val::Void
       }
       t => {
-        return error(def.loc, format!("can't return value of type {:?} from a top-level function", t));
+        let loc = self.code_store.nodes(unit_id).root().loc;
+        return error(loc, format!("can't return value of type {:?} from a top-level function", t));
       }
     };
     Ok(value)

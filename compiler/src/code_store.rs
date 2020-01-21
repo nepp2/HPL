@@ -18,8 +18,9 @@ pub struct SourceId(u64);
 impl From<u64> for SourceId { fn from(v : u64) -> Self { SourceId(v) } }
 
 pub struct PolyFunction {
-  source_unit : UnitId,
-  source_node : NodeId,
+  pub source_unit : UnitId,
+  pub source_node : NodeId,
+  pub instances : HashMap<Type, UnitId>,
 }
 
 #[derive(Default)]
@@ -33,7 +34,6 @@ pub struct CodeStore {
   pub llvm_units : HashMap<UnitId, LlvmUnit>,
   pub vals : HashMap<UnitId, Val>,
   pub poly_functions : HashMap<SymbolId, PolyFunction>,
-  pub poly_variations : HashMap<UnitId, (Type, SymbolId)>,
 }
 
 impl CodeStore {
