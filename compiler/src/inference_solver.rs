@@ -524,17 +524,20 @@ impl <'a> Inference<'a> {
         if t.is_concrete() {
           self.mapping.node_type.insert(*n, t);
         }
+        else {
+          panic!("abstract type but no error");
+        }
       }
     }
 
     // Find polymorphic definitions
     if self.errors.is_empty() {
-      for (nid, (mid, gid)) in self.mapping.symbol_references.iter() {
-        let def = self.t.find_module(*mid).symbols.get(gid).unwrap().clone();
+      for (node_id, (unit_id, symbol_id)) in self.mapping.symbol_references.iter() {
+        let def = self.t.find_module(*unit_id).symbols.get(symbol_id).unwrap().clone();
         if def.polymorphic {
           if let SymbolInit::Function(_) = def.initialiser {
-            let t = self.mapping.node_type.get(nid).unwrap();
-            println!("polymorphic def '{}', {} - {}", def.name, def.type_tag, t);
+            let t = self.mapping.node_type.get(node_id).unwrap();
+            self.mapping.polymorphic_references.insert((def.unit_id, def.id, t.clone()));
           }
         }
       }

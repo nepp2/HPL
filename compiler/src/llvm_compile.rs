@@ -82,7 +82,6 @@ impl LlvmCompiler {
     let mut globals_to_link : Vec<(GlobalValue, usize)> = vec![];
     let mut functions_to_link : Vec<(FunctionValue, usize)> = vec![];
     {
-      //let type_directory
       let gen = Gen::new(
         &self.context, &mut llvm_module, &mut ee.get_target_data(),
         &c_symbols.local_symbol_table, &mut globals_to_link,

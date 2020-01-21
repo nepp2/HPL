@@ -332,7 +332,7 @@ impl <'l> Gen<'l> {
 
   /// Code-generates a module, returning a reference to the top-level function in the module
   pub fn codegen_module(mut self, info : &'l CompileInfo) -> Result<(), Error> {
-    // declare the globals and functions
+    // Declare all the globals and functions
     let mut functions_to_codegen = vec!();
     for def in info.t.symbols.values() {
       if !def.polymorphic {

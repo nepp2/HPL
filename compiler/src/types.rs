@@ -8,7 +8,7 @@ use crate::structure::{
   NodeId, TypeKind, Reference
 };
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct UnitId(u64);
@@ -35,6 +35,7 @@ pub struct TypeMapping {
   pub node_type : HashMap<NodeId, Type>,
   pub sizeof_info : HashMap<NodeId, Type>,
   pub symbol_references : HashMap<NodeId, (UnitId, SymbolId)>,
+  pub polymorphic_references : HashSet<(UnitId, SymbolId, Type)>,
 }
 
 impl TypeMapping {
@@ -43,6 +44,7 @@ impl TypeMapping {
       node_type: HashMap::new(),
       sizeof_info: HashMap::new(),
       symbol_references: HashMap::new(),
+      polymorphic_references: HashSet::new(),
     }
   }
 }
@@ -78,13 +80,13 @@ impl PType {
   }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Type {
   pub content : TypeContent,
   pub children : Vec<Type>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TypeContent {
   /// Primitive type (e.g. int, float, bool, etc)
   Prim(PType),
@@ -271,7 +273,7 @@ impl Type {
   }
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, Eq, Hash)]
 pub enum AbstractType {
   Float,
   Integer,
