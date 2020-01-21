@@ -53,7 +53,7 @@ impl Compiler {
     self.code_store.exprs.insert(unit_id, expr.clone());
     self.structure(unit_id)?;
     self.typecheck(unit_id)?;
-    self.codegen(unit_id)?;
+    self.codegen(&[unit_id])?;
     self.initialise(unit_id)?;
     let val = self.code_store.vals.get(&unit_id).unwrap().clone();
     Ok((unit_id, val))
@@ -68,7 +68,7 @@ impl Compiler {
     self.parse(source_id, unit_id)?;
     self.structure(unit_id)?;
     self.typecheck(unit_id)?;
-    self.codegen(unit_id)?;
+    self.codegen(&[unit_id])?;
     self.initialise(unit_id)?;
     let val = self.code_store.vals.get(&unit_id).unwrap().clone();
     Ok((unit_id, val))
@@ -105,12 +105,12 @@ impl Compiler {
     Ok(())
   }
 
-  fn codegen(&mut self, unit_id : UnitId) -> Result<(), Error> {
+  fn codegen(&mut self, unit_ids : &[UnitId]) -> Result<(), Error> {
     let llvm_unit_id = self.gen.next().into();
-    // for &unit_id in unit_ids {
+    for &unit_id in unit_ids {
        self.code_store.llvm_unit_mapping.insert(unit_id, llvm_unit_id);
-    // }
-    let llvm_unit = self.llvm_compiler.compile_unit(unit_id, &self.code_store, &self.c_symbols)?;
+    }
+    let llvm_unit = self.llvm_compiler.compile_unit(unit_ids[0], &self.code_store, &self.c_symbols)?;
     self.code_store.llvm_units.insert(llvm_unit_id, llvm_unit);
     Ok(())
   }

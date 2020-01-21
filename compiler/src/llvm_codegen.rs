@@ -1200,17 +1200,17 @@ impl <'l, 'a> GenFunction<'l, 'a> {
       self.gen.module.get_global(&def.name)
         .expect("expected local global!")
     }
+    // Check if it was already added
+    else if let Some(gv) = self.gen.module.get_global(&def.name) {
+      gv
+    }
+    // Else find and include it
     else {
-      if let Some(gv) = self.gen.module.get_global(&def.name) {
-        gv
-      }
-      else {
-        let t = self.gen.to_basic_type(info, &def.type_tag).unwrap();
-        let gv = self.gen.module.add_global(t, Some(AddressSpace::Generic), &def.name);
-        let address = info.find_global_address(def.unit_id, &def.name);
-        self.gen.globals_to_link.push((gv, address));
-        gv
-      }
+      let t = self.gen.to_basic_type(info, &def.type_tag).unwrap();
+      let gv = self.gen.module.add_global(t, Some(AddressSpace::Generic), &def.name);
+      let address = info.find_global_address(def.unit_id, &def.name);
+      self.gen.globals_to_link.push((gv, address));
+      gv
     }
   }
 
@@ -1221,6 +1221,11 @@ impl <'l, 'a> GenFunction<'l, 'a> {
           self.gen.module.get_function(&init.name_for_codegen)
             .expect("expected local function!")
         }
+        // Check if it was already added
+        else if let Some(f) = self.gen.module.get_function(&def.name) {
+          f
+        }
+        // Else find and include it
         else {
           let sig = def.type_tag.sig().unwrap();
           let f = self.gen.codegen_prototype(info, &init.name_for_codegen, sig.return_type, Some(&init.args), sig.args);
