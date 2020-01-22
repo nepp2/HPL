@@ -1,3 +1,9 @@
+# TODO - 22/01/2020
+
+I need to typecheck the polymorphic instances. That means they need to refer to node graphs. Do I duplicate nodes, or just repurpose some existing ones? I'm concerned about node id clashes. However, clashes could be fixed by addressing nodes with their unit_id as well.
+
+The old node graphs also slightly incorrect for the instances, because they make references to polymorphic types. There will also need to be some effort made to link the symbol ids together. I may just be able to add special support for type checking polymorphic instances.
+
 # TODO - 20/01/2020
 
 - ~~Stop trying to codegen the polymorphic functions~~

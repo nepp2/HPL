@@ -14,19 +14,6 @@ use crate::types::{
 };
 use std::collections::HashMap;
 
-pub fn gather_constraints(
-  t : &mut TypeDirectory,
-  mapping : &mut TypeMapping,
-  cache : &StringCache,
-  gen : &mut UIDGenerator,
-  c : &mut Constraints,
-  errors : &mut Vec<Error>,
-  n : &Nodes)
-{
-  let mut gc = GatherConstraints::new(t, mapping, cache, gen, c, errors);
-  gc.process_node(n, n.root);
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct TypeSymbol(u64);
 
@@ -122,7 +109,7 @@ impl Constraints {
   }
 }
 
-struct GatherConstraints<'l, 't> {
+pub struct GatherConstraints<'l, 't> {
   labels : HashMap<LabelId, TypeSymbol>,
   polytype_ids : Vec<(RefStr, PolyTypeId)>,
   t : &'l mut TypeDirectory<'t>,
@@ -135,7 +122,7 @@ struct GatherConstraints<'l, 't> {
 
 impl <'l, 't> GatherConstraints<'l, 't> {
 
-  fn new(
+  pub fn new(
     t : &'l mut TypeDirectory<'t>,
     mapping : &'l mut TypeMapping,
     cache : &'l StringCache,
@@ -216,7 +203,80 @@ impl <'l, 't> GatherConstraints<'l, 't> {
     symbol_id
   }
 
-  fn process_node(&mut self, n : &Nodes, id : NodeId)-> TypeSymbol {
+  fn process_function_def(
+    &mut self,
+    n : &Nodes, id : NodeId,
+    function_type : Type,
+    is_polymorphic_def : bool,
+    args : Vec<Reference>,
+    body : NodeId,
+    name : &RefStr)
+      -> SymbolId
+  {
+    use ConstraintContent::*;
+    let node = n.node(id);
+    // Assert type of the symbol
+    let symbol_ts = self.type_symbol(node.loc);
+    self.assert_type(symbol_ts, function_type);
+    // Process the body
+    if !is_polymorphic_def {
+      // Register argument types. MUST happen before gathering the body constraints.
+      let args = args.iter().map(|arg| self.variable_to_type_symbol(arg)).collect();
+      // Need new scope stack for new function body.
+      let mut ngc = GatherConstraints::new(
+        self.t, self.mapping, self.cache, self.gen,
+        self.c, self.errors
+      );
+      // Gather constraints for the body of the function. The arguments MUST be processed
+      // first so that their type symbols are available.
+      let body_ts = ngc.process_node(n, body);
+      ngc.constraint(Function {
+        function: symbol_ts,
+        args,
+        return_type: body_ts,
+      });
+    }
+    // Register the symbol definition
+    let symbol_id = self.create_symbol_id(id);
+    self.t.create_symbol({
+      let name_for_codegen =
+      self.cache.get(format!("{}.{}", name, self.gen.next()).as_str());
+      let f = FunctionInit {
+        body: body,
+        name_for_codegen,
+        args,
+      };
+      SymbolDefinition {
+        id: symbol_id,
+        unit_id: self.t.new_module_id(),
+        name: name.clone(),
+        type_tag: Type::any(),
+        initialiser: SymbolInit::Function(f),
+        polymorphic: is_polymorphic_def,
+      }
+    });
+    // Bind the symbol definition to its type symbol
+    self.constraint(SymbolDef {
+      symbol_id,
+      type_symbol: symbol_ts,
+    });
+    symbol_id
+  }
+
+  pub fn process_polymorphic_function_instance(&mut self, n : &Nodes, id : NodeId, instanced_function_type : Type) 
+    -> SymbolId
+  {
+    let node = n.node(id);
+    match &node.content {
+      Content::FunctionDefinition{ name, args, return_tag:_, polytypes:_, body } => {
+        let args = args.iter().map(|x| x.0.clone()).collect();
+        self.process_function_def(n, id, instanced_function_type, false, args, *body, name)
+      }
+      _ => panic!("unexpected node! expected polymorphic function definition."),
+    }
+  }
+
+  pub fn process_node(&mut self, n : &Nodes, id : NodeId)-> TypeSymbol {
     use ConstraintContent::*;
     let node = n.node(id);
     let ts = self.node_to_symbol(node);
@@ -256,7 +316,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             GlobalType::Normal => SymbolInit::Expression(*value),
           };
           let symbol_id = self.create_symbol_id(id);
-          self.t.create_global(SymbolDefinition {
+          self.t.create_symbol(SymbolDefinition {
             id: symbol_id,
             unit_id: self.t.new_module_id(),
             name: name.name.clone(),
@@ -326,7 +386,8 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             if let Some(rt) = return_tag.as_ref().and_then(|e| gc.expr_to_type(e)) {
               rt
             }
-            // Polymorphic defs assume no explicit return type means void. Monomorphic defs can infer it from the body.
+            // Polymorphic defs assume no explicit return type means void.
+            // Monomorphic defs can infer it from the body.
             else if is_polymorphic_def {
               PType::Void.into()
             }
@@ -346,51 +407,8 @@ impl <'l, 't> GatherConstraints<'l, 't> {
               sig.append_arg(Type::any());
             }
           }
-          // Assert type of the global
-          let global_ts = gc.type_symbol(node.loc);
-          gc.assert_type(global_ts, sig.into());
-          // Process the body
-          if !is_polymorphic_def {
-            // Register argument types. MUST happen before gathering the body constraints.
-            let args = args.iter().map(|(arg, _)| gc.variable_to_type_symbol(arg)).collect();
-            // Need new scope stack for new function body.
-            let mut gc = GatherConstraints::new(
-              gc.t, gc.mapping, gc.cache, gc.gen,
-              gc.c, gc.errors
-            );
-            // Gather constraints for the body of the function. The arguments MUST be processed
-            // first so that their type symbols are available.
-            let body_ts = gc.process_node(n, *body);
-            gc.constraint(Function {
-              function: global_ts,
-              args,
-              return_type: body_ts,
-            });
-          }
-          // Register the global definition
-          let symbol_id = gc.create_symbol_id(id);
-          gc.t.create_global({
-            let name_for_codegen =
-            gc.cache.get(format!("{}.{}", name, gc.gen.next()).as_str());
-            let f = FunctionInit {
-              body: *body,
-              name_for_codegen,
-              args: arg_names,
-            };
-            SymbolDefinition {
-              id: symbol_id,
-              unit_id: gc.t.new_module_id(),
-              name: name.clone(),
-              type_tag: Type::any(),
-              initialiser: SymbolInit::Function(f),
-              polymorphic: polytypes.len() > 0,
-            }
-          });
-          // Bind the global definition to its type symbol
-          gc.constraint(SymbolDef {
-            symbol_id,
-            type_symbol: global_ts,
-          });
+          gc.process_function_def(
+            n, id, sig.into(), is_polymorphic_def, arg_names, *body, name);
         });
       }
       Content::CBind { name, type_tag } => {
@@ -404,7 +422,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           symbol_id,
           type_symbol: cbind_ts,
         });
-        self.t.create_global(SymbolDefinition {
+        self.t.create_symbol(SymbolDefinition {
           id: symbol_id,
           unit_id: self.t.new_module_id(),
           name: name.clone(),

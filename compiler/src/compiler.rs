@@ -11,7 +11,7 @@ use llvm_compile::{LlvmCompiler, execute_function};
 use error::{Error, error, ErrorContent, error_raw};
 use structure::TOP_LEVEL_FUNCTION_NAME;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque, HashSet};
 
 // TODO: Put these options somewhere more sensible
 pub static DEBUG_PRINTING_EXPRS : bool = false;
@@ -76,16 +76,7 @@ impl Compiler {
   fn load_module_from_expr_internal(&mut self, unit_id : UnitId) -> Result<(), Error> {
     self.structure(unit_id)?;
     self.typecheck(unit_id)?;
-    let mapping = self.code_store.type_mapping(unit_id);
-    for (unit_id, symbol_id, type_tag) in mapping.polymorphic_references.iter() {
-      if let Some(pf) = self.code_store.poly_functions.get(symbol_id) {
-        if !pf.instances.contains_key(type_tag) {
-          // Do something here to create a new instance and typecheck it
-        }
-      }
-    }
-
-    self.codegen(unit_id, &[])?;
+    self.codegen(unit_id)?;
     self.initialise(unit_id)?;
     Ok(())
   }
@@ -100,17 +91,11 @@ impl Compiler {
   fn typecheck(&mut self, unit_id : UnitId) -> Result<(), Error> {
     let (types, mapping) =
       inference_solver::infer_types(
-        unit_id, &self.code_store, &self.cache, &mut self.gen)
-      .map_err(|es| {
-        let c = ErrorContent::InnerErrors("type errors".into(), es);
-        let nodes = self.code_store.nodes(unit_id);
-        error_raw(nodes.root().loc, c)
-      })?;
+        unit_id, &self.code_store, &self.cache, &mut self.gen)?;
     for def in types.symbols.values() {
       if def.polymorphic {
         let pf = PolyFunction {
           source_unit: def.unit_id,
-          source_node: *mapping.symbol_def_nodes.get(&def.id).unwrap(),
           instances: HashMap::new(),
         };
         self.code_store.poly_functions.insert(def.id, pf);
@@ -118,15 +103,74 @@ impl Compiler {
     }
     self.code_store.types.insert(unit_id, types);
     self.code_store.type_mappings.insert(unit_id, mapping);
+    self.typecheck_new_polymorphic_instances(unit_id)?;
     Ok(())
   }
 
-  fn codegen(&mut self, unit_id : UnitId, subunits : &[UnitId]) -> Result<(), Error> {
-    let llvm_unit = self.llvm_compiler.compile_unit(unit_id, subunits, &self.code_store, &self.c_symbols)?;
-    self.code_store.llvm_units.insert(unit_id, llvm_unit);
-    for &subunit_id in subunits {
+  fn typecheck_new_polymorphic_instances(&mut self, unit_id : UnitId) -> Result<(), Error> {
+    // Typecheck and codegen any new polymorphic function instances
+    let mut new_types = vec![];
+    let mut polymorph_search_queue = VecDeque::new();
+    polymorph_search_queue.push_back(unit_id);
+    while let Some(psid) = polymorph_search_queue.pop_front() {
+      let mapping = self.code_store.type_mappings.get(&psid).unwrap();
+      for (poly_unit_id, symbol_id, type_tag) in mapping.polymorphic_references.iter() {
+        if let Some(pf) = self.code_store.poly_functions.get(symbol_id) {
+          if !pf.instances.contains_key(type_tag) {
+            // Create a new unit for the function instance and typecheck it
+            let instance_unit_id = self.gen.next().into();
+            let poly_def = self.code_store.types(*poly_unit_id).symbols.get(symbol_id).unwrap();
+            let (instance_types, instance_mapping, instance_symbol_id) =
+              inference_solver::typecheck_polymorphic_function_instance(
+                instance_unit_id, poly_def, type_tag, &self.code_store, &self.cache, &mut self.gen)?;
+            // Register the instance with the code store
+            let pf = self.code_store.poly_functions.get_mut(symbol_id).unwrap();
+            pf.instances.insert(type_tag.clone(), (instance_unit_id, instance_symbol_id));
+            new_types.push((instance_unit_id, instance_types, instance_mapping));
+            // Register the new unit to be searched for more polymorphic instances
+            polymorph_search_queue.push_back(instance_unit_id);
+          }
+        }
+      }
+    }
+    // Register new type info with the code store
+    for (instance_unit_id, instance_types, instance_mapping) in new_types {
+      self.code_store.types.insert(instance_unit_id, instance_types);
+      self.code_store.type_mappings.insert(instance_unit_id, instance_mapping);
+    }
+    Ok(())
+  }
+
+  fn codegen(&mut self, unit_id : UnitId) -> Result<(), Error> {
+    let mut codegen_subunits = HashSet::new();
+    let mut codegen_independent = HashSet::new();
+    let mut polymorph_search_queue = VecDeque::new();
+    polymorph_search_queue.push_back(unit_id);
+    while let Some(psid) = polymorph_search_queue.pop_front() {
+      let mapping = self.code_store.type_mappings.get(&psid).unwrap();
+      for (poly_unit_id, symbol_id, type_tag) in mapping.polymorphic_references.iter() {
+        let pf = self.code_store.poly_functions.get(symbol_id).unwrap();
+        let instance_unit_id = pf.instances.get(type_tag).unwrap().0;
+        // Check if the instance needs to be code generated with its parent
+        if *poly_unit_id == unit_id {
+          codegen_subunits.insert(instance_unit_id);
+        }
+        // If not, check if it needs to be code generated separately
+        else if !self.code_store.llvm_units.contains_key(&instance_unit_id) {
+          polymorph_search_queue.push_back(instance_unit_id);
+          codegen_independent.insert(instance_unit_id);
+        }
+      }
+    }
+    for id in codegen_independent {
+      // do something
+    }
+    for &subunit_id in codegen_subunits.iter() {
       self.code_store.subunit_parent.insert(subunit_id, unit_id);
     }
+    let subunits : Vec<_> = codegen_subunits.into_iter().collect();
+    let llvm_unit = self.llvm_compiler.compile_unit(unit_id, subunits.as_slice(), &self.code_store, &self.c_symbols)?;
+    self.code_store.llvm_units.insert(unit_id, llvm_unit);
     Ok(())
   }
 

@@ -8,7 +8,7 @@ use expr::{StringCache, Expr, UIDGenerator, RefStr};
 use types::{UnitId, TypeInfo, SymbolId, Type, TypeMapping};
 use llvm_compile::LlvmUnit;
 use compiler::Val;
-use structure::{NodeId, Nodes};
+use structure::Nodes;
 
 use std::collections::HashMap;
 
@@ -19,8 +19,7 @@ impl From<u64> for SourceId { fn from(v : u64) -> Self { SourceId(v) } }
 
 pub struct PolyFunction {
   pub source_unit : UnitId,
-  pub source_node : NodeId,
-  pub instances : HashMap<Type, UnitId>,
+  pub instances : HashMap<Type, (UnitId, SymbolId)>,
 }
 
 #[derive(Default)]

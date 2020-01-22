@@ -9,7 +9,7 @@ use itertools::Itertools;
 
 use crate::{error, expr, structure, types, inference_constraints, code_store};
 
-use error::{Error, error, error_raw, TextLocation};
+use error::{Error, error, error_raw, TextLocation, ErrorContent};
 use expr::{UIDGenerator, RefStr, StringCache};
 use structure::{
   NodeId, TypeKind, Nodes,
@@ -17,11 +17,12 @@ use structure::{
 use types::{
   Type, TypeContent, TypeInfo, TypeDirectory, SymbolId,
   SignatureBuilder, incremental_unify, TypeMapping,
-  UnifyResult, UnitId, AbstractType, SymbolInit,
+  UnifyResult, UnitId, AbstractType, SymbolInit, SymbolDefinition,
 };
 use inference_constraints::{
-  gather_constraints, Constraint, ConstraintContent,
+  Constraint, ConstraintContent,
   Constraints, TypeSymbol, Assertion,
+  GatherConstraints,
 };
 use code_store::CodeStore;
 
@@ -35,7 +36,7 @@ pub fn infer_types(
   cache : &StringCache,
   gen : &mut UIDGenerator,
 )
-  -> Result<(TypeInfo, TypeMapping), Vec<Error>>
+  -> Result<(TypeInfo, TypeMapping), Error>
 {
   let mut c = Constraints::new();
   let mut mapping = TypeMapping::new();
@@ -46,18 +47,61 @@ pub fn infer_types(
   let mut type_directory =
     TypeDirectory::new(unit_id, imports.as_slice(), &mut new_types);
   let nodes = code_store.nodes(unit_id);
-  gather_constraints(
+  GatherConstraints::new(
     &mut type_directory, &mut mapping, cache,
-    gen, &mut c, &mut errors, &nodes);
+    gen, &mut c, &mut errors
+  ).process_node(&nodes, nodes.root);
+  let i = Inference::new(
+    &nodes, &mut type_directory,
+    &mut mapping, &c, cache, gen, &mut errors);
+  i.infer();
+  if errors.len() > 0 {    
+    let c = ErrorContent::InnerErrors("type errors".into(), errors);
+    error(nodes.root().loc, c)
+  }
+  else {
+    Ok((new_types, mapping))
+  }
+}
+
+
+pub fn typecheck_polymorphic_function_instance(
+  instance_unit : UnitId,
+  poly_function : &SymbolDefinition,
+  type_tag : &Type,
+  code_store : &CodeStore,
+  cache : &StringCache,
+  gen : &mut UIDGenerator,
+)
+  -> Result<(TypeInfo, TypeMapping, SymbolId), Error>
+{
+  let mut c = Constraints::new();
+  let mut mapping = TypeMapping::new();
+  let mut errors = vec![];
+  let mut new_types = TypeInfo::new(instance_unit);
+  let imports : Vec<_> =
+    code_store.types.values().collect();
+  let mut type_directory =
+    TypeDirectory::new(instance_unit, imports.as_slice(), &mut new_types);
+  let nodes = code_store.nodes(poly_function.unit_id);
+  let source_node =
+    *code_store.type_mapping(poly_function.unit_id)
+    .symbol_def_nodes.get(&poly_function.id).unwrap();
+  let symbol_id =
+    GatherConstraints::new(
+      &mut type_directory, &mut mapping, cache,
+      gen, &mut c, &mut errors
+    ).process_polymorphic_function_instance(&nodes, source_node, type_tag.clone());
   let i = Inference::new(
     &nodes, &mut type_directory,
     &mut mapping, &c, cache, gen, &mut errors);
   i.infer();
   if errors.len() > 0 {
-    Err(errors)
+    let c = ErrorContent::InnerErrors("type errors".into(), errors);
+    error(nodes.root().loc, c)
   }
   else {
-    Ok((new_types, mapping))
+    Ok((new_types, mapping, symbol_id))
   }
 }
 
@@ -151,7 +195,7 @@ impl <'a> Inference<'a> {
       Constructor { def_ts:_ , fields:_ } => return,
       Convert { val:_, into_type_ts:_ } => return,
       SymbolDef { symbol_id, type_symbol:_ } => {
-        let def = self.t.get_global_mut(*symbol_id);
+        let def = self.t.get_symbol_mut(*symbol_id);
         let node_id = *self.mapping.symbol_def_nodes.get(symbol_id).unwrap();
         let loc = self.nodes.node(node_id).loc;
         error_raw(loc,
@@ -379,11 +423,11 @@ impl <'a> Inference<'a> {
       // }
       SymbolDef{ symbol_id, type_symbol } => {
         // Use global def to update the type symbol
-        let mut t = self.t.get_global_mut(*symbol_id).type_tag.clone();
+        let mut t = self.t.get_symbol_mut(*symbol_id).type_tag.clone();
         let def_type_changed = self.update_type_mut(*type_symbol, &mut t);
         // Use the type symbol to update the global def
         if def_type_changed {
-          let def = self.t.get_global_mut(*symbol_id);
+          let def = self.t.get_symbol_mut(*symbol_id);
           def.type_tag = t;
           // Trigger any constraints looking for this name
           if let Some(cs) = self.dependency_map.global_map.get(&def.name) {

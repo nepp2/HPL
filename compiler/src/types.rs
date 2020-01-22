@@ -2,7 +2,6 @@
 use std::fmt;
 use itertools::Itertools;
 
-use crate::error::TextLocation;
 use crate::expr::RefStr;
 use crate::structure::{
   NodeId, TypeKind, Reference
@@ -626,7 +625,7 @@ impl <'a> TypeDirectory<'a> {
     }
   }
 
-  pub fn get_global_mut(&mut self, id : SymbolId) -> &mut SymbolDefinition {
+  pub fn get_symbol_mut(&mut self, id : SymbolId) -> &mut SymbolDefinition {
     self.new_module.symbols.get_mut(&id).unwrap()
   }
 
@@ -642,7 +641,7 @@ impl <'a> TypeDirectory<'a> {
     self.new_module.type_defs.insert(def.name.clone(), def);
   }
 
-  pub fn create_global(&mut self, def : SymbolDefinition) {
+  pub fn create_symbol(&mut self, def : SymbolDefinition) {
     self.new_module.symbols.insert(def.id, def);
   }
 
