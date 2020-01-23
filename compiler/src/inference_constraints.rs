@@ -111,7 +111,7 @@ impl Constraints {
 
 pub struct GatherConstraints<'l, 't> {
   labels : HashMap<LabelId, TypeSymbol>,
-  polytype_ids : Vec<(RefStr, PolyTypeId)>,
+  type_parameters : Vec<(RefStr, Type)>,
   t : &'l mut TypeDirectory<'t>,
   mapping : &'l mut TypeMapping,
   cache : &'l StringCache,
@@ -133,7 +133,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
   {
     GatherConstraints {
       labels: HashMap::new(),
-      polytype_ids : vec![],
+      type_parameters : vec![],
       cache, t, mapping, gen, c,
       errors,
     }
@@ -270,6 +270,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
     match &node.content {
       Content::FunctionDefinition{ name, args, return_tag:_, polytypes:_, body } => {
         let args = args.iter().map(|x| x.0.clone()).collect();
+        
         self.process_function_def(n, id, instanced_function_type, false, args, *body, name)
       }
       _ => panic!("unexpected node! expected polymorphic function definition."),
@@ -542,24 +543,40 @@ impl <'l, 't> GatherConstraints<'l, 't> {
     ts
   }
 
-  fn with_polytypes<F>(&mut self, polytypes : &[RefStr], f : F)
+  fn with_instanced_type_paramters<F>(
+    &mut self, type_parameters : &[RefStr],
+    types : &[Type],
+    f : F
+  )
+    where F : Fn(&mut GatherConstraints)
+  {
+    let aaa = (); // TODO: this function isn't actually used yet
+    for (i, pt) in type_parameters.iter().enumerate() {
+      let t = types[i].clone();
+      self.type_parameters.push((pt.clone(), t));
+    }
+    f(self);
+    self.type_parameters.drain((self.type_parameters.len()-type_parameters.len())..);
+  }
+
+  fn with_polytypes<F>(&mut self, type_parameters : &[RefStr], f : F)
     where F : Fn(&mut GatherConstraints, Vec<PolyTypeId>)
   {
     let mut polytype_ids = vec![];
-    for pt in polytypes.iter() {
-      let id = self.gen.next().into();
+    for pt in type_parameters.iter() {
+      let id : PolyTypeId = self.gen.next().into();
       polytype_ids.push(id);
-      self.polytype_ids.push((pt.clone(), id));
+      self.type_parameters.push((pt.clone(), id.into()));
     }
     f(self, polytype_ids);
-    self.polytype_ids.drain((self.polytype_ids.len()-polytypes.len())..);
+    self.type_parameters.drain((self.type_parameters.len()-type_parameters.len())..);
   }
 
   fn symbol_to_type(&mut self, name : &str) -> Type {
       // Check for polytypes
-      for (polytype_name, generic_id) in self.polytype_ids.iter() {
+      for (polytype_name, t) in self.type_parameters.iter() {
         if polytype_name.as_ref() == name {
-          return (*generic_id).into();
+          return t.clone();
         }
       }
       // Assume type definition

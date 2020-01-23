@@ -8,7 +8,7 @@ use c_interface::CSymbols;
 use code_store::{CodeStore, SourceId, PolyFunction};
 use types::{TypeContent, PType, UnitId};
 use llvm_compile::{LlvmCompiler, execute_function};
-use error::{Error, error, ErrorContent, error_raw};
+use error::{Error, error};
 use structure::TOP_LEVEL_FUNCTION_NAME;
 
 use std::collections::{HashMap, VecDeque, HashSet};
@@ -142,6 +142,10 @@ impl Compiler {
   }
 
   fn codegen(&mut self, unit_id : UnitId) -> Result<(), Error> {
+    // Find all of the polymorphic instances that this unit depends on,
+    // and which still need to be code generated. Some of these will be
+    // generated into the same LlvmUnit, and some into a free-standing
+    // unit.
     let mut codegen_subunits = HashSet::new();
     let mut codegen_independent = HashSet::new();
     let mut polymorph_search_queue = VecDeque::new();
@@ -154,21 +158,25 @@ impl Compiler {
         // Check if the instance needs to be code generated with its parent
         if *poly_unit_id == unit_id {
           codegen_subunits.insert(instance_unit_id);
+          polymorph_search_queue.push_back(instance_unit_id);
         }
         // If not, check if it needs to be code generated separately
         else if !self.code_store.llvm_units.contains_key(&instance_unit_id) {
-          polymorph_search_queue.push_back(instance_unit_id);
           codegen_independent.insert(instance_unit_id);
         }
       }
     }
+    // Codegen the independent polymorphic instances
     for id in codegen_independent {
-      // do something
+      self.codegen(id)?;
     }
+    // Register the tightly-coupled polymorphic instances
+    let mut subunits = vec![];
     for &subunit_id in codegen_subunits.iter() {
       self.code_store.subunit_parent.insert(subunit_id, unit_id);
+      subunits.push(subunit_id);
     }
-    let subunits : Vec<_> = codegen_subunits.into_iter().collect();
+    // Codegen the main module
     let llvm_unit = self.llvm_compiler.compile_unit(unit_id, subunits.as_slice(), &self.code_store, &self.c_symbols)?;
     self.code_store.llvm_units.insert(unit_id, llvm_unit);
     Ok(())

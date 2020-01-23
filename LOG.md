@@ -1,8 +1,14 @@
 # THOUGHTS - 23/01/2020
 
-The current module loading function is probably not memory safe. E.g. if something is borrowed from one of the `CodeStore` hash maps, calling `load_module` from inside the language may append to that hash map, causing its underlying array to be dropped and reallocated. Then that borrowed reference is a dangling pointer.
+Type checking polymorphic stuff is now proving tricky specifically when polymorphic type tags are used inside the function body. For example, the `ptr(T)` in the example below is a problem:
 
-In practise it might be quite unlikely for this to happen, but I should still look into it.
+```rust
+fun list() => list(T) with T {
+  list.new(0, 0 as ptr(T), 0)
+}
+```
+
+It's hard to swap the types in the node graph because I currently know the type of the function, but not of the individual type parameters. I might be able to find and retrieve this information somehow. Perhaps I should _not_ convert the names of type parameters into numerical ids?
 
 # TODO - 22/01/2020
 

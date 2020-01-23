@@ -64,4 +64,8 @@ impl CodeStore {
   pub fn type_mapping(&self, unit_id : UnitId) -> &TypeMapping {
     self.type_mappings.get(&unit_id).unwrap()
   }
+
+  pub fn poly_function(&self, symbol_id : SymbolId) -> &PolyFunction {
+    self.poly_functions.get(&symbol_id).unwrap()
+  }
 }

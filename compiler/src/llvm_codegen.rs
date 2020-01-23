@@ -189,7 +189,7 @@ pub struct CompileInfo<'l> {
   code_store : &'l CodeStore,
   t : &'l TypeInfo,
   nodes : &'l Nodes,
-  cg : &'l TypeMapping,
+  mapping : &'l TypeMapping,
 }
 
 impl <'l> CompileInfo<'l> {
@@ -198,16 +198,21 @@ impl <'l> CompileInfo<'l> {
     code_store : &'l CodeStore,
     t : &'l TypeInfo,
     nodes : &'l Nodes,
-    cg : &'l TypeMapping,
+    mapping : &'l TypeMapping,
   )
       -> Self 
   {
-    CompileInfo { code_store, t, nodes, cg }
+    CompileInfo { code_store, t, nodes, mapping }
   }
 
   fn typed_node(&self, nid : NodeId) -> TypedNode {
     let node = self.nodes.node(nid);
     TypedNode { info: self, node }
+  }
+
+  fn symbol_def(&self, unit_id : UnitId, symbol_id : SymbolId) -> &SymbolDefinition {
+    let types = self.code_store.types(unit_id);
+    types.symbols.get(&symbol_id).unwrap()
   }
 
   fn symbol_node(&self, unit_id : UnitId, symbol_id : SymbolId) -> &Node {
@@ -261,7 +266,7 @@ impl <'l> Into<TextLocation> for TypedNode<'l> {
 
 impl <'l> TypedNode<'l> {
   fn type_tag(&self) -> &Type {
-    self.info.cg.node_type.get(&self.node.id).unwrap()
+    self.info.mapping.node_type.get(&self.node.id).unwrap()
   }
 
   fn get(&self, nid : NodeId) -> TypedNode {
@@ -277,15 +282,13 @@ impl <'l> TypedNode<'l> {
   }
 
   fn sizeof_type(&self) -> Option<&Type> {
-    self.info.cg.sizeof_info.get(&self.node.id)
+    self.info.mapping.sizeof_info.get(&self.node.id)
   }
 
   fn node_symbol_def(&self) -> Option<&SymbolDefinition> {
-    if let Some((unit_id, symbol_id)) = self.info.cg.symbol_references.get(&self.node.id) {
-      let types = self.info.code_store.types(*unit_id);
-      return types.symbols.get(symbol_id);
-    }
-    None
+    let (unit_id, symbol_id) = *self.info.mapping.symbol_references.get(&self.node.id)?;
+    let def = self.info.symbol_def(unit_id, symbol_id);
+    Some(def)
   }
 
   fn node_type_def(&self) -> Option<&TypeDefinition> {
@@ -1167,7 +1170,18 @@ impl <'l, 'a> GenFunction<'l, 'a> {
   }
 
   /// ensure necessary definitions are inserted and linking operations performed when a global is referenced
-  fn get_linked_global_value(&mut self, info: &CompileInfo, def : &SymbolDefinition) -> GenVal {
+  fn get_linked_global_value(&mut self, node : TypedNode, def : &SymbolDefinition) -> GenVal {
+    let info = node.info;
+    // Replace any polymorphic def with the correct monomorphic instance
+    let def = if def.polymorphic {
+      let pf = info.code_store.poly_function(def.id);
+      let (unit_id, symbol_id) = *pf.instances.get(node.type_tag()).unwrap();
+      let def = info.symbol_def(unit_id, symbol_id);
+      def
+    }
+    else {
+      def
+    };
     match def.initialiser {
       SymbolInit::Expression(_) => {
         let gv = self.get_linked_global_reference(info, def);
@@ -1223,6 +1237,10 @@ impl <'l, 'a> GenFunction<'l, 'a> {
   }
 
   fn get_linked_function_reference(&mut self, info: &CompileInfo, def : &SymbolDefinition) -> FunctionValue {
+    if def.polymorphic {
+      panic!("{} {}", "Tried to get the address of a polymorphic function definition.",
+        "This will always fail, and means there is a bug somewhere earlier in the pipeline.");
+    }
     match &def.initialiser {
       SymbolInit::Function(init) => {
         if def.unit_id == info.t.unit_id {
@@ -1263,7 +1281,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
 
     // Check if it's a static call or a function value
     let function_pointer = if let Some(def) = node.node_symbol_def() {
-      let v = self.get_linked_global_value(node.info, &def);
+      let v = self.get_linked_global_value(node, &def);
       *self.genval_to_register(v).as_pointer_value()
     }
     else {
@@ -1647,7 +1665,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
           pointer(*ptr)
         }
         else if let Some(def) = node.node_symbol_def() {
-          self.get_linked_global_value(info, &def)
+          self.get_linked_global_value(node, &def)
         }
         else {
           panic!("no value found for reference '{}'!", name);
