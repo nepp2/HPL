@@ -1,5 +1,5 @@
 
-# Design
+# Design - January 2020
 
 I'm still trying to implement polymorphism. I got stuck when I started thinking about how to integrate it with a system of hotloadable modules. Now I'm not sure how this system should work.
 
@@ -133,3 +133,29 @@ What could be replaced, and how?
   - Polymorphism has special support partly for the sake of type inference. So if it was implemented as an extension, would type inference have to be as well?
 
 The problem with making a language out of crazy scheme-style macros is that compile times might be quite high. Particularly because all these macros are being JIT-compiled, in my case.
+
+# Vague V1 plan
+
+Statically typed language. Dynamic types not really needed.
+
+Safe most of the time. Support unsafe junk too.
+
+Reference-counted pointers. How do I implement them?
+ * Default synax (e.g. `[1, 2, 3]`) allocates a dynamically-sized, reference-counted array.
+
+How do I implement `drop` functions for reference-counted pointers? (and other resources)
+ * Function overloading would work
+
+Do I need function overloading?
+ * This would make implementing `drop` functions much neater
+ * Overloading means that the ABI is going to be ugly. But who cares about ABI? I'm not trying to replace C.
+
+Do I need to support generics/templates out of the box?
+ * The pointer and array types are built in. Reference-counted pointers aren't, so that's maybe a problem.
+ * Seems like probably not, for V1.
+
+Support binding C functions properly
+
+Support loading modules somehow (like they are DLLs?)
+
+Support metaprogramming?
