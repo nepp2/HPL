@@ -29,6 +29,12 @@ It is designed for game development and seems to be pursuing a borrow-checking a
 
 It has an interesting opt-in approach to function overloading whose behaviour can be altered separately within the scope of each module that imports the function.
 
+# GOAL (Game-Oriented Assembly Lisp)
+
+https://en.wikipedia.org/wiki/Game_Oriented_Assembly_Lisp
+
+The (somewhat) famous lisp dialect from the early days of Naughty Dog, which apparently mixed high-level features with the ability to generate assembly code. It was also used as an interactive editing tool for loading compiled code into running games. This is very similar to what I'm doing.
+
 # Jai
 
 A low-level programming language designed for game development by Jonathan Blow. It is not targetting memory safety or RAII. Instead it intends to support the programming patterns that many game developers have found to be more practical and performant. Like most game engine developers, Jonathan Blow advocates managing memory in large chunks, instead of on a per-object basis. In practise this often means putting lots of objects in large, flat arrays in global scope. This is probably best understood as a relational approach to managing data structures. It has many advantages, in terms of performance, simplicity and even ease of use. Jai is also aiming to provide better support for short-lived memory arenas, in the style of region-based memory management.

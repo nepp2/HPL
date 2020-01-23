@@ -64,7 +64,6 @@ pub fn infer_types(
   }
 }
 
-
 pub fn typecheck_polymorphic_function_instance(
   instance_unit : UnitId,
   poly_function : &SymbolDefinition,
