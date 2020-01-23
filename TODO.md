@@ -5,9 +5,10 @@
   - ~~Typecheck generic functions and structs~~
   - ~~Find set of functions to monomorphise~~
   - ~~Add a code store that centralises information about all loaded code~~
+  - ~~_Don't_ try to codegen the polymorphic versions~~
   - Typecheck the monomorphised functions
+    - Prevent instanced function definitions from contaminating type resolution!
   - Codegen the monomorphised functions
-  - _Don't_ try to codegen the polymorphic versions
 - Load and replace modules in basic DLL style
   - Load & codegen modules dynamically
     - May work already
