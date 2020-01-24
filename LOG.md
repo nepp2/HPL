@@ -1,3 +1,9 @@
+# THOUGHTS - 24/01/2020
+
+There were various things that I needed to fix, and now I don't really remember what they are.
+
+I don't think I should deviate significantly from my implementation strategy. I should just make it work.
+
 # THOUGHTS - 23/01/2020
 
 Type checking polymorphic stuff is now proving tricky specifically when polymorphic type tags are used inside the function body. For example, the `ptr(T)` in the example below is a problem:

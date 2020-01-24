@@ -67,7 +67,7 @@ pub fn infer_types(
 pub fn typecheck_polymorphic_function_instance(
   instance_unit : UnitId,
   poly_function : &SymbolDefinition,
-  type_tag : &Type,
+  instance_type : &Type,
   code_store : &CodeStore,
   cache : &StringCache,
   gen : &mut UIDGenerator,
@@ -78,19 +78,30 @@ pub fn typecheck_polymorphic_function_instance(
   let mut mapping = TypeMapping::new();
   let mut errors = vec![];
   let mut new_types = TypeInfo::new(instance_unit);
-  let imports : Vec<_> =
-    code_store.types.values().collect();
+  let aaa = (); // TODO: type directory should just take the code store, and be a lot simpler
+  let imports : Vec<_> = code_store.types.values().collect();
   let mut type_directory =
     TypeDirectory::new(instance_unit, imports.as_slice(), &mut new_types);
   let nodes = code_store.nodes(poly_function.unit_id);
   let source_node =
     *code_store.type_mapping(poly_function.unit_id)
     .symbol_def_nodes.get(&poly_function.id).unwrap();
+
+  let mut polytype_map = HashMap::new();
+  types::polytype_match(&mut polytype_map, instance_type, &poly_function.type_tag);
+  
+  // #### TODO ########
+  // #### TODO ########
+  // #### TODO ########
+  // #### TODO ########
+  // #### TODO ########
+
+  //polytype_match
   let symbol_id =
     GatherConstraints::new(
       &mut type_directory, &mut mapping, cache,
       gen, &mut c, &mut errors
-    ).process_polymorphic_function_instance(&nodes, source_node, type_tag.clone());
+    ).process_polymorphic_function_instance(&nodes, source_node, instance_type.clone(), &[]);
   let i = Inference::new(
     &nodes, &mut type_directory,
     &mut mapping, &c, cache, gen, &mut errors);

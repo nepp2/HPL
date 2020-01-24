@@ -108,7 +108,7 @@ fn polytype_replace(polytypes : &HashMap<PolyTypeId, Type>, polytype : &Type) ->
 }
 
 /// `polytype` may be a polymorphic type. It will be treated like `Abstract(Any)`.
-fn polytype_match(polytypes : &mut HashMap<PolyTypeId, Type>, t : &Type, polytype : &Type) -> bool {
+pub fn polytype_match(polytypes : &mut HashMap<PolyTypeId, Type>, t : &Type, polytype : &Type) -> bool {
   fn polytype_match_internal(polytypes : &mut HashMap<PolyTypeId, Type>, t : &Type, polytype : &Type) -> bool {
     if let Polytype(_) = &t.content { panic!("unexpected generic type") }
     if let Polytype(gid) = &polytype.content {

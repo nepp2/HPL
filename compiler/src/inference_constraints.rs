@@ -263,15 +263,16 @@ impl <'l, 't> GatherConstraints<'l, 't> {
     symbol_id
   }
 
-  pub fn process_polymorphic_function_instance(&mut self, n : &Nodes, id : NodeId, instanced_function_type : Type) 
+  pub fn process_polymorphic_function_instance(&mut self, n : &Nodes, id : NodeId, instanced_function_type : Type, instanced_polytypes : &[Type]) 
     -> SymbolId
   {
     let node = n.node(id);
     match &node.content {
-      Content::FunctionDefinition{ name, args, return_tag:_, polytypes:_, body } => {
-        let args = args.iter().map(|x| x.0.clone()).collect();
-        
-        self.process_function_def(n, id, instanced_function_type, false, args, *body, name)
+      Content::FunctionDefinition{ name, args, return_tag:_, polytypes, body } => {
+        self.with_instanced_type_parameters(polytypes.as_slice(), instanced_polytypes, |gc| {
+          let args = args.iter().map(|x| x.0.clone()).collect();
+          gc.process_function_def(n, id, instanced_function_type, false, args, *body, name)
+        })
       }
       _ => panic!("unexpected node! expected polymorphic function definition."),
     }
@@ -543,20 +544,21 @@ impl <'l, 't> GatherConstraints<'l, 't> {
     ts
   }
 
-  fn with_instanced_type_paramters<F>(
+  fn with_instanced_type_parameters<F, T>(
     &mut self, type_parameters : &[RefStr],
     types : &[Type],
     f : F
-  )
-    where F : Fn(&mut GatherConstraints)
+  ) -> T
+    where F : FnOnce(&mut GatherConstraints) -> T
   {
     let aaa = (); // TODO: this function isn't actually used yet
     for (i, pt) in type_parameters.iter().enumerate() {
       let t = types[i].clone();
       self.type_parameters.push((pt.clone(), t));
     }
-    f(self);
+    let result = f(self);
     self.type_parameters.drain((self.type_parameters.len()-type_parameters.len())..);
+    result
   }
 
   fn with_polytypes<F>(&mut self, type_parameters : &[RefStr], f : F)
@@ -574,7 +576,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
 
   fn symbol_to_type(&mut self, name : &str) -> Type {
       // Check for polytypes
-      for (polytype_name, t) in self.type_parameters.iter() {
+      for (polytype_name, t) in self.type_parameters.iter().rev() {
         if polytype_name.as_ref() == name {
           return t.clone();
         }
