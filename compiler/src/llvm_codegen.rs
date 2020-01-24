@@ -344,7 +344,7 @@ impl <'l> Gen<'l> {
     // Declare all the globals and functions
     let mut functions_to_codegen = vec!();
     for def in info.t.symbols.values() {
-      if !def.polymorphic {
+      if !def.is_polymorphic() {
         let t = self.to_basic_type(info, &def.type_tag).unwrap();
         match &def.initialiser {
           SymbolInit::CBind => {
@@ -1173,7 +1173,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
   fn get_linked_global_value(&mut self, node : TypedNode, def : &SymbolDefinition) -> GenVal {
     let info = node.info;
     // Replace any polymorphic def with the correct monomorphic instance
-    let def = if def.polymorphic {
+    let def = if def.is_polymorphic() {
       let pf = info.code_store.poly_function(def.id);
       let (unit_id, symbol_id) = *pf.instances.get(node.type_tag()).unwrap();
       let def = info.symbol_def(unit_id, symbol_id);
@@ -1237,7 +1237,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
   }
 
   fn get_linked_function_reference(&mut self, info: &CompileInfo, def : &SymbolDefinition) -> FunctionValue {
-    if def.polymorphic {
+    if def.is_polymorphic() {
       panic!("{} {}", "Tried to get the address of a polymorphic function definition.",
         "This will always fail, and means there is a bug somewhere earlier in the pipeline.");
     }

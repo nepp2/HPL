@@ -1,17 +1,17 @@
-use crate::error::TextLocation;
-use crate::expr::{StringCache, UIDGenerator};
+use crate::expr::{StringCache, UIDGenerator, RefStr};
 use crate::types::{
-  Type, PType, TypeInfo,
+  Type, PType, TypeInfo, TypeContent,
   UnitId, SignatureBuilder, SymbolDefinition,
-  PolyTypeId, SymbolInit,
+  SymbolInit,
 };
 
 pub fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypeInfo {
   use PType::*;
+  use TypeContent::Polytype;
 
   fn create_definition(
     cache : &StringCache, gen : &mut UIDGenerator, unit_id : UnitId, name : &str,
-    args : &[&Type], return_type : &Type, polymorphic : bool)
+    args : &[&Type], return_type : &Type, type_vars : Vec<RefStr>)
       -> SymbolDefinition
   {
     let mut sig = SignatureBuilder::new(return_type.clone());
@@ -23,7 +23,7 @@ pub fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypeInfo
       name: cache.get(name),
       type_tag: sig.into(),
       initialiser: SymbolInit::Intrinsic,
-      polymorphic,
+      type_vars,
     }
   }
 
@@ -31,16 +31,16 @@ pub fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypeInfo
     cache : &StringCache, gen : &mut UIDGenerator, unit_id : UnitId, t : &mut TypeInfo,
     name : &str, args : &[&Type], return_type : &Type)
   {
-    let g = create_definition(cache, gen, unit_id, name, args, return_type, false);
-    t.symbols.insert(g.id, g);
+    let def = create_definition(cache, gen, unit_id, name, args, return_type, vec![]);
+    t.symbols.insert(def.id, def);
   }
   
   fn add_polymorphic_intrinsic(
     cache : &StringCache, gen : &mut UIDGenerator, unit_id : UnitId, t : &mut TypeInfo,
-    name : &str, args : &[&Type], return_type : &Type)
+    name : &str, args : &[&Type], return_type : &Type, type_vars : Vec<RefStr>)
   {
-    let g = create_definition(cache, gen, unit_id, name, args, return_type, true);
-    t.symbols.insert(g.id, g);
+    let def = create_definition(cache, gen, unit_id, name, args, return_type, type_vars);
+    t.symbols.insert(def.id, def);
   }
 
   let unit_id = gen.next().into();
@@ -63,26 +63,27 @@ pub fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypeInfo
   }
   add_intrinsic(cache, gen, unit_id, &mut types, "!", &[boolean], boolean);
 
+  let tvar = cache.get("A");
   for prim in &[I64.into(), I32.into(), U64.into(), U32.into()] {
     for container in &[Type::ptr_to, Type::array_of] {
-      let gid : PolyTypeId = gen.next().into();
-      let gt : Type = gid.into();
-      let gcontainer = container(gt.clone());
+      let tv : Type = Polytype(tvar.clone()).into();
+      let gcontainer = container(tv.clone());
       let args = &[&gcontainer, prim];
-      add_polymorphic_intrinsic(cache, gen, unit_id, &mut types, "Index", args, &gt);
+      add_polymorphic_intrinsic(
+        cache, gen, unit_id, &mut types, "Index", args, &tv, vec![tvar.clone()]);
     }
   }
   {
-    let gid : PolyTypeId = gen.next().into();
-    let gt : Type = gid.into();
-    let gptr = Type::ptr_to(gt.clone());
-    add_polymorphic_intrinsic(cache, gen, unit_id, &mut types, "*", &[&gptr], &gt);
+    let tv : Type = Polytype(tvar.clone()).into();
+    let gptr = Type::ptr_to(tv.clone());
+    add_polymorphic_intrinsic(
+      cache, gen, unit_id, &mut types, "*", &[&gptr], &tv, vec![tvar.clone()]);
   }
   {
-    let gid : PolyTypeId = gen.next().into();
-    let gt : Type = gid.into();
-    let gptr = Type::ptr_to(gt.clone());
-    add_polymorphic_intrinsic(cache, gen, unit_id, &mut types, "&", &[&gt], &gptr);
+    let tv : Type = Polytype(tvar.clone()).into();
+    let gptr = Type::ptr_to(tv.clone());
+    add_polymorphic_intrinsic(
+      cache, gen, unit_id, &mut types, "&", &[&tv], &gptr, vec![tvar.clone()]);
   }
   types
 }

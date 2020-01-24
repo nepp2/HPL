@@ -22,7 +22,6 @@ use types::{
 use inference_constraints::{
   Constraint, ConstraintContent,
   Constraints, TypeSymbol, Assertion,
-  GatherConstraints,
 };
 use code_store::CodeStore;
 
@@ -38,7 +37,6 @@ pub fn infer_types(
 )
   -> Result<(TypeInfo, TypeMapping), Error>
 {
-  let mut c = Constraints::new();
   let mut mapping = TypeMapping::new();
   let mut errors = vec![];
   let mut new_types = TypeInfo::new(unit_id);
@@ -47,10 +45,9 @@ pub fn infer_types(
   let mut type_directory =
     TypeDirectory::new(unit_id, imports.as_slice(), &mut new_types);
   let nodes = code_store.nodes(unit_id);
-  GatherConstraints::new(
-    &mut type_directory, &mut mapping, cache,
-    gen, &mut c, &mut errors
-  ).process_node(&nodes, nodes.root);
+  let c =
+    inference_constraints::get_module_constraints(
+      &nodes, &mut type_directory, &mut mapping, cache, gen, &mut errors);
   let i = Inference::new(
     &nodes, &mut type_directory,
     &mut mapping, &c, cache, gen, &mut errors);
@@ -74,7 +71,6 @@ pub fn typecheck_polymorphic_function_instance(
 )
   -> Result<(TypeInfo, TypeMapping, SymbolId), Error>
 {
-  let mut c = Constraints::new();
   let mut mapping = TypeMapping::new();
   let mut errors = vec![];
   let mut new_types = TypeInfo::new(instance_unit);
@@ -86,22 +82,11 @@ pub fn typecheck_polymorphic_function_instance(
   let source_node =
     *code_store.type_mapping(poly_function.unit_id)
     .symbol_def_nodes.get(&poly_function.id).unwrap();
-
-  let mut polytype_map = HashMap::new();
-  types::polytype_match(&mut polytype_map, instance_type, &poly_function.type_tag);
-  
-  // #### TODO ########
-  // #### TODO ########
-  // #### TODO ########
-  // #### TODO ########
-  // #### TODO ########
-
-  //polytype_match
-  let symbol_id =
-    GatherConstraints::new(
-      &mut type_directory, &mut mapping, cache,
-      gen, &mut c, &mut errors
-    ).process_polymorphic_function_instance(&nodes, source_node, instance_type.clone(), &[]);
+  let instanced_type_vars = poly_function.instanced_type_vars(instance_type);
+  let (c, symbol_id) =
+    inference_constraints::get_polymorphic_function_instance_constraints(
+      &nodes, source_node, instance_type.clone(), instanced_type_vars.as_slice(),
+      &mut type_directory, &mut mapping, cache, gen, &mut errors);
   let i = Inference::new(
     &nodes, &mut type_directory,
     &mut mapping, &c, cache, gen, &mut errors);
@@ -244,9 +229,9 @@ impl <'a> Inference<'a> {
       Abstract(AbstractType::Def(name)) => {
         if let Some(def) = self.t.find_type_def(name) {
           let children = if t.children.len() == 0 {
-            def.polytypes.iter().map(|_| Type::any()).collect()
+            def.type_vars.iter().map(|_| Type::any()).collect()
           }
-          else if t.children.len() != def.polytypes.len() {
+          else if t.children.len() != def.type_vars.len() {
             return error(loc, "incorrect number of type arguments");
           }
           else {
@@ -590,7 +575,7 @@ impl <'a> Inference<'a> {
     if self.errors.is_empty() {
       for (node_id, (unit_id, symbol_id)) in self.mapping.symbol_references.iter() {
         let def = self.t.find_module(*unit_id).symbols.get(symbol_id).unwrap().clone();
-        if def.polymorphic {
+        if def.is_polymorphic() {
           if let SymbolInit::Function(_) = def.initialiser {
             let t = self.mapping.node_type.get(node_id).unwrap();
             self.mapping.polymorphic_references.insert((def.unit_id, def.id, t.clone()));

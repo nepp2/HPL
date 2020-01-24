@@ -1,10 +1,12 @@
-# THOUGHTS - 24/01/2020
+# LOG - 24/01/2020
 
-There were various things that I needed to fix, and now I don't really remember what they are.
+My current linking strategy doesn't work very well. It might be better to record which symbols need to be linked in the codegen stage, and then handle it afterwards in a linking step.
 
-I don't think I should deviate significantly from my implementation strategy. I should just make it work.
+This could remove the subunit complexity, and pave the way for more fine-grained hotloading later, if modules are separated by function.
 
-# THOUGHTS - 23/01/2020
+It's likely that the type inference still has some bugs, based on the output I got from the full polymorphism example in `scratchpad.code`. For now I have disabled most of the code to get the simplest case working.
+
+# LOG - 23/01/2020
 
 Type checking polymorphic stuff is now proving tricky specifically when polymorphic type tags are used inside the function body. For example, the `ptr(T)` in the example below is a problem:
 
@@ -16,13 +18,13 @@ fun list() => list(T) with T {
 
 It's hard to swap the types in the node graph because I currently know the type of the function, but not of the individual type parameters. I might be able to find and retrieve this information somehow. Perhaps I should _not_ convert the names of type parameters into numerical ids?
 
-# TODO - 22/01/2020
+# LOG - 22/01/2020
 
 I need to typecheck the polymorphic instances. That means they need to refer to node graphs. Do I duplicate nodes, or just repurpose some existing ones? I'm concerned about node id clashes. However, clashes could be fixed by addressing nodes with their unit_id as well.
 
 The old node graphs also slightly incorrect for the instances, because they make references to polymorphic types. There will also need to be some effort made to link the symbol ids together. I may just be able to add special support for type checking polymorphic instances.
 
-# TODO - 20/01/2020
+# LOG - 20/01/2020
 
 - ~~Stop trying to codegen the polymorphic functions~~
 - Typecheck the monomorphised functions
@@ -31,7 +33,7 @@ The old node graphs also slightly incorrect for the instances, because they make
 
 The monomorphised functions can't be generated before their parent modules, because they might refer to other stuff in those modules. So any that are called inside their parent should be generated inside them.
 
-# THOUGHTS - 17/01/2020
+# LOG - 17/01/2020
 
 It could be a goal that hotloaded programs can also compile into static binaries, without any extra effort. This is not the case when modules are loaded with dynamic, runtime code, such as a `load_module` function. This could potentially be fixed by providing a clear distinction between code that runs at compile time and code that runs at runtime.
 
@@ -51,7 +53,7 @@ For now, a module should just import whatever it's told to by its parent (recurs
 
 I'm trying to create something akin to a synchronous actor, which also provides guarantees about which types it can see. When it is reloaded, every instance would need to be replaced. Any graph processing system would need a graph of compile-time evaluated code modules, as well as a graph of data and events. These modules should be data, then. Code must be very strictly wired together according to the type system. So really it just needs to be possible to query a module's dependencies.
 
-# THOUGHTS - 13/01/2020
+# LOG - 13/01/2020
 
 ## A list of requirements for live-edited Tetris
 
@@ -103,7 +105,7 @@ I should simplify this somehow. There needs to be some data structure storing al
 
 So I need a code database type thing, in charge of generating code and finding definitions and so-on.
 
-# THOUGHTS - 13/01/2020
+# LOG - 13/01/2020
 
 I was thinking about supporting template-style macros which can be nested within each other to code-generate a module.
 
@@ -115,7 +117,7 @@ I'm also not sure whether macro-expansion style code generation should be necess
 
 Is polymorphism really required for simple module loading functionality? Or possibly it's just needed to make tetris in a sensible way.
 
-# THOUGHTS - 08/01/2020
+# LOG - 08/01/2020
 
 The important thing is that the host module imposes a concrete type interface, and the loaded module returns an error if it does not conform to it.
 
@@ -145,7 +147,7 @@ Module state should probably be separated from the module's code, so it's not ju
 
 It also seems that module dependencies should eventually be managed automatically, instead of being managed manually in response to module handles and module events. But this would require a standardised and extremely flexible module graph interface, which I am not yet sure on the design for.
 
-# THOUGHTS - 07/01/2020
+# LOG - 07/01/2020
 
 Think about having some kind of central code database. This would track:
 - module origin
@@ -177,7 +179,7 @@ e.g.
   }
 ```
 
-# THOUGHTS - 06/01/2020
+# LOG - 06/01/2020
 
 A consistent theme to my many realisations over the past 4 years is that freeform expression in programming languages is important. Having the space to commit acts of great programmatic foolishness is valuable. Whenever we suppose that perhaps we curtail this freedom in some particular way, such as by imposing a limitation on the shape of our data structures, or how we can update them, or what we can do with them, we are incurring a huge cost in usability. And yet, these limitations can provide invaluable properties, such as referential transparency, memory safety, data-race freedom or cache coherence.
 
@@ -185,7 +187,7 @@ I have realised that both of these things can often be achieved as long as the f
 
 Many of these ideas are realised in the Pony programming language. However, this programming language is designed around the actor model, which involves a system of asynchronous message passing and queues. I'm not sure if synchronous calls are possible between actors. If they are not, the actor model is perhaps more heavyweight than what I need for this project. However, the Pony type system and much of its runtime could surely be adapted for a simpler, synchronous model of programming.
 
-# TODO - 30/12/2019
+# LOG - 30/12/2019
 
 - Polymorphic type checking code doesn't work yet
   - ~~Stupid problem with the AST's handling of explicit return types.~~
@@ -196,7 +198,7 @@ At the moment, polymorphic functions are not registered correctly. Initially, th
 - I don't have any solution for generating polymorphic variants yet.
   - Can just make do a lazy bodge job for now. Don't worry about duplication or reloading modules.
 
-# THOUGHTS - 18/12/2019
+# LOG - 18/12/2019
 
 I introduced a lot of changes at once:
 
@@ -214,7 +216,7 @@ These are hard to actually implement because:
 - I don't know how to inform a field reference that its type has been updated. A field access constraint has no dependency link to the typedef. This dependency isn't even known until later. They could be linked and triggered using the field string instead. (pretty gross, but oh well).
 
 
-# THOUGHTS - 13/12/2019
+# LOG - 13/12/2019
 
 There is a huge bug in the way types are resolved. Defs are resolved by looking up their name in the list of supplied modules, but this goes for all the defs in the supplied modules too. Since the modules passed in might reference different modules, this is very broken.
 
@@ -226,7 +228,7 @@ There is a huge bug in the way types are resolved. Defs are resolved by looking 
 
 3. Monotype possibly stays, but just strips generic IDs and replaces them with the Any type
 
-# THOUGHTS - 06/12/2019
+# LOG - 06/12/2019
 
 Implementing polymorphic functions requires:
   - New syntax for declaring their type parameters
@@ -245,7 +247,7 @@ Do I actually need polymorphic functions for Tetris? What do I need? I need to b
 
 I also need for loops. Are these hard to implement? It's kind of annoying to do for-loops over array without them. Possible though.
 
-# TODO - 05/12/2019
+# LOG - 05/12/2019
 
 - ~~Type inference of new symbols should allow their types to be refined incrementally~~
 - Prevent unnecessary array allocation
@@ -255,7 +257,7 @@ I also need for loops. Are these hard to implement? It's kind of annoying to do 
   - Detect constant expressions and allocate them globally
   - Maybe always allocate on the stack (or as global) without putting it in type info?
 
-# THOUGHTS - 02/12/2019
+# LOG - 02/12/2019
 
 I'm contemplating the possible wrongness of regions. Although not that they are very wrong. Just that possibly a slot map would be a better choice. Or some combination of the two.
 
@@ -264,16 +266,16 @@ Requirements:
 - in-place mutations to types
 - confidence that different arenas don't contain pointers into each other
 
-# TODO - 01/12/2019
+# LOG - 01/12/2019
 
 - Declare symbols immediately, but with incomplete types.
 - Implement polymorphic functions
 
-# TODO - 30/11/2019
+# LOG - 30/11/2019
 
 The current problem is that Globals aren't registered without concrete values (because abstract values may no longer be obtained by equivalence). At the moment this global issue only happens due to REPL mode. Maybe REPL globals should just be resolved in lexical scope again. This broke them previously, but I'm sure it could be made to work.
 
-# THOUGHTS - 29/11/2019
+# LOG - 29/11/2019
 
 The old prelude doesn't work fully because build_module can't find the existing modules. I'm not sure what solution is desirable here. The easiest thing is to say that modules are first-class values. You have to pass references to them into `build_module`.
 
@@ -281,14 +283,14 @@ It's not clear how a module would obtain a reference to itself. It could be pass
 
 Okay, it actually makes a lot of sense that there should be a global store of modules. Maybe just in the compiler. The `build_module` function can resume using this for now, but there should eventually be some way of narrowing what a module can see.
 
-## TODO
+## LOG
 
 - ~~Add a global module store~~
 - Reintroduce function call/global constraints when new symbols are resolved
 - Make sure that the equivalence constraints hang around.
 - Implement polymorphic functions
 
-# THOUGHTS - 26/11/2019
+# LOG - 26/11/2019
 
 Resolving function types is complicated if the function is both polymorphic and overloaded. But all polymorphic functions are overloaded, right? This is not really true from the perspective of symbol resolution. You resolve repeatedly against the polymorphic symbol instead of the specialisations, because the important detail is the particular function body that you dispatch on.
 
@@ -334,7 +336,7 @@ Finally, I could fix it by re-introducing function call constraints where releva
 - ~~Turn index operations into function calls properly~~
 - Make sure that the equivalence constraints hang around.
 
-# THOUGHTS - 25/11/2019
+# LOG - 25/11/2019
 
 Hopelessly stuck again, trying to figure out how to handle function resolution in the presence of both overloading and two-way type inference. I had the idea that I could detect when all of the information is available and then just choose the single matching implementation if there is one, or return an error otherwise. But that is complicated to implement in practise, and has become a bit of a mess with globals and generics. Consider the following:
 
@@ -370,7 +372,7 @@ The language lets you define whatever symbol you want, but complains if you try 
 
 The first advantage is that global resolution is now always simple. The second is that type inference will work much better for normal functions. It still doesn't really fix the general complexity of overloads, and I'm not sure whether it should dispatch on more than the type of the first argument. It could also dispatch on the number of arguments, possibly.
 
-# THOUGHTS - 22/11/2019
+# LOG - 22/11/2019
 
 This arena type allows the storage of persistant regions alongside pointers into the region. It currently does not provide compile-time safety. Instead it makes a best-effort at runtime safety with slightly expensive dereferencing checks (which should be optimised out in release builds). However, it might be possible to provide compile-time safety with a carefully-designed interface. Specifically, arenas contain top-level types which can only be accessed by passing closures into an access function.
 
@@ -397,12 +399,12 @@ The arena pointers should also not be allowed to store anything that must be dro
 This simple interface would allow the user to build and store tree structures of regions, but it would not easily
 allow them to build graphs of regions. A better interface could probably do that though.
 
-# TODO - 21/11/2019
+# LOG - 21/11/2019
 
 - Look up type definitions properly in the codegen step
 - Fix the type evaluation (needs to retrigger equivalences)
 
-# TODO - 19/11/2019
+# LOG - 19/11/2019
 
 Currently types and modules are stored together in one big blob. They have to be because otherwise a Type could end up with two different TypeIds, and that would break Type comparisons.
 
@@ -425,18 +427,18 @@ Module C depends on A and B: if ptr(u32) uses x, it will not match signatures co
 
 One solution is to use an arena and replace all the ids with pointers.
 
-# TODO - 18/11/2019
+# LOG - 18/11/2019
 
 - Remove overloaded functions (for now). Namespacing is a better idea.
 - Consider removing destructors. Replace with memory regions. Consider defer.
 - Add syntactic macros. Implement for loops.
 - Support generics.
 
-# THOUGHTS - 13/11/2019
+# LOG - 13/11/2019
 
 I don't need generics to support stuff like arithmetic and indexing. I just needed to special-case indexing for pointer types. For everything else, overloaded functions work.
 
-# THOUGHTS - 12/11/2019
+# LOG - 12/11/2019
 
 I went on a big type inference detour. It's close to done, but it is still limited in power due to the unfriendliness of overloading. That is a problem for another day.
 
@@ -444,7 +446,7 @@ Problems for right now are that the codegen doesn't yet use the new node and typ
 
 Secondly, I need to decide how to pass information about where to find functions, type defs and globals. This might involve swapping to immutable maps inside the modules.
 
-# THOUGHTS - 31/10/2019
+# LOG - 31/10/2019
 
 Close to finishing a crude Drop and Clone system.
 
@@ -454,7 +456,7 @@ There are two (big) outstanding problems:
 
 2. Drop does not do anything about nested types! To implement this via metaprogramming I'd need some type introspection features.
 
-# THOUGHTS - 29/10/2019
+# LOG - 29/10/2019
 
 ## RC pointers, arrays and strings
 
@@ -483,7 +485,7 @@ I could implement exceptions, or aim for a slightly more automated version of th
   let s = can_fail(2)?
 ```
 
-# THOUGHTS - 25/10/2019
+# LOG - 25/10/2019
 
 What would I need to implement everything internally?
 What would I want the code that does it to look like?
@@ -540,7 +542,7 @@ Decide whether to pursue this:
   }
 ```
 
-# THOUGHTS - 24/10/2019
+# LOG - 24/10/2019
 
 ## On reference counting
 
@@ -601,7 +603,7 @@ But then how do I specify which other modules a module can see? Perhaps a better
 
 The module `m` captures the variable `a` and also now depends on the module containing `blah`.
 
-# THOUGHTS - 23/10/2019
+# LOG - 23/10/2019
 
 I am very bad at explaining the point of this project, on any kind of vaguely detailed technical level. Internally I have been thinking of the language and compiler as an alternative to Terra and Extempore which aims to unify the high-performance language and the metaprogramming language. But I suspect this explanation would mostly result in blank stares.
 
@@ -642,7 +644,7 @@ This is actually pretty difficult, because I have to handle situations like this
 
 If one branch of an if statement consumes a Move value, then the other one must as well, even if the other branch doesn't explicitly exist. Can I just choose the hamfisted option instead? I detect if something is Move, and then I just call functions everywhere to make sure it gets shepherded around correctly. I remember implementing a system this way in the past.
 
-# THOUGHTS - 22/10/2019
+# LOG - 22/10/2019
 
 ## RC pointers
 
@@ -656,7 +658,7 @@ I realised that my `build_module` function could break Rust's borrowing rules qu
 
 I had a think about implementing for loops. The plan is to do it without any new codegen code, by transforming the AST to reuse existing features (like while loops). I think it would work fine, but it's slightly irritating to implement, and I'm not sure how to define a generic interface for iteration yet. I could just enforce the use of the range struct.
 
-# TODO - 21/10/2019
+# LOG - 21/10/2019
 
 There is some kind of bug in my quote templating tests. However, the bug might actually be in the mapping between the `Expr` type in my Rust code and the `expr` type in the scripting language.
 
@@ -681,7 +683,7 @@ The short version is that an enum declared with `repr(u8)` is represented as a b
 
 Anyway, I got the tests to pass.
 
-# THOUGHTS - 17/10/2019
+# LOG - 17/10/2019
 
 I never really solved the "create_module" function issue. Instead I just decided that, for now, the host module can unsafely retrieve function pointers from module handlers. Then it just casts them to whatever type it expects them to be and tries to call it. A better long term solution probably involves a way of asserting the return type that is dynamically checked. I suppose it could return a dynamic type which undergoes a checked cast to the expected type, if those two things are supported at some point.
 
@@ -713,7 +715,7 @@ So how does this work? Every time the code runs it has to build a new expression
   ```
 
 
-# THOUGHTS - 16/10/2019
+# LOG - 16/10/2019
 
 I'm considering whether the REPL model is really a good idea. If the language behaves differently in different places, is it even powerful enough to build the kind of module system I'm talking about? It can maybe be done at the top level, but then I can't abstract over any of it? Can I make similar
 functionality work in functions somehow?
@@ -814,7 +816,7 @@ A special language construct could return type information, but then it wouldn't
 Instead it could just do a checked cast to a particular return type (or something equivalent). Functions could potentially be accessed as though from a DLL. But that wouldn't work if they used types internal to the module.
 
 
-# THOUGHTS - 15/10/2019
+# LOG - 15/10/2019
 
 In general I prefer a value-based approach, because it seems like a cleaner way to make use of the heap and the full power of the language.
 

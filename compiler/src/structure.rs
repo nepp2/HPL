@@ -50,9 +50,9 @@ pub enum Content {
   Block(Vec<NodeId>),
   Quote(Box<Expr>),
   Reference { name: RefStr, refers_to: Option<ReferenceId> },
-  FunctionDefinition{ name: RefStr, args: Vec<(Reference, Option<Box<Expr>>)>, return_tag: Option<Box<Expr>>, polytypes : Vec<RefStr>, body: NodeId },
+  FunctionDefinition{ name: RefStr, args: Vec<(Reference, Option<Box<Expr>>)>, return_tag: Option<Box<Expr>>, type_vars : Vec<RefStr>, body: NodeId },
   CBind { name: RefStr, type_tag : Box<Expr> },
-  TypeDefinition{ name: RefStr, kind : TypeKind, fields: Vec<(Reference, Option<Box<Expr>>)>, polytypes : Vec<RefStr> },
+  TypeDefinition{ name: RefStr, kind : TypeKind, fields: Vec<(Reference, Option<Box<Expr>>)>, type_vars : Vec<RefStr> },
   TypeConstructor{ name: Reference, field_values: Vec<(Option<Reference>, NodeId)> },
   FieldAccess{ container: NodeId, field: Reference },
   ArrayLiteral(Vec<NodeId>),
@@ -327,18 +327,18 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       }
       else { None }
     };
-    let polytypes = {
+    let type_vars = {
       if let Some(("polytypes", ts)) = polytypes.and_then(|e| e.try_construct()) {
-        let polytypes =
+        let type_vars =
           ts.iter().map(|e| { let s = self.cached(e.unwrap_symbol()?) ; Ok(s) })
           .collect::<Result<Vec<_>, _>>()?;
-        polytypes
+        type_vars
       }
       else { vec![] }
     };
     let mut function_checker = FunctionConverter::new(self.t, false, arg_symbols);
     let body = function_checker.to_function_body(body)?;
-    return Ok(self.node(expr, FunctionDefinition{name, args, polytypes, return_tag, body}));
+    return Ok(self.node(expr, FunctionDefinition{name, args, type_vars, return_tag, body}));
   }
 
   fn construct_to_node(&mut self, expr : &Expr) -> Result<NodeId, Error> {
@@ -482,16 +482,16 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
           fields_expr.children().iter()
           .map(|e| self.typed_symbol(e))
           .collect::<Result<Vec<_>, Error>>()?;
-        let td = TypeDefinition{name, kind: TypeKind::Union, fields, polytypes: vec![] };
+        let td = TypeDefinition{name, kind: TypeKind::Union, fields, type_vars: vec![] };
         Ok(self.node(expr, td))
       }
       ("struct", [name, fields_expr]) => {
-        let (name, polytypes) = {
+        let (name, type_vars) = {
           if let Some(("call", exprs)) = name.try_construct() {
             let name = self.cached(exprs[0].unwrap_symbol()?);
-            let polytypes : Result<Vec<_>, _> =
+            let type_vars : Result<Vec<_>, _> =
               exprs[1..].iter().map(|e| { let s = self.cached(e.unwrap_symbol()?) ; Ok(s) }).collect();
-            (name, polytypes?)
+            (name, type_vars?)
           }
           else {
             let name = self.cached(name.unwrap_symbol()?);
@@ -502,7 +502,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
           fields_expr.children().iter()
           .map(|e| self.typed_symbol(e))
           .collect::<Result<Vec<_>, Error>>()?;
-        Ok(self.node(expr, TypeDefinition{name, kind: TypeKind::Struct, fields, polytypes }))
+        Ok(self.node(expr, TypeDefinition{name, kind: TypeKind::Struct, fields, type_vars }))
       }
       (".", [container_expr, field_expr]) => {
         let container = self.to_node(container_expr)?;
@@ -580,7 +580,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       name: self.cached(TOP_LEVEL_FUNCTION_NAME),
       args: vec![],
       return_tag: None,
-      polytypes: vec![],
+      type_vars: vec![],
       body: self.to_function_body(expr)?,
     };
     let f = self.node(expr, c);

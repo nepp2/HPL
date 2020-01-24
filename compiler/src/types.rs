@@ -75,7 +75,7 @@ impl PType {
   }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Type {
   pub content : TypeContent,
   pub children : Vec<Type>,
@@ -90,13 +90,13 @@ pub enum TypeContent {
   Array,
   Ptr,
   Abstract(AbstractType),
-  Polytype(PolyTypeId),
+  Polytype(RefStr),
 }
 
-fn polytype_replace(polytypes : &HashMap<PolyTypeId, Type>, polytype : &Type) -> Type {
-  fn polytype_replace_internal(polytypes : &HashMap<PolyTypeId, Type>, t : &mut Type) {
+fn polytype_replace(polytypes : &HashMap<RefStr, Type>, polytype : &Type) -> Type {
+  fn polytype_replace_internal(polytypes : &HashMap<RefStr, Type>, t : &mut Type) {
     if let Polytype(gid) = &t.content {
-      *t = polytypes.get(&gid).cloned().unwrap_or_else(||Type::any());
+      *t = polytypes.get(gid).cloned().unwrap_or_else(||Type::any());
     }
     for t in t.children.iter_mut() {
       polytype_replace_internal(polytypes, t);
@@ -108,19 +108,19 @@ fn polytype_replace(polytypes : &HashMap<PolyTypeId, Type>, polytype : &Type) ->
 }
 
 /// `polytype` may be a polymorphic type. It will be treated like `Abstract(Any)`.
-pub fn polytype_match(polytypes : &mut HashMap<PolyTypeId, Type>, t : &Type, polytype : &Type) -> bool {
-  fn polytype_match_internal(polytypes : &mut HashMap<PolyTypeId, Type>, t : &Type, polytype : &Type) -> bool {
+fn polytype_match(polytypes : &mut HashMap<RefStr, Type>, t : &Type, polytype : &Type) -> bool {
+  fn polytype_match_internal(polytypes : &mut HashMap<RefStr, Type>, t : &Type, polytype : &Type) -> bool {
     if let Polytype(_) = &t.content { panic!("unexpected generic type") }
     if let Polytype(gid) = &polytype.content {
-      if let Some(bound_type) = polytypes.get(&gid) {
+      if let Some(bound_type) = polytypes.get(gid) {
         if let Some(t) = unify_types(bound_type, &t) {
-          polytypes.insert(*gid, t);
+          polytypes.insert(gid.clone(), t);
           true
         }
         else { false }
       }
       else {
-        polytypes.insert(*gid, t.clone());
+        polytypes.insert(gid.clone(), t.clone());
         true
       }    
     }
@@ -148,15 +148,15 @@ impl Into<Type> for PType {
   }
 }
 
-impl Into<Type> for AbstractType {
+impl Into<Type> for TypeContent {
   fn into(self) -> Type {
-    Type::new(Abstract(self), vec![])
+    Type::new(self, vec![])
   }
 }
 
-impl Into<Type> for PolyTypeId {
+impl Into<Type> for AbstractType {
   fn into(self) -> Type {
-    Type::new(Polytype(self), vec![])
+    Type::new(Abstract(self), vec![])
   }
 }
 
@@ -307,7 +307,7 @@ pub struct TypeDefinition {
   pub unit_id : UnitId,
   pub fields : Vec<(Reference, Type)>,
   pub kind : TypeKind,
-  pub polytypes : Vec<PolyTypeId>,
+  pub type_vars : Vec<RefStr>,
   pub drop_function : Option<ResolvedSymbol>,
   pub clone_function : Option<ResolvedSymbol>,
 }
@@ -342,7 +342,7 @@ pub struct SymbolDefinition {
   pub name : RefStr,
   pub type_tag : Type,
   pub initialiser : SymbolInit,
-  pub polymorphic : bool,
+  pub type_vars : Vec<RefStr>,
 }
 
 impl SymbolDefinition {
@@ -352,6 +352,19 @@ impl SymbolDefinition {
       SymbolInit::CBind | SymbolInit::Expression(_) => Some(&self.name),
       _ => None,
     }
+  }
+
+  pub fn is_polymorphic(&self) -> bool {
+    self.type_vars.len() > 0
+  }
+
+  pub fn instanced_type_vars(&self, instanced_signature : &Type) -> Vec<Type> {
+    let mut polytype_map = HashMap::new();
+    let success = polytype_match(&mut polytype_map, instanced_signature, &self.type_tag);
+    if !success {
+      panic!("instanced signature did not match polymorphic function signature");
+    }
+    self.type_vars.iter().map(|v| polytype_map.remove(v).unwrap()).collect()
   }
 }
 
@@ -396,6 +409,12 @@ impl  fmt::Display for Type {
       Polytype(id) => write!(f, "@Polytype({})", id),
       Abstract(abs) => write!(f, "{}", abs),
     }
+  }
+}
+
+impl fmt::Debug for Type {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "{}", self)
   }
 }
 
@@ -567,20 +586,20 @@ impl TypeInfo {
     &'a self,
     name : &str,
     t : &Type,
-    polytypes : &mut HashMap<PolyTypeId, Type>,
+    polytypes : &mut HashMap<RefStr, Type>,
     results : &mut Vec<ResolvedSymbol>) {
-    for g in self.symbols.values() {
-      if g.name.as_ref() == name {
-        if g.polymorphic {
+    for sym in self.symbols.values() {
+      if sym.name.as_ref() == name {
+        if sym.is_polymorphic() {
           polytypes.clear();
-          if polytype_match(polytypes, t, &g.type_tag) {
-            let resolved_type = polytype_replace(polytypes, &g.type_tag);
-            results.push(ResolvedSymbol { def: g.clone(), resolved_type });
+          if polytype_match(polytypes, t, &sym.type_tag) {
+            let resolved_type = polytype_replace(polytypes, &sym.type_tag);
+            results.push(ResolvedSymbol { def: sym.clone(), resolved_type });
           }
         }
         else {
-          if let Some(resolved_type) = unify_types(&t, &g.type_tag) {
-            results.push(ResolvedSymbol { def: g.clone(), resolved_type });
+          if let Some(resolved_type) = unify_types(&t, &sym.type_tag) {
+            results.push(ResolvedSymbol { def: sym.clone(), resolved_type });
           }
         }
       }
@@ -595,6 +614,7 @@ impl TypeInfo {
 #[derive(Clone, Debug)]
 pub struct ResolvedSymbol {
   /// TODO: this is very inefficient, because these are searched for and returned repeatedly
+  /// Refactor to use the symbol id & unit id instead.
   pub def : SymbolDefinition,
   pub resolved_type : Type,
 }
@@ -605,7 +625,7 @@ pub struct TypeDirectory<'a> {
   new_module_id : UnitId,
   import_types : &'a [&'a TypeInfo],
   new_module : &'a mut TypeInfo,
-  polytype_bindings : HashMap<PolyTypeId, Type>,
+  polytype_bindings : HashMap<RefStr, Type>,
   symbol_results : Vec<ResolvedSymbol>,
 }
 

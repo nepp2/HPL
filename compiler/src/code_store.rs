@@ -54,7 +54,12 @@ impl CodeStore {
   }
 
   pub fn llvm_unit(&self, unit_id : UnitId) -> &LlvmUnit {
-    self.llvm_units.get(&unit_id).unwrap()
+    println!("Looking for llvm_unit {:?}", unit_id);
+    if let Some(lu) = self.llvm_units.get(&unit_id) {
+      return lu;
+    }
+    let parent_id = *self.subunit_parent.get(&unit_id).unwrap();
+    self.llvm_unit(parent_id)
   }  
 
   pub fn types(&self, unit_id : UnitId) -> &TypeInfo {

@@ -9,8 +9,8 @@ use crate::structure::{
 };
 use crate::types::{
   Type, PType, TypeDefinition, FunctionInit, SymbolDefinition,
-  TypeDirectory, SymbolInit, SymbolId, AbstractType, PolyTypeId,
-  SignatureBuilder, TypeMapping,
+  TypeDirectory, SymbolInit, SymbolId, AbstractType,
+  SignatureBuilder, TypeMapping, TypeContent,
 };
 use std::collections::HashMap;
 
@@ -109,9 +109,46 @@ impl Constraints {
   }
 }
 
-pub struct GatherConstraints<'l, 't> {
+pub fn get_module_constraints(
+  nodes : &Nodes,
+  t : &mut TypeDirectory,
+  mapping : &mut TypeMapping,
+  cache : &StringCache,
+  gen : &mut UIDGenerator,
+  errors : &mut Vec<Error>,
+) -> Constraints
+{
+  let mut c = Constraints::new();
+  let mut type_parameters = vec![];
+  ConstraintGenerator::new(&mut type_parameters, t, mapping, cache, gen, &mut c, errors)
+    .process_node(nodes, nodes.root);
+  c
+}
+
+pub fn get_polymorphic_function_instance_constraints(
+  n : &Nodes,
+  id : NodeId,
+  instanced_function_type : Type,
+  instanced_type_vars : &[Type],
+  t : &mut TypeDirectory,
+  mapping : &mut TypeMapping,
+  cache : &StringCache,
+  gen : &mut UIDGenerator,
+  errors : &mut Vec<Error>,
+) -> (Constraints, SymbolId)
+{
+  let mut c = Constraints::new();
+  let mut type_parameters = vec![];
+  let symbol_id =
+    ConstraintGenerator::new(
+      &mut type_parameters, t, mapping, cache, gen, &mut c, errors)
+    .process_polymorphic_function_instance(n, id, instanced_function_type, instanced_type_vars);
+  (c, symbol_id)
+}
+
+pub struct ConstraintGenerator<'l, 't> {
   labels : HashMap<LabelId, TypeSymbol>,
-  type_parameters : Vec<(RefStr, Type)>,
+  type_parameters : &'l mut Vec<(RefStr, Type)>,
   t : &'l mut TypeDirectory<'t>,
   mapping : &'l mut TypeMapping,
   cache : &'l StringCache,
@@ -120,9 +157,10 @@ pub struct GatherConstraints<'l, 't> {
   errors : &'l mut Vec<Error>,
 }
 
-impl <'l, 't> GatherConstraints<'l, 't> {
+impl <'l, 't> ConstraintGenerator<'l, 't> {
 
   pub fn new(
+    type_parameters : &'l mut Vec<(RefStr, Type)>,
     t : &'l mut TypeDirectory<'t>,
     mapping : &'l mut TypeMapping,
     cache : &'l StringCache,
@@ -131,9 +169,9 @@ impl <'l, 't> GatherConstraints<'l, 't> {
     errors : &'l mut Vec<Error>,
   ) -> Self
   {
-    GatherConstraints {
+    ConstraintGenerator {
       labels: HashMap::new(),
-      type_parameters : vec![],
+      type_parameters,
       cache, t, mapping, gen, c,
       errors,
     }
@@ -207,7 +245,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
     &mut self,
     n : &Nodes, id : NodeId,
     function_type : Type,
-    is_polymorphic_def : bool,
+    type_vars : &[RefStr],
     args : Vec<Reference>,
     body : NodeId,
     name : &RefStr)
@@ -219,13 +257,14 @@ impl <'l, 't> GatherConstraints<'l, 't> {
     let symbol_ts = self.type_symbol(node.loc);
     self.assert_type(symbol_ts, function_type);
     // Process the body
+    let is_polymorphic_def = type_vars.len() > 0;
     if !is_polymorphic_def {
       // Register argument types. MUST happen before gathering the body constraints.
       let args = args.iter().map(|arg| self.variable_to_type_symbol(arg)).collect();
       // Need new scope stack for new function body.
-      let mut ngc = GatherConstraints::new(
-        self.t, self.mapping, self.cache, self.gen,
-        self.c, self.errors
+      let mut ngc = ConstraintGenerator::new(
+        self.type_parameters, self.t, self.mapping, self.cache,
+        self.gen, self.c, self.errors
       );
       // Gather constraints for the body of the function. The arguments MUST be processed
       // first so that their type symbols are available.
@@ -252,7 +291,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
         name: name.clone(),
         type_tag: Type::any(),
         initialiser: SymbolInit::Function(f),
-        polymorphic: is_polymorphic_def,
+        type_vars: type_vars.iter().cloned().collect(),
       }
     });
     // Bind the symbol definition to its type symbol
@@ -263,15 +302,16 @@ impl <'l, 't> GatherConstraints<'l, 't> {
     symbol_id
   }
 
-  pub fn process_polymorphic_function_instance(&mut self, n : &Nodes, id : NodeId, instanced_function_type : Type, instanced_polytypes : &[Type]) 
+  pub fn process_polymorphic_function_instance(&mut self, n : &Nodes, id : NodeId, instanced_function_type : Type, instanced_type_vars : &[Type]) 
     -> SymbolId
   {
     let node = n.node(id);
     match &node.content {
-      Content::FunctionDefinition{ name, args, return_tag:_, polytypes, body } => {
-        self.with_instanced_type_parameters(polytypes.as_slice(), instanced_polytypes, |gc| {
+      Content::FunctionDefinition{ name, args, return_tag:_, type_vars, body } => {
+        println!("Process polymorphic instance: {} {:?} {:?} {:?}", name, args, type_vars, instanced_type_vars);
+        self.with_instanced_type_parameters(type_vars.as_slice(), instanced_type_vars, |gc| {
           let args = args.iter().map(|x| x.0.clone()).collect();
-          gc.process_function_def(n, id, instanced_function_type, false, args, *body, name)
+          gc.process_function_def(n, id, instanced_function_type, &[], args, *body, name)
         })
       }
       _ => panic!("unexpected node! expected polymorphic function definition."),
@@ -324,7 +364,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             name: name.name.clone(),
             type_tag: Type::any(),
             initialiser,
-            polymorphic: false,
+            type_vars: vec![],
           });
           self.constraint(SymbolDef{
             symbol_id,
@@ -379,9 +419,9 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           self.constraint(GlobalReference{ node: id, name: name.clone(), result: ts });
         }
       }
-      Content::FunctionDefinition{ name, args, return_tag, polytypes, body } => {
+      Content::FunctionDefinition{ name, args, return_tag, type_vars, body } => {
         self.assert(ts, PType::Void);
-        self.with_polytypes(polytypes.as_slice(), |gc, polytypes| {
+        self.with_type_parameters(type_vars.as_slice(), |gc, polytypes| {
           let is_polymorphic_def = polytypes.len() > 0;
           // Determine return type
           let return_type : Type = {
@@ -410,7 +450,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
             }
           }
           gc.process_function_def(
-            n, id, sig.into(), is_polymorphic_def, arg_names, *body, name);
+            n, id, sig.into(), polytypes.as_slice(), arg_names, *body, name);
         });
       }
       Content::CBind { name, type_tag } => {
@@ -430,17 +470,17 @@ impl <'l, 't> GatherConstraints<'l, 't> {
           name: name.clone(),
           initialiser: SymbolInit::CBind,
           type_tag: Type::any(),
-          polymorphic: false,
+          type_vars: vec![],
         });
       }
-      Content::TypeDefinition{ name, kind, fields, polytypes } => {
+      Content::TypeDefinition{ name, kind, fields, type_vars } => {
         self.assert(ts, PType::Void);
         if self.t.find_type_def(name.as_ref()).is_some() {
           let e = error_raw(node.loc, "type with this name already defined");
           self.errors.push(e)
         }
         else {
-          self.with_polytypes(polytypes.as_slice(), |gc, polytypes| {
+          self.with_type_parameters(type_vars.as_slice(), |gc, type_vars| {
             // TODO: check for duplicate fields?
             let mut field_types = vec![];
             for (_, type_tag) in fields.iter() {
@@ -457,7 +497,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
               unit_id: gc.t.new_module_id(),
               fields: fields.iter().map(|(f, _)| (f.clone(), Type::any())).collect(),
               kind: *kind,
-              polytypes,
+              type_vars,
               drop_function: None, clone_function: None,
             };
             gc.mapping.type_def_nodes.insert(name.clone(), id);
@@ -549,9 +589,8 @@ impl <'l, 't> GatherConstraints<'l, 't> {
     types : &[Type],
     f : F
   ) -> T
-    where F : FnOnce(&mut GatherConstraints) -> T
+    where F : FnOnce(&mut ConstraintGenerator) -> T
   {
-    let aaa = (); // TODO: this function isn't actually used yet
     for (i, pt) in type_parameters.iter().enumerate() {
       let t = types[i].clone();
       self.type_parameters.push((pt.clone(), t));
@@ -561,16 +600,14 @@ impl <'l, 't> GatherConstraints<'l, 't> {
     result
   }
 
-  fn with_polytypes<F>(&mut self, type_parameters : &[RefStr], f : F)
-    where F : Fn(&mut GatherConstraints, Vec<PolyTypeId>)
+  fn with_type_parameters<F>(&mut self, type_parameters : &[RefStr], f : F)
+    where F : Fn(&mut ConstraintGenerator, Vec<RefStr>)
   {
-    let mut polytype_ids = vec![];
     for pt in type_parameters.iter() {
-      let id : PolyTypeId = self.gen.next().into();
-      polytype_ids.push(id);
-      self.type_parameters.push((pt.clone(), id.into()));
+      let t = TypeContent::Polytype(pt.clone()).into();
+      self.type_parameters.push((pt.clone(), t));
     }
-    f(self, polytype_ids);
+    f(self, type_parameters.iter().cloned().collect());
     self.type_parameters.drain((self.type_parameters.len()-type_parameters.len())..);
   }
 
@@ -588,7 +625,7 @@ impl <'l, 't> GatherConstraints<'l, 't> {
 
   /// Converts expression into type.
   fn expr_to_type(&mut self, expr : &Expr) -> Option<Type> {
-    fn expr_to_type_internal(gc: &mut GatherConstraints, expr : &Expr) -> Result<Type, Error> {
+    fn expr_to_type_internal(gc: &mut ConstraintGenerator, expr : &Expr) -> Result<Type, Error> {
       if let ExprContent::LiteralUnit = &expr.content {
         return Ok(PType::Void.into());
       }

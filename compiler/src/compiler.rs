@@ -93,7 +93,7 @@ impl Compiler {
       inference_solver::infer_types(
         unit_id, &self.code_store, &self.cache, &mut self.gen)?;
     for def in types.symbols.values() {
-      if def.polymorphic {
+      if def.is_polymorphic() {
         let pf = PolyFunction {
           source_unit: def.unit_id,
           instances: HashMap::new(),
@@ -132,11 +132,11 @@ impl Compiler {
           }
         }
       }
-    }
-    // Register new type info with the code store
-    for (instance_unit_id, instance_types, instance_mapping) in new_types {
-      self.code_store.types.insert(instance_unit_id, instance_types);
-      self.code_store.type_mappings.insert(instance_unit_id, instance_mapping);
+      // Register new type info with the code store
+      for (instance_unit_id, instance_types, instance_mapping) in new_types.drain(..) {
+        self.code_store.types.insert(instance_unit_id, instance_types);
+        self.code_store.type_mappings.insert(instance_unit_id, instance_mapping);
+      }
     }
     Ok(())
   }
@@ -173,6 +173,7 @@ impl Compiler {
     // Register the tightly-coupled polymorphic instances
     let mut subunits = vec![];
     for &subunit_id in codegen_subunits.iter() {
+      println!("Registering subunit {:?} with {:?}", subunit_id, unit_id);
       self.code_store.subunit_parent.insert(subunit_id, unit_id);
       subunits.push(subunit_id);
     }
