@@ -29,7 +29,6 @@ pub struct CodeStore {
   pub nodes : HashMap<UnitId, Nodes>,
   pub types : HashMap<UnitId, TypeInfo>,
   pub type_mappings : HashMap<UnitId, TypeMapping>,
-  pub subunit_parent : HashMap<UnitId, UnitId>,
   pub llvm_units : HashMap<UnitId, LlvmUnit>,
   pub vals : HashMap<UnitId, Val>,
   pub poly_functions : HashMap<SymbolId, PolyFunction>,
@@ -54,12 +53,7 @@ impl CodeStore {
   }
 
   pub fn llvm_unit(&self, unit_id : UnitId) -> &LlvmUnit {
-    println!("Looking for llvm_unit {:?}", unit_id);
-    if let Some(lu) = self.llvm_units.get(&unit_id) {
-      return lu;
-    }
-    let parent_id = *self.subunit_parent.get(&unit_id).unwrap();
-    self.llvm_unit(parent_id)
+    self.llvm_units.get(&unit_id).unwrap()
   }  
 
   pub fn types(&self, unit_id : UnitId) -> &TypeInfo {

@@ -1,13 +1,14 @@
 
 use crate::{
-  error, c_interface, types, llvm_codegen, code_store, compiler
+  error, c_interface, types, llvm_codegen, code_store, compiler, expr
 };
 
 use error::{Error, error_raw};
 use c_interface::CSymbols;
-use types::UnitId;
+use types::{UnitId, SymbolId, SymbolInit};
 use code_store::CodeStore;
 use llvm_codegen::{Gen, dump_module, CompileInfo };
+use expr::RefStr;
 
 use inkwell::context::{Context};
 use inkwell::passes::PassManager;
@@ -19,10 +20,18 @@ use inkwell::module::Module;
 // TODO: Get rid of this static mut?
 static mut LOADED_SYMBOLS : bool = false;
 
+pub enum SymbolLocation {
+  CBind(RefStr),
+  Function(UnitId, SymbolId),
+  Global(UnitId, SymbolId),
+}
+
 pub struct LlvmUnit {
   pub unit_id : UnitId,
   pub ee : ExecutionEngine,
   pub llvm_module : Module,
+  pub globals_to_link : Vec<(GlobalValue, SymbolLocation)>,
+  pub functions_to_link : Vec<(FunctionValue, SymbolLocation)>,
 }
 
 pub fn execute_function<T>(function_name : &str, llvm_unit : &LlvmUnit) -> T {
@@ -46,9 +55,7 @@ impl LlvmCompiler {
   pub fn compile_unit(
     &self,
     unit_id : UnitId,
-    subunits : &[UnitId],
     code_store : &CodeStore,
-    c_symbols : &CSymbols
   ) -> Result<LlvmUnit, Error>
   {
     let name = code_store.name(unit_id);
@@ -75,14 +82,13 @@ impl LlvmCompiler {
     }
     pm.initialize();
 
-    let mut globals_to_link : Vec<(GlobalValue, usize)> = vec![];
-    let mut functions_to_link : Vec<(FunctionValue, usize)> = vec![];
+    let mut globals_to_link = vec![];
+    let mut functions_to_link = vec![];
     {
       //let type_directory
       let gen = Gen::new(
         &self.context, &mut llvm_module, &mut ee.get_target_data(),
-        &c_symbols.local_symbol_table, &mut globals_to_link,
-        &mut functions_to_link, &pm);
+        &mut globals_to_link, &mut functions_to_link, &pm);
       let info = CompileInfo::new(code_store, types, nodes, mapping);
       gen.codegen_module(&info)?
     };
@@ -91,22 +97,63 @@ impl LlvmCompiler {
       dump_module(&llvm_module);
     }
 
-    // Link c globals
-    for (global_value, address) in globals_to_link.iter() {
-      // println!("c global '{}' - {}", name, address);
-      ee.add_global_mapping(global_value, *address);
-    }
-
-    // Link c functions
-    for (function_value, address) in functions_to_link.iter() {
-      // println!("c function '{}' - {}", name, address);
-      ee.add_global_mapping(function_value, *address);
-    }
-
-    // TODO: is this needed?
-    ee.run_static_constructors();
-
-    let lu = LlvmUnit { unit_id, ee, llvm_module };
+    let lu = LlvmUnit { unit_id, ee, llvm_module, globals_to_link, functions_to_link };
     Ok(lu)
   }
+}
+
+fn find_symbol_address(code_store : &CodeStore, c_symbols : &CSymbols, loc : &SymbolLocation) -> usize {
+  match loc {
+    SymbolLocation::CBind(name) => {
+      if let Some(address) = c_symbols.local_symbol_table.get(name) {
+        *address
+      }
+      else {
+        panic!("c symbol '{}' could not be found.", name)
+      }
+    }
+    SymbolLocation::Function(unit_id, symbol_id) => {
+      let def = code_store.types(*unit_id).symbols.get(&symbol_id).unwrap();
+      let init = match &def.initialiser {
+        SymbolInit::Function(init) => init, _ => panic!("expected function initialiser") 
+      };
+      let lu = code_store.llvm_unit(*unit_id);
+      unsafe {
+        lu.ee.get_function_address(&init.name_for_codegen)
+          .expect("function pointer was null") as usize
+      }
+    }
+    SymbolLocation::Global(unit_id, symbol_id) => {
+      let def = code_store.types(*unit_id).symbols.get(&symbol_id).unwrap();
+      let lu = code_store.llvm_unit(*unit_id);
+      unsafe {
+        lu.ee.get_global_address(&def.name)
+          .expect("global pointer was null") as usize
+      }
+    }
+  }
+}
+
+pub fn link_unit(
+  unit_id : UnitId,
+  code_store : &CodeStore,
+  c_symbols : &CSymbols,
+)
+{
+  let lu = code_store.llvm_unit(unit_id);
+
+  // Link globals
+  for (global_value, loc) in lu.globals_to_link.iter() {
+    let address = find_symbol_address(code_store, c_symbols, loc);
+    lu.ee.add_global_mapping(global_value, address);
+  }
+
+  // Link functions
+  for (function_value, loc) in lu.functions_to_link.iter() {
+    let address = find_symbol_address(code_store, c_symbols, loc);
+    lu.ee.add_global_mapping(function_value, address);
+  }
+
+  // TODO: is this needed?
+  lu.ee.run_static_constructors();
 }

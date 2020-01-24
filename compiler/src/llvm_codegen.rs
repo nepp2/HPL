@@ -11,6 +11,7 @@ use crate::types::{
   Type, PType, TypeDefinition, SymbolInit, SymbolId, TypeMapping,
   SymbolDefinition, TypeInfo, TypeContent, UnitId };
 use crate::code_store::CodeStore;
+use crate::llvm_compile::SymbolLocation;
 
 use std::collections::HashMap;
 
@@ -132,13 +133,12 @@ pub struct Gen<'l> {
   context: &'l Context,
   module : &'l mut Module,
   target_data : &'l TargetData,
-  c_symbol_table : &'l HashMap<RefStr, usize>,
 
   /// Globals that need linking when the execution engine is created
-  globals_to_link: &'l mut Vec<(GlobalValue, usize)>,
+  globals_to_link: &'l mut Vec<(GlobalValue, SymbolLocation)>,
 
   /// Functions that need linking when the execution engine is created
-  functions_to_link: &'l mut Vec<(FunctionValue, usize)>,
+  functions_to_link: &'l mut Vec<(FunctionValue, SymbolLocation)>,
 
   struct_types: HashMap<RefStr, StructType>,
 
@@ -226,22 +226,6 @@ impl <'l> CompileInfo<'l> {
     self.code_store.types(unit_id).find_type_def(name)
   }
 
-  fn find_function_address(&self, unit_id : UnitId, name_for_codegen : &str) -> usize {
-    unsafe {
-      self.code_store.llvm_unit(unit_id)
-        .ee.get_function_address(name_for_codegen)
-        .expect("function pointer was null") as usize
-    }
-  }
-
-  fn find_global_address(&self, unit_id : UnitId, name : &str) -> usize {
-    unsafe {
-      self.code_store.llvm_unit(unit_id)
-        .ee.get_global_address(name)
-        .expect("global pointer was null") as usize
-    }
-  }
-
   fn get_global_def(&self, unit_id : UnitId, global_id : SymbolId) -> Option<&SymbolDefinition> {
     if self.t.unit_id == unit_id {
       self.t.symbols.get(&global_id)
@@ -311,9 +295,8 @@ impl <'l> Gen<'l> {
     context: &'l Context,
     module : &'l mut Module,
     target_data : &'l TargetData,
-    c_symbol_table : &'l HashMap<RefStr, usize>,
-    globals_to_link: &'l mut Vec<(GlobalValue, usize)>,
-    functions_to_link: &'l mut Vec<(FunctionValue, usize)>,
+    globals_to_link: &'l mut Vec<(GlobalValue, SymbolLocation)>,
+    functions_to_link: &'l mut Vec<(FunctionValue, SymbolLocation)>,
     pm : &'l PassManager<FunctionValue>,
   )
       -> Gen<'l>
@@ -321,21 +304,10 @@ impl <'l> Gen<'l> {
     Gen {
       context, module,
       target_data,
-      c_symbol_table,
       globals_to_link,
       functions_to_link,
       struct_types: HashMap::new(),
       pm,
-    }
-  }
-
-  fn get_c_symbol_address(&self, loc : TextLocation, name : &str) -> Result<usize, Error> {
-    if let Some(address) = self.c_symbol_table.get(name) {
-      Ok(*address)
-    }
-    else {
-      println!("FAILURE");
-      error(loc, format!("c symbol '{}' could not be found.", name))
     }
   }
 
@@ -349,15 +321,14 @@ impl <'l> Gen<'l> {
         match &def.initialiser {
           SymbolInit::CBind => {
             let loc = info.symbol_node(def.unit_id, def.id).loc;
+            let symloc = SymbolLocation::CBind(def.name.clone());
             if let Some(sig) = def.type_tag.sig() {
               let f = self.codegen_prototype(info, def.name.as_ref(), sig.return_type, None, sig.args);
-              let address = self.get_c_symbol_address(loc, &def.name)?;
-              self.functions_to_link.push((f, address));
+              self.functions_to_link.push((f, symloc));
             }
             else {
               let gv = self.module.add_global(t, Some(AddressSpace::Generic), &def.name);
-              let address = self.get_c_symbol_address(loc, &def.name)?;
-              self.globals_to_link.push((gv, address));
+              self.globals_to_link.push((gv, symloc));
             }
           }
           SymbolInit::Expression(_node) => {
@@ -1199,8 +1170,8 @@ impl <'l, 'a> GenFunction<'l, 'a> {
           else {
             let f = self.gen.codegen_prototype(info, &def.name, sig.return_type, None, sig.args);
             let loc = info.symbol_node(def.unit_id, def.id).loc;
-            let address = self.gen.get_c_symbol_address(loc, &def.name).unwrap();
-            self.gen.functions_to_link.push((f, address));
+            let symloc = SymbolLocation::CBind(def.name.clone());
+            self.gen.functions_to_link.push((f, symloc));
             f
           };
           reg(fv.as_global_value().as_pointer_value().into())
@@ -1218,20 +1189,16 @@ impl <'l, 'a> GenFunction<'l, 'a> {
 
   /// ensure necessary definitions are inserted and linking operations performed when a global is referenced
   fn get_linked_global_reference(&mut self, info: &CompileInfo, def : &SymbolDefinition) -> GlobalValue {
-    if def.unit_id == info.t.unit_id {
-      self.gen.module.get_global(&def.name)
-        .expect("expected local global!")
-    }
     // Check if it was already added
-    else if let Some(gv) = self.gen.module.get_global(&def.name) {
+    if let Some(gv) = self.gen.module.get_global(&def.name) {
       gv
     }
     // Else find and include it
     else {
       let t = self.gen.to_basic_type(info, &def.type_tag).unwrap();
       let gv = self.gen.module.add_global(t, Some(AddressSpace::Generic), &def.name);
-      let address = info.find_global_address(def.unit_id, &def.name);
-      self.gen.globals_to_link.push((gv, address));
+      let symloc = SymbolLocation::Global(def.unit_id, def.id);
+      self.gen.globals_to_link.push((gv, symloc));
       gv
     }
   }
@@ -1243,20 +1210,16 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     }
     match &def.initialiser {
       SymbolInit::Function(init) => {
-        if def.unit_id == info.t.unit_id {
-          self.gen.module.get_function(&init.name_for_codegen)
-            .expect("expected local function!")
-        }
         // Check if it was already added
-        else if let Some(f) = self.gen.module.get_function(&def.name) {
+        if let Some(f) = self.gen.module.get_function(&init.name_for_codegen) {
           f
         }
         // Else find and include it
         else {
           let sig = def.type_tag.sig().unwrap();
           let f = self.gen.codegen_prototype(info, &init.name_for_codegen, sig.return_type, Some(&init.args), sig.args);
-          let address = info.find_function_address(def.unit_id, &init.name_for_codegen);
-          self.gen.functions_to_link.push((f, address));
+          let symloc = SymbolLocation::Function(def.unit_id, def.id);
+          self.gen.functions_to_link.push((f, symloc));
           f
         }
       }

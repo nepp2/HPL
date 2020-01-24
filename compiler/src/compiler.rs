@@ -143,43 +143,31 @@ impl Compiler {
 
   fn codegen(&mut self, unit_id : UnitId) -> Result<(), Error> {
     // Find all of the polymorphic instances that this unit depends on,
-    // and which still need to be code generated. Some of these will be
-    // generated into the same LlvmUnit, and some into a free-standing
-    // unit.
-    let mut codegen_subunits = HashSet::new();
-    let mut codegen_independent = HashSet::new();
+    // and which still need to be code generated
+    let mut units_to_codegen = HashSet::new();
+    units_to_codegen.insert(unit_id);
     let mut polymorph_search_queue = VecDeque::new();
     polymorph_search_queue.push_back(unit_id);
     while let Some(psid) = polymorph_search_queue.pop_front() {
       let mapping = self.code_store.type_mappings.get(&psid).unwrap();
-      for (poly_unit_id, symbol_id, type_tag) in mapping.polymorphic_references.iter() {
+      for (_, symbol_id, type_tag) in mapping.polymorphic_references.iter() {
         let pf = self.code_store.poly_functions.get(symbol_id).unwrap();
         let instance_unit_id = pf.instances.get(type_tag).unwrap().0;
-        // Check if the instance needs to be code generated with its parent
-        if *poly_unit_id == unit_id {
-          codegen_subunits.insert(instance_unit_id);
+        if !self.code_store.llvm_units.contains_key(&instance_unit_id) {
+          units_to_codegen.insert(instance_unit_id);
           polymorph_search_queue.push_back(instance_unit_id);
-        }
-        // If not, check if it needs to be code generated separately
-        else if !self.code_store.llvm_units.contains_key(&instance_unit_id) {
-          codegen_independent.insert(instance_unit_id);
         }
       }
     }
-    // Codegen the independent polymorphic instances
-    for id in codegen_independent {
-      self.codegen(id)?;
+    // Codegen the new units
+    for &id in units_to_codegen.iter() {
+      let lu = self.llvm_compiler.compile_unit(id, &self.code_store)?;
+      self.code_store.llvm_units.insert(id, lu);
     }
-    // Register the tightly-coupled polymorphic instances
-    let mut subunits = vec![];
-    for &subunit_id in codegen_subunits.iter() {
-      println!("Registering subunit {:?} with {:?}", subunit_id, unit_id);
-      self.code_store.subunit_parent.insert(subunit_id, unit_id);
-      subunits.push(subunit_id);
+    // Link the new units
+    for &id in units_to_codegen.iter() {
+      llvm_compile::link_unit(id, &self.code_store, &self.c_symbols);
     }
-    // Codegen the main module
-    let llvm_unit = self.llvm_compiler.compile_unit(unit_id, subunits.as_slice(), &self.code_store, &self.c_symbols)?;
-    self.code_store.llvm_units.insert(unit_id, llvm_unit);
     Ok(())
   }
 
