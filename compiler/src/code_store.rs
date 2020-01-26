@@ -17,10 +17,13 @@ pub struct SourceId(u64);
 
 impl From<u64> for SourceId { fn from(v : u64) -> Self { SourceId(v) } }
 
-pub struct PolyFunction {
-  pub source_unit : UnitId,
-  pub instances : HashMap<Type, (UnitId, SymbolId)>,
+pub struct PolyInstanceInfo {
+  pub poly_unit_id : UnitId,
+  pub instance_symbol_id : SymbolId,
+  pub instance_unit_id : UnitId,  
 }
+
+pub type PolyInstanceMap = HashMap<SymbolId, HashMap<Type, PolyInstanceInfo>>;
 
 #[derive(Default)]
 pub struct CodeStore {
@@ -31,7 +34,7 @@ pub struct CodeStore {
   pub type_mappings : HashMap<UnitId, TypeMapping>,
   pub llvm_units : HashMap<UnitId, LlvmUnit>,
   pub vals : HashMap<UnitId, Val>,
-  pub poly_functions : HashMap<SymbolId, PolyFunction>,
+  pub poly_function_instances : PolyInstanceMap,
 }
 
 impl CodeStore {
@@ -64,7 +67,7 @@ impl CodeStore {
     self.type_mappings.get(&unit_id).unwrap()
   }
 
-  pub fn poly_function(&self, symbol_id : SymbolId) -> &PolyFunction {
-    self.poly_functions.get(&symbol_id).unwrap()
+  pub fn poly_function_instance(&self, poly_symbol_id : SymbolId, instance_type : &Type) -> Option<&PolyInstanceInfo> {
+    self.poly_function_instances.get(&poly_symbol_id).and_then(|m| m.get(instance_type))
   }
 }
