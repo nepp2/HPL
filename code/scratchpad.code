@@ -17,6 +17,8 @@ struct list(T) {
 
 fun list() => list(T) with T {
   let v = 0 as u64
+  /// BROKEN, maybe constructors
+  /// don't handle polymorphism?
   let inner = inner_list.new(0, v as ptr(T), 0)
   list.new(alloc(inner))
 }
