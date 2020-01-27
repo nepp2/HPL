@@ -1,6 +1,41 @@
 # LOG - 27/01/2020
 
-I need to fix polymorphic structs. They don't typecheck properly _or_ codegen properly.
+Fixed polymorphic structs, as they didn't typecheck properly _or_ codegen properly.
+
+I then ran into the issue that I don't provide an option to differentiate between reference and value semantics in an implicit way. You can explicitly take a pointer to something and then call a function with it, but you can't call a function that implicitly takes certain arguments as pointers.
+
+This a problem for any function that mutates its arguments. For example:
+
+```rust
+  fun add(list : list(T), item : T) with T {
+    // add an element to a list
+  }
+```
+This signature would work in a language like Java or Python, but in this language the list struct will be passed by value. So it is copied into the function, then modified locally, and the external copy is left unchanged.
+
+Another problem is that, with overloading and implicit referencing, the following two function signatures will clash:
+
+```rust
+  fun add(list : list(T), item : T) with T { ... }
+  fun add(list : ptr(list(T)), item : T) with T { ... }
+```
+
+An alternative syntax that would make this clearer could look like this:
+
+```rust
+  fun add(list : list(T), item : T) with T { ... }
+  fun add(ref list : list(T), item : T) with T { ... }
+```
+
+I'm not sure how this would actually work as a type. It seems like something which possibly only needs to influence code generation... Although the type system has to know when a function pointer's arguments need to be refs or values.
+
+The common modern approach to reference semantics is to make them a fixed characteristic of the type. For example, `class Foo` is always passed around as a pointer, while `struct Bar` is always passed as a value. This works, but it limits the memory model, specifically because a `class` instance can never be stored inline.
+
+Julia divides types based on whether they are immutable or mutable. The compiler is then free to store and pass immutable objects as values or references, but must pass mutable objects as references. Immutable objects are copied when updated, but this can compile down to fast in-place mutation if they are stored inline in a mutable variable or object.
+
+The Rust and C++ style of growable list only works thanks to move semantics. In other languages, a growable list will be allocated as at least two heap objects. This is likely true in Swift.
+
+I think the quickest solution, for now, is to implement the list as a java-style reference type, like an array list. I can decide what to do about this later.
 
 # LOG - 24/01/2020
 

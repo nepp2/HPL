@@ -690,9 +690,6 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
       error(expr, format!("invalid type expression {}", expr))
     }
     let r = expr_to_type_internal(self, expr);
-    if let Ok(t) = r.as_ref() {
-      println!("PARSED TYPE: {}", t)
-    }
     self.log_error(r)
   }
 }  

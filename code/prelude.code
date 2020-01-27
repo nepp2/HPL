@@ -4,6 +4,10 @@ cbind free : fun(ptr: ptr(u8))
 cbind memcpy : fun(dest : ptr(u8), src : ptr(u8), length : u64) => ptr(u8)
 cbind panic : fun(s : ptr(string))
 
+fun panic(s : string) {
+  panic(&s)
+}
+
 struct range {
   start : i64
   limit : i64

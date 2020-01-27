@@ -439,7 +439,6 @@ impl <'a> Inference<'a> {
         }
       }
       GlobalReference { node, name, result } => {
-        println!("Visiting GlobalReference constraint {} at {}", name, self.loc(*result));
         let any = Type::any();
         let t = self.get_type(*result).cloned().unwrap_or(any);
         match self.t.find_symbol(&name, &t) {
@@ -459,7 +458,6 @@ impl <'a> Inference<'a> {
       FieldAccess{ container, field, result } => {
         let container_type = self.resolved.get(container);
         if let Some(ct) = container_type {
-          println!("Field access on container of type {}", ct);
           let mut t = ct;
           // Dereference any pointers
           while let Some(inner) = t.ptr() {
@@ -468,11 +466,9 @@ impl <'a> Inference<'a> {
           if let Def(name, unit_id) = &t.content {
             self.dependency_map.register_typedef(name, c);
             let def = self.t.get_type_def(&name, *unit_id);
-            let f = def.fields.iter().find(|(n, _)| n.name == field.name);
-            if let Some((_, t)) = f {
-              println!("Found field of type {}", t);
-              let mt = t.clone();
-              self.update_type(*result, &mt);
+            let field_type = def.instanced_field_type(&field.name, t.children.as_slice());
+            if let Some(t) = field_type {
+              self.update_type(*result, &t);
             }
             else {
               let s = format!("type '{}' has no field '{}'", def.name, field.name);

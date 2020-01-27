@@ -752,12 +752,14 @@ fn float_binary_ops(gf : &mut GenFunction, name: &str, a : TypedNode, b : TypedN
   }
 }
 
-fn integer_binary_ops(gf : &mut GenFunction, name: &str, a : TypedNode, b : TypedNode)
-  -> Result<GenVal, Error>
+fn integer_binary_ops(
+  gf : &mut GenFunction, name: &str,
+  node_a : TypedNode, node_b : TypedNode
+) -> Result<GenVal, Error>
 {
-  let t = a.type_tag();
-  let a = gf.codegen_int(a)?;
-  let b = gf.codegen_int(b)?;
+  let t = node_a.type_tag();
+  let a = gf.codegen_int(node_a)?;
+  let b = gf.codegen_int(node_b)?;
   match name {
     "+" => binary_op!(build_int_add, gf, a, b),
     "-" => binary_op!(build_int_sub, gf, a, b),
@@ -775,7 +777,10 @@ fn integer_binary_ops(gf : &mut GenFunction, name: &str, a : TypedNode, b : Type
     "<" => compare_op!(build_int_compare, IntPredicate::SLT, gf, a, b),
     "<=" => compare_op!(build_int_compare, IntPredicate::SLE, gf, a, b),
     "==" => compare_op!(build_int_compare, IntPredicate::EQ, gf, a, b),
-    _ => panic!("invalid intrinsic"),
+    "!=" => compare_op!(build_int_compare, IntPredicate::NE, gf, a, b),
+    _ =>
+      panic!("invalid intrinsic '{} {} {}'",
+        node_a.type_tag(), name, node_b.type_tag()),
   }
 }
 

@@ -12,11 +12,7 @@ use std::collections::{HashMap, HashSet};
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct UnitId(Uid);
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct PolyTypeId(Uid);
-
 impl From<Uid> for UnitId { fn from(v : Uid) -> Self { UnitId(v) } }
-impl From<Uid> for PolyTypeId { fn from(v : Uid) -> Self { PolyTypeId(v) } }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct SymbolId {
@@ -119,6 +115,11 @@ fn polytype_replace(polytypes : &HashMap<RefStr, Type>, polytype : &Type) -> Typ
   let mut t = polytype.clone();
   polytype_replace_internal(polytypes, &mut t);
   t
+}
+
+trait PolyTypes {
+  fn get<'l>(&'l self, name : &str) -> Option<&'l Type>;
+  fn insert(&mut self, name : RefStr, t : Type);
 }
 
 /// `polytype` may be a polymorphic type. It will be treated like `Abstract(Any)`.
@@ -326,6 +327,34 @@ pub struct TypeDefinition {
   pub clone_function : Option<ResolvedSymbol>,
 }
 
+impl TypeDefinition {
+
+  pub fn is_polymorphic(&self) -> bool {
+    self.type_vars.len() > 0
+  }
+
+  pub fn instanced_field_type(&self, name : &str, type_var_instances : &[Type]) -> Option<Type> {
+    for (r, t) in self.fields.iter() {
+      if r.name.as_ref() == name {
+        let mut t = t.clone();
+        self.monomorphise_type(&mut t, type_var_instances);
+        return Some(t);
+      }
+    }
+    None
+  }
+
+  fn monomorphise_type(&self, t : &mut Type, type_var_instances : &[Type]) {
+    if let TypeContent::Polytype(name) = &t.content {
+      let i = self.type_vars.iter().position(|tv| tv == name).unwrap();
+      *t = type_var_instances[i].clone();
+    }
+    for c in t.children.iter_mut() {
+      self.monomorphise_type(c, type_var_instances);
+    }
+  }
+}
+
 #[derive(Debug, Clone)]
 pub enum FunctionImplementation {
   Normal{body: NodeId, name_for_codegen: RefStr, args : Vec<Reference> },
@@ -379,13 +408,6 @@ impl SymbolDefinition {
       panic!("instanced signature did not match polymorphic function signature");
     }
     self.type_vars.iter().map(|v| polytype_map.remove(v).unwrap()).collect()
-  }
-}
-
-impl  fmt::Display for PolyTypeId {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let PolyTypeId(id) = *self;
-    write!(f, "{}", id)
   }
 }
 
