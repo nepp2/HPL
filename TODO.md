@@ -11,8 +11,8 @@
     - Prevent instanced function definitions from contaminating type resolution!
   - ~~Codegen the monomorphised functions~~
 - Solve implicit reference problem
-  - For now, support passing arguments as pointers automatically at the call site
-  - The type checking mechanism is unclear. Due to overloading, the reference of an argument should possibly be independent of its type.
+  - Implement crude template-based reference type?
+  - Support passing arguments as pointers automatically at the call site?
 - Load and replace modules in basic DLL style
   - Load & codegen modules dynamically
     - May work already

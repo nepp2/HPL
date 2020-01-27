@@ -1,16 +1,27 @@
 
-struct list(T) {
+fun alloc(v : T) => T with T {
+  let p = malloc(sizeof(T)) as ptr(T)
+  *p = v
+  p
+}
+
+struct inner_list(T) {
   len : u64
   data : ptr(T)
   capacity : u64
 }
 
-fun list() => list(T) with T {
-  let v = 0 as u64
-  list.new(0, v as ptr(T), 0)
+struct list(T) {
+  p : ptr(inner_list(T))
 }
 
-fun add(list : ptr(list(T)), item : T) with T {
+fun list() => list(T) with T {
+  let v = 0 as u64
+  let inner = inner_list.new(0, v as ptr(T), 0)
+  list.new(alloc(inner))
+}
+
+fun add(list : list(T), item : T) with T {
   let len = list.len
   print("len: "); print(len); println()
   if list.capacity <= list.len {
@@ -49,7 +60,7 @@ let nums : list(i64) = list()
 
 for x in range(0, 10) {
   print(x) ; println()
-  nums.add(x)
+  //nums.add(x)
 }
 
 //println(nums)
