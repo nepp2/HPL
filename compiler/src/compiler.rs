@@ -5,7 +5,7 @@ use crate::{
 };
 use expr::{StringCache, Expr, UIDGenerator};
 use c_interface::CSymbols;
-use code_store::{CodeStore, SourceId, PolyInstanceInfo};
+use code_store::{CodeStore, SourceId};
 use types::{TypeContent, PType, UnitId};
 use llvm_compile::{LlvmCompiler, execute_function};
 use error::{Error, error};
@@ -92,8 +92,8 @@ impl Compiler {
     let (types, mapping) =
       inference_solver::infer_types(
         unit_id, &self.code_store, &self.cache, &mut self.gen)?;
-    self.code_store.types.insert(unit_id, types);
-    self.code_store.type_mappings.insert(unit_id, mapping);
+        self.code_store.types.insert(unit_id, types);
+        self.code_store.type_mappings.insert(unit_id, mapping);
     self.typecheck_new_polymorphic_instances(unit_id)?;
     Ok(())
   }
@@ -106,21 +106,24 @@ impl Compiler {
     while let Some(psid) = polymorph_search_queue.pop_front() {
       let mapping = self.code_store.type_mappings.get(&psid).unwrap();
       for (poly_unit_id, poly_symbol_id, instance_type) in mapping.polymorphic_references.iter() {
-        if self.code_store.poly_function_instance(*poly_symbol_id, instance_type).is_none() {
+        let instance_exists =
+          self.code_store.poly_instance(*poly_symbol_id, instance_type).is_some();
+        if !instance_exists {
           // Create a new unit for the function instance and typecheck it
           let instance_unit_id = self.gen.next().into();
           let poly_def = self.code_store.types(*poly_unit_id).symbols.get(poly_symbol_id).unwrap();
           let (instance_types, instance_mapping, instance_symbol_id) =
             inference_solver::typecheck_polymorphic_function_instance(
-              instance_unit_id, poly_def, instance_type, &self.code_store, &self.cache, &mut self.gen)?;
+              instance_unit_id, poly_def, instance_type, &self.code_store,
+              &self.cache, &mut self.gen)?;
           // Register the instance with the code store
-          let instance_info = PolyInstanceInfo {
-            poly_unit_id: *poly_unit_id,
-            instance_symbol_id,
+          let instances = self.code_store.poly_instances.entry(*poly_symbol_id).or_default();
+          instances.insert(
+            instance_type.clone(),
+            (instance_symbol_id, instance_unit_id).into());
+          self.code_store.poly_parents.insert(
             instance_unit_id,
-          };
-          self.code_store.poly_function_instances.entry(*poly_symbol_id)
-            .or_default().insert(instance_type.clone(), instance_info);
+            (*poly_symbol_id, *poly_unit_id).into());
           new_types.push((instance_unit_id, instance_types, instance_mapping));
           // Register the new unit to be searched for more polymorphic instances
           polymorph_search_queue.push_back(instance_unit_id);
@@ -142,14 +145,13 @@ impl Compiler {
     units_to_codegen.insert(unit_id);
     let mut polymorph_search_queue = VecDeque::new();
     polymorph_search_queue.push_back(unit_id);
-    let aaa = (); // TODO: this operation will become super slow, because the `poly_function_instance` function is slow.
     while let Some(psid) = polymorph_search_queue.pop_front() {
       let mapping = self.code_store.type_mappings.get(&psid).unwrap();
       for (_, symbol_id, type_tag) in mapping.polymorphic_references.iter() {
-        let i = self.code_store.poly_function_instance(*symbol_id, type_tag).unwrap();
-        if !self.code_store.llvm_units.contains_key(&i.instance_unit_id) {
-          units_to_codegen.insert(i.instance_unit_id);
-          polymorph_search_queue.push_back(i.instance_unit_id);
+        let id = self.code_store.poly_instance(*symbol_id, type_tag).unwrap();
+        if !self.code_store.llvm_units.contains_key(&id.uid) {
+          units_to_codegen.insert(id.uid);
+          polymorph_search_queue.push_back(id.uid);
         }
       }
     }

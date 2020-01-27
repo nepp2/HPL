@@ -1145,8 +1145,8 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     let info = node.info;
     // Replace any polymorphic def with the correct monomorphic instance
     let def = if def.is_polymorphic() {
-      let i = info.code_store.poly_function_instance(def.id, node.type_tag()).unwrap();
-      let def = info.symbol_def(i.instance_unit_id, i.instance_symbol_id);
+      let id = info.code_store.poly_instance(def.id, node.type_tag()).unwrap();
+      let def = info.symbol_def(id.uid, id.sid);
       def
     }
     else {

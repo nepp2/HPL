@@ -6,10 +6,10 @@
   - ~~Find set of functions to monomorphise~~
   - ~~Add a code store that centralises information about all loaded code~~
   - ~~_Don't_ try to codegen the polymorphic versions~~
-  - Add a new linking step, which happens _after_ code generation.
-  - Typecheck the monomorphised functions
+  - ~~Add a new linking step, which happens _after_ code generation.~~
+  - ~~Typecheck the monomorphised functions~~
     - Prevent instanced function definitions from contaminating type resolution!
-  - Codegen the monomorphised functions
+  - ~~Codegen the monomorphised functions~~
 - Load and replace modules in basic DLL style
   - Load & codegen modules dynamically
     - May work already

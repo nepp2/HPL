@@ -308,7 +308,11 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
     let node = n.node(id);
     match &node.content {
       Content::FunctionDefinition{ name, args, return_tag:_, type_vars, body } => {
-        println!("Process polymorphic instance: {} {:?} {:?} {:?}", name, args, type_vars, instanced_type_vars);
+        print!("Process polymorphic instance: {} [", name);
+        for (r, e) in args {
+          print!("{} : {:?}, ", r.name, e);
+        }
+        println!("] {:?} {:?}", type_vars, instanced_type_vars);
         self.with_instanced_type_parameters(type_vars.as_slice(), instanced_type_vars, |gc| {
           let args = args.iter().map(|x| x.0.clone()).collect();
           gc.process_function_def(n, id, instanced_function_type, &[], args, *body, name)
