@@ -4,7 +4,7 @@ use crate::{
   llvm_compile, types,
   compiler, intrinsics,
 };
-use expr::{StringCache, Expr, UIDGenerator, RefStr};
+use expr::{StringCache, Expr, UIDGenerator, Uid, RefStr};
 use types::{UnitId, TypeInfo, SymbolId, Type, TypeMapping, SymbolDefinition};
 use llvm_compile::LlvmUnit;
 use compiler::Val;
@@ -13,9 +13,9 @@ use structure::Nodes;
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct SourceId(u64);
+pub struct SourceId(Uid);
 
-impl From<u64> for SourceId { fn from(v : u64) -> Self { SourceId(v) } }
+impl From<Uid> for SourceId { fn from(v : Uid) -> Self { SourceId(v) } }
 
 #[derive(Default)]
 pub struct CodeStore {

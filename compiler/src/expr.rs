@@ -10,6 +10,16 @@ use crate::c_interface::SStr;
 /// An immutable, reference counted string
 pub type RefStr = Rc<str>;
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub struct Uid(u64);
+
+impl  fmt::Display for Uid {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let Uid(id) = *self;
+    write!(f, "{:X}", id)
+  }
+}
+
 pub struct UIDGenerator {
   gen : u64,
 }
@@ -19,10 +29,10 @@ impl UIDGenerator {
     UIDGenerator { gen : 0 }
   }
 
-  pub fn next(&mut self) -> u64 {
+  pub fn next(&mut self) -> Uid {
     let uid = self.gen;
     self.gen += 1;
-    uid
+    Uid(uid)
   }
 }
 

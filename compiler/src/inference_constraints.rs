@@ -2,7 +2,7 @@
 use std::fmt;
 
 use crate::error::{Error, error, error_raw, TextLocation};
-use crate::expr::{Expr, ExprContent, UIDGenerator, RefStr, StringCache};
+use crate::expr::{Expr, ExprContent, UIDGenerator, Uid, RefStr, StringCache};
 use crate::structure::{
   Node, NodeId, ReferenceId, Content, PrimitiveVal, LabelId,
   VarScope, GlobalType, Reference, Nodes,
@@ -15,7 +15,7 @@ use crate::types::{
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct TypeSymbol(u64);
+pub struct TypeSymbol(Uid);
 
 pub enum Assertion {
   Assert(TypeSymbol, Type),
@@ -26,7 +26,7 @@ pub enum Assertion {
 }
 
 pub struct Constraint {
-  pub id : u64,
+  pub id : Uid,
   pub content : ConstraintContent,
 }
 

@@ -1,6 +1,6 @@
 
 use crate::error::{Error, error, TextLocation};
-use crate::expr::{StringCache, RefStr, Expr, ExprContent, UIDGenerator};
+use crate::expr::{StringCache, RefStr, Expr, ExprContent, UIDGenerator, Uid};
 
 use std::collections::HashMap;
 
@@ -16,10 +16,10 @@ pub enum PrimitiveVal {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct LabelId(u64);
+pub struct LabelId(Uid);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ReferenceId(u64);
+pub struct ReferenceId(Uid);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TypeKind {
@@ -93,9 +93,9 @@ pub enum NodeValueType {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct NodeId(u64);
+pub struct NodeId(Uid);
 
-impl From<u64> for NodeId { fn from(v : u64) -> Self { NodeId(v) } }
+impl From<Uid> for NodeId { fn from(v : Uid) -> Self { NodeId(v) } }
 
 #[derive(Debug)]
 pub struct Node {

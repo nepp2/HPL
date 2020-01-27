@@ -2,7 +2,7 @@
 use std::fmt;
 use itertools::Itertools;
 
-use crate::expr::{RefStr, UIDGenerator};
+use crate::expr::{RefStr, UIDGenerator, Uid};
 use crate::structure::{
   NodeId, TypeKind, Reference
 };
@@ -10,17 +10,17 @@ use crate::structure::{
 use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct UnitId(u64);
+pub struct UnitId(Uid);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct PolyTypeId(u64);
+pub struct PolyTypeId(Uid);
 
-impl From<u64> for UnitId { fn from(v : u64) -> Self { UnitId(v) } }
-impl From<u64> for PolyTypeId { fn from(v : u64) -> Self { PolyTypeId(v) } }
+impl From<Uid> for UnitId { fn from(v : Uid) -> Self { UnitId(v) } }
+impl From<Uid> for PolyTypeId { fn from(v : Uid) -> Self { PolyTypeId(v) } }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct SymbolId {
-  pub sid : u64,
+  pub sid : Uid,
   pub uid : UnitId,
 }
 
@@ -30,8 +30,8 @@ impl UnitId {
   }
 }
 
-impl From<(u64, UnitId)> for SymbolId {
-  fn from(v : (u64, UnitId)) -> Self {
+impl From<(Uid, UnitId)> for SymbolId {
+  fn from(v : (Uid, UnitId)) -> Self {
     SymbolId{sid: v.0, uid: v.1}
   }
 }
@@ -385,7 +385,7 @@ impl SymbolDefinition {
 impl  fmt::Display for PolyTypeId {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let PolyTypeId(id) = *self;
-    write!(f, "{:X}", id)
+    write!(f, "{}", id)
   }
 }
 

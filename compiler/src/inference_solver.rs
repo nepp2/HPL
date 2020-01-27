@@ -10,7 +10,7 @@ use itertools::Itertools;
 use crate::{error, expr, structure, types, inference_constraints, code_store};
 
 use error::{Error, error, error_raw, TextLocation, ErrorContent};
-use expr::{UIDGenerator, RefStr, StringCache};
+use expr::{UIDGenerator, Uid, RefStr, StringCache};
 use structure::{
   NodeId, TypeKind, Nodes,
 };
@@ -110,7 +110,7 @@ struct Inference<'a> {
   gen : &'a mut UIDGenerator,
   errors : &'a mut Vec<Error>,
   dependency_map : ConstraintDependencyMap<'a>,
-  next_edge_set : HashMap<u64, &'a Constraint>,
+  next_edge_set : HashMap<Uid, &'a Constraint>,
   resolved : HashMap<TypeSymbol, Type>,
 }
 
@@ -597,7 +597,7 @@ impl <'a> Inference<'a> {
 
 struct ConstraintDependencyMap<'a> {
   global_map : HashMap<RefStr, Vec<&'a Constraint>>,
-  typedef_map : HashMap<RefStr, HashMap<u64, &'a Constraint>>,
+  typedef_map : HashMap<RefStr, HashMap<Uid, &'a Constraint>>,
   ts_map : HashMap<TypeSymbol, Vec<&'a Constraint>>,
 }
 
