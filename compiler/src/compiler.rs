@@ -105,25 +105,21 @@ impl Compiler {
     polymorph_search_queue.push_back(unit_id);
     while let Some(psid) = polymorph_search_queue.pop_front() {
       let mapping = self.code_store.type_mappings.get(&psid).unwrap();
-      for (poly_unit_id, poly_symbol_id, instance_type) in mapping.polymorphic_references.iter() {
+      for (poly_symbol_id, instance_type) in mapping.polymorphic_references.iter() {
         let instance_exists =
           self.code_store.poly_instance(*poly_symbol_id, instance_type).is_some();
         if !instance_exists {
           // Create a new unit for the function instance and typecheck it
           let instance_unit_id = self.gen.next().into();
-          let poly_def = self.code_store.types(*poly_unit_id).symbols.get(poly_symbol_id).unwrap();
+          let poly_def = self.code_store.symbol_def(*poly_symbol_id);
           let (instance_types, instance_mapping, instance_symbol_id) =
             inference_solver::typecheck_polymorphic_function_instance(
               instance_unit_id, poly_def, instance_type, &self.code_store,
               &self.cache, &mut self.gen)?;
           // Register the instance with the code store
           let instances = self.code_store.poly_instances.entry(*poly_symbol_id).or_default();
-          instances.insert(
-            instance_type.clone(),
-            (instance_symbol_id, instance_unit_id).into());
-          self.code_store.poly_parents.insert(
-            instance_unit_id,
-            (*poly_symbol_id, *poly_unit_id).into());
+          instances.insert(instance_type.clone(), instance_symbol_id);
+          self.code_store.poly_parents.insert(instance_unit_id, *poly_symbol_id);
           new_types.push((instance_unit_id, instance_types, instance_mapping));
           // Register the new unit to be searched for more polymorphic instances
           polymorph_search_queue.push_back(instance_unit_id);
@@ -147,7 +143,7 @@ impl Compiler {
     polymorph_search_queue.push_back(unit_id);
     while let Some(psid) = polymorph_search_queue.pop_front() {
       let mapping = self.code_store.type_mappings.get(&psid).unwrap();
-      for (_, symbol_id, type_tag) in mapping.polymorphic_references.iter() {
+      for (symbol_id, type_tag) in mapping.polymorphic_references.iter() {
         let id = self.code_store.poly_instance(*symbol_id, type_tag).unwrap();
         if !self.code_store.llvm_units.contains_key(&id.uid) {
           units_to_codegen.insert(id.uid);

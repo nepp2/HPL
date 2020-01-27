@@ -28,6 +28,10 @@
 
 # Low priority issues
 
+## TypeDirectory legacy
+
+The `TypeDirectory` struct in `types.rs` is pretty ugly code, and can probably be replaced with some simpler use of the `CodeStore` type.
+
 ## Broken C ABI
 
 I haven't made any effort to support the C ABI beyond using the default behaviour of LLVM. This behaviour is definitely incorrect on Windows. I am currently hacking around it because I know what the most common ABI issue is; any type larger than 64 bits will never actually be passed by value in a Windows C function, even if the signature implies that it is. Instead it is passed as a const pointer. I hack around this by just passing types like this by pointer.

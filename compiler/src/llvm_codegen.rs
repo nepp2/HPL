@@ -210,9 +210,8 @@ impl <'l> CompileInfo<'l> {
     TypedNode { info: self, node }
   }
 
-  fn symbol_def(&self, unit_id : UnitId, symbol_id : SymbolId) -> &SymbolDefinition {
-    let types = self.code_store.types(unit_id);
-    types.symbols.get(&symbol_id).unwrap()
+  fn symbol_def(&self, symbol_id : SymbolId) -> &SymbolDefinition {
+    self.code_store.symbol_def(symbol_id)
   }
 
   fn symbol_node(&self, unit_id : UnitId, symbol_id : SymbolId) -> &Node {
@@ -270,8 +269,8 @@ impl <'l> TypedNode<'l> {
   }
 
   fn node_symbol_def(&self) -> Option<&SymbolDefinition> {
-    let (unit_id, symbol_id) = *self.info.mapping.symbol_references.get(&self.node.id)?;
-    let def = self.info.symbol_def(unit_id, symbol_id);
+    let symbol_id = *self.info.mapping.symbol_references.get(&self.node.id)?;
+    let def = self.info.symbol_def(symbol_id);
     Some(def)
   }
 
@@ -1146,7 +1145,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     // Replace any polymorphic def with the correct monomorphic instance
     let def = if def.is_polymorphic() {
       let id = info.code_store.poly_instance(def.id, node.type_tag()).unwrap();
-      let def = info.symbol_def(id.uid, id.sid);
+      let def = info.symbol_def(id);
       def
     }
     else {
@@ -1262,7 +1261,8 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     if let TypeContent::Def(name, unit_id) = &t.content {
       let def = info.find_type_def(name, *unit_id).unwrap();
       if let Some(drop) = &def.drop_function {
-        return Some(self.get_linked_function_reference(info, &drop.def));
+        let drop_def = info.symbol_def(drop.symbol_id);
+        return Some(self.get_linked_function_reference(info, drop_def));
       }
     }
     None
@@ -1272,7 +1272,8 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     if let TypeContent::Def(name, unit_id) = &t.content {
       let def = info.find_type_def(name, *unit_id).unwrap();
       if let Some(clone) = &def.clone_function {
-        return Some(self.get_linked_function_reference(info, &clone.def));
+        let clone_def = info.symbol_def(clone.symbol_id);
+        return Some(self.get_linked_function_reference(info, clone_def));
       }
     }
     None

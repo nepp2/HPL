@@ -5,7 +5,7 @@ use crate::{
   compiler, intrinsics,
 };
 use expr::{StringCache, Expr, UIDGenerator, RefStr};
-use types::{UnitId, TypeInfo, SymbolId, Type, TypeMapping};
+use types::{UnitId, TypeInfo, SymbolId, Type, TypeMapping, SymbolDefinition};
 use llvm_compile::LlvmUnit;
 use compiler::Val;
 use structure::Nodes;
@@ -16,18 +16,6 @@ use std::collections::HashMap;
 pub struct SourceId(u64);
 
 impl From<u64> for SourceId { fn from(v : u64) -> Self { SourceId(v) } }
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct GlobalSymbolId {
-  pub sid : SymbolId,
-  pub uid : UnitId,
-}
-
-impl From<(SymbolId, UnitId)> for GlobalSymbolId {
-  fn from(v : (SymbolId, UnitId)) -> Self {
-    GlobalSymbolId{sid: v.0, uid: v.1}
-  }
-}
 
 #[derive(Default)]
 pub struct CodeStore {
@@ -41,11 +29,11 @@ pub struct CodeStore {
 
   /// Map from the id of a polymorphic symbol to its various instances,
   /// and their instanced types.
-  pub poly_instances : HashMap<SymbolId, HashMap<Type, GlobalSymbolId>>,
+  pub poly_instances : HashMap<SymbolId, HashMap<Type, SymbolId>>,
 
   /// Map from unit_id of a polymorphic instance to the definition
   /// that it is an instance of.
-  pub poly_parents : HashMap<UnitId, GlobalSymbolId>,
+  pub poly_parents : HashMap<UnitId, SymbolId>,
 }
 
 impl CodeStore {
@@ -78,12 +66,16 @@ impl CodeStore {
     self.types.get(&unit_id).unwrap()
   }
 
+  pub fn symbol_def(&self, symbol_id : SymbolId) -> &SymbolDefinition {
+    self.types(symbol_id.uid).symbols.get(&symbol_id).unwrap()
+  }
+
   pub fn type_mapping(&self, unit_id : UnitId) -> &TypeMapping {
     self.type_mappings.get(&unit_id).unwrap()
   }
 
   pub fn poly_instance(&self, poly_symbol_id : SymbolId, instance_type : &Type)
-    -> Option<GlobalSymbolId>
+    -> Option<SymbolId>
   {
     self.poly_instances.get(&poly_symbol_id)
       .and_then(|m| m.get(instance_type)).cloned()

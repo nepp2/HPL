@@ -236,7 +236,7 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
   }
 
   fn create_symbol_id(&mut self, node_id : NodeId) -> SymbolId {
-    let symbol_id = self.gen.next().into();
+    let symbol_id = self.t.new_unit_id().new_symbol_id(self.gen);
     self.mapping.symbol_def_nodes.insert(symbol_id, node_id);
     symbol_id
   }
@@ -287,7 +287,7 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
       };
       SymbolDefinition {
         id: symbol_id,
-        unit_id: self.t.new_module_id(),
+        unit_id: self.t.new_unit_id(),
         name: name.clone(),
         type_tag: Type::any(),
         initialiser: SymbolInit::Function(f),
@@ -308,11 +308,18 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
     let node = n.node(id);
     match &node.content {
       Content::FunctionDefinition{ name, args, return_tag:_, type_vars, body } => {
-        print!("Process polymorphic instance: {} [", name);
+        println!("####################################################");
+        println!("Process polymorphic instance: {}", name);
+        println!("Instance signature: {}", instanced_function_type);
+        print!("Args: [");
         for (r, e) in args {
           print!("{} : {:?}, ", r.name, e);
         }
-        println!("] {:?} {:?}", type_vars, instanced_type_vars);
+        println!("]");
+        println!("Type var instances: {:?}",
+          type_vars.iter().zip(instanced_type_vars).collect::<Vec<_>>());
+        println!("####################################################");
+        
         self.with_instanced_type_parameters(type_vars.as_slice(), instanced_type_vars, |gc| {
           let args = args.iter().map(|x| x.0.clone()).collect();
           gc.process_function_def(n, id, instanced_function_type, &[], args, *body, name)
@@ -364,7 +371,7 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
           let symbol_id = self.create_symbol_id(id);
           self.t.create_symbol(SymbolDefinition {
             id: symbol_id,
-            unit_id: self.t.new_module_id(),
+            unit_id: self.t.new_unit_id(),
             name: name.name.clone(),
             type_tag: Type::any(),
             initialiser,
@@ -470,7 +477,7 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
         });
         self.t.create_symbol(SymbolDefinition {
           id: symbol_id,
-          unit_id: self.t.new_module_id(),
+          unit_id: self.t.new_unit_id(),
           name: name.clone(),
           initialiser: SymbolInit::CBind,
           type_tag: Type::any(),
@@ -498,7 +505,7 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
             });
             let def = TypeDefinition {
               name: name.clone(),
-              unit_id: gc.t.new_module_id(),
+              unit_id: gc.t.new_unit_id(),
               fields: fields.iter().map(|(f, _)| (f.clone(), Type::any())).collect(),
               kind: *kind,
               type_vars,
@@ -683,6 +690,9 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
       error(expr, format!("invalid type expression {}", expr))
     }
     let r = expr_to_type_internal(self, expr);
+    if let Ok(t) = r.as_ref() {
+      println!("PARSED TYPE: {}", t)
+    }
     self.log_error(r)
   }
 }  

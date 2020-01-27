@@ -1,3 +1,7 @@
+# LOG - 27/01/2020
+
+I need to fix polymorphic structs. They don't typecheck properly _or_ codegen properly.
+
 # LOG - 24/01/2020
 
 My current linking strategy doesn't work very well. It might be better to record which symbols need to be linked in the codegen stage, and then handle it afterwards in a linking step.

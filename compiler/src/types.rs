@@ -2,7 +2,7 @@
 use std::fmt;
 use itertools::Itertools;
 
-use crate::expr::RefStr;
+use crate::expr::{RefStr, UIDGenerator};
 use crate::structure::{
   NodeId, TypeKind, Reference
 };
@@ -15,12 +15,26 @@ pub struct UnitId(u64);
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct PolyTypeId(u64);
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct SymbolId(u64);
-
 impl From<u64> for UnitId { fn from(v : u64) -> Self { UnitId(v) } }
 impl From<u64> for PolyTypeId { fn from(v : u64) -> Self { PolyTypeId(v) } }
-impl From<u64> for SymbolId { fn from(v : u64) -> Self { SymbolId(v) } }
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub struct SymbolId {
+  pub sid : u64,
+  pub uid : UnitId,
+}
+
+impl UnitId {
+  pub fn new_symbol_id(self, gen : &mut UIDGenerator) -> SymbolId {
+    SymbolId { sid: gen.next(), uid: self }
+  }
+}
+
+impl From<(u64, UnitId)> for SymbolId {
+  fn from(v : (u64, UnitId)) -> Self {
+    SymbolId{sid: v.0, uid: v.1}
+  }
+}
 
 /// Provides all the type definitions for a particular unit
 pub struct TypeInfo {
@@ -34,8 +48,8 @@ pub struct TypeInfo {
 pub struct TypeMapping {
   pub node_type : HashMap<NodeId, Type>,
   pub sizeof_info : HashMap<NodeId, Type>,
-  pub symbol_references : HashMap<NodeId, (UnitId, SymbolId)>,
-  pub polymorphic_references : HashSet<(UnitId, SymbolId, Type)>,
+  pub symbol_references : HashMap<NodeId, SymbolId>,
+  pub polymorphic_references : HashSet<(SymbolId, Type)>,
   pub symbol_def_nodes : HashMap<SymbolId, NodeId>,
   pub type_def_nodes : HashMap<RefStr, NodeId>,
 }
@@ -594,12 +608,12 @@ impl TypeInfo {
           polytypes.clear();
           if polytype_match(polytypes, t, &sym.type_tag) {
             let resolved_type = polytype_replace(polytypes, &sym.type_tag);
-            results.push(ResolvedSymbol { def: sym.clone(), resolved_type });
+            results.push(ResolvedSymbol { symbol_id: sym.id, resolved_type });
           }
         }
         else {
           if let Some(resolved_type) = unify_types(&t, &sym.type_tag) {
-            results.push(ResolvedSymbol { def: sym.clone(), resolved_type });
+            results.push(ResolvedSymbol { symbol_id: sym.id, resolved_type });
           }
         }
       }
@@ -613,16 +627,14 @@ impl TypeInfo {
 
 #[derive(Clone, Debug)]
 pub struct ResolvedSymbol {
-  /// TODO: this is very inefficient, because these are searched for and returned repeatedly
-  /// Refactor to use the symbol id & unit id instead.
-  pub def : SymbolDefinition,
+  pub symbol_id : SymbolId,
   pub resolved_type : Type,
 }
 
 /// Utility type for finding definitions either in the module being constructed,
 /// or in the other modules in scope.
 pub struct TypeDirectory<'a> {
-  new_module_id : UnitId,
+  new_unit_id : UnitId,
   import_types : &'a [&'a TypeInfo],
   new_module : &'a mut TypeInfo,
   polytype_bindings : HashMap<RefStr, Type>,
@@ -634,12 +646,12 @@ pub struct TypeDirectory<'a> {
 // be wary of new symbols being added.
 impl <'a> TypeDirectory<'a> {
   pub fn new(
-    new_module_id : UnitId,
+    new_unit_id : UnitId,
     import_types : &'a [&'a TypeInfo],
     new_module : &'a mut TypeInfo) -> Self
   {
     TypeDirectory{
-      new_module_id, import_types, new_module,
+      new_unit_id, import_types, new_module,
       polytype_bindings: HashMap::new(),
       symbol_results: vec![],
     }
@@ -650,7 +662,7 @@ impl <'a> TypeDirectory<'a> {
   }
 
   pub fn get_type_def(&self, name : &str, unit_id : UnitId) -> &TypeDefinition {
-    self.find_module(unit_id).find_type_def(name).unwrap()
+    self.find_type_info(unit_id).find_type_def(name).unwrap()
   }
 
   pub fn get_type_def_mut(&mut self, name : &str) -> &mut TypeDefinition {
@@ -687,11 +699,11 @@ impl <'a> TypeDirectory<'a> {
       self.import_types.iter().rev().flat_map(|m| m.find_type_def(name)).next())
   }
 
-  pub fn new_module_id(&self) -> UnitId {
+  pub fn new_unit_id(&self) -> UnitId {
     self.new_module.unit_id
   }
 
-  pub fn find_module(&self, unit_id : UnitId) -> &TypeInfo {
+  pub fn find_type_info(&self, unit_id : UnitId) -> &TypeInfo {
     [&*self.new_module].iter()
       .chain(self.import_types.iter().rev())
       .find(|t| t.unit_id == unit_id)

@@ -18,8 +18,9 @@ pub fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypeInfo
     for &a in args {
       sig.append_arg(a.clone());
     }
+    let id = unit_id.new_symbol_id(gen);
     SymbolDefinition {
-      id: gen.next().into(), unit_id,
+      id, unit_id,
       name: cache.get(name),
       type_tag: sig.into(),
       initialiser: SymbolInit::Intrinsic,

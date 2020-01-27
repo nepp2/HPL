@@ -49,7 +49,7 @@ pub fn infer_types(
     inference_constraints::get_module_constraints(
       &nodes, &mut type_directory, &mut mapping, cache, gen, &mut errors);
   let i = Inference::new(
-    &nodes, &mut type_directory,
+    &nodes, code_store, &mut type_directory,
     &mut mapping, &c, cache, gen, &mut errors);
   i.infer();
   if errors.len() > 0 {    
@@ -88,7 +88,7 @@ pub fn typecheck_polymorphic_function_instance(
       &nodes, source_node, instance_type.clone(), instanced_type_vars.as_slice(),
       &mut type_directory, &mut mapping, cache, gen, &mut errors);
   let i = Inference::new(
-    &nodes, &mut type_directory,
+    &nodes, code_store, &mut type_directory,
     &mut mapping, &c, cache, gen, &mut errors);
   i.infer();
   if errors.len() > 0 {
@@ -102,6 +102,7 @@ pub fn typecheck_polymorphic_function_instance(
 
 struct Inference<'a> {
   nodes : &'a Nodes,
+  code_store : &'a CodeStore,
   t : &'a mut TypeDirectory<'a>,
   mapping : &'a mut TypeMapping,
   c : &'a Constraints,
@@ -117,6 +118,7 @@ impl <'a> Inference<'a> {
 
   fn new(
     nodes : &'a Nodes,
+    code_store : &'a CodeStore,
     t : &'a mut TypeDirectory<'a>,
     mapping : &'a mut TypeMapping,
     c : &'a Constraints,
@@ -126,7 +128,7 @@ impl <'a> Inference<'a> {
       -> Self
   {
     Inference {
-      nodes, t, mapping, c, cache, gen, errors,
+      nodes, code_store, t, mapping, c, cache, gen, errors,
       dependency_map: ConstraintDependencyMap::new(),
       next_edge_set: HashMap::new(),
       resolved: HashMap::new(),
@@ -200,7 +202,11 @@ impl <'a> Inference<'a> {
         let any = Type::any();
         let t = self.resolved.get(result).unwrap_or(&any);
         let symbols = self.t.find_symbol(&name, t);
-        let s = symbols.iter().map(|g| format!("      {} : {}", g.def.name, g.resolved_type)).join("\n");
+        let cs = &self.code_store;
+        let s = symbols.iter().map(|g| {
+          let def = cs.symbol_def(g.symbol_id);
+          format!("      {} : {}", def.name, g.resolved_type)
+        }).join("\n");
         error_raw(self.loc(*result),
           format!("Reference '{}' of type '{}' not resolved\n   Symbols available:\n{}", name, t, s))
       }
@@ -218,8 +224,8 @@ impl <'a> Inference<'a> {
     self.errors.push(e);
   }
 
-  fn register_def(&mut self, node : NodeId, unit_id : UnitId, symbol_id : SymbolId) {
-    self.mapping.symbol_references.insert(node, (unit_id, symbol_id));
+  fn register_def(&mut self, node : NodeId, symbol_id : SymbolId) {
+    self.mapping.symbol_references.insert(node, symbol_id);
   }
 
   fn resolve_abstract_defs<'l>(&self, loc : TextLocation, t : &'l Type)
@@ -433,13 +439,14 @@ impl <'a> Inference<'a> {
         }
       }
       GlobalReference { node, name, result } => {
+        println!("Visiting GlobalReference constraint {} at {}", name, self.loc(*result));
         let any = Type::any();
         let t = self.get_type(*result).cloned().unwrap_or(any);
         match self.t.find_symbol(&name, &t) {
-          [g] => {
-            let resolved_type = g.resolved_type.clone();
-            let (mid, gid) = (g.def.unit_id, g.def.id);
-            self.register_def(*node, mid, gid);
+          [rs] => {
+            let resolved_type = rs.resolved_type.clone();
+            let id = rs.symbol_id;
+            self.register_def(*node, id);
             self.update_type(*result, &resolved_type);
           }
           [] => {
@@ -452,6 +459,7 @@ impl <'a> Inference<'a> {
       FieldAccess{ container, field, result } => {
         let container_type = self.resolved.get(container);
         if let Some(ct) = container_type {
+          println!("Field access on container of type {}", ct);
           let mut t = ct;
           // Dereference any pointers
           while let Some(inner) = t.ptr() {
@@ -462,6 +470,7 @@ impl <'a> Inference<'a> {
             let def = self.t.get_type_def(&name, *unit_id);
             let f = def.fields.iter().find(|(n, _)| n.name == field.name);
             if let Some((_, t)) = f {
+              println!("Found field of type {}", t);
               let mt = t.clone();
               self.update_type(*result, &mt);
             }
@@ -573,12 +582,12 @@ impl <'a> Inference<'a> {
 
     // Find polymorphic definitions
     if self.errors.is_empty() {
-      for (node_id, (unit_id, symbol_id)) in self.mapping.symbol_references.iter() {
-        let def = self.t.find_module(*unit_id).symbols.get(symbol_id).unwrap().clone();
+      for (node_id, symbol_id) in self.mapping.symbol_references.iter() {
+        let def = self.t.find_type_info(symbol_id.uid).symbols.get(symbol_id).unwrap().clone();
         if def.is_polymorphic() {
           if let SymbolInit::Function(_) = def.initialiser {
             let t = self.mapping.node_type.get(node_id).unwrap();
-            self.mapping.polymorphic_references.insert((def.unit_id, def.id, t.clone()));
+            self.mapping.polymorphic_references.insert((*symbol_id, t.clone()));
           }
         }
       }
