@@ -507,7 +507,8 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
             let def = TypeDefinition {
               name: name.clone(),
               unit_id: gc.t.new_unit_id(),
-              fields: fields.iter().map(|(f, _)| (f.clone(), Type::any())).collect(),
+              fields: fields.iter().map(|x| x.0.clone()).collect(),
+              type_tag: Type::any(),
               type_vars,
               drop_function: None, clone_function: None,
             };
