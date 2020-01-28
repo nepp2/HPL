@@ -5,7 +5,7 @@ use crate::{
 
 use error::{Error, error_raw};
 use c_interface::CSymbols;
-use types::{UnitId, SymbolId, SymbolInit};
+use types::{UnitId, SymbolId, SymbolInfo};
 use code_store::CodeStore;
 use llvm_codegen::{Gen, dump_module, CompileInfo };
 use expr::RefStr;
@@ -114,8 +114,8 @@ fn find_symbol_address(code_store : &CodeStore, c_symbols : &CSymbols, loc : &Sy
     }
     SymbolLocation::Function(unit_id, symbol_id) => {
       let def = code_store.types(*unit_id).symbols.get(&symbol_id).unwrap();
-      let init = match &def.initialiser {
-        SymbolInit::Function(init) => init, _ => panic!("expected function initialiser") 
+      let init = match &def.info {
+        SymbolInfo::Function(init) => init, _ => panic!("expected function info") 
       };
       let lu = code_store.llvm_unit(*unit_id);
       unsafe {

@@ -4,7 +4,7 @@ use itertools::Itertools;
 
 use crate::expr::{RefStr, UIDGenerator, Uid};
 use crate::structure::{
-  NodeId, TypeKind, Reference
+  NodeId, Reference
 };
 
 use std::collections::{HashMap, HashSet};
@@ -98,6 +98,7 @@ pub enum TypeContent {
   Fun,
   Def(RefStr, UnitId),
   Array,
+  Union,
   Ptr,
   Abstract(AbstractType),
   Polytype(RefStr),
@@ -316,45 +317,6 @@ impl AbstractType {
   }
 }
 
-#[derive(Clone, Debug)]
-pub struct TypeDefinition {
-  pub name : RefStr,
-  pub unit_id : UnitId,
-  pub fields : Vec<(Reference, Type)>,
-  pub kind : TypeKind,
-  pub type_vars : Vec<RefStr>,
-  pub drop_function : Option<ResolvedSymbol>,
-  pub clone_function : Option<ResolvedSymbol>,
-}
-
-impl TypeDefinition {
-
-  pub fn is_polymorphic(&self) -> bool {
-    self.type_vars.len() > 0
-  }
-
-  pub fn instanced_field_type(&self, name : &str, type_var_instances : &[Type]) -> Option<Type> {
-    for (r, t) in self.fields.iter() {
-      if r.name.as_ref() == name {
-        let mut t = t.clone();
-        self.instance_type(&mut t, type_var_instances);
-        return Some(t);
-      }
-    }
-    None
-  }
-
-  pub fn instance_type(&self, t : &mut Type, type_var_instances : &[Type]) {
-    if let TypeContent::Polytype(name) = &t.content {
-      let i = self.type_vars.iter().position(|tv| tv == name).unwrap();
-      *t = type_var_instances[i].clone();
-    }
-    for c in t.children.iter_mut() {
-      self.instance_type(c, type_var_instances);
-    }
-  }
-}
-
 #[derive(Debug, Clone)]
 pub enum FunctionImplementation {
   Normal{body: NodeId, name_for_codegen: RefStr, args : Vec<Reference> },
@@ -362,20 +324,38 @@ pub enum FunctionImplementation {
   Intrinsic,
 }
 
-/// The initialiser for the symbol
+/// The info for the symbol
 #[derive(Debug, Clone)]
-pub enum SymbolInit {
-  Function(FunctionInit),
-  Expression(NodeId),
+pub enum SymbolInfo {
+  Function(FunctionInfo),
+  GlobalVar(NodeId),
   Intrinsic,
   CBind,
 }
 
 #[derive(Debug, Clone)]
-pub struct FunctionInit {
+pub struct FunctionInfo {
   pub body: NodeId,
   pub name_for_codegen: RefStr,
   pub args : Vec<Reference>,
+}
+
+#[derive(Clone, Debug)]
+pub struct UnionDefinition {
+  pub name : RefStr,
+  pub unit_id : UnitId,
+  pub fields : Vec<(Reference, Type)>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TypeDefinition {
+  pub name : RefStr,
+  pub unit_id : UnitId,
+  pub fields : Vec<Reference>,
+  pub type_tag : Type,
+  pub type_vars : Vec<RefStr>,
+  pub drop_function : Option<ResolvedSymbol>,
+  pub clone_function : Option<ResolvedSymbol>,
 }
 
 #[derive(Clone, Debug)]
@@ -384,15 +364,21 @@ pub struct SymbolDefinition {
   pub unit_id : UnitId,
   pub name : RefStr,
   pub type_tag : Type,
-  pub initialiser : SymbolInit,
+  pub info : SymbolInfo,
   pub type_vars : Vec<RefStr>,
+}
+
+impl TypeDefinition {
+  pub fn is_polymorphic(&self) -> bool {
+    self.type_vars.len() > 0
+  }
 }
 
 impl SymbolDefinition {
   pub fn codegen_name(&self) -> Option<&str> {
-    match &self.initialiser {
-      SymbolInit::Function(f) => Some(&f.name_for_codegen),
-      SymbolInit::CBind | SymbolInit::Expression(_) => Some(&self.name),
+    match &self.info {
+      SymbolInfo::Function(f) => Some(&f.name_for_codegen),
+      SymbolInfo::CBind | SymbolInfo::GlobalVar(_) => Some(&self.name),
       _ => None,
     }
   }
