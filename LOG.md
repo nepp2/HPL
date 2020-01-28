@@ -1,3 +1,23 @@
+# LOG - 28/01/2020
+
+I still have a polymorphism bug. I'm wondering if I should have built around a smaller number of constraints, where everything is modelled as a function.
+
+A constructor becomes a function. Field accesses become functions too. e.g.
+
+```rust
+struct Point { x : i32, y : i32 }
+```
+
+becomes:
+
+```rust
+  fun @construct.point(i32, i32) -> Point
+  fun @point.x(Point) -> i32
+  fun @point.y(Point) -> i32
+```
+
+But in order to do this, all modules would have to be searchable in this format. Would all type definitions just disappear?
+
 # LOG - 27/01/2020
 
 Fixed polymorphic structs, as they didn't typecheck properly _or_ codegen properly.

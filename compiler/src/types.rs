@@ -112,7 +112,7 @@ fn polytype_replace(polytypes : &HashMap<RefStr, Type>, polytype : &Type) -> Typ
       polytype_replace_internal(polytypes, t);
     }
   }
-  let mut t = polytype.clone();
+  let mut t = .clone();
   polytype_replace_internal(polytypes, &mut t);
   t
 }
@@ -122,7 +122,7 @@ trait PolyTypes {
   fn insert(&mut self, name : RefStr, t : Type);
 }
 
-/// `polytype` may be a polymorphic type. It will be treated like `Abstract(Any)`.
+/// `` may be a polymorphic type. It will be treated like `Abstract(Any)`.
 fn polytype_match(polytypes : &mut HashMap<RefStr, Type>, t : &Type, polytype : &Type) -> bool {
   fn polytype_match_internal(polytypes : &mut HashMap<RefStr, Type>, t : &Type, polytype : &Type) -> bool {
     if let Polytype(_) = &t.content { panic!("unexpected generic type {}", t) }
@@ -337,20 +337,20 @@ impl TypeDefinition {
     for (r, t) in self.fields.iter() {
       if r.name.as_ref() == name {
         let mut t = t.clone();
-        self.monomorphise_type(&mut t, type_var_instances);
+        self.instance_type(&mut t, type_var_instances);
         return Some(t);
       }
     }
     None
   }
 
-  fn monomorphise_type(&self, t : &mut Type, type_var_instances : &[Type]) {
+  pub fn instance_type(&self, t : &mut Type, type_var_instances : &[Type]) {
     if let TypeContent::Polytype(name) = &t.content {
       let i = self.type_vars.iter().position(|tv| tv == name).unwrap();
       *t = type_var_instances[i].clone();
     }
     for c in t.children.iter_mut() {
-      self.monomorphise_type(c, type_var_instances);
+      self.instance_type(c, type_var_instances);
     }
   }
 }

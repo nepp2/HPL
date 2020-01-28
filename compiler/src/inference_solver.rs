@@ -340,16 +340,18 @@ impl <'a> Inference<'a> {
               TypeKind::Struct => {
                 if fields.len() == def.fields.len() {
                   let it = fields.iter().zip(def.fields.iter());
-                  let mut arg_types = vec![];
-                  for ((field_name, _), (expected_name, expected_type)) in it {
-                    if let Some(field_name) = field_name {
-                      if field_name.name != expected_name.name {
-                        self.errors.push(error_raw(field_name.loc, "incorrect field name"));
+                  let mut field_types = vec![];
+                  for ((arg_name, _), (field_name, field_type)) in it {
+                    let mut field_type = field_type.clone();
+                    def.instance_type(&mut field_type, t.children.as_slice());
+                    field_types.push(field_type.clone());
+                    if let Some(arg_name) = arg_name {
+                      if arg_name.name != field_name.name {
+                        self.errors.push(error_raw(arg_name.loc, "incorrect field name"));
                       }
                     }
-                    arg_types.push(expected_type.clone());
                   }
-                  for(i, t) in arg_types.into_iter().enumerate() {
+                  for(i, t) in field_types.into_iter().enumerate() {
                     self.update_type(fields[i].1, &t);
                   }
                 }

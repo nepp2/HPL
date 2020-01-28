@@ -71,7 +71,7 @@ pub fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypeInfo
       let gcontainer = container(tv.clone());
       let args = &[&gcontainer, prim];
       add_polymorphic_intrinsic(
-        cache, gen, unit_id, &mut types, "Index", args, &tv, vec![tvar.clone()]);
+        cache, gen, unit_id, &mut types, "@index", args, &tv, vec![tvar.clone()]);
     }
   }
   {
