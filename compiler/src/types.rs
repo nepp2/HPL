@@ -112,7 +112,7 @@ fn polytype_replace(polytypes : &HashMap<RefStr, Type>, polytype : &Type) -> Typ
       polytype_replace_internal(polytypes, t);
     }
   }
-  let mut t = .clone();
+  let mut t = polytype.clone();
   polytype_replace_internal(polytypes, &mut t);
   t
 }
@@ -122,7 +122,7 @@ trait PolyTypes {
   fn insert(&mut self, name : RefStr, t : Type);
 }
 
-/// `` may be a polymorphic type. It will be treated like `Abstract(Any)`.
+/// `polytype` may be a polymorphic type. It will be treated like `Abstract(Any)`.
 fn polytype_match(polytypes : &mut HashMap<RefStr, Type>, t : &Type, polytype : &Type) -> bool {
   fn polytype_match_internal(polytypes : &mut HashMap<RefStr, Type>, t : &Type, polytype : &Type) -> bool {
     if let Polytype(_) = &t.content { panic!("unexpected generic type {}", t) }
