@@ -91,16 +91,9 @@ struct text_location {
   end: text_marker
 }
 
-union expr_data {
-  list : expr_list
-  symbol : string
-  literal_string : string
-  literal_float : f64
-  literal_int : i64
-  literal_bool : bool
-}
+type expr_data = union(expr_list, string, f64, i64, bool);
 
-union expr_list {
+struct expr_list {
   s : string
   array : expr_array
 }
@@ -118,14 +111,12 @@ fun sym(e : ptr(expr), loc : text_location) {
 }
 
 fun sym(s : string, loc : text_location) {
-  let data = expr_data.new(symbol: s)
-  let c = expr_content.new(symbol_tag, data)
+  let c = expr_content.new(symbol_tag, s as expr_data)
   expr.new(loc, c)
 }
 
 fun sym(i : i64, loc : text_location) {
-  let data = expr_data.new(literal_int: i)
-  let c = expr_content.new(literal_int_tag, data)
+  let c = expr_content.new(literal_int_tag, i as expr_data)
   expr.new(loc, c)
 }
 
@@ -136,7 +127,7 @@ fun sym(i : i64, loc : text_location) {
 // more compact representation, but it's also a lot more boilerplate.
 struct expr_content {
   tag : u64
-  data : expr_data
+  data : union(expr_list, string, f64, i64, bool)
 }
 
 struct expr_array {

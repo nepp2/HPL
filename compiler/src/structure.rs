@@ -47,7 +47,7 @@ pub enum Content {
   Reference { name: RefStr, refers_to: Option<ReferenceId> },
   FunctionDefinition{ name: RefStr, args: Vec<(Reference, Option<Box<Expr>>)>, return_tag: Option<Box<Expr>>, type_vars : Vec<RefStr>, body: NodeId },
   CBind { name: RefStr, type_tag : Box<Expr> },
-  TypeDefinition{ name: RefStr, fields: Vec<(Reference, Option<Box<Expr>>)>, type_vars : Vec<RefStr> },
+  TypeDefinition{ name: Reference, fields: Vec<(Reference, Option<Box<Expr>>)>, type_vars : Vec<RefStr> },
   TypeConstructor{ name: Reference, field_values: Vec<(Option<Reference>, NodeId)> },
   FieldAccess{ container: NodeId, field: Reference },
   ArrayLiteral(Vec<NodeId>),
@@ -474,13 +474,13 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       ("struct", [name, fields_expr]) => {
         let (name, type_vars) = {
           if let Some(("call", exprs)) = name.try_construct() {
-            let name = self.cached(exprs[0].unwrap_symbol()?);
+            let name = self.expr_to_symbol(&exprs[0])?;
             let type_vars : Result<Vec<_>, _> =
               exprs[1..].iter().map(|e| { let s = self.cached(e.unwrap_symbol()?) ; Ok(s) }).collect();
             (name, type_vars?)
           }
           else {
-            let name = self.cached(name.unwrap_symbol()?);
+            let name = self.expr_to_symbol(name)?;
             (name, vec![])
           }
         };
