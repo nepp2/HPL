@@ -319,7 +319,6 @@ impl <'l> Gen<'l> {
         let t = self.to_basic_type(info, &def.type_tag).unwrap();
         match &def.initialiser {
           SymbolInit::CBind => {
-            let loc = info.symbol_node(def.unit_id, def.id).loc;
             let symloc = SymbolLocation::CBind(def.name.clone());
             if let Some(sig) = def.type_tag.sig() {
               let f = self.codegen_prototype(info, def.name.as_ref(), sig.return_type, None, sig.args);
@@ -1172,7 +1171,6 @@ impl <'l, 'a> GenFunction<'l, 'a> {
           }
           else {
             let f = self.gen.codegen_prototype(info, &def.name, sig.return_type, None, sig.args);
-            let loc = info.symbol_node(def.unit_id, def.id).loc;
             let symloc = SymbolLocation::CBind(def.name.clone());
             self.gen.functions_to_link.push((f, symloc));
             f
@@ -1270,8 +1268,8 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     //     return Some(self.get_linked_function_reference(info, drop_def));
     //   }
     // }
-    // None
-    panic!("drop is not currently supported")
+    let aaa = (); // TODO: decide whether to fix Drop
+    None
   }
 
   fn get_linked_clone_reference(&mut self, info : &CompileInfo, t : &Type) -> Option<FunctionValue> {
@@ -1282,8 +1280,8 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     //     return Some(self.get_linked_function_reference(info, clone_def));
     //   }
     // }
-    // None
-    panic!("clone is not currently supported")
+    let aaa = (); // TODO: decide whether to fix Drop
+    None
   }
 
   /// Makes sure newly created values that need to be dropped are registered with the block that they

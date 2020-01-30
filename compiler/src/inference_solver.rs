@@ -228,22 +228,26 @@ impl <'a> Inference<'a> {
     self.mapping.symbol_references.insert(node, symbol_id);
   }
 
+  /// Recursively copies, turning all `Abstract(Def)` types into resolved `Def` types,
+  /// or throwing an error if no `Def` is found.
   fn resolve_abstract_defs<'l>(&self, loc : TextLocation, t : &'l Type)
     -> Result<Type, Error> 
   {
     let content = match &t.content {
       Abstract(AbstractType::Def(name)) => {
         if let Some(def) = self.t.find_type_def(name) {
-          let children = if t.children.len() == 0 {
-            def.type_vars.iter().map(|_| Type::any()).collect()
-          }
-          else if t.children.len() != def.type_vars.len() {
+          let len = t.children().len();
+          if !(len == def.type_vars.len() || len == 0) {
             return error(loc, "incorrect number of type arguments");
           }
-          else {
-            t.children.iter().map(|c| self.resolve_abstract_defs(loc, c))
-              .collect::<Result<Vec<_>, Error>>()?
-          };
+          let mut children = vec![];
+          for i in 0..def.type_vars.len() {
+            let c = match t.children.get(i) {
+              Some(c) => self.resolve_abstract_defs(loc, c)?,
+              None => Type::any(),
+            };
+            children.push(c);
+          }
           let content = Def(name.clone(), def.unit_id);
           return Ok(Type::new(content, children));
         }
