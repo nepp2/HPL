@@ -134,26 +134,34 @@ fn find_symbol_address(code_store : &CodeStore, c_symbols : &CSymbols, loc : &Sy
   }
 }
 
-pub fn link_unit(
-  unit_id : UnitId,
+pub fn link_group(
+  units : &[UnitId],
   code_store : &CodeStore,
   c_symbols : &CSymbols,
 )
 {
-  let lu = code_store.llvm_unit(unit_id);
-
-  // Link globals
-  for (global_value, loc) in lu.globals_to_link.iter() {
-    let address = find_symbol_address(code_store, c_symbols, loc);
-    lu.ee.add_global_mapping(global_value, address);
+  for &unit_id in units {
+    let lu = code_store.llvm_unit(unit_id);
+    println!("   LINKING GLOBALS {:?}", unit_id);
+    // Link globals
+    for (global_value, loc) in lu.globals_to_link.iter() {
+      println!("      LINKING GLOBAL {:?}", global_value.print_to_string());
+      let address = find_symbol_address(code_store, c_symbols, loc);
+      lu.ee.add_global_mapping(global_value, address);
+    }
+    println!("   GLOBALS ALL LINKED");
+    println!("   LINKING FUNCTIONS {:?}", unit_id);
+    // Link functions
+    for (function_value, loc) in lu.functions_to_link.iter() {
+      println!("      LINKING FUNCTION {:?}", function_value.print_to_string());
+      let address = find_symbol_address(code_store, c_symbols, loc);
+      lu.ee.add_global_mapping(function_value, address);
+    }
+    println!("   FUNCTIONS ALL LINKED");
   }
-
-  // Link functions
-  for (function_value, loc) in lu.functions_to_link.iter() {
-    let address = find_symbol_address(code_store, c_symbols, loc);
-    lu.ee.add_global_mapping(function_value, address);
-  }
-
-  // TODO: is this needed?
-  lu.ee.run_static_constructors();
+  let aaa = (); // TODO: Why does this sometimes cause a crash?
+  // for &unit_id in units {
+  //   let lu = code_store.llvm_unit(unit_id);
+  //   lu.ee.run_static_constructors();
+  // }
 }

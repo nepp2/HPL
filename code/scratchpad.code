@@ -1,7 +1,7 @@
 
-fun alloc(v : T) => T with T {
+fun alloc(v : T) => ptr(T) with T {
   let p = malloc(sizeof(T)) as ptr(T)
-  *p = v
+  //*p = v
   p
 }
 
@@ -16,10 +16,7 @@ struct list(T) {
 }
 
 fun list() => list(T) with T {
-  let v = 0 as u64
-  /// BROKEN, maybe constructors
-  /// don't handle polymorphism?
-  let inner = inner_list.new(0, v as ptr(T), 0)
+  let inner = inner_list.new(0, (0 as u64) as ptr(T), 0)
   list.new(alloc(inner))
 }
 
@@ -58,7 +55,8 @@ fun println(list : list(T)) with T {
   println()
 }
 
-let nums : list(i64) = list()
+print("Hello") ; println()
+let nums : list(i64) = list() // THIS FUNCTION CRASHES
 
 // for x in range(0, 10) {
 //   print(x) ; println()

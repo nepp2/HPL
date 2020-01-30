@@ -76,7 +76,9 @@ impl Compiler {
   fn load_module_from_expr_internal(&mut self, unit_id : UnitId) -> Result<(), Error> {
     self.structure(unit_id)?;
     self.typecheck(unit_id)?;
+    println!("ENTERING CODEGEN");
     self.codegen(unit_id)?;
+    println!("CODEGEN COMPLETE");
     self.initialise(unit_id)?;
     Ok(())
   }
@@ -153,13 +155,16 @@ impl Compiler {
     }
     // Codegen the new units
     for &id in units_to_codegen.iter() {
+      println!("CODEGEN {:?}", id);
       let lu = self.llvm_compiler.compile_unit(id, &self.code_store)?;
       self.code_store.llvm_units.insert(id, lu);
     }
+    println!("ALL UNITS CODE GENENERATED");
     // Link the new units
-    for &id in units_to_codegen.iter() {
-      llvm_compile::link_unit(id, &self.code_store, &self.c_symbols);
-    }
+    let units_to_link : Vec<_> =
+      units_to_codegen.iter().cloned().collect();
+    llvm_compile::link_group(units_to_link.as_slice(), &self.code_store, &self.c_symbols);
+    println!("ALL UNITS LINKED");
     Ok(())
   }
 

@@ -100,7 +100,8 @@ union expr_data {
   literal_bool : bool
 }
 
-union expr_list {
+// TODO: Is this correct? It used to be a union, but I think that's wrong.
+struct expr_list {
   s : string
   array : expr_array
 }

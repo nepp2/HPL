@@ -535,8 +535,8 @@ impl <'l> Gen<'l> {
         let bt = self.to_basic_type(info, t);
         Some(self.pointer_to_type(bt).into())
       }
-      TypeContent::Polytype(_) => panic!(),
-      TypeContent::Abstract(_) => panic!(),
+      TypeContent::Polytype(_) => panic!("polytype encountered in codegen"),
+      TypeContent::Abstract(_) => panic!("abstract type encountered in codegen"),
     }
   }
 
