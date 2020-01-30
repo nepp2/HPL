@@ -12,7 +12,7 @@ use crate::{error, expr, structure, types, inference_constraints, code_store};
 use error::{Error, error, error_raw, TextLocation, ErrorContent};
 use expr::{UIDGenerator, Uid, RefStr, StringCache};
 use structure::{
-  NodeId, Nodes,
+  NodeId, TypeKind, Nodes,
 };
 use types::{
   Type, TypeContent, TypeInfo, TypeDirectory, SymbolId,
