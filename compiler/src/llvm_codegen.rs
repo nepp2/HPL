@@ -5,10 +5,10 @@ use crate::error::{Error, error, error_raw, TextLocation};
 use crate::expr::RefStr;
 
 use crate::structure::{
-  Node, NodeId, Nodes, Content, PrimitiveVal, ReferenceId,
+  Node, NodeId, Nodes, Content, PrimitiveVal, TypeKind, ReferenceId,
   LabelId, NodeValueType, VarScope, Reference };
 use crate::types::{
-  Type, PType, TypeDefinition, SymbolInfo, SymbolId, TypeMapping,
+  Type, PType, TypeDefinition, SymbolInit, SymbolId, TypeMapping,
   SymbolDefinition, TypeInfo, TypeContent, UnitId };
 use crate::code_store::CodeStore;
 use crate::llvm_compile::SymbolLocation;
@@ -283,7 +283,7 @@ impl <'l> TypedNode<'l> {
 
   fn is_intrinsic_function(&self) -> bool {
     self.node_symbol_def()
-    .map(|def| if let SymbolInfo::Intrinsic = def.info { true } else { false })
+    .map(|def| if let SymbolInit::Intrinsic = def.initialiser { true } else { false })
     .unwrap_or(false)
   }
 }
@@ -317,8 +317,8 @@ impl <'l> Gen<'l> {
     for def in info.t.symbols.values() {
       if !def.is_polymorphic() {
         let t = self.to_basic_type(info, &def.type_tag).unwrap();
-        match &def.info {
-          SymbolInfo::CBind => {
+        match &def.initialiser {
+          SymbolInit::CBind => {
             let loc = info.symbol_node(def.unit_id, def.id).loc;
             let symloc = SymbolLocation::CBind(def.name.clone());
             if let Some(sig) = def.type_tag.sig() {
@@ -330,13 +330,13 @@ impl <'l> Gen<'l> {
               self.globals_to_link.push((gv, symloc));
             }
           }
-          SymbolInfo::GlobalVar(_node) => {
+          SymbolInit::Expression(_node) => {
             self.add_global(const_zero(t), false, &def.name);
             let aaa = (); // Do static initialisation where possible
             // let v = self.codegen_static(info.typed_node(node_id))?;
             // self.add_global(v, false, &name);
           }
-          SymbolInfo::Function(init) => {
+          SymbolInit::Function(init) => {
             let sig = def.type_tag.sig().unwrap();
             let f =
               self.codegen_prototype(
@@ -344,7 +344,7 @@ impl <'l> Gen<'l> {
                 Some(&init.args), sig.args);
             functions_to_codegen.push((f, init.args.as_slice(), init.body));
           }
-          SymbolInfo::Intrinsic => (),
+          SymbolInit::Intrinsic => (),
         }
       }
     }
@@ -479,7 +479,7 @@ impl <'l> Gen<'l> {
         }
       }
       _ => {
-        return error(node, "unsupported construct in static info");
+        return error(node, "unsupported construct in static initialiser");
       }
     };
     Ok(v)
@@ -526,9 +526,6 @@ impl <'l> Gen<'l> {
         else {
           panic!("type `{}` not found", name);
         }
-      }
-      TypeContent::Union => {
-        Some(self.union_type(info, t.children.as_slice()).into())
       }
       TypeContent::Array => {
         let t = t.array().unwrap();
@@ -633,47 +630,50 @@ impl <'l> Gen<'l> {
     }
   }
 
-  fn union_type(&mut self, info : &CompileInfo, types : &[Type]) -> StructType {
-    let mut union_bitwidth = 0;
-    let mut bt : Option<BasicTypeEnum> = None;
-    let mut widest_alignment = 0;
-    for t in types {
-      if let Some(t) = self.to_basic_type_no_cycle(info, t) {
-        let alignment = self.target_data.get_preferred_alignment(&t);
-        if alignment > widest_alignment {
-          widest_alignment = alignment;
-          bt = Some(t)
-        }
-        let width = self.target_data.get_bit_size(&t);
-        if width > union_bitwidth {
-          union_bitwidth = width;
-        }
-      }
-    }
-    if let Some(t) = bt {
-      let val_bitwidth = self.target_data.get_bit_size(&t);
-      assert!(union_bitwidth >= val_bitwidth);
-      let difference = union_bitwidth - val_bitwidth;
-      assert!(difference % 8 == 0);
-      let padding = self.context.i8_type().array_type(difference as u32 / 8);
-      self.context.struct_type(&[t, padding.into()], true)
-    }
-    else {
-      let padding = self.context.i8_type().array_type(union_bitwidth as u32 / 8);
-      self.context.struct_type(&[padding.into()], true)
-    }
-  }
-
   fn composite_type(&mut self, info : &CompileInfo, def : &TypeDefinition) -> StructType {
     if let Some(t) = self.struct_types.get(&def.name) {
       return *t;
     }
-    let types =
-      def.type_tag.children.iter().map(|t| {
-        self.to_basic_type_no_cycle(info, t).unwrap()
-      })
-      .collect::<Vec<BasicTypeEnum>>();
-    let t = self.context.struct_type(&types, false);
+    let t = match def.kind {
+      TypeKind::Struct => {
+        let types =
+          def.fields.iter().map(|(_, t)| {
+            self.to_basic_type_no_cycle(info, t).unwrap()
+          })
+          .collect::<Vec<BasicTypeEnum>>();
+        self.context.struct_type(&types, false)
+      }
+      TypeKind::Union => {
+        let mut union_bitwidth = 0;
+        let mut bt : Option<BasicTypeEnum> = None;
+        let mut widest_alignment = 0;
+        for (_, t) in def.fields.iter() {
+          if let Some(t) = self.to_basic_type_no_cycle(info, t) {
+            let alignment = self.target_data.get_preferred_alignment(&t);
+            if alignment > widest_alignment {
+              widest_alignment = alignment;
+              bt = Some(t)
+            }
+            let width = self.target_data.get_bit_size(&t);
+            if width > union_bitwidth {
+              union_bitwidth = width;
+            }
+          }
+        }
+        if let Some(t) = bt {
+          let val_bitwidth = self.target_data.get_bit_size(&t);
+          assert!(union_bitwidth >= val_bitwidth);
+          let difference = union_bitwidth - val_bitwidth;
+          assert!(difference % 8 == 0);
+          let padding = self.context.i8_type().array_type(difference as u32 / 8);
+          self.context.struct_type(&[t, padding.into()], true)
+        }
+        else {
+          let padding = self.context.i8_type().array_type(union_bitwidth as u32 / 8);
+          self.context.struct_type(&[padding.into()], true)
+        }
+      }
+    };
     self.struct_types.insert(def.name.clone(), t);
     return t;
   }
@@ -1117,9 +1117,9 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     reg(sv.into())
   }
 
-  fn codegen_union_initialise(&mut self, info : &CompileInfo, types : &[Type], val : BasicValueEnum) -> GenVal {
-    let union_type = self.gen.union_type(info, types).as_basic_type_enum();
-    let ptr = self.create_entry_block_alloca(union_type, "union");
+  fn codegen_union_initialise(&mut self, info : &CompileInfo, def : &TypeDefinition, val : BasicValueEnum) -> GenVal {
+    let union_type = self.gen.composite_type(info, def).as_basic_type_enum();
+    let ptr = self.create_entry_block_alloca(union_type, &def.name);
     let variant_type = self.gen.pointer_to_type(Some(val.get_type()));
     let variant_ptr = self.builder.build_pointer_cast(ptr, variant_type, "union_cast");
     self.builder.build_store(variant_ptr, val);
@@ -1156,16 +1156,16 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     else {
       def
     };
-    match def.info {
-      SymbolInfo::GlobalVar(_) => {
+    match def.initialiser {
+      SymbolInit::Expression(_) => {
         let gv = self.get_linked_global_reference(info, def);
         pointer(gv.as_pointer_value())
       }
-      SymbolInfo::Function(_) => {
+      SymbolInit::Function(_) => {
         let fv = self.get_linked_function_reference(info, def);
         reg(fv.as_global_value().as_pointer_value().into())
       }
-      SymbolInfo::CBind => {
+      SymbolInit::CBind => {
         if let Some(sig) = def.type_tag.sig() {
           let fv = if let Some(local_f) = self.gen.module.get_function(&def.name) {
             local_f
@@ -1184,7 +1184,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
           pointer(gv.as_pointer_value())
         }
       }
-      SymbolInfo::Intrinsic => {
+      SymbolInit::Intrinsic => {
         panic!("cannot get reference to intrinsic");
       }
     }
@@ -1211,8 +1211,8 @@ impl <'l, 'a> GenFunction<'l, 'a> {
       panic!("{} {}", "Tried to get the address of a polymorphic function definition.",
         "This will always fail, and means there is a bug somewhere earlier in the pipeline.");
     }
-    match &def.info {
-      SymbolInfo::Function(init) => {
+    match &def.initialiser {
+      SymbolInit::Function(init) => {
         // Check if it was already added
         if let Some(f) = self.gen.module.get_function(&init.name_for_codegen) {
           f
@@ -1226,7 +1226,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
           f
         }
       }
-      _ => panic!("expected function info"),
+      _ => panic!("expected function initialiser"),
     }
   }
 
@@ -1494,27 +1494,16 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         let a : Result<Vec<BasicValueEnum>, Error> =
           field_values.iter().map(|(_, a)| self.codegen_value(node.get(*a))).collect();
         let def = node.node_type_def().unwrap();
-        self.codegen_struct_initialise(info, &def, a?.as_slice())
+        match def.kind {
+          TypeKind::Struct => {
+            self.codegen_struct_initialise(info, &def, a?.as_slice())
+          }
+          TypeKind::Union => {
+            self.codegen_union_initialise(info, &def, a?[0])
+          }
+        }
       }
       Content::FieldAccess{ container, field } => {
-        let aaa = (); // TODO: this code should be moved somewhere, to support the use of structs!
-        // TypeKind::Union => {
-        //   let t = self.gen.to_basic_type(info, node.type_tag());
-        //   match v.storage {
-        //     Storage::Register => {
-        //       // if the struct is in a register, dereference the field into a register
-        //       let reg_val =
-        //         self.builder.build_bitcast(v.value, t.unwrap(), "union_cast");
-        //       reg(reg_val)
-        //     }
-        //     Storage::Pointer => {
-        //       // if this is a pointer to the struct, get a pointer to the field
-        //       let ptr = *v.value.as_pointer_value();
-        //       let field_ptr = self.builder.build_pointer_cast(ptr, self.gen.pointer_to_type(t), "union_cast");
-        //       pointer(field_ptr)
-        //     }
-        //   }
-        // }
         let container = node.get(*container);
         let mut v = self.codegen_expression(container)?.unwrap();
         let mut ct = container.type_tag();
@@ -1529,30 +1518,51 @@ impl <'l, 'a> GenFunction<'l, 'a> {
           }
           _ => panic!(),
         };
-        let (field_index, _) =
-          def.fields.iter().enumerate()
-          .find(|(_, n)| n.name.as_ref() == field.name.as_ref()).unwrap();
-        match v.storage {
-          Storage::Register => {
-            // if the struct is in a register, dereference the field into a register
-            let reg_val =
-              self.builder.build_extract_value(
-                *v.value.as_struct_value(), field_index as u32, &field.name).unwrap();
-            reg(reg_val)
+        match def.kind {
+          TypeKind::Struct => {
+            let (field_index, _) =
+              def.fields.iter().enumerate()
+              .find(|(_, (n, _))| n.name.as_ref() == field.name.as_ref()).unwrap();
+            match v.storage {
+              Storage::Register => {
+                // if the struct is in a register, dereference the field into a register
+                let reg_val =
+                  self.builder.build_extract_value(
+                    *v.value.as_struct_value(), field_index as u32, &field.name).unwrap();
+                reg(reg_val)
+              }
+              Storage::Pointer => {
+                // if this is a pointer to the struct, get a pointer to the field
+                let ptr = *v.value.as_pointer_value();
+                let field_ptr_untyped = unsafe {
+                  self.builder.build_struct_gep(ptr, field_index as u32, &field.name)
+                };
+                let t = self.gen.to_basic_type(info, node.type_tag());
+                // this cast is necessary because all pointer fields are tagged as void pointers
+                // in the IR, due to an issue with generating cyclic references
+                let field_ptr =
+                  self.builder.build_pointer_cast(
+                    field_ptr_untyped, self.gen.pointer_to_type(t), "field_cast");
+                pointer(field_ptr)
+              }
+            }
           }
-          Storage::Pointer => {
-            // if this is a pointer to the struct, get a pointer to the field
-            let ptr = *v.value.as_pointer_value();
-            let field_ptr_untyped = unsafe {
-              self.builder.build_struct_gep(ptr, field_index as u32, &field.name)
-            };
+          TypeKind::Union => {
             let t = self.gen.to_basic_type(info, node.type_tag());
-            // this cast is necessary because all pointer fields are tagged as void pointers
-            // in the IR, due to an issue with generating cyclic references
-            let field_ptr =
-              self.builder.build_pointer_cast(
-                field_ptr_untyped, self.gen.pointer_to_type(t), "field_cast");
-            pointer(field_ptr)
+            match v.storage {
+              Storage::Register => {
+                // if the struct is in a register, dereference the field into a register
+                let reg_val =
+                  self.builder.build_bitcast(v.value, t.unwrap(), "union_cast");
+                reg(reg_val)
+              }
+              Storage::Pointer => {
+                // if this is a pointer to the struct, get a pointer to the field
+                let ptr = *v.value.as_pointer_value();
+                let field_ptr = self.builder.build_pointer_cast(ptr, self.gen.pointer_to_type(t), "union_cast");
+                pointer(field_ptr)
+              }
+            }
           }
         }
       }

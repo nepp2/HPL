@@ -2,7 +2,7 @@ use crate::expr::{StringCache, UIDGenerator, RefStr};
 use crate::types::{
   Type, PType, TypeInfo, TypeContent,
   UnitId, SignatureBuilder, SymbolDefinition,
-  SymbolInfo,
+  SymbolInit,
 };
 
 pub fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypeInfo {
@@ -23,7 +23,7 @@ pub fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypeInfo
       id, unit_id,
       name: cache.get(name),
       type_tag: sig.into(),
-      info: SymbolInfo::Intrinsic,
+      initialiser: SymbolInit::Intrinsic,
       type_vars,
     }
   }

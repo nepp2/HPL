@@ -17,7 +17,7 @@ use structure::{
 use types::{
   Type, TypeContent, TypeInfo, TypeDirectory, SymbolId,
   SignatureBuilder, incremental_unify, TypeMapping,
-  UnifyResult, UnitId, AbstractType, SymbolInfo, SymbolDefinition,
+  UnifyResult, UnitId, AbstractType, SymbolInit, SymbolDefinition,
 };
 use inference_constraints::{
   Constraint, ConstraintContent,
@@ -583,7 +583,7 @@ impl <'a> Inference<'a> {
       for (node_id, symbol_id) in self.mapping.symbol_references.iter() {
         let def = self.t.find_type_info(symbol_id.uid).symbols.get(symbol_id).unwrap().clone();
         if def.is_polymorphic() {
-          if let SymbolInfo::Function(_) = def.info {
+          if let SymbolInit::Function(_) = def.initialiser {
             let t = self.mapping.node_type.get(node_id).unwrap();
             self.mapping.polymorphic_references.insert((*symbol_id, t.clone()));
           }

@@ -21,6 +21,11 @@ pub struct LabelId(Uid);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ReferenceId(Uid);
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TypeKind {
+  Struct, Union
+}
+
 #[derive(Debug, Clone)]
 pub struct Reference {
   pub id : ReferenceId,
@@ -47,7 +52,7 @@ pub enum Content {
   Reference { name: RefStr, refers_to: Option<ReferenceId> },
   FunctionDefinition{ name: RefStr, args: Vec<(Reference, Option<Box<Expr>>)>, return_tag: Option<Box<Expr>>, type_vars : Vec<RefStr>, body: NodeId },
   CBind { name: RefStr, type_tag : Box<Expr> },
-  TypeDefinition{ name: RefStr, fields: Vec<(Reference, Option<Box<Expr>>)>, type_vars : Vec<RefStr> },
+  TypeDefinition{ name: RefStr, kind : TypeKind, fields: Vec<(Reference, Option<Box<Expr>>)>, type_vars : Vec<RefStr> },
   TypeConstructor{ name: Reference, field_values: Vec<(Option<Reference>, NodeId)> },
   FieldAccess{ container: NodeId, field: Reference },
   ArrayLiteral(Vec<NodeId>),
@@ -471,6 +476,15 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
           }
         }
       }
+      ("union", [name, fields_expr]) => {
+        let name = self.cached(name.unwrap_symbol()?);
+        let fields =
+          fields_expr.children().iter()
+          .map(|e| self.typed_symbol(e))
+          .collect::<Result<Vec<_>, Error>>()?;
+        let td = TypeDefinition{name, kind: TypeKind::Union, fields, type_vars: vec![] };
+        Ok(self.node(expr, td))
+      }
       ("struct", [name, fields_expr]) => {
         let (name, type_vars) = {
           if let Some(("call", exprs)) = name.try_construct() {
@@ -488,7 +502,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
           fields_expr.children().iter()
           .map(|e| self.typed_symbol(e))
           .collect::<Result<Vec<_>, Error>>()?;
-        Ok(self.node(expr, TypeDefinition{name, fields, type_vars }))
+        Ok(self.node(expr, TypeDefinition{name, kind: TypeKind::Struct, fields, type_vars }))
       }
       (".", [container_expr, field_expr]) => {
         let container = self.to_node(container_expr)?;

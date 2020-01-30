@@ -8,8 +8,8 @@ use crate::structure::{
   VarScope, GlobalType, Reference, Nodes,
 };
 use crate::types::{
-  Type, PType, TypeDefinition, FunctionInfo, SymbolDefinition,
-  TypeDirectory, SymbolInfo, SymbolId, AbstractType,
+  Type, PType, TypeDefinition, FunctionInit, SymbolDefinition,
+  TypeDirectory, SymbolInit, SymbolId, AbstractType,
   SignatureBuilder, TypeMapping, TypeContent,
 };
 use std::collections::HashMap;
@@ -42,8 +42,7 @@ pub enum ConstraintContent {
   },
   Constructor {
     def_ts : TypeSymbol,
-    fun_ts : TypeSymbol,
-    fields : Vec<Option<Reference>>,
+    fields : Vec<(Option<Reference>, TypeSymbol)>,
   },
   Function {
     function : TypeSymbol,
@@ -281,7 +280,7 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
     self.t.create_symbol({
       let name_for_codegen =
       self.cache.get(format!("{}.{}", name, self.gen.next()).as_str());
-      let f = FunctionInfo {
+      let f = FunctionInit {
         body: body,
         name_for_codegen,
         args,
@@ -291,7 +290,7 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
         unit_id: self.t.new_unit_id(),
         name: name.clone(),
         type_tag: Type::any(),
-        info: SymbolInfo::Function(f),
+        initialiser: SymbolInit::Function(f),
         type_vars: type_vars.iter().cloned().collect(),
       }
     });
@@ -365,9 +364,9 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
         let vid = self.process_node(n, *value);
         self.equalivalent(var_type_symbol, vid);
         if let VarScope::Global(global_type) = *var_scope {
-          let info = match global_type {
-            GlobalType::CBind => SymbolInfo::CBind,
-            GlobalType::Normal => SymbolInfo::GlobalVar(*value),
+          let initialiser = match global_type {
+            GlobalType::CBind => SymbolInit::CBind,
+            GlobalType::Normal => SymbolInit::Expression(*value),
           };
           let symbol_id = self.create_symbol_id(id);
           self.t.create_symbol(SymbolDefinition {
@@ -375,7 +374,7 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
             unit_id: self.t.new_unit_id(),
             name: name.name.clone(),
             type_tag: Type::any(),
-            info,
+            initialiser,
             type_vars: vec![],
           });
           self.constraint(SymbolDef{
@@ -480,12 +479,12 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
           id: symbol_id,
           unit_id: self.t.new_unit_id(),
           name: name.clone(),
-          info: SymbolInfo::CBind,
+          initialiser: SymbolInit::CBind,
           type_tag: Type::any(),
           type_vars: vec![],
         });
       }
-      Content::TypeDefinition{ name, fields, type_vars } => {
+      Content::TypeDefinition{ name, kind, fields, type_vars } => {
         self.assert(ts, PType::Void);
         if self.t.find_type_def(name.as_ref()).is_some() {
           let e = error_raw(node.loc, "type with this name already defined");
@@ -508,6 +507,7 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
               name: name.clone(),
               unit_id: gc.t.new_unit_id(),
               fields: fields.iter().map(|(f, _)| (f.clone(), Type::any())).collect(),
+              kind: *kind,
               type_vars,
               drop_function: None, clone_function: None,
             };
@@ -525,17 +525,8 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
         }
         let def_type = Type::unresolved_def(name.name.clone());
         self.assert_type(ts, def_type);
-        let fun_ts = self.type_symbol(name.loc);
-        self.constraint(Constructor{
-          def_ts: ts,
-          fun_ts,
-          fields: field_values.iter().map(|x| x.0.clone()).collect(),
-        });
-        self.constraint(Function {
-          function: fun_ts,
-          args: field_values.iter().map(|(_, nid)| self.process_node(n, *nid)).collect(),
-          return_type: ts,
-        });
+        let tc = Constructor{ def_ts: ts, fields };
+        self.constraint(tc);
       }
       Content::FieldAccess{ container, field } => {
         let fa = FieldAccess {
@@ -555,11 +546,12 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
       }
       Content::FunctionCall{ function, args } => {
         let function = self.process_node(n, *function);
-        self.constraint(Function {
+        let fc = Function {
           function,
           args: args.iter().map(|id| self.process_node(n, *id)).collect(),
           return_type: ts,
-        });
+        };
+        self.constraint(fc);
       }
       Content::While{ condition, body } => {
         self.assert(ts, PType::Void);
@@ -700,4 +692,4 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
     let r = expr_to_type_internal(self, expr);
     self.log_error(r)
   }
-}
+}  
