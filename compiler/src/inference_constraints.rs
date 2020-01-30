@@ -509,7 +509,6 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
               fields: fields.iter().map(|(f, _)| (f.clone(), Type::any())).collect(),
               kind: *kind,
               type_vars,
-              drop_function: None, clone_function: None,
             };
             gc.mapping.type_def_nodes.insert(name.clone(), id);
             gc.t.create_type_def(def);

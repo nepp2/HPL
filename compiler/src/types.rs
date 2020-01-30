@@ -320,11 +320,9 @@ impl AbstractType {
 pub struct TypeDefinition {
   pub name : RefStr,
   pub unit_id : UnitId,
-  pub fields : Vec<(Reference, Type)>,
   pub kind : TypeKind,
+  pub fields : Vec<(Reference, Type)>,
   pub type_vars : Vec<RefStr>,
-  pub drop_function : Option<ResolvedSymbol>,
-  pub clone_function : Option<ResolvedSymbol>,
 }
 
 impl TypeDefinition {

@@ -5,7 +5,10 @@ use crate::{
   compiler, intrinsics,
 };
 use expr::{StringCache, Expr, UIDGenerator, Uid, RefStr};
-use types::{UnitId, TypeInfo, SymbolId, Type, TypeMapping, SymbolDefinition};
+use types::{
+  UnitId, TypeInfo, SymbolId, Type, TypeMapping,
+  SymbolDefinition, TypeDefinition,
+};
 use llvm_compile::LlvmUnit;
 use compiler::Val;
 use structure::Nodes;
@@ -68,6 +71,10 @@ impl CodeStore {
 
   pub fn symbol_def(&self, symbol_id : SymbolId) -> &SymbolDefinition {
     self.types(symbol_id.uid).symbols.get(&symbol_id).unwrap()
+  }
+
+  pub fn type_def(&self, name : &str, unit_id : UnitId) -> &TypeDefinition {
+    self.types(unit_id).type_defs.get(name).unwrap()
   }
 
   pub fn type_mapping(&self, unit_id : UnitId) -> &TypeMapping {

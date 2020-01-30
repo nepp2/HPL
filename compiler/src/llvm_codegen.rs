@@ -1263,25 +1263,27 @@ impl <'l, 'a> GenFunction<'l, 'a> {
   }
 
   fn get_linked_drop_reference(&mut self, info : &CompileInfo, t : &Type) -> Option<FunctionValue> {
-    if let TypeContent::Def(name, unit_id) = &t.content {
-      let def = info.find_type_def(name, *unit_id).unwrap();
-      if let Some(drop) = &def.drop_function {
-        let drop_def = info.symbol_def(drop.symbol_id);
-        return Some(self.get_linked_function_reference(info, drop_def));
-      }
-    }
-    None
+    // if let TypeContent::Def(name, unit_id) = &t.content {
+    //   let def = info.find_type_def(name, *unit_id).unwrap();
+    //   if let Some(drop) = &def.drop_function {
+    //     let drop_def = info.symbol_def(drop.symbol_id);
+    //     return Some(self.get_linked_function_reference(info, drop_def));
+    //   }
+    // }
+    // None
+    panic!("drop is not currently supported")
   }
 
   fn get_linked_clone_reference(&mut self, info : &CompileInfo, t : &Type) -> Option<FunctionValue> {
-    if let TypeContent::Def(name, unit_id) = &t.content {
-      let def = info.find_type_def(name, *unit_id).unwrap();
-      if let Some(clone) = &def.clone_function {
-        let clone_def = info.symbol_def(clone.symbol_id);
-        return Some(self.get_linked_function_reference(info, clone_def));
-      }
-    }
-    None
+    // if let TypeContent::Def(name, unit_id) = &t.content {
+    //   let def = info.find_type_def(name, *unit_id).unwrap();
+    //   if let Some(clone) = &def.clone_function {
+    //     let clone_def = info.symbol_def(clone.symbol_id);
+    //     return Some(self.get_linked_function_reference(info, clone_def));
+    //   }
+    // }
+    // None
+    panic!("clone is not currently supported")
   }
 
   /// Makes sure newly created values that need to be dropped are registered with the block that they
