@@ -12,7 +12,7 @@ use crate::{error, expr, structure, types, inference_constraints, code_store};
 use error::{Error, error, error_raw, TextLocation, ErrorContent};
 use expr::{UIDGenerator, Uid, RefStr, StringCache};
 use structure::{
-  NodeId, Nodes
+  NodeId, Nodes,
 };
 use types::{
   Type, TypeContent, TypeInfo, TypeDirectory, SymbolId,
@@ -21,7 +21,7 @@ use types::{
 };
 use inference_constraints::{
   Constraint, ConstraintContent,
-  Constraints, TypeSymbol,
+  Constraints, TypeSymbol, Assertion,
 };
 use code_store::CodeStore;
 
@@ -97,15 +97,6 @@ pub fn typecheck_polymorphic_function_instance(
   }
   else {
     Ok((new_types, mapping, symbol_id))
-  }
-}
-
-fn recursive_mut_deref<A>(t : &mut Type, mut f : impl FnMut(&mut Type) -> A) -> A {
-  if let Some(inner) = t.ptr_mut() {
-    recursive_mut_deref(inner, f)
-  }
-  else {
-    f(t)
   }
 }
 
@@ -195,32 +186,19 @@ impl <'a> Inference<'a> {
   fn unresolved_constraint_error(&mut self, c : &Constraint) {
     use ConstraintContent::*;
     let e = match &c.content  {
-      Assert(_, _) => return,
       Equalivalent(_a, _b) => return,
       // this error should always be accompanied by other unresolved constraints
       Function{ function:_, args:_, return_type:_ } => return,
-      StructDef { typename , def_ts } => {
-        let any = Type::any();
-        let t = self.resolved.get(def_ts).unwrap_or(&any);
-        error_raw(typename.loc,
-          format!("Struct def '{}' not resolved. Inferred type {}.", typename.name, t))
-      },
-      StructReference { typename , def_ts } => {
-        let any = Type::any();
-        let t = self.resolved.get(def_ts).unwrap_or(&any);
-        error_raw(typename.loc,
-          format!("Struct reference '{}' not resolved. Inferred type {}.", typename.name, t))
-      },
-      Struct { def_ts:_ , fields:_ } => return,
+      Constructor { def_ts:_ , fields:_ } => return,
       Convert { val:_, into_type_ts:_ } => return,
       SymbolDef { symbol_id, type_symbol:_ } => {
         let def = self.t.get_symbol_mut(*symbol_id);
         let node_id = *self.mapping.symbol_def_nodes.get(symbol_id).unwrap();
         let loc = self.nodes.node(node_id).loc;
         error_raw(loc,
-          format!("Symbol definition '{}' not resolved. Inferred type {}.", def.name, def.type_tag))
+          format!("Global definition '{}' not resolved. Inferred type {}.", def.name, def.type_tag))
       }
-      SymbolReference { node:_, name, result } => {
+      GlobalReference { node:_, name, result } => {
         let any = Type::any();
         let t = self.resolved.get(result).unwrap_or(&any);
         let symbols = self.t.find_symbol(&name, t);
@@ -250,47 +228,77 @@ impl <'a> Inference<'a> {
     self.mapping.symbol_references.insert(node, symbol_id);
   }
 
-  fn resolve_defs(&mut self, loc : TextLocation, t : &mut Type, c : &'a Constraint)
-    -> Result<(), Error> 
+  fn resolve_abstract_defs<'l>(&self, loc : TextLocation, t : &'l Type)
+    -> Result<Type, Error> 
   {
-    match &t.content {
-      Def(name, unit_id) => {
-        let def = self.t.get_type_def(name, *unit_id);
-        self.dependency_map.new_struct_ref(name, c);
-        *t = def.type_tag.clone();
-      }
+    let content = match &t.content {
       Abstract(AbstractType::Def(name)) => {
         if let Some(def) = self.t.find_type_def(name) {
-          self.dependency_map.new_struct_ref(name, c);
-          *t = def.type_tag.clone();
+          let children = if t.children.len() == 0 {
+            def.type_vars.iter().map(|_| Type::any()).collect()
+          }
+          else if t.children.len() != def.type_vars.len() {
+            return error(loc, "incorrect number of type arguments");
+          }
+          else {
+            t.children.iter().map(|c| self.resolve_abstract_defs(loc, c))
+              .collect::<Result<Vec<_>, Error>>()?
+          };
+          let content = Def(name.clone(), def.unit_id);
+          return Ok(Type::new(content, children));
         }
         else {
           return error(loc, format!("type definition '{}' was not found", name));
         }
       }
-      _ => (),
+      _ => t.content.clone(),
     };
-    for t in t.children.iter_mut() {
-      self.resolve_defs(loc, t, c)?;
+    let mut children = vec![];
+    for c in t.children() {
+      let c = self.resolve_abstract_defs(loc, c)?;
+      children.push(c.into())
     }
-    Ok(())
+    Ok(Type::new(content, children))
   }
 
-  fn process_constraint(&mut self, c : &'a Constraint) {
-    use ConstraintContent::*;
-    match &c.content  {
-      Assert(ts, t) => {
+  fn process_assertion(&mut self, a : &'a Assertion) {
+    fn to_resolved(i : &mut Inference, t : &Option<(Type, TextLocation)>) -> Type {
+      if let Some((t, loc)) = t.as_ref() {
+        match i.resolve_abstract_defs(*loc, t) {
+          Ok(t) => return t,
+          Err(e) => i.errors.push(e),
+        }
+      }
+      Type::any()
+    }
+    match a {
+      Assertion::Assert(ts, t) => {
         let loc = self.loc(*ts);
-        let mut t = t.clone();
-        match self.resolve_defs(loc, &mut t, c) {
-          Ok(()) => {
-            self.update_type(*ts, &t);
+        match self.resolve_abstract_defs(loc, t) {
+          Ok(t) => {
+            self.resolved.insert(*ts, t);
           }
           Err(e) => {
             self.errors.push(e);
           }
         }
       }
+      Assertion::AssertTypeDef{ typename, fields } => {
+        let mut fs = vec![];
+        for f in fields {
+          fs.push(to_resolved(self, f));
+        }
+        let def = self.t.get_type_def_mut(typename);
+        for (i, t) in fs.into_iter().enumerate() {
+          def.fields[i].1 = t;
+        }
+      }
+    }
+  }
+
+  fn process_constraint(&mut self, c : &'a Constraint) {
+    use ConstraintContent::*;
+    match &c.content  {
       Equalivalent(a, b) => {
         if let Some(t) = self.get_type(*a) {
           let t = t.clone();
@@ -323,39 +331,50 @@ impl <'a> Inference<'a> {
           self.update_type(*function, &sig.into());
         }
       }
-      StructDef { typename, def_ts } => {
-        // Use global def to update the type symbol
-        let mut t = self.t.get_type_def_mut(&typename.name).type_tag.clone();
-        let def_type_changed = self.update_type_mut(*def_ts, &mut t);
-        // Use the type symbol to update the global def
-        if def_type_changed {
-          let def = self.t.get_type_def_mut(&typename.name);
-          def.type_tag = t;
-          // Trigger any constraints looking for this name
-          if let Some(cs) = self.dependency_map.struct_refs.get(&def.name) {
-            for &c in cs.iter() {
-              self.next_edge_set.insert(c.id, c);
-            }
-          }
-        }
-      }
-      StructReference { typename, def_ts } => {
-        if let Some(def) = self.t.find_type_def(&typename.name) {
-          let t = def.type_tag.clone();
-          self.update_type(*def_ts, &t);
-        }
-      }
-      Struct { def_ts, fields } => {
+      Constructor { def_ts, fields } => {
         if let Some(t) = self.resolved.get(def_ts) {
-          if let Def(_, _) = &t.content {
-            let mut children = vec![];
-            for ts in fields {
-              children.push(self.resolved.get(ts).cloned().unwrap_or(Type::any()));
-            }
-            let mut t = Type::new(t.content.clone(), children);
-            if self.update_type_mut(*def_ts, &mut t) {
-              for (c, ts) in t.children.iter().zip(fields) {
-                self.update_type(*ts, c);
+          if let Def(name, unit_id) = &t.content {
+            self.dependency_map.register_typedef(name, c);
+            let def = self.t.get_type_def(name, *unit_id);
+            match def.kind {
+              TypeKind::Struct => {
+                if fields.len() == def.fields.len() {
+                  let it = fields.iter().zip(def.fields.iter());
+                  let mut field_types = vec![];
+                  for ((arg_name, _), (field_name, field_type)) in it {
+                    let mut field_type = field_type.clone();
+                    def.instance_type(&mut field_type, t.children.as_slice());
+                    field_types.push(field_type.clone());
+                    if let Some(arg_name) = arg_name {
+                      if arg_name.name != field_name.name {
+                        self.errors.push(error_raw(arg_name.loc, "incorrect field name"));
+                      }
+                    }
+                  }
+                  for(i, t) in field_types.into_iter().enumerate() {
+                    self.update_type(fields[i].1, &t);
+                  }
+                }
+                else{
+                  let e = error_raw(self.loc(*def_ts), "incorrect number of field arguments for struct");
+                  self.errors.push(e);
+                }
+              }
+              TypeKind::Union => {
+                if let [(Some(sym), ts)] = fields.as_slice() {
+                  if let Some((_, t)) = def.fields.iter().find(|(n, _)| n.name == sym.name) {
+                    let t = t.clone();
+                    self.update_type(*ts, &t);
+                  }
+                  else {
+                    self.errors.push(error_raw(sym.loc, "field does not exist in this union"));
+                  }
+                }
+                else {
+                  let s = format!("incorrect number of field arguments for union '{}'", def.name);
+                  let e = error_raw(self.loc(*def_ts), s);
+                  self.errors.push(e);
+                }
               }
             }
           }
@@ -372,23 +391,8 @@ impl <'a> Inference<'a> {
               }
               false
             }
-            fn union_contains(union : &Type, t : &Type) -> bool {
-              if let Union = &union.content {
-                if let Abstract(_) = &t.content {
-                  return true;
-                }
-                for ut in union.children() {
-                  if t == ut {
-                    return true;
-                  }
-                }
-              }
-              return false;
-            }
             let valid =
               abstract_contains(t, into) ||
-              union_contains(t, into) ||
-              union_contains(into, t) ||
               (t.pointer() && into.pointer()) ||
               (t.number() && into.number()) ||
               (t.pointer() && into.unsigned_int()) ||
@@ -400,6 +404,26 @@ impl <'a> Inference<'a> {
           }
         }
       }
+      // TODO: improve this and make it work again
+      // TypeDefField { container, field_index, field_type } => {
+      //   if let Some(ctype) = self.resolved.get(container) {
+      //     if let Def(name, _) = &ctype.as_type().content {
+      //       let def = self.t.get_type_def_mut(name);
+      //       if let Some(inferred_type) = self.resolved.get(field_type) {
+      //         let t = &mut def.fields[*field_index].1;
+      //         let r = incremental_unify_polymorphic(inferred_type, t);
+      //         if r.new_type_changed {
+      //           // Trigger any constraints looking for this def
+      //           if let Some(cs) = self.dependency_map.typedef_map.get(name) {
+      //             for &c in cs.values() {
+      //               self.next_edge_set.insert(c.id, c);
+      //             }
+      //           }
+      //         }
+      //       }
+      //     }
+      //   }
+      // }
       SymbolDef{ symbol_id, type_symbol } => {
         // Use global def to update the type symbol
         let mut t = self.t.get_symbol_mut(*symbol_id).type_tag.clone();
@@ -409,14 +433,14 @@ impl <'a> Inference<'a> {
           let def = self.t.get_symbol_mut(*symbol_id);
           def.type_tag = t;
           // Trigger any constraints looking for this name
-          if let Some(cs) = self.dependency_map.symbol_refs.get(&def.name) {
+          if let Some(cs) = self.dependency_map.global_map.get(&def.name) {
             for &c in cs.iter() {
               self.next_edge_set.insert(c.id, c);
             }
           }
         }
       }
-      SymbolReference { node, name, result } => {
+      GlobalReference { node, name, result } => {
         let any = Type::any();
         let t = self.get_type(*result).cloned().unwrap_or(any);
         match self.t.find_symbol(&name, &t) {
@@ -435,27 +459,23 @@ impl <'a> Inference<'a> {
       }
       FieldAccess{ container, field, result } => {
         let container_type = self.resolved.get(container);
-        if let Some(def_t) = container_type {
-          let mut def_t = def_t.clone();
+        if let Some(ct) = container_type {
+          let mut t = ct;
           // Dereference any pointers
-          let changed_def = recursive_mut_deref(&mut def_t, |t| {
-            if let Def(name, unit_id) = &t.content {
-              let def = self.t.get_type_def(name, *unit_id);
-              let i = def.fields.iter().position(|s| &s.name == &field.name);
-              if let Some(i) = i {
-                if self.update_type_mut(*result, &mut t.children[i]) {
-                  return true;
-                }
-              }
-              else {
-                let s = format!("type '{}' has no field '{}'", name, field.name);
-                self.errors.push(error_raw(field.loc, s));
-              }
+          while let Some(inner) = t.ptr() {
+            t = inner;
+          }
+          if let Def(name, unit_id) = &t.content {
+            self.dependency_map.register_typedef(name, c);
+            let def = self.t.get_type_def(&name, *unit_id);
+            let field_type = def.instanced_field_type(&field.name, t.children.as_slice());
+            if let Some(t) = field_type {
+              self.update_type(*result, &t);
             }
-            false
-          });
-          if changed_def {
-            self.update_type(*container, &def_t);
+            else {
+              let s = format!("type '{}' has no field '{}'", def.name, field.name);
+              self.errors.push(error_raw(field.loc, s));
+            }
           }
         }
       }
@@ -491,6 +511,9 @@ impl <'a> Inference<'a> {
 
   fn infer(mut self) {
     println!("To resolve: {}", self.c.symbols.len());
+    for a in self.c.assertions.iter() {
+      self.process_assertion(a);
+    }
     for c in self.c.constraints.iter() {
       self.dependency_map.populate_dependency_map(c);
       self.next_edge_set.insert(c.id, c);
@@ -571,8 +594,8 @@ impl <'a> Inference<'a> {
 }
 
 struct ConstraintDependencyMap<'a> {
-  symbol_refs : HashMap<RefStr, Vec<&'a Constraint>>,
-  struct_refs : HashMap<RefStr, Vec<&'a Constraint>>,
+  global_map : HashMap<RefStr, Vec<&'a Constraint>>,
+  typedef_map : HashMap<RefStr, HashMap<Uid, &'a Constraint>>,
   ts_map : HashMap<TypeSymbol, Vec<&'a Constraint>>,
 }
 
@@ -580,8 +603,8 @@ impl <'a> ConstraintDependencyMap<'a> {
 
   fn new() -> Self {
     ConstraintDependencyMap {
-      symbol_refs: HashMap::new(),
-      struct_refs: HashMap::new(),
+      global_map: HashMap::new(),
+      typedef_map: HashMap::new(),
       ts_map: HashMap::new() }
   }
 
@@ -589,41 +612,25 @@ impl <'a> ConstraintDependencyMap<'a> {
     self.ts_map.entry(*ts).or_insert(vec![]).push(c);
   }
 
-  fn symbol_ref(&mut self, name : &RefStr, c : &'a Constraint) {
-    if let Some(cs) = self.symbol_refs.get_mut(name) { cs.push(c); }
-    else { self.symbol_refs.insert(name.clone(), vec![c]); }
+  fn global(&mut self, name : &RefStr, c : &'a Constraint) {
+    if let Some(cs) = self.global_map.get_mut(name) { cs.push(c); }
+    else { self.global_map.insert(name.clone(), vec![c]); }
   }
 
-  // Checks for duplicates on insertion
-  fn new_struct_ref(&mut self, name : &RefStr, c : &'a Constraint) {
-    if let Some(cs) = self.struct_refs.get_mut(name) {
-      if cs.iter().find(|con| con.id == c.id).is_none() {
-        cs.push(c);
-      }
+  fn register_typedef(&mut self, name : &RefStr, c : &'a Constraint) {
+    if let Some(cs) = self.typedef_map.get_mut(name) {
+      cs.insert(c.id, c);
     }
-    else { self.struct_refs.insert(name.clone(), vec![c]); }
-  }
-
-  fn struct_ref(&mut self, name : &RefStr, c : &'a Constraint) {
-    if let Some(cs) = self.struct_refs.get_mut(name) { cs.push(c); }
-    else { self.struct_refs.insert(name.clone(), vec![c]); }
-  }
-
-  fn find_struct_refs(&mut self, t : &Type, c : &'a Constraint) {
-    if let Def(name, _) = &t.content {
-      self.struct_ref(name, c);
-    }
-    for t in t.children.iter() {
-      self.find_struct_refs(t, c);
+    else {
+      let mut cs = HashMap::new();
+      cs.insert(c.id, c);
+      self.typedef_map.insert(name.clone(), cs);
     }
   }
 
   fn populate_dependency_map(&mut self, c : &'a Constraint) {
     use ConstraintContent::*;
     match &c.content {
-      Assert(_, t) => {
-        self.find_struct_refs(t, c);
-      }
       Equalivalent(a, b) => {
         self.ts(a, c);
         self.ts(b, c);
@@ -631,7 +638,7 @@ impl <'a> ConstraintDependencyMap<'a> {
       Array{ array, element } => {
         self.ts(array, c);
         self.ts(element, c);
-      }
+      },
       Convert{ val, into_type_ts } => {
         self.ts(val, c);
         self.ts(into_type_ts, c);
@@ -639,25 +646,20 @@ impl <'a> ConstraintDependencyMap<'a> {
       FieldAccess { container, field:_, result } => {
         self.ts(container, c);
         self.ts(result, c);
-      }
-      Struct { def_ts, fields } => {
+      },
+      Constructor { def_ts, fields } => {
         self.ts(def_ts, c);
-        for ts in fields { self.ts(ts, c) }
-      }
+        for (_, ts) in fields { self.ts(ts, c) }
+      },
       Function { function, args, return_type } => {
         self.ts(function, c);
         for ts in args { self.ts(ts, c) }
         self.ts(return_type, c);
-      }
+      },
       SymbolDef { symbol_id:_, type_symbol } => self.ts(type_symbol, c),
-      StructDef { typename:_, def_ts } => self.ts(def_ts, c),
-      SymbolReference { node:_, name, result } => {
-        self.symbol_ref(name, c);
+      GlobalReference { node:_, name, result } => {
+        self.global(name, c);
         self.ts(result, c);
-      }
-      StructReference { typename, def_ts } => {
-        self.struct_ref(&typename.name, c);
-        self.ts(def_ts, c);
       }
       SizeOf { node:_, ts } => {
         self.ts(ts, c);

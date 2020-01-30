@@ -1,30 +1,3 @@
-# LOG - 29/01/2020
-
-I have a problem because type asserts need to pass field information which might not have been inferred yet:
-
-```rust
-  fun blah(p : point) {
-    p
-  }
-  struct point {x : i32, y : i32}
-```
-
-`p` will be asserted as `Def("point")` with no children. I can fix this by creating a constraint dependency, but it won't work if the problem goes two layers deep:
-
-```rust
-  fun blah(p : vec2) {
-    p
-  }
-  struct vec2 {a : point, y : point}
-  struct point {x : i32, y : i32}
-```
-
-Now the assert for `p` has no dependency on the point type. This is why the old system didn't carry def information around. Also, the asserts aren't processed first, which means that they will only have AbstractDefs, and not resolved Defs.
-
-This whole approach has gotten complicated quickly. The main goal was to make polymorphic struct types typecheck & behave properly. To do that I borrowed ideas from function inference.
-
-This plan is failing because it has invalidated some assumptions that the old type assertion system relied on. In particular, that TypeDefinitions would be fully resolved before the constraint solver runs. I could either patch this guarantee into the new code, or I could somehow fix the new system to work without the guarantee. This might require introducing new dependencies between constraints _during_ the solving process.
-
 # LOG - 28/01/2020
 
 I still have a polymorphism bug. I'm wondering if I should have built around a smaller number of constraints, where everything is modelled as a function.
@@ -32,7 +5,7 @@ I still have a polymorphism bug. I'm wondering if I should have built around a s
 A constructor becomes a function. Field accesses become functions too. e.g.
 
 ```rust
-  struct Point { x : i32, y : i32 }
+struct Point { x : i32, y : i32 }
 ```
 
 becomes:

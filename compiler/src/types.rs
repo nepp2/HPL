@@ -257,14 +257,13 @@ impl Type {
     Type::new(Ptr, vec![self])
   }
 
-  pub fn ptr_mut(&mut self) -> Option<&mut Type> {
-    if self.content == Ptr { self.children.get_mut(0) }
-    else { None }
-  }
-
   pub fn ptr(&self) -> Option<&Type> {
-    if self.content == Ptr { self.children.get(0) }
-    else { None }
+    if self.content == Ptr {
+      if let [t] = self.children.as_slice() {
+        return Some(t);
+      }
+    }
+    None
   }
 
   pub fn array(&self) -> Option<&Type> {
@@ -426,7 +425,6 @@ impl  fmt::Display for Type {
         }
         Ok(())
       },
-      Union => write!(f, "union({})", self.children().iter().join(", ")),
       Array => write!(f, "array({})", self.array().unwrap()),
       Ptr => write!(f, "ptr({})", self.ptr().unwrap()),
       Prim(t) => write!(f, "{:?}", t),

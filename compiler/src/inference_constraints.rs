@@ -17,13 +17,20 @@ use std::collections::HashMap;
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct TypeSymbol(Uid);
 
+pub enum Assertion {
+  Assert(TypeSymbol, Type),
+  AssertTypeDef {
+    typename: RefStr,
+    fields : Vec<Option<(Type, TextLocation)>>,
+  },
+}
+
 pub struct Constraint {
   pub id : Uid,
   pub content : ConstraintContent,
 }
 
 pub enum ConstraintContent {
-  Assert(TypeSymbol, Type),
   Equalivalent(TypeSymbol, TypeSymbol),
   Array{ array : TypeSymbol, element : TypeSymbol },
   Convert{ val : TypeSymbol, into_type_ts : TypeSymbol },
@@ -33,17 +40,10 @@ pub enum ConstraintContent {
     field : Reference,
     result : TypeSymbol,
   },
-  StructReference {
-    typename: Reference,
+  Constructor {
     def_ts : TypeSymbol,
-  },
-  StructDef {
-    typename: Reference,
-    def_ts : TypeSymbol,
-  },
-  Struct {
-    def_ts : TypeSymbol,
-    fields : Vec<TypeSymbol>,
+    fun_ts : TypeSymbol,
+    fields : Vec<Option<Reference>>,
   },
   Function {
     function : TypeSymbol,
@@ -54,7 +54,7 @@ pub enum ConstraintContent {
     symbol_id: SymbolId,
     type_symbol: TypeSymbol,
   },
-  SymbolReference {
+  GlobalReference {
     node : NodeId,
     name : RefStr,
     result : TypeSymbol,
@@ -70,18 +70,15 @@ impl  fmt::Display for Constraint {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     use ConstraintContent::*;
     match &self.content {
-      Assert(_, t) => write!(f, "Assert {}", t),
       Equalivalent(_, _) => write!(f, "Equalivalent"),
       Array{ .. } => write!(f, "Array"),
       Convert{ .. } => write!(f, "Convert"),
       FieldAccess { field, .. } => write!(f, "FieldAccess {}", field.name),
-      StructReference { typename, .. } => write!(f, "StructReference {}", typename.name),
-      StructDef { typename, .. } => write!(f, "StructDef {}", typename.name),
-      Struct { .. } => write!(f, "Struct"),
+      Constructor { .. } => write!(f, "Constructor"),
       Function { args, .. } =>
-        write!(f, "Function ({} args)", args.len()),
+        write!(f, "FunctionCall ({} args)", args.len()),
       SymbolDef { .. } => write!(f, "SymbolDef"),
-      SymbolReference { name, .. } => write!(f, "SymbolReference {}", name),
+      GlobalReference { name, .. } => write!(f, "GlobalRef {}", name),
       SizeOf{ .. } => write!(f, "SizeOf"),
     }
   }
@@ -93,6 +90,7 @@ pub struct Constraints {
   pub literals : Vec<NodeId>,
   pub variable_symbols : HashMap<ReferenceId, TypeSymbol>,
   pub constraints : Vec<Constraint>,
+  pub assertions : Vec<Assertion>,
 }
 
 impl Constraints {
@@ -103,6 +101,7 @@ impl Constraints {
       literals: vec![],
       variable_symbols: HashMap::new(),
       constraints: vec![],
+      assertions: vec![],
     }
   }
 
@@ -219,8 +218,12 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
     self.constraint(ConstraintContent::Equalivalent(a, b));
   }
 
+  fn assertion(&mut self, a : Assertion) {
+    self.c.assertions.push(a);
+  }
+
   fn assert_type(&mut self, ts : TypeSymbol, t : Type) {
-    self.constraint(ConstraintContent::Assert(ts, t));
+    self.assertion(Assertion::Assert(ts, t));
   }
 
   fn assert(&mut self, ts : TypeSymbol, t : PType) {
@@ -300,9 +303,8 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
     symbol_id
   }
 
-  pub fn process_polymorphic_function_instance(
-    &mut self, n : &Nodes, id : NodeId, instanced_function_type : Type, instanced_type_vars : &[Type]
-  ) -> SymbolId
+  pub fn process_polymorphic_function_instance(&mut self, n : &Nodes, id : NodeId, instanced_function_type : Type, instanced_type_vars : &[Type]) 
+    -> SymbolId
   {
     let node = n.node(id);
     match &node.content {
@@ -426,7 +428,7 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
           self.equalivalent(ts, var_type);
         }
         else {
-          self.constraint(SymbolReference{ node: id, name: name.clone(), result: ts });
+          self.constraint(GlobalReference{ node: id, name: name.clone(), result: ts });
         }
       }
       Content::FunctionDefinition{ name, args, return_tag, type_vars, body } => {
@@ -485,37 +487,32 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
       }
       Content::TypeDefinition{ name, fields, type_vars } => {
         self.assert(ts, PType::Void);
-        if self.t.find_type_def(name.name.as_ref()).is_some() {
+        if self.t.find_type_def(name.as_ref()).is_some() {
           let e = error_raw(node.loc, "type with this name already defined");
           self.errors.push(e)
         }
         else {
           self.with_type_parameters(type_vars.as_slice(), |gc, type_vars| {
             // TODO: check for duplicate fields?
-            let mut fields_ts = vec![];
-            for (name, type_tag) in fields.iter() {
-              let ts = gc.type_symbol(name.loc);
-              type_tag.as_ref().map(|e| gc.tag_symbol(ts, e));
-              fields_ts.push(ts);
+            let mut field_types = vec![];
+            for (_, type_tag) in fields.iter() {
+              field_types.push(
+                type_tag.as_ref()
+                  .and_then(|e| gc.expr_to_type(e).map(|t| (t, e.loc)))
+              );
             }
-            let def_ts = gc.type_symbol(name.loc);
-            gc.constraint(StructDef {
-              typename: name.clone(),
-              def_ts,
-            });
-            gc.constraint(Struct {
-              def_ts,
-              fields: fields_ts,
+            gc.assertion(Assertion::AssertTypeDef {
+              typename: name.clone(), fields: field_types,
             });
             let def = TypeDefinition {
-              name: name.name.clone(),
+              name: name.clone(),
               unit_id: gc.t.new_unit_id(),
               fields: fields.iter().map(|x| x.0.clone()).collect(),
               type_tag: Type::any(),
               type_vars,
               drop_function: None, clone_function: None,
             };
-            gc.mapping.type_def_nodes.insert(name.name.clone(), id);
+            gc.mapping.type_def_nodes.insert(name.clone(), id);
             gc.t.create_type_def(def);
           });
         }
@@ -523,17 +520,22 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
       Content::TypeConstructor{ name, field_values } => {
         let mut fields = vec![];
         for (field, value) in field_values.iter() {
-          // TODO: check the field names somehow!
           let field_type_symbol = self.process_node(n, *value);
-          fields.push(field_type_symbol);
+          let field = field.clone();
+          fields.push((field, field_type_symbol));
         }
-        self.constraint(StructReference{
-          typename: name.clone(),
-          def_ts: ts
-        });
-        self.constraint(Struct{
+        let def_type = Type::unresolved_def(name.name.clone());
+        self.assert_type(ts, def_type);
+        let fun_ts = self.type_symbol(name.loc);
+        self.constraint(Constructor{
           def_ts: ts,
-          fields,
+          fun_ts,
+          fields: field_values.iter().map(|x| x.0.clone()).collect(),
+        });
+        self.constraint(Function {
+          function: fun_ts,
+          args: field_values.iter().map(|(_, nid)| self.process_node(n, *nid)).collect(),
+          return_type: ts,
         });
       }
       Content::FieldAccess{ container, field } => {
@@ -554,9 +556,10 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
       }
       Content::FunctionCall{ function, args } => {
         let function = self.process_node(n, *function);
-        let args = args.iter().map(|id| self.process_node(n, *id)).collect();
         self.constraint(Function {
-          function, args, return_type: ts,
+          function,
+          args: args.iter().map(|id| self.process_node(n, *id)).collect(),
+          return_type: ts,
         });
       }
       Content::While{ condition, body } => {
@@ -680,12 +683,6 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
               if let [t] = &exprs[1..] {
                 let t = expr_to_type_internal(gc, t)?;
                 return Ok(t.array_of())
-              }
-            }
-            "union" => {
-              let mut t = Type::new(TypeContent::Union, vec![]);
-              for e in &exprs[1..] {
-                t.children.push(expr_to_type_internal(gc, e)?);
               }
             }
             name => {
