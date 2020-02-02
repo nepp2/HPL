@@ -160,8 +160,8 @@ pub fn link_group(
     println!("   FUNCTIONS ALL LINKED");
   }
   let aaa = (); // TODO: Why does this sometimes cause a crash?
-  // for &unit_id in units {
-  //   let lu = code_store.llvm_unit(unit_id);
-  //   lu.ee.run_static_constructors();
-  // }
+  for &unit_id in units {
+    let lu = code_store.llvm_unit(unit_id);
+    lu.ee.run_static_constructors();
+  }
 }

@@ -1,5 +1,23 @@
 # LOG - 30/01/2020
 
+## 23:09
+
+I have a linking problem. I have been assuming that I need to load all the addresses into the new modules before they are finalised, and that it crashes if I don't. But I might actually be having the opposite problem; it's possible that functions & globals don't actually have valid addresses until they are finalised.
+
+So maybe I need to finalise them all first (somehow), and _then_ link the addresses. I'm not sure what actually triggers binary code generation in LLVM. Running static constructors sounds wrong, because that could execute code that isn't linked.
+
+MCJIT has a `finalizeModule()` function, but I don't think it's exposed through inkwell. I might be able to do that though.
+
+Alternatively, I think there is a partial ordering over all the modules, so I could just try generating them in the correct order. It will be a bit difficult to figure out though, without more changes to the code.
+
+## 16:50
+
+I have now reverted the past few days of work ;_;
+
+The tests run again, but I still need to fix the struct polymorphism problem.
+
+# Morning
+
 My newest dumb plan involves saying that type aliases aren't types. Instead they are more like symbols. Symbols aren't represented in types because they aren't part of the language of types. They could be.
 
 I now don't remember what the problem with just representing defs directly was.
@@ -28,12 +46,6 @@ Alternative struct syntax:
 This implies that structs are structurally typed, rather than nominally typed. I intended to have nominal typing though.
 
 Type aliases are a different feature.
-
-## 16:50
-
-I have now reverted the past few days of work ;_;
-
-The tests run again, but I still need to fix the struct polymorphism problem.
 
 # LOG - 29/01/2020
 
