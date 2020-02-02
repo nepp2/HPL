@@ -1,3 +1,11 @@
+# LOG - 02/02/2020
+
+There is not a guaranteed partial ordering over all units, because it's possible to have mutually recursive polymorphic functions, which will depend on each other despite being generated into two different units.
+
+The current linking method is a hack to get around the confusing MCJIT linking API, which may not even be supported properly in Inkwell (or the OrcJIT version, either). I am reading and setting symbol addresses manually. The problem, I think, is that I can only read them reliably after the code has been finalized, but I can't set them one it has been finalized, due to memory permissions. Alternatively it may just be that trying to finalize code with invalid addresses just fails.
+
+I tried setting everything to zero. Perhaps I can trick the check by setting everything to a different value. That would be _very_ ugly.
+
 # LOG - 30/01/2020
 
 ## 23:09
