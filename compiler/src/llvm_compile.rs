@@ -140,25 +140,46 @@ pub fn link_group(
   c_symbols : &CSymbols,
 )
 {
+  let mut globs = vec![];
+  let mut funs = vec![];
   for &unit_id in units {
     let lu = code_store.llvm_unit(unit_id);
-    println!("   LINKING GLOBALS {:?}", unit_id);
     // Link globals
     for (global_value, loc) in lu.globals_to_link.iter() {
-      println!("      LINKING GLOBAL {:?}", global_value.print_to_string());
       let address = find_symbol_address(code_store, c_symbols, loc);
-      lu.ee.add_global_mapping(global_value, address);
+      globs.push((lu, global_value, address));
     }
-    println!("   GLOBALS ALL LINKED");
-    println!("   LINKING FUNCTIONS {:?}", unit_id);
     // Link functions
     for (function_value, loc) in lu.functions_to_link.iter() {
-      println!("      LINKING FUNCTION {:?}", function_value.print_to_string());
       let address = find_symbol_address(code_store, c_symbols, loc);
-      lu.ee.add_global_mapping(function_value, address);
+      funs.push((lu, function_value, address));
     }
-    println!("   FUNCTIONS ALL LINKED");
   }
+  for (lu, global_value, address) in globs {
+    lu.ee.add_global_mapping(global_value, address);
+  }
+  for (lu, function_value, address) in funs {
+    lu.ee.add_global_mapping(function_value, address);
+  }
+  // for &unit_id in units {
+  //   let lu = code_store.llvm_unit(unit_id);
+  //   println!("   LINKING GLOBALS {:?}", unit_id);
+  //   // Link globals
+  //   for (global_value, loc) in lu.globals_to_link.iter() {
+  //     println!("      LINKING GLOBAL {:?}", global_value.print_to_string());
+  //     let address = find_symbol_address(code_store, c_symbols, loc);
+  //     lu.ee.add_global_mapping(global_value, address);
+  //   }
+  //   println!("   GLOBALS ALL LINKED");
+  //   println!("   LINKING FUNCTIONS {:?}", unit_id);
+  //   // Link functions
+  //   for (function_value, loc) in lu.functions_to_link.iter() {
+  //     println!("      LINKING FUNCTION {:?}", function_value.print_to_string());
+  //     let address = find_symbol_address(code_store, c_symbols, loc);
+  //     lu.ee.add_global_mapping(function_value, address);
+  //   }
+  //   println!("   FUNCTIONS ALL LINKED");
+  // }
   let aaa = (); // TODO: Why does this sometimes cause a crash?
   for &unit_id in units {
     let lu = code_store.llvm_unit(unit_id);
