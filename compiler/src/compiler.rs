@@ -1,7 +1,7 @@
 
 use crate::{
   error, expr, c_interface, llvm_compile, types, code_store,
-  structure, lexer, parser, inference_solver
+  structure, lexer, parser, inference_solver, intrinsics,
 };
 use expr::{StringCache, Expr, UIDGenerator};
 use c_interface::CSymbols;
@@ -24,17 +24,23 @@ pub struct Compiler {
   pub gen : UIDGenerator,
   pub cache : StringCache,
   pub c_symbols : CSymbols,
+  intrinsics : UnitId,
 }
 
 impl Compiler {
   pub fn new() -> Box<Compiler> {
     let mut gen = UIDGenerator::new();
     let cache = StringCache::new();
-    let code_store  = CodeStore::new_with_intrinsics(&mut gen, &cache);
+    let mut code_store  = CodeStore::new();
+    let i_types = intrinsics::get_intrinsics(&mut gen, &cache);
+    let intrinsics_id = i_types.unit_id;
+    code_store.types.insert(intrinsics_id, i_types);
+    code_store.names.push((intrinsics_id, "intrinsics".into()));
     let llvm_compiler = LlvmCompiler::new();
     let c_symbols = CSymbols::new_populated();
     let mut c = Box::new(Compiler { 
-      code_store, llvm_compiler, gen, cache, c_symbols
+      code_store, llvm_compiler, gen, cache,
+      c_symbols, intrinsics: intrinsics_id,
     });
     let cptr = (&mut *c) as *mut Compiler;
     c.c_symbols.add_symbol("compiler", cptr);
@@ -102,10 +108,10 @@ impl Compiler {
 
   fn typecheck_new_polymorphic_instances(&mut self, unit_id : UnitId) -> Result<(), Error> {
     // Typecheck and codegen any new polymorphic function instances
-    let mut new_types = vec![];
-    let mut polymorph_search_queue = VecDeque::new();
-    polymorph_search_queue.push_back(unit_id);
-    while let Some(psid) = polymorph_search_queue.pop_front() {
+    let mut new_instances = vec![];
+    let mut search_queue = VecDeque::new();
+    search_queue.push_back(unit_id);
+    while let Some(psid) = search_queue.pop_front() {
       let mapping = self.code_store.type_mappings.get(&psid).unwrap();
       for (poly_symbol_id, instance_type) in mapping.polymorphic_references.iter() {
         let instance_exists =
@@ -122,13 +128,13 @@ impl Compiler {
           let instances = self.code_store.poly_instances.entry(*poly_symbol_id).or_default();
           instances.insert(instance_type.clone(), instance_symbol_id);
           self.code_store.poly_parents.insert(instance_unit_id, *poly_symbol_id);
-          new_types.push((instance_unit_id, instance_types, instance_mapping));
+          new_instances.push((instance_unit_id, instance_types, instance_mapping));
           // Register the new unit to be searched for more polymorphic instances
-          polymorph_search_queue.push_back(instance_unit_id);
+          search_queue.push_back(instance_unit_id);
         }
       }
       // Register new type info with the code store
-      for (instance_unit_id, instance_types, instance_mapping) in new_types.drain(..) {
+      for (instance_unit_id, instance_types, instance_mapping) in new_instances.drain(..) {
         self.code_store.types.insert(instance_unit_id, instance_types);
         self.code_store.type_mappings.insert(instance_unit_id, instance_mapping);
       }
@@ -147,7 +153,7 @@ impl Compiler {
       let mapping = self.code_store.type_mappings.get(&psid).unwrap();
       for (symbol_id, type_tag) in mapping.polymorphic_references.iter() {
         let id = self.code_store.poly_instance(*symbol_id, type_tag).unwrap();
-        if !self.code_store.llvm_units.contains_key(&id.uid) {
+        if !self.code_store.codegen_mapping.contains_key(&id.uid) {
           units_to_codegen.insert(id.uid);
           polymorph_search_queue.push_back(id.uid);
         }
@@ -157,7 +163,9 @@ impl Compiler {
     for &id in units_to_codegen.iter() {
       println!("CODEGEN {:?}", id);
       let lu = self.llvm_compiler.compile_unit(id, &self.code_store)?;
-      self.code_store.llvm_units.insert(id, lu);
+      let codegen_id = self.gen.next().into();
+      self.code_store.codegen_mapping.insert(id, codegen_id);
+      self.code_store.llvm_units.insert(codegen_id, lu);
       llvm_compile::link_unit(id, &self.code_store, &self.c_symbols);
     }
     Ok(())

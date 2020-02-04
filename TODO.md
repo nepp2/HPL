@@ -1,6 +1,10 @@
 
 # Immediate TODO list
 
+- Implement basic module dependencies
+  - To solve the polymorphism linking problem
+  - To prevent instanced function definitions from contaminating type resolution
+  - For correctness when hotloading
 - Finish polymorphism
   - ~~Typecheck generic functions and structs~~
   - ~~Find set of functions to monomorphise~~
@@ -8,11 +12,9 @@
   - ~~_Don't_ try to codegen the polymorphic versions~~
   - ~~Add a new linking step, which happens _after_ code generation.~~
   - ~~Typecheck the monomorphised functions~~
-    - Prevent instanced function definitions from contaminating type resolution!
   - ~~Codegen the monomorphised functions~~
-- Solve implicit reference problem
-  - Implement crude template-based reference type?
-  - Support passing arguments as pointers automatically at the call site?
+- ~~Solve implicit reference problem~~
+  - ~~For now, just pass heap-types around as reference types (like in Java)~~
 - Load and replace modules in basic DLL style
   - Load & codegen modules dynamically
     - May work already

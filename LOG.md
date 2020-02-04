@@ -1,6 +1,19 @@
 # LOG - 04/02/2020
 
-I was wondering why linking is such a pain in the first place. I wondered about swapping over to use orcjit, but it's probably a lot of work. I'm really not sure how MCJIT is supported to handle linking. Seems like it just doesn't.
+I was wondering why linking is such a pain in the first place. I wondered about swapping over to use OrcJIT, but it's probably a lot of work. I'd have to figure out how to create an execution environment, or the OrcJIT equivalent, and either patch it into Inkwell, or patch Inkwell so that I can get at the raw references of the modules I generate.
+
+## Dependency-driven compilation
+
+In order to fix the linking problem, my plan looks like this:
+- Order the compilation and linking of modules according to the partial ordering defined by their dependencies
+- Detect dependency cycles and group them into the same compilation unit
+
+Where do dependencies come from?
+- Prelude and intrinsics are automatic? (some prelude stuff should move into intrinsics, like the string type, so that the prelude doesn't need to be automatic)
+- Named imports (not in the language)
+- Referencing polymorphic instances
+
+Dependency cycles can arise with mutually-recursive polymorphic functions, but also when a unit instantiates one of its own modules.
 
 # LOG - 02/02/2020
 

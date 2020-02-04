@@ -2,9 +2,9 @@
 use crate::{
   expr, structure,
   llvm_compile, types,
-  compiler, intrinsics,
+  compiler,
 };
-use expr::{StringCache, Expr, UIDGenerator, Uid, RefStr};
+use expr::{Expr, Uid, RefStr};
 use types::{
   UnitId, TypeInfo, SymbolId, Type, TypeMapping,
   SymbolDefinition, TypeDefinition,
@@ -18,16 +18,24 @@ use std::collections::HashMap;
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct SourceId(Uid);
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub struct CodegenId(Uid);
+
 impl From<Uid> for SourceId { fn from(v : Uid) -> Self { SourceId(v) } }
+
+impl From<Uid> for CodegenId { fn from(v : Uid) -> Self { CodegenId(v) } }
 
 #[derive(Default)]
 pub struct CodeStore {
   pub code : HashMap<SourceId, RefStr>,
+  pub names : Vec<(UnitId, RefStr)>,
+  pub dependencies : HashMap<UnitId, Vec<UnitId>>,
   pub exprs : HashMap<UnitId, Expr>,
   pub nodes : HashMap<UnitId, Nodes>,
   pub types : HashMap<UnitId, TypeInfo>,
   pub type_mappings : HashMap<UnitId, TypeMapping>,
-  pub llvm_units : HashMap<UnitId, LlvmUnit>,
+  pub codegen_mapping : HashMap<UnitId, CodegenId>,
+  pub llvm_units : HashMap<CodegenId, LlvmUnit>,
   pub vals : HashMap<UnitId, Val>,
 
   /// Map from the id of a polymorphic symbol to its various instances,
@@ -41,16 +49,17 @@ pub struct CodeStore {
 
 impl CodeStore {
 
-  pub fn new_with_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> Self {
-    let mut cs : Self = Default::default();
-    let i_types = intrinsics::get_intrinsics(gen, cache);
-    cs.types.insert(i_types.unit_id, i_types);
-    cs
+  pub fn new() -> Self {
+    Default::default()
   }
 
   pub fn name(&self, unit_id : UnitId) -> RefStr {
-    let aaa = (); // TODO store names based on files (or something)
-    format!("module_{:?}", unit_id).into()
+    if let Some(x) = self.names.iter().find(|x| x.0 == unit_id) {
+      x.1.clone()
+    }
+    else {
+      format!("module_{:?}", unit_id).into()
+    }
   }
 
   pub fn nodes(&self, unit_id : UnitId) -> &Nodes {
@@ -62,7 +71,8 @@ impl CodeStore {
   }
 
   pub fn llvm_unit(&self, unit_id : UnitId) -> &LlvmUnit {
-    self.llvm_units.get(&unit_id).unwrap()
+    let codegen_id = self.codegen_mapping.get(&unit_id).unwrap();
+    self.llvm_units.get(codegen_id).unwrap()
   }  
 
   pub fn types(&self, unit_id : UnitId) -> &TypeInfo {
