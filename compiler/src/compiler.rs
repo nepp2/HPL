@@ -158,13 +158,8 @@ impl Compiler {
       println!("CODEGEN {:?}", id);
       let lu = self.llvm_compiler.compile_unit(id, &self.code_store)?;
       self.code_store.llvm_units.insert(id, lu);
+      llvm_compile::link_unit(id, &self.code_store, &self.c_symbols);
     }
-    println!("ALL UNITS CODE GENENERATED");
-    // Link the new units
-    let units_to_link : Vec<_> =
-      units_to_codegen.iter().cloned().collect();
-    llvm_compile::link_group(units_to_link.as_slice(), &self.code_store, &self.c_symbols);
-    println!("ALL UNITS LINKED");
     Ok(())
   }
 

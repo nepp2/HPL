@@ -1,3 +1,7 @@
+# LOG - 04/02/2020
+
+I was wondering why linking is such a pain in the first place. I wondered about swapping over to use orcjit, but it's probably a lot of work. I'm really not sure how MCJIT is supported to handle linking. Seems like it just doesn't.
+
 # LOG - 02/02/2020
 
 There is not a guaranteed partial ordering over all units, because it's possible to have mutually recursive polymorphic functions, which will depend on each other despite being generated into two different units.

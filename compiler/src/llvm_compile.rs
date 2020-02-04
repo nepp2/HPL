@@ -134,6 +134,27 @@ fn find_symbol_address(code_store : &CodeStore, c_symbols : &CSymbols, loc : &Sy
   }
 }
 
+pub fn link_unit(
+  unit_id : UnitId,
+  code_store : &CodeStore,
+  c_symbols : &CSymbols,
+)
+{
+  let lu = code_store.llvm_unit(unit_id);
+  // Link globals
+  for (global_value, loc) in lu.globals_to_link.iter() {
+    let address = find_symbol_address(code_store, c_symbols, loc);
+    lu.ee.add_global_mapping(global_value, address);
+  }
+  // Link functions
+  for (function_value, loc) in lu.functions_to_link.iter() {
+    let address = find_symbol_address(code_store, c_symbols, loc);
+    lu.ee.add_global_mapping(function_value, address);
+  }
+  // Finalize unit
+  lu.ee.run_static_constructors();
+}
+
 pub fn link_group(
   units : &[UnitId],
   code_store : &CodeStore,
@@ -142,6 +163,7 @@ pub fn link_group(
 {
   let mut globs = vec![];
   let mut funs = vec![];
+  println!("Getting all addresses");
   for &unit_id in units {
     let lu = code_store.llvm_unit(unit_id);
     // Link globals
@@ -155,9 +177,11 @@ pub fn link_group(
       funs.push((lu, function_value, address));
     }
   }
+  println!("Linking globals");
   for (lu, global_value, address) in globs {
     lu.ee.add_global_mapping(global_value, address);
   }
+  println!("Linking functions");
   for (lu, function_value, address) in funs {
     lu.ee.add_global_mapping(function_value, address);
   }
@@ -180,6 +204,7 @@ pub fn link_group(
   //   }
   //   println!("   FUNCTIONS ALL LINKED");
   // }
+  println!("Running static constructors");
   let aaa = (); // TODO: Why does this sometimes cause a crash?
   for &unit_id in units {
     let lu = code_store.llvm_unit(unit_id);
