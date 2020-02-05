@@ -3,7 +3,7 @@ use crate::{
   error, expr, c_interface, llvm_compile, types, code_store,
   structure, lexer, parser, inference_solver, intrinsics,
 };
-use expr::{StringCache, Expr, UIDGenerator};
+use expr::{StringCache, Expr, UIDGenerator, RefStr};
 use c_interface::CSymbols;
 use code_store::{CodeStore, SourceId};
 use types::{TypeContent, PType, UnitId};
@@ -57,15 +57,22 @@ impl Compiler {
     Ok((unit_id, val))
   }
 
-  pub fn load_module(&mut self, code : &str)
+  pub fn load_module(&mut self, code : &str, name : Option<&str>)
     -> Result<(UnitId, Val), Error>
   {
+    let unit_id = self.gen.next().into();
+    let name : RefStr =
+      name.map(|x| x.into())
+      .unwrap_or_else(|| format!("module_{:?}", unit_id).into());
+    if self.code_store.named_unit(&name).is_some() {
+      panic!("tried to load two modules called '{}'", name);
+    }
     let source_id = self.gen.next().into();
     self.code_store.code.insert(source_id, code.into());
-    let unit_id = self.gen.next().into();
     self.parse(source_id, unit_id)?;
     self.load_module_from_expr_internal(unit_id)?;
     let val = self.code_store.vals.get(&unit_id).unwrap().clone();
+    self.code_store.names.push((unit_id, self.cache.get(name)));
     Ok((unit_id, val))
   }
 
@@ -80,8 +87,13 @@ impl Compiler {
   }
 
   fn load_module_from_expr_internal(&mut self, unit_id : UnitId) -> Result<(), Error> {
+    let mut imports = HashSet::new();
+    imports.insert(self.intrinsics);
+    if let Some(prelude) = self.code_store.named_unit("prelude") {
+      imports.insert(prelude);
+    }
     self.structure(unit_id)?;
-    self.typecheck(unit_id)?;
+    self.typecheck(unit_id, imports)?;
     println!("ENTERING CODEGEN");
     self.codegen(unit_id)?;
     println!("CODEGEN COMPLETE");
@@ -96,10 +108,10 @@ impl Compiler {
     Ok(())
   }
 
-  fn typecheck(&mut self, unit_id : UnitId) -> Result<(), Error> {
+  fn typecheck(&mut self, unit_id : UnitId, imports : HashSet<UnitId>) -> Result<(), Error> {
     let (types, mapping) =
       inference_solver::infer_types(
-        unit_id, &self.code_store, &self.cache, &mut self.gen)?;
+        unit_id, &self.code_store, &self.cache, &mut self.gen, imports)?;
         self.code_store.types.insert(unit_id, types);
         self.code_store.type_mappings.insert(unit_id, mapping);
     self.typecheck_new_polymorphic_instances(unit_id)?;

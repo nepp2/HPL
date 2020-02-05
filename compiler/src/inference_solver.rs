@@ -25,7 +25,7 @@ use inference_constraints::{
 };
 use code_store::CodeStore;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use TypeContent::*;
 
@@ -34,6 +34,7 @@ pub fn infer_types(
   code_store : &CodeStore,
   cache : &StringCache,
   gen : &mut UIDGenerator,
+  imports : HashSet<UnitId>,
 )
   -> Result<(TypeInfo, TypeMapping), Error>
 {
@@ -41,7 +42,7 @@ pub fn infer_types(
   let mut errors = vec![];
   let mut new_types = TypeInfo::new(unit_id);
   let imports : Vec<_> =
-    code_store.types.values().collect();
+    imports.iter().map(|&uid| code_store.types(uid)).collect();
   let mut type_directory =
     TypeDirectory::new(unit_id, imports.as_slice(), &mut new_types);
   let nodes = code_store.nodes(unit_id);

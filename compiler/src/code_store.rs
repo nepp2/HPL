@@ -62,6 +62,10 @@ impl CodeStore {
     }
   }
 
+  pub fn named_unit(&self, name : &str) -> Option<UnitId> {
+    self.names.iter().find(|x| x.1.as_ref() == name).map(|x| x.0)
+  }
+
   pub fn nodes(&self, unit_id : UnitId) -> &Nodes {
     if let Some(parent_id) = self.poly_parents.get(&unit_id) {
       return self.nodes(parent_id.uid);
