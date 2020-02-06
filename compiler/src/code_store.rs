@@ -13,7 +13,7 @@ use llvm_compile::LlvmUnit;
 use compiler::Val;
 use structure::Nodes;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct SourceId(Uid);
@@ -29,7 +29,7 @@ impl From<Uid> for CodegenId { fn from(v : Uid) -> Self { CodegenId(v) } }
 pub struct CodeStore {
   pub code : HashMap<SourceId, RefStr>,
   pub names : Vec<(UnitId, RefStr)>,
-  pub dependencies : HashMap<UnitId, Vec<UnitId>>,
+  pub dependencies : HashMap<UnitId, HashSet<UnitId>>,
   pub exprs : HashMap<UnitId, Expr>,
   pub nodes : HashMap<UnitId, Nodes>,
   pub types : HashMap<UnitId, TypeInfo>,
@@ -72,6 +72,10 @@ impl CodeStore {
     }
     self.nodes.get(&unit_id).unwrap()
 
+  }
+
+  pub fn add_dependency(&mut self, unit : UnitId, depends_on : UnitId) {
+    self.dependencies.entry(unit).or_default().insert(depends_on);
   }
 
   pub fn llvm_unit(&self, unit_id : UnitId) -> &LlvmUnit {

@@ -34,7 +34,7 @@ pub fn infer_types(
   code_store : &CodeStore,
   cache : &StringCache,
   gen : &mut UIDGenerator,
-  imports : HashSet<UnitId>,
+  imports : &HashSet<UnitId>,
 )
   -> Result<(TypeInfo, TypeMapping), Error>
 {

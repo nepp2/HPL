@@ -109,24 +109,30 @@ impl Compiler {
   fn typecheck(&mut self, unit_id : UnitId, imports : HashSet<UnitId>) -> Result<(), Error> {
     let (types, mapping) =
       inference_solver::infer_types(
-        unit_id, &self.code_store, &self.cache, &mut self.gen, imports)?;
+        unit_id, &self.code_store, &self.cache, &mut self.gen, &imports)?;
         self.code_store.types.insert(unit_id, types);
         self.code_store.type_mappings.insert(unit_id, mapping);
+    for &i in imports.iter() {
+      self.code_store.add_dependency(unit_id, i);
+    }
     self.typecheck_new_polymorphic_instances(unit_id)?;
     Ok(())
   }
 
   fn typecheck_new_polymorphic_instances(&mut self, unit_id : UnitId) -> Result<(), Error> {
-    // Typecheck and codegen any new polymorphic function instances
+    // Typecheck any new polymorphic function instances
+    let mut dependencies = vec![];
     let mut new_instances = vec![];
     let mut search_queue = VecDeque::new();
     search_queue.push_back(unit_id);
     while let Some(psid) = search_queue.pop_front() {
       let mapping = self.code_store.type_mappings.get(&psid).unwrap();
       for (poly_symbol_id, instance_type) in mapping.polymorphic_references.iter() {
-        let instance_exists =
-          self.code_store.poly_instance(*poly_symbol_id, instance_type).is_some();
-        if !instance_exists {
+        let existing_poly_instance = self.code_store.poly_instance(*poly_symbol_id, instance_type);
+        if let Some(id) = existing_poly_instance {
+          dependencies.push((psid, id.uid));
+        }
+        else {
           // Create a new unit for the function instance and typecheck it
           let instance_unit_id = self.gen.next().into();
           let poly_def = self.code_store.symbol_def(*poly_symbol_id);
@@ -141,6 +147,8 @@ impl Compiler {
           new_instances.push((instance_unit_id, instance_types, instance_mapping));
           // Register the new unit to be searched for more polymorphic instances
           search_queue.push_back(instance_unit_id);
+          // Register the dependency
+          dependencies.push((psid, instance_unit_id));
         }
       }
       // Register new type info with the code store
@@ -149,10 +157,19 @@ impl Compiler {
         self.code_store.type_mappings.insert(instance_unit_id, instance_mapping);
       }
     }
+    for (unit, depends_on) in dependencies {
+      self.code_store.add_dependency(unit, depends_on);
+    }
     Ok(())
   }
 
   fn codegen(&mut self, unit_id : UnitId) -> Result<(), Error> {
+    // TODO: Accept a list of stuff that needs to be code generated. Use Tarjan's algorithm
+    // get a DAG of the "strongly-connected-components". Codegen these groups together in a
+    // valid order.
+    let aaa = ();
+
+
     // Find all of the polymorphic instances that this unit depends on,
     // and which still need to be code generated
     let mut units_to_codegen = HashSet::new();
