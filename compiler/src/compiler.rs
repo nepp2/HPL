@@ -52,12 +52,12 @@ impl Compiler {
   {
     let unit_id = self.gen.next().into();
     self.code_store.exprs.insert(unit_id, expr.clone());
-    self.load_module_from_expr_internal(unit_id)?;
+    self.load_module_from_expr_internal(unit_id, HashSet::new())?;
     let val = self.code_store.vals.get(&unit_id).unwrap().clone();
     Ok((unit_id, val))
   }
 
-  pub fn load_module(&mut self, code : &str, name : Option<&str>)
+  pub fn load_module(&mut self, code : &str, name : Option<&str>, imports : &[UnitId])
     -> Result<(UnitId, Val), Error>
   {
     let unit_id = self.gen.next().into();
@@ -70,7 +70,7 @@ impl Compiler {
     let source_id = self.gen.next().into();
     self.code_store.code.insert(source_id, code.into());
     self.parse(source_id, unit_id)?;
-    self.load_module_from_expr_internal(unit_id)?;
+    self.load_module_from_expr_internal(unit_id, imports.iter().cloned().collect())?;
     let val = self.code_store.vals.get(&unit_id).unwrap().clone();
     self.code_store.names.push((unit_id, self.cache.get(name)));
     Ok((unit_id, val))
@@ -86,12 +86,10 @@ impl Compiler {
     Ok(())
   }
 
-  fn load_module_from_expr_internal(&mut self, unit_id : UnitId) -> Result<(), Error> {
-    let mut imports = HashSet::new();
+  fn load_module_from_expr_internal(&mut self, unit_id : UnitId, mut imports : HashSet<UnitId>)
+    -> Result<(), Error>
+  {
     imports.insert(self.intrinsics);
-    if let Some(prelude) = self.code_store.named_unit("prelude") {
-      imports.insert(prelude);
-    }
     self.structure(unit_id)?;
     self.typecheck(unit_id, imports)?;
     println!("ENTERING CODEGEN");
@@ -224,7 +222,7 @@ impl Compiler {
 
 pub fn run_program(code : &str) -> Result<Val, Error> {
   let mut c = Compiler::new();
-  let (_, val) = c.load_module(code)?;
+  let (_, val) = c.load_module(code, None, &[])?;
   Ok(val)
 }
 
