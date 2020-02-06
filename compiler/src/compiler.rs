@@ -135,6 +135,7 @@ impl Compiler {
         else {
           // Create a new unit for the function instance and typecheck it
           let instance_unit_id = self.gen.next().into();
+          dependencies.push((instance_unit_id, poly_symbol_id.uid));
           let poly_def = self.code_store.symbol_def(*poly_symbol_id);
           let (instance_types, instance_mapping, instance_symbol_id) =
             inference_solver::typecheck_polymorphic_function_instance(
