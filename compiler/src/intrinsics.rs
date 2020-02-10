@@ -2,10 +2,10 @@ use crate::expr::{StringCache, UIDGenerator, RefStr};
 use crate::types::{
   Type, PType, TypeInfo, TypeContent,
   UnitId, SignatureBuilder, SymbolDefinition,
-  SymbolInit,
+  SymbolInit
 };
 
-pub fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypeInfo {
+pub fn get_intrinsics(intrinsics_id : UnitId, gen : &mut UIDGenerator, cache : &StringCache) -> TypeInfo {
   use PType::*;
   use TypeContent::Polytype;
 
@@ -44,7 +44,7 @@ pub fn get_intrinsics(gen : &mut UIDGenerator, cache : &StringCache) -> TypeInfo
     t.symbols.insert(def.id, def);
   }
 
-  let unit_id = gen.next().into();
+  let unit_id = intrinsics_id;
   let mut types = TypeInfo::new(unit_id);
   let prim_number_types : &[Type] =
     &[I64.into(), I32.into(), F32.into(), F64.into(),

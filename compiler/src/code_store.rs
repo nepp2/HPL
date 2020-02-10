@@ -25,11 +25,19 @@ impl From<Uid> for SourceId { fn from(v : Uid) -> Self { SourceId(v) } }
 
 impl From<Uid> for CodegenId { fn from(v : Uid) -> Self { CodegenId(v) } }
 
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
+pub enum UnitType {
+  Named(RefStr),
+  Anonymous,
+  PolymorphicInstance,
+}
+
 #[derive(Default)]
 pub struct CodeStore {
   pub code : HashMap<SourceId, RefStr>,
   pub names : Vec<(UnitId, RefStr)>,
   pub dependencies : HashMap<UnitId, HashSet<UnitId>>,
+  pub units : HashMap<UnitId, UnitType>,
   pub exprs : HashMap<UnitId, Expr>,
   pub nodes : HashMap<UnitId, Nodes>,
   pub types : HashMap<UnitId, TypeInfo>,
@@ -51,6 +59,12 @@ impl CodeStore {
 
   pub fn new() -> Self {
     Default::default()
+  }
+
+  pub fn create_unit(&mut self, uid : Uid, unit_type : UnitType) -> UnitId {
+    let id = types::create_unit(uid);
+    self.units.insert(id, unit_type);
+    id
   }
 
   pub fn name(&self, unit_id : UnitId) -> RefStr {

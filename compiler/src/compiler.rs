@@ -5,7 +5,7 @@ use crate::{
 };
 use expr::{StringCache, Expr, UIDGenerator, RefStr};
 use c_interface::CSymbols;
-use code_store::{CodeStore, SourceId};
+use code_store::{CodeStore, SourceId, UnitType};
 use types::{TypeContent, PType, UnitId};
 use llvm_compile::{LlvmCompiler, execute_function};
 use error::{Error, error};
@@ -32,8 +32,8 @@ impl Compiler {
     let mut gen = UIDGenerator::new();
     let cache = StringCache::new();
     let mut code_store  = CodeStore::new();
-    let i_types = intrinsics::get_intrinsics(&mut gen, &cache);
-    let intrinsics_id = i_types.unit_id;
+    let intrinsics_id = code_store.create_unit(gen.next(), UnitType::Named("intrinsics".into()));
+    let i_types = intrinsics::get_intrinsics(intrinsics_id, &mut gen, &cache);
     code_store.types.insert(intrinsics_id, i_types);
     code_store.names.push((intrinsics_id, "intrinsics".into()));
     let llvm_compiler = LlvmCompiler::new();
@@ -50,7 +50,7 @@ impl Compiler {
   pub fn load_expr_as_module(&mut self, expr : &Expr)
     -> Result<(UnitId, Val), Error>
   {
-    let unit_id = self.gen.next().into();
+    let unit_id = self.code_store.create_unit(self.gen.next(), UnitType::Anonymous);
     self.code_store.exprs.insert(unit_id, expr.clone());
     self.load_module_from_expr_internal(unit_id, HashSet::new())?;
     let val = self.code_store.vals.get(&unit_id).unwrap().clone();
@@ -60,13 +60,14 @@ impl Compiler {
   pub fn load_module(&mut self, code : &str, name : Option<&str>, imports : &[UnitId])
     -> Result<(UnitId, Val), Error>
   {
-    let unit_id = self.gen.next().into();
+    let uid = self.gen.next();
     let name : RefStr =
       name.map(|x| x.into())
-      .unwrap_or_else(|| format!("module_{:?}", unit_id).into());
+      .unwrap_or_else(|| format!("module_{:?}", uid).into());
     if self.code_store.named_unit(&name).is_some() {
       panic!("tried to load two modules called '{}'", name);
     }
+    let unit_id = self.code_store.create_unit(uid, UnitType::Named(name.clone()));
     let source_id = self.gen.next().into();
     self.code_store.code.insert(source_id, code.into());
     self.parse(source_id, unit_id)?;
@@ -121,45 +122,37 @@ impl Compiler {
 
   fn typecheck_new_polymorphic_instances(&mut self, unit_id : UnitId) -> Result<(), Error> {
     // Typecheck any new polymorphic function instances
-    let mut dependencies = vec![];
-    let mut new_instances = vec![];
     let mut search_queue = VecDeque::new();
     search_queue.push_back(unit_id);
     while let Some(psid) = search_queue.pop_front() {
       let mapping = self.code_store.type_mappings.get(&psid).unwrap();
-      for (poly_symbol_id, instance_type) in mapping.polymorphic_references.iter() {
-        let existing_poly_instance = self.code_store.poly_instance(*poly_symbol_id, instance_type);
+      let polymorphic_references : Vec<_> = mapping.polymorphic_references.iter().cloned().collect();
+      for (poly_symbol_id, instance_type) in polymorphic_references {
+        let existing_poly_instance = self.code_store.poly_instance(poly_symbol_id, &instance_type);
         if let Some(id) = existing_poly_instance {
-          dependencies.push((psid, id.uid));
+          self.code_store.add_dependency(psid, id.uid);
         }
         else {
           // Create a new unit for the function instance and typecheck it
-          let instance_unit_id = self.gen.next().into();
-          dependencies.push((instance_unit_id, poly_symbol_id.uid));
-          let poly_def = self.code_store.symbol_def(*poly_symbol_id);
+          let instance_unit_id = self.code_store.create_unit(self.gen.next(), UnitType::PolymorphicInstance);
+          self.code_store.add_dependency(instance_unit_id, poly_symbol_id.uid);
+          let poly_def = self.code_store.symbol_def(poly_symbol_id);
           let (instance_types, instance_mapping, instance_symbol_id) =
             inference_solver::typecheck_polymorphic_function_instance(
-              instance_unit_id, poly_def, instance_type, &self.code_store,
+              instance_unit_id, poly_def, &instance_type, &self.code_store,
               &self.cache, &mut self.gen)?;
           // Register the instance with the code store
-          let instances = self.code_store.poly_instances.entry(*poly_symbol_id).or_default();
-          instances.insert(instance_type.clone(), instance_symbol_id);
-          self.code_store.poly_parents.insert(instance_unit_id, *poly_symbol_id);
-          new_instances.push((instance_unit_id, instance_types, instance_mapping));
+          let instances = self.code_store.poly_instances.entry(poly_symbol_id).or_default();
+          instances.insert(instance_type, instance_symbol_id);
+          self.code_store.poly_parents.insert(instance_unit_id, poly_symbol_id);
+          self.code_store.types.insert(instance_unit_id, instance_types);
+          self.code_store.type_mappings.insert(instance_unit_id, instance_mapping);
           // Register the new unit to be searched for more polymorphic instances
           search_queue.push_back(instance_unit_id);
           // Register the dependency
-          dependencies.push((psid, instance_unit_id));
+          self.code_store.add_dependency(psid, instance_unit_id);
         }
       }
-      // Register new type info with the code store
-      for (instance_unit_id, instance_types, instance_mapping) in new_instances.drain(..) {
-        self.code_store.types.insert(instance_unit_id, instance_types);
-        self.code_store.type_mappings.insert(instance_unit_id, instance_mapping);
-      }
-    }
-    for (unit, depends_on) in dependencies {
-      self.code_store.add_dependency(unit, depends_on);
     }
     Ok(())
   }

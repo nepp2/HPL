@@ -12,7 +12,9 @@ use std::collections::{HashMap, HashSet};
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct UnitId(Uid);
 
-impl From<Uid> for UnitId { fn from(v : Uid) -> Self { UnitId(v) } }
+pub fn create_unit(uid : Uid) -> UnitId {
+  UnitId(uid)
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct SymbolId {
