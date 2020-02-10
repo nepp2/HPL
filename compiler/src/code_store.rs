@@ -35,7 +35,7 @@ pub enum UnitType {
 #[derive(Default)]
 pub struct CodeStore {
   pub code : HashMap<SourceId, RefStr>,
-  pub names : Vec<(UnitId, RefStr)>,
+  pub names : HashMap<UnitId, RefStr>,
   pub dependencies : HashMap<UnitId, HashSet<UnitId>>,
   pub units : HashMap<UnitId, UnitType>,
   pub exprs : HashMap<UnitId, Expr>,
@@ -63,21 +63,25 @@ impl CodeStore {
 
   pub fn create_unit(&mut self, uid : Uid, unit_type : UnitType) -> UnitId {
     let id = types::create_unit(uid);
+    let name = match &unit_type {
+      UnitType::Named(n) => n.clone(),
+      UnitType::Anonymous => format!("@unit_{:?}", uid).into(),
+      UnitType::PolymorphicInstance => format!("@poly_instance_{:?}", uid).into(),
+    };
+    if self.named_unit(&name).is_some() {
+      panic!("tried to load two modules called '{}'", name);
+    }
+    self.names.insert(id, name);
     self.units.insert(id, unit_type);
     id
   }
 
   pub fn name(&self, unit_id : UnitId) -> RefStr {
-    if let Some(x) = self.names.iter().find(|x| x.0 == unit_id) {
-      x.1.clone()
-    }
-    else {
-      format!("module_{:?}", unit_id).into()
-    }
+    self.names.get(&unit_id).unwrap().clone()
   }
 
   pub fn named_unit(&self, name : &str) -> Option<UnitId> {
-    self.names.iter().find(|x| x.1.as_ref() == name).map(|x| x.0)
+    self.names.iter().find(|x| x.1.as_ref() == name).map(|x| *x.0)
   }
 
   pub fn nodes(&self, unit_id : UnitId) -> &Nodes {

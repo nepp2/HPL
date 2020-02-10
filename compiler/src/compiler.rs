@@ -3,7 +3,7 @@ use crate::{
   error, expr, c_interface, llvm_compile, types, code_store,
   structure, lexer, parser, inference_solver, intrinsics,
 };
-use expr::{StringCache, Expr, UIDGenerator, RefStr};
+use expr::{StringCache, Expr, UIDGenerator };
 use c_interface::CSymbols;
 use code_store::{CodeStore, SourceId, UnitType};
 use types::{TypeContent, PType, UnitId};
@@ -35,7 +35,6 @@ impl Compiler {
     let intrinsics_id = code_store.create_unit(gen.next(), UnitType::Named("intrinsics".into()));
     let i_types = intrinsics::get_intrinsics(intrinsics_id, &mut gen, &cache);
     code_store.types.insert(intrinsics_id, i_types);
-    code_store.names.push((intrinsics_id, "intrinsics".into()));
     let llvm_compiler = LlvmCompiler::new();
     let c_symbols = CSymbols::new_populated();
     let mut c = Box::new(Compiler { 
@@ -60,20 +59,19 @@ impl Compiler {
   pub fn load_module(&mut self, code : &str, name : Option<&str>, imports : &[UnitId])
     -> Result<(UnitId, Val), Error>
   {
-    let uid = self.gen.next();
-    let name : RefStr =
-      name.map(|x| x.into())
-      .unwrap_or_else(|| format!("module_{:?}", uid).into());
-    if self.code_store.named_unit(&name).is_some() {
-      panic!("tried to load two modules called '{}'", name);
-    }
-    let unit_id = self.code_store.create_unit(uid, UnitType::Named(name.clone()));
+    let unit_type = {
+      if let Some(name) = name { 
+        UnitType::Named(name.into())
+      } else {
+        UnitType::Anonymous
+      }
+    };
+    let unit_id = self.code_store.create_unit(self.gen.next(), unit_type);
     let source_id = self.gen.next().into();
     self.code_store.code.insert(source_id, code.into());
     self.parse(source_id, unit_id)?;
     self.load_module_from_expr_internal(unit_id, imports.iter().cloned().collect())?;
     let val = self.code_store.vals.get(&unit_id).unwrap().clone();
-    self.code_store.names.push((unit_id, self.cache.get(name)));
     Ok((unit_id, val))
   }
 
@@ -92,9 +90,10 @@ impl Compiler {
   {
     imports.insert(self.intrinsics);
     self.structure(unit_id)?;
-    self.typecheck(unit_id, imports)?;
+    let mut new_units = vec![unit_id];
+    self.typecheck(unit_id, imports, &mut new_units)?;
     println!("ENTERING CODEGEN");
-    self.codegen(unit_id)?;
+    self.codegen(new_units.as_slice())?;
     println!("CODEGEN COMPLETE");
     self.initialise(unit_id)?;
     Ok(())
@@ -107,7 +106,7 @@ impl Compiler {
     Ok(())
   }
 
-  fn typecheck(&mut self, unit_id : UnitId, imports : HashSet<UnitId>) -> Result<(), Error> {
+  fn typecheck(&mut self, unit_id : UnitId, imports : HashSet<UnitId>, new_units : &mut Vec<UnitId>) -> Result<(), Error> {
     let (types, mapping) =
       inference_solver::infer_types(
         unit_id, &self.code_store, &self.cache, &mut self.gen, &imports)?;
@@ -116,11 +115,11 @@ impl Compiler {
     for &i in imports.iter() {
       self.code_store.add_dependency(unit_id, i);
     }
-    self.typecheck_new_polymorphic_instances(unit_id)?;
+    self.typecheck_new_polymorphic_instances(unit_id, new_units)?;
     Ok(())
   }
 
-  fn typecheck_new_polymorphic_instances(&mut self, unit_id : UnitId) -> Result<(), Error> {
+  fn typecheck_new_polymorphic_instances(&mut self, unit_id : UnitId, new_units : &mut Vec<UnitId>) -> Result<(), Error> {
     // Typecheck any new polymorphic function instances
     let mut search_queue = VecDeque::new();
     search_queue.push_back(unit_id);
@@ -138,16 +137,17 @@ impl Compiler {
           self.code_store.add_dependency(instance_unit_id, poly_symbol_id.uid);
           let poly_def = self.code_store.symbol_def(poly_symbol_id);
           let (instance_types, instance_mapping, instance_symbol_id) =
-            inference_solver::typecheck_polymorphic_function_instance(
-              instance_unit_id, poly_def, &instance_type, &self.code_store,
-              &self.cache, &mut self.gen)?;
+          inference_solver::typecheck_polymorphic_function_instance(
+            instance_unit_id, poly_def, &instance_type, &self.code_store,
+            &self.cache, &mut self.gen)?;
           // Register the instance with the code store
           let instances = self.code_store.poly_instances.entry(poly_symbol_id).or_default();
           instances.insert(instance_type, instance_symbol_id);
           self.code_store.poly_parents.insert(instance_unit_id, poly_symbol_id);
           self.code_store.types.insert(instance_unit_id, instance_types);
           self.code_store.type_mappings.insert(instance_unit_id, instance_mapping);
-          // Register the new unit to be searched for more polymorphic instances
+          // Register the new unit
+          new_units.push(instance_unit_id);
           search_queue.push_back(instance_unit_id);
           // Register the dependency
           self.code_store.add_dependency(psid, instance_unit_id);
@@ -157,31 +157,14 @@ impl Compiler {
     Ok(())
   }
 
-  fn codegen(&mut self, unit_id : UnitId) -> Result<(), Error> {
+  fn codegen(&mut self, new_units : &[UnitId]) -> Result<(), Error> {
     // TODO: Accept a list of stuff that needs to be code generated. Use Tarjan's algorithm
     // get a DAG of the "strongly-connected-components". Codegen these groups together in a
     // valid order.
     let aaa = ();
 
-
-    // Find all of the polymorphic instances that this unit depends on,
-    // and which still need to be code generated
-    let mut units_to_codegen = HashSet::new();
-    units_to_codegen.insert(unit_id);
-    let mut polymorph_search_queue = VecDeque::new();
-    polymorph_search_queue.push_back(unit_id);
-    while let Some(psid) = polymorph_search_queue.pop_front() {
-      let mapping = self.code_store.type_mappings.get(&psid).unwrap();
-      for (symbol_id, type_tag) in mapping.polymorphic_references.iter() {
-        let id = self.code_store.poly_instance(*symbol_id, type_tag).unwrap();
-        if !self.code_store.codegen_mapping.contains_key(&id.uid) {
-          units_to_codegen.insert(id.uid);
-          polymorph_search_queue.push_back(id.uid);
-        }
-      }
-    }
     // Codegen the new units
-    for &id in units_to_codegen.iter() {
+    for &id in new_units.iter() {
       println!("CODEGEN {:?}", id);
       let lu = self.llvm_compiler.compile_unit(id, &self.code_store)?;
       let codegen_id = self.gen.next().into();
