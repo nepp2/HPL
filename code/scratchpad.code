@@ -60,10 +60,6 @@ fun print(list : list(T)) with T {
   print("]")
 }
 
-fun println(t : T) with T {
-  print(t); println()
-}
-
 let nums = list()
 
 for x in range(0, 10) {

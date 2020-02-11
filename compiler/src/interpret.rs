@@ -35,6 +35,10 @@ impl Interpreter {
     Ok(self.load_module(code, None)?.1)
   }
 
+  pub fn run_module(&mut self, code : &str, name : &str) -> Result<Val, Error> {
+    Ok(self.load_module(code, Some(name))?.1)
+  }
+
   fn load_module(&mut self, code : &str, name : Option<&str>) -> Result<(UnitId, Val), Error> {
     let (unit_id, val) = self.c.load_module(code, name, &self.imports)?;
     self.imports.push(unit_id);

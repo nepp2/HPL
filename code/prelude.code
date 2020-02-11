@@ -71,6 +71,10 @@ fun print(v : bool) { print_bool(v) }
 fun print(e : ptr(expr)) { print_expr(e) }
 fun println() { print("\n") }
 
+fun println(t : T) with T {
+  print(t); println()
+}
+
 cbind thread_sleep : fun(millis : u64)
 
 cbind compiler : ptr(u8)
@@ -187,4 +191,4 @@ fun get_function(module : module_handle, name : string) {
   get_function(compiler, module, &name)
 }
 
-print("Prelude loaded."); println()
+println("Prelude loaded.");

@@ -1,7 +1,7 @@
 
 use crate::{
   error, expr, c_interface, llvm_compile, types, code_store,
-  structure, lexer, parser, inference_solver, intrinsics,
+  structure, lexer, parser, inference_solver, intrinsics, graph,
 };
 use expr::{StringCache, Expr, UIDGenerator };
 use c_interface::CSymbols;
@@ -10,6 +10,7 @@ use types::{TypeContent, PType, UnitId};
 use llvm_compile::{LlvmCompiler, execute_function};
 use error::{Error, error};
 use structure::TOP_LEVEL_FUNCTION_NAME;
+use graph::DirectedGraph;
 
 use std::collections::{VecDeque, HashSet};
 
@@ -152,28 +153,45 @@ impl Compiler {
   }
 
   fn codegen(&mut self, new_units : &[UnitId]) -> Result<(), Error> {
-    // TODO: Accept a list of stuff that needs to be code generated. Use Tarjan's algorithm
-    // get a DAG of the "strongly-connected-components". Codegen these groups together in a
-    // valid order.
-    let aaa = ();
-
-    // Codegen the new units
-    let codegen_id = self.gen.next().into();
-    let lu = self.llvm_compiler.compile_unit_group(codegen_id, new_units, &self.code_store)?;
-    for &unit_id in new_units {
-      self.code_store.codegen_mapping.insert(unit_id, codegen_id);
+    // Use Tarjan's algorithm to get a DAG of the "strongly-connected-components".
+    // Codegen these groups together in a valid order.
+    let mut g : DirectedGraph = Default::default();
+    for uid in new_units.iter() {
+      let mut vertex_edges = vec![];
+      for d in self.code_store.dependencies.get(uid).unwrap() {
+        if let Some(w) = new_units.iter().position(|id| id == d) {
+          vertex_edges.push(w);
+        }
+      }
+      g.vertex_edges.push(vertex_edges);
     }
-    self.code_store.llvm_units.insert(codegen_id, lu);
-    llvm_compile::link_unit(codegen_id, &self.code_store, &self.c_symbols);
-
-    // for &id in new_units.iter() {
-    //   println!("CODEGEN {:?}", id);
-    //   let lu = self.llvm_compiler.compile_unit(id, &self.code_store)?;
-    //   let codegen_id = self.gen.next().into();
-    //   self.code_store.codegen_mapping.insert(id, codegen_id);
-    //   self.code_store.llvm_units.insert(codegen_id, lu);
-    //   llvm_compile::link_unit(id, &self.code_store, &self.c_symbols);
-    // }
+    let strongly_connected_components = graph::get_strongly_connected_components(&g);
+    for c in strongly_connected_components.iter() {
+      println!("component: {:?}", c.iter().map(|&i| self.code_store.name(new_units[i])).collect::<Vec<_>>());
+    }
+    let ordering = {
+      let component_graph = graph::graph_of_disjoint_subgraphs(strongly_connected_components.as_slice(), &g);
+      println!("component_graph: {:?}", component_graph.vertex_edges);
+      graph::valid_topological_ordering(&component_graph).expect("graph contained cycles!")
+    };
+    // Codegen the strongly-connected subgraphs together
+    let mut unit_group = vec![];
+    for subgraph_index in ordering {
+      let g = &strongly_connected_components[subgraph_index];
+      // build unit group
+      unit_group.clear();
+      for &i in g {
+        unit_group.push(new_units[i]);
+      }
+      // codegen group
+      let codegen_id = self.gen.next().into();
+      let lu = self.llvm_compiler.compile_unit_group(codegen_id, unit_group.as_slice(), &self.code_store)?;
+      for &unit_id in unit_group.iter() {
+        self.code_store.codegen_mapping.insert(unit_id, codegen_id);
+      }
+      self.code_store.llvm_units.insert(codegen_id, lu);
+      llvm_compile::link_unit(codegen_id, &self.code_store, &self.c_symbols);
+    }
     Ok(())
   }
 

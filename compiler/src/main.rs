@@ -23,6 +23,7 @@ mod llvm_compile;
 mod compiler;
 mod interpret;
 mod repl;
+mod graph;
 pub mod c_interface;
 
 #[cfg(test)]
@@ -55,7 +56,7 @@ fn load(path : &str) -> String {
 fn load_and_run(path : &str) {
   let code = load(path);
   let mut i = interpreter();
-  let result = i.eval(&code);
+  let result = i.run_module(&code, path);
   println!("{}", print_result(result));
 }
 
