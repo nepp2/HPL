@@ -58,10 +58,10 @@ fun println(list : list(T)) with T {
 print("Hello") ; println()
 let nums : list(i64) = list() // THIS FUNCTION CRASHES
 
-// for x in range(0, 10) {
-//   print(x) ; println()
-//   //nums.add(x)
-// }
+for x in range(0, 10) {
+  print(x) ; println()
+  //nums.add(x)
+}
 
 //println(nums)
 

@@ -5,7 +5,7 @@ use crate::{
 };
 use expr::{StringCache, Expr, UIDGenerator };
 use c_interface::CSymbols;
-use code_store::{CodeStore, SourceId, UnitType};
+use code_store::{CodeStore, SourceId};
 use types::{TypeContent, PType, UnitId};
 use llvm_compile::{LlvmCompiler, execute_function};
 use error::{Error, error};
@@ -32,7 +32,7 @@ impl Compiler {
     let mut gen = UIDGenerator::new();
     let cache = StringCache::new();
     let mut code_store  = CodeStore::new();
-    let intrinsics_id = code_store.create_unit(gen.next(), UnitType::Named("intrinsics".into()));
+    let intrinsics_id = code_store.create_unit(gen.next(), Some(cache.get("intrinsics")));
     let i_types = intrinsics::get_intrinsics(intrinsics_id, &mut gen, &cache);
     code_store.types.insert(intrinsics_id, i_types);
     let llvm_compiler = LlvmCompiler::new();
@@ -49,7 +49,7 @@ impl Compiler {
   pub fn load_expr_as_module(&mut self, expr : &Expr)
     -> Result<(UnitId, Val), Error>
   {
-    let unit_id = self.code_store.create_unit(self.gen.next(), UnitType::Anonymous);
+    let unit_id = self.code_store.create_unit(self.gen.next(), None);
     self.code_store.exprs.insert(unit_id, expr.clone());
     self.load_module_from_expr_internal(unit_id, HashSet::new())?;
     let val = self.code_store.vals.get(&unit_id).unwrap().clone();
@@ -59,14 +59,8 @@ impl Compiler {
   pub fn load_module(&mut self, code : &str, name : Option<&str>, imports : &[UnitId])
     -> Result<(UnitId, Val), Error>
   {
-    let unit_type = {
-      if let Some(name) = name { 
-        UnitType::Named(name.into())
-      } else {
-        UnitType::Anonymous
-      }
-    };
-    let unit_id = self.code_store.create_unit(self.gen.next(), unit_type);
+    let name = name.map(|s| self.cache.get(s));
+    let unit_id = self.code_store.create_unit(self.gen.next(), name);
     let source_id = self.gen.next().into();
     self.code_store.code.insert(source_id, code.into());
     self.parse(source_id, unit_id)?;
@@ -133,7 +127,7 @@ impl Compiler {
         }
         else {
           // Create a new unit for the function instance and typecheck it
-          let instance_unit_id = self.code_store.create_unit(self.gen.next(), UnitType::PolymorphicInstance);
+          let instance_unit_id = self.code_store.create_unit(self.gen.next(), None);
           self.code_store.add_dependency(instance_unit_id, poly_symbol_id.uid);
           let poly_def = self.code_store.symbol_def(poly_symbol_id);
           let (instance_types, instance_mapping, instance_symbol_id) =
@@ -164,14 +158,22 @@ impl Compiler {
     let aaa = ();
 
     // Codegen the new units
-    for &id in new_units.iter() {
-      println!("CODEGEN {:?}", id);
-      let lu = self.llvm_compiler.compile_unit(id, &self.code_store)?;
-      let codegen_id = self.gen.next().into();
-      self.code_store.codegen_mapping.insert(id, codegen_id);
-      self.code_store.llvm_units.insert(codegen_id, lu);
-      llvm_compile::link_unit(id, &self.code_store, &self.c_symbols);
+    let codegen_id = self.gen.next().into();
+    let lu = self.llvm_compiler.compile_unit_group(codegen_id, new_units, &self.code_store)?;
+    for &unit_id in new_units {
+      self.code_store.codegen_mapping.insert(unit_id, codegen_id);
     }
+    self.code_store.llvm_units.insert(codegen_id, lu);
+    llvm_compile::link_unit(codegen_id, &self.code_store, &self.c_symbols);
+
+    // for &id in new_units.iter() {
+    //   println!("CODEGEN {:?}", id);
+    //   let lu = self.llvm_compiler.compile_unit(id, &self.code_store)?;
+    //   let codegen_id = self.gen.next().into();
+    //   self.code_store.codegen_mapping.insert(id, codegen_id);
+    //   self.code_store.llvm_units.insert(codegen_id, lu);
+    //   llvm_compile::link_unit(id, &self.code_store, &self.c_symbols);
+    // }
     Ok(())
   }
 

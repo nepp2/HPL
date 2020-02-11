@@ -221,17 +221,7 @@ impl <'l> CompileInfo<'l> {
   }
 
   fn find_type_def(&self, name : &str, unit_id : UnitId) -> Option<&TypeDefinition> {
-    if self.t.unit_id == unit_id { return self.t.find_type_def(name) }
     self.code_store.types(unit_id).find_type_def(name)
-  }
-
-  fn get_global_def(&self, unit_id : UnitId, global_id : SymbolId) -> Option<&SymbolDefinition> {
-    if self.t.unit_id == unit_id {
-      self.t.symbols.get(&global_id)
-    }
-    else {
-      self.code_store.types(unit_id).symbols.get(&global_id)
-    }
   }
 }
 
@@ -311,45 +301,55 @@ impl <'l> Gen<'l> {
   }
 
   /// Code-generates a module, returning a reference to the top-level function in the module
-  pub fn codegen_module(mut self, info : &'l CompileInfo) -> Result<(), Error> {
-    // Declare all the globals and functions
+  pub fn codegen_module(mut self, unit_group : &[UnitId], code_store : &CodeStore) -> Result<(), Error> {
+    let mut info = vec![];
+    for &unit_id in unit_group {
+      let nodes = code_store.nodes(unit_id);
+      let types = code_store.types(unit_id);
+      let mapping = code_store.type_mapping(unit_id);
+      info.push(CompileInfo::new(code_store, types, nodes, mapping));
+    }
+
     let mut functions_to_codegen = vec!();
-    for def in info.t.symbols.values() {
-      if !def.is_polymorphic() {
-        let t = self.to_basic_type(info, &def.type_tag).unwrap();
-        match &def.initialiser {
-          SymbolInit::CBind => {
-            let symloc = SymbolLocation::CBind(def.name.clone());
-            if let Some(sig) = def.type_tag.sig() {
-              let f = self.codegen_prototype(info, def.name.as_ref(), sig.return_type, None, sig.args);
-              self.functions_to_link.push((f, symloc));
+    // Declare all the globals and functions
+    for (unit_id, info) in unit_group.iter().cloned().zip(info.iter()) {
+      for def in info.t.symbols.values() {
+        if !def.is_polymorphic() {
+          let t = self.to_basic_type(info, &def.type_tag).unwrap();
+          match &def.initialiser {
+            SymbolInit::CBind => {
+              let symloc = SymbolLocation::CBind(def.name.clone());
+              if let Some(sig) = def.type_tag.sig() {
+                let f = self.codegen_prototype(info, def.name.as_ref(), sig.return_type, None, sig.args);
+                self.functions_to_link.push((f, symloc));
+              }
+              else {
+                let gv = self.module.add_global(t, Some(AddressSpace::Generic), &def.name);
+                self.globals_to_link.push((gv, symloc));
+              }
             }
-            else {
-              let gv = self.module.add_global(t, Some(AddressSpace::Generic), &def.name);
-              self.globals_to_link.push((gv, symloc));
+            SymbolInit::Expression(_node) => {
+              self.add_global(const_zero(t), false, &def.name);
+              let aaa = (); // Do static initialisation where possible
+              // let v = self.codegen_static(info.typed_node(node_id))?;
+              // self.add_global(v, false, &name);
             }
+            SymbolInit::Function(init) => {
+              let sig = def.type_tag.sig().unwrap();
+              let f =
+                self.codegen_prototype(
+                  info, init.name_for_codegen.as_ref(), sig.return_type,
+                  Some(&init.args), sig.args);
+              functions_to_codegen.push((f, init.args.as_slice(), init.body, info));
+            }
+            SymbolInit::Intrinsic => (),
           }
-          SymbolInit::Expression(_node) => {
-            self.add_global(const_zero(t), false, &def.name);
-            let aaa = (); // Do static initialisation where possible
-            // let v = self.codegen_static(info.typed_node(node_id))?;
-            // self.add_global(v, false, &name);
-          }
-          SymbolInit::Function(init) => {
-            let sig = def.type_tag.sig().unwrap();
-            let f =
-              self.codegen_prototype(
-                info, init.name_for_codegen.as_ref(), sig.return_type,
-                Some(&init.args), sig.args);
-            functions_to_codegen.push((f, init.args.as_slice(), init.body));
-          }
-          SymbolInit::Intrinsic => (),
         }
       }
     }
 
     // codegen the functions
-    for (p, args, body) in functions_to_codegen {
+    for (p, args, body, info) in functions_to_codegen {
       self.codegen_function(p, info.typed_node(body), args)?;
     }
 
@@ -391,7 +391,7 @@ impl <'l> Gen<'l> {
   fn codegen_function(
     &mut self,
     prototype_handle : FunctionValue,
-    body : TypedNode<'l>,
+    body : TypedNode,
     args : &[Reference])
       -> Result<FunctionValue, Error>
   {

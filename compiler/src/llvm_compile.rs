@@ -6,7 +6,7 @@ use crate::{
 use error::{Error, error_raw};
 use c_interface::CSymbols;
 use types::{UnitId, SymbolId, SymbolInit};
-use code_store::CodeStore;
+use code_store::{CodeStore, CodegenId};
 use llvm_codegen::{Gen, dump_module, CompileInfo };
 use expr::RefStr;
 
@@ -27,7 +27,7 @@ pub enum SymbolLocation {
 }
 
 pub struct LlvmUnit {
-  pub unit_id : UnitId,
+  pub codegen_id : CodegenId,
   pub ee : ExecutionEngine,
   pub llvm_module : Module,
   pub globals_to_link : Vec<(GlobalValue, SymbolLocation)>,
@@ -52,22 +52,19 @@ impl LlvmCompiler {
     LlvmCompiler { context: Context::create() }
   }
 
-  pub fn compile_unit(
+  pub fn compile_unit_group(
     &self,
-    unit_id : UnitId,
+    codegen_id : CodegenId,
+    unit_group : &[UnitId],
     code_store : &CodeStore,
   ) -> Result<LlvmUnit, Error>
   {
-    let name = code_store.name(unit_id);
-    let nodes = code_store.nodes(unit_id);
-    let types = code_store.types(unit_id);
-    let mapping = code_store.type_mapping(unit_id);
-
+    let name = code_store.name(unit_group[0]);
     let mut llvm_module = self.context.create_module(&name);
 
     let ee =
       llvm_module.create_jit_execution_engine(OptimizationLevel::None)
-      .map_err(|e| error_raw(nodes.root().loc, e.to_string()))?;
+      .expect("could not create execution engine");
 
     let pm = PassManager::create(&llvm_module);
     if compiler::ENABLE_IR_OPTIMISATION {
@@ -85,19 +82,17 @@ impl LlvmCompiler {
     let mut globals_to_link = vec![];
     let mut functions_to_link = vec![];
     {
-      //let type_directory
       let gen = Gen::new(
         &self.context, &mut llvm_module, &mut ee.get_target_data(),
         &mut globals_to_link, &mut functions_to_link, &pm);
-      let info = CompileInfo::new(code_store, types, nodes, mapping);
-      gen.codegen_module(&info)?
+      gen.codegen_module(unit_group, code_store)?
     };
 
     if compiler::DEBUG_PRINTING_IR {
       dump_module(&llvm_module);
     }
 
-    let lu = LlvmUnit { unit_id, ee, llvm_module, globals_to_link, functions_to_link };
+    let lu = LlvmUnit { codegen_id, ee, llvm_module, globals_to_link, functions_to_link };
     Ok(lu)
   }
 }
@@ -135,12 +130,12 @@ fn find_symbol_address(code_store : &CodeStore, c_symbols : &CSymbols, loc : &Sy
 }
 
 pub fn link_unit(
-  unit_id : UnitId,
+  codegen_id : CodegenId,
   code_store : &CodeStore,
   c_symbols : &CSymbols,
 )
 {
-  let lu = code_store.llvm_unit(unit_id);
+  let lu = code_store.llvm_units.get(&codegen_id).unwrap();
   // Link globals
   for (global_value, loc) in lu.globals_to_link.iter() {
     let address = find_symbol_address(code_store, c_symbols, loc);

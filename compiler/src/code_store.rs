@@ -25,19 +25,11 @@ impl From<Uid> for SourceId { fn from(v : Uid) -> Self { SourceId(v) } }
 
 impl From<Uid> for CodegenId { fn from(v : Uid) -> Self { CodegenId(v) } }
 
-#[derive(Clone, PartialEq, Eq, Debug, Hash)]
-pub enum UnitType {
-  Named(RefStr),
-  Anonymous,
-  PolymorphicInstance,
-}
-
 #[derive(Default)]
 pub struct CodeStore {
   pub code : HashMap<SourceId, RefStr>,
   pub names : HashMap<UnitId, RefStr>,
   pub dependencies : HashMap<UnitId, HashSet<UnitId>>,
-  pub units : HashMap<UnitId, UnitType>,
   pub exprs : HashMap<UnitId, Expr>,
   pub nodes : HashMap<UnitId, Nodes>,
   pub types : HashMap<UnitId, TypeInfo>,
@@ -61,18 +53,13 @@ impl CodeStore {
     Default::default()
   }
 
-  pub fn create_unit(&mut self, uid : Uid, unit_type : UnitType) -> UnitId {
+  pub fn create_unit(&mut self, uid : Uid, name : Option<RefStr>) -> UnitId {
     let id = types::create_unit(uid);
-    let name = match &unit_type {
-      UnitType::Named(n) => n.clone(),
-      UnitType::Anonymous => format!("@unit_{:?}", uid).into(),
-      UnitType::PolymorphicInstance => format!("@poly_instance_{:?}", uid).into(),
-    };
+    let name =  name.unwrap_or_else(|| format!("unit_{:?}", uid).into());
     if self.named_unit(&name).is_some() {
       panic!("tried to load two modules called '{}'", name);
     }
     self.names.insert(id, name);
-    self.units.insert(id, unit_type);
     id
   }
 
@@ -99,7 +86,7 @@ impl CodeStore {
   pub fn llvm_unit(&self, unit_id : UnitId) -> &LlvmUnit {
     let codegen_id = self.codegen_mapping.get(&unit_id).unwrap();
     self.llvm_units.get(codegen_id).unwrap()
-  }  
+  }
 
   pub fn types(&self, unit_id : UnitId) -> &TypeInfo {
     self.types.get(&unit_id).unwrap()
