@@ -811,7 +811,7 @@ fn codegen_intrinsic_call(gf : &mut GenFunction, node : TypedNode, name : &str, 
   use PType::*;
   let gv : GenVal = if let [a, b] = args {
     let (a, b) = (node.get(*a), node.get(*b));
-    if name == "@index" {
+    if name == "Index" {
       return codegen_index(gf, a, b);
     }
     let (ta, tb) = (a.type_tag(), b.type_tag());

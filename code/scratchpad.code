@@ -1,7 +1,7 @@
 
 fun alloc(v : T) => ptr(T) with T {
   let p = malloc(sizeof(T)) as ptr(T)
-  //*p = v
+  *p = v
   p
 }
 
@@ -21,8 +21,8 @@ fun list() => list(T) with T {
 }
 
 fun add(list : list(T), item : T) with T {
+  let list = list.p;
   let len = list.len
-  print("len: "); print(len); println()
   if list.capacity <= list.len {
     let next_capacity = {
       if list.capacity == 0 { 1 }
@@ -30,15 +30,18 @@ fun add(list : list(T), item : T) with T {
     }
     let new_data = malloc(next_capacity * sizeof(T))
     memcpy(new_data, list.data as ptr(u8), list.capacity * sizeof(T))
-    if (list.data as u64) != 0 { free(list.data as ptr(u8)) }
+    if (list.data as u64) != 0 {
+      free(list.data as ptr(u8))
+    }
     list.data = new_data as ptr(T)
-    list.capacity = list.capacity * 2
+    list.capacity = next_capacity
   }
   list.data[list.len] = item
   list.len = list.len + 1
 }
 
 fun Index(list : list(T), i : Int) => T with T, Int {
+  let list = list.p;
   let i = i as u64
   if i >= list.len {
     panic("list access out of bounds")
@@ -46,24 +49,31 @@ fun Index(list : list(T), i : Int) => T with T, Int {
   list.data[i]
 }
 
-fun println(list : list(T)) with T {
+fun print(list : list(T)) with T {
   print("[")
-  for x in range(0, list.len as i64) {
-    print(list[x]) ; print(", ")
+  if list.p.len > 0 {
+    print(list[0])
+    for x in range(1, list.p.len as i64) {
+      print(", ") ; print(list[x])
+    }
   }
   print("]")
-  println()
 }
 
-print("Hello") ; println()
-let nums : list(i64) = list() // THIS FUNCTION CRASHES
+fun println(t : T) with T {
+  print(t); println()
+}
+
+let nums = list()
 
 for x in range(0, 10) {
-  print(x) ; println()
-  //nums.add(x)
+  nums.add(x)
 }
 
-//println(nums)
+println(nums)
 
-// let strings = list()
-// strings.add("hello")
+let strings = list()
+strings.add("hello")
+strings.add("world")
+
+println(strings)

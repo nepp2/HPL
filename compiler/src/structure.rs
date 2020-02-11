@@ -522,7 +522,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         if let [index_expr] = &exprs[1..] {
           let container = self.to_node(array_expr)?;
           let index = self.to_node(index_expr)?;
-          return Ok(self.function_call(expr, "@index", vec![container, index]));
+          return Ok(self.function_call(expr, "Index", vec![container, index]));
         }
         error(expr, "malformed array index expression")
       }
