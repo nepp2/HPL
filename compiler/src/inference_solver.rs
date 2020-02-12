@@ -44,14 +44,14 @@ pub fn infer_types(
   let imports : Vec<_> =
     imports.iter().map(|&uid| code_store.types(uid)).collect();
   let mut type_directory =
-    TypeDirectory::new(unit_id, imports.as_slice(), &mut new_types);
+    TypeDirectory::new(imports.as_slice(), &mut new_types);
   let nodes = code_store.nodes(unit_id);
   let c =
     inference_constraints::get_module_constraints(
       &nodes, &mut type_directory, &mut mapping, cache, gen, &mut errors);
   let i = Inference::new(
     &nodes, code_store, &mut type_directory,
-    &mut mapping, &c, cache, gen, &mut errors);
+    &mut mapping, &c, &mut errors);
   i.infer();
   if errors.len() > 0 {    
     let c = ErrorContent::InnerErrors("type errors".into(), errors);
@@ -78,7 +78,7 @@ pub fn typecheck_polymorphic_function_instance(
   let aaa = (); // TODO: type directory should just take the code store, and be a lot simpler
   let imports : Vec<_> = code_store.types.values().collect();
   let mut type_directory =
-    TypeDirectory::new(instance_unit, imports.as_slice(), &mut new_types);
+    TypeDirectory::new(imports.as_slice(), &mut new_types);
   let nodes = code_store.nodes(poly_function.unit_id);
   let source_node =
     *code_store.type_mapping(poly_function.unit_id)
@@ -90,7 +90,7 @@ pub fn typecheck_polymorphic_function_instance(
       &mut type_directory, &mut mapping, cache, gen, &mut errors);
   let i = Inference::new(
     &nodes, code_store, &mut type_directory,
-    &mut mapping, &c, cache, gen, &mut errors);
+    &mut mapping, &c, &mut errors);
   i.infer();
   if errors.len() > 0 {
     let c = ErrorContent::InnerErrors("type errors".into(), errors);
@@ -107,8 +107,6 @@ struct Inference<'a> {
   t : &'a mut TypeDirectory<'a>,
   mapping : &'a mut TypeMapping,
   c : &'a Constraints,
-  cache : &'a StringCache,
-  gen : &'a mut UIDGenerator,
   errors : &'a mut Vec<Error>,
   dependency_map : ConstraintDependencyMap<'a>,
   next_edge_set : HashMap<Uid, &'a Constraint>,
@@ -123,13 +121,11 @@ impl <'a> Inference<'a> {
     t : &'a mut TypeDirectory<'a>,
     mapping : &'a mut TypeMapping,
     c : &'a Constraints,
-    cache : &'a StringCache,
-    gen : &'a mut UIDGenerator,
     errors : &'a mut Vec<Error>)
       -> Self
   {
     Inference {
-      nodes, code_store, t, mapping, c, cache, gen, errors,
+      nodes, code_store, t, mapping, c, errors,
       dependency_map: ConstraintDependencyMap::new(),
       next_edge_set: HashMap::new(),
       resolved: HashMap::new(),

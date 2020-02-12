@@ -23,7 +23,7 @@ use inkwell::module::{Module, Linkage};
 use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::passes::PassManager;
 use inkwell::types::{
-  BasicTypeEnum, BasicType, StructType, PointerType, FunctionType, AnyTypeEnum, ArrayType,
+  BasicTypeEnum, BasicType, StructType, PointerType, FunctionType, ArrayType,
   IntType, FloatType };
 use inkwell::values::{
   BasicValueEnum, BasicValue, FloatValue, StructValue, IntValue,
@@ -96,21 +96,6 @@ fn const_zero(t : BasicTypeEnum) -> BasicValueEnum {
     StructType(t) => t.const_zero().into(),
     VectorType(t) => t.const_zero().into(),
   }
-}
-
-fn basic_type(t : AnyTypeEnum) -> Option<BasicTypeEnum> {
-  use AnyTypeEnum::*;
-  let bt = match t {
-    FloatType(t) => t.as_basic_type_enum(),
-    IntType(t) => t.as_basic_type_enum(),
-    ArrayType(t) => t.as_basic_type_enum(),
-    PointerType(t) => t.as_basic_type_enum(),
-    StructType(t) => t.as_basic_type_enum(),
-    VectorType(t) => t.as_basic_type_enum(),
-    VoidType(_t) => return None,
-    FunctionType(_t) => return None,
-  };
-  Some(bt)
 }
 
 fn name_basic_type(t : &BasicValueEnum, s : &str) {
@@ -214,12 +199,6 @@ impl <'l> CompileInfo<'l> {
     self.code_store.symbol_def(symbol_id)
   }
 
-  fn symbol_node(&self, unit_id : UnitId, symbol_id : SymbolId) -> &Node {
-    let mapping  = self.code_store.type_mapping(unit_id);
-    let node_id = *mapping.symbol_def_nodes.get(&symbol_id).unwrap();
-    self.code_store.nodes(unit_id).node(node_id)
-  }
-
   fn find_type_def(&self, name : &str, unit_id : UnitId) -> Option<&TypeDefinition> {
     self.code_store.types(unit_id).find_type_def(name)
   }
@@ -312,7 +291,7 @@ impl <'l> Gen<'l> {
 
     let mut functions_to_codegen = vec!();
     // Declare all the globals and functions
-    for (unit_id, info) in unit_group.iter().cloned().zip(info.iter()) {
+    for info in info.iter() {
       for def in info.t.symbols.values() {
         if !def.is_polymorphic() {
           let t = self.to_basic_type(info, &def.type_tag).unwrap();
@@ -580,18 +559,6 @@ impl <'l> Gen<'l> {
     }
     else {
       self.context.void_type().fn_type(arg_types, false)
-    }
-  }
-
-  fn array_of_type(&self, t : BasicTypeEnum, length : u32) -> ArrayType {
-    use BasicTypeEnum::*;
-    match t {
-      ArrayType(t) => t.array_type(length),
-      IntType(t) => t.array_type(length),
-      FloatType(t) => t.array_type(length),
-      PointerType(t) => t.array_type(length),
-      StructType(t) => t.array_type(length),
-      VectorType(t) => t.array_type(length),
     }
   }
 
@@ -1260,7 +1227,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     Ok(self.build_function_call(function_pointer, arg_vals.as_slice(), "return_val"))
   }
 
-  fn get_linked_drop_reference(&mut self, info : &CompileInfo, t : &Type) -> Option<FunctionValue> {
+  fn get_linked_drop_reference(&mut self, _info : &CompileInfo, _t : &Type) -> Option<FunctionValue> {
     // if let TypeContent::Def(name, unit_id) = &t.content {
     //   let def = info.find_type_def(name, *unit_id).unwrap();
     //   if let Some(drop) = &def.drop_function {
@@ -1272,7 +1239,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     None
   }
 
-  fn get_linked_clone_reference(&mut self, info : &CompileInfo, t : &Type) -> Option<FunctionValue> {
+  fn get_linked_clone_reference(&mut self, _info : &CompileInfo, _t : &Type) -> Option<FunctionValue> {
     // if let TypeContent::Def(name, unit_id) = &t.content {
     //   let def = info.find_type_def(name, *unit_id).unwrap();
     //   if let Some(clone) = &def.clone_function {

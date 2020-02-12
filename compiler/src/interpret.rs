@@ -53,7 +53,8 @@ impl Interpreter {
     Ok(())
   }
 
-  // Calls a function that accepts an OUT pointer as an argument, in C style.
+  /// Calls a function that accepts an OUT pointer as an argument, in C style.
+  #[allow(dead_code)]
   pub fn run_with_pointer_return<A>(
     &mut self, code : &str, function_name: &str)
       -> Result<A, Error>

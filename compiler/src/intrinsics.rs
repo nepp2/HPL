@@ -88,18 +88,3 @@ pub fn get_intrinsics(intrinsics_id : UnitId, gen : &mut UIDGenerator, cache : &
   }
   types
 }
-
-#[derive(Clone, PartialEq, Debug)]
-pub enum Val {
-  Void,
-  F64(f64),
-  F32(f32),
-  I64(i64),
-  U64(u64),
-  I32(i32),
-  U32(u32),
-  U16(u16),
-  U8(u8),
-  String(String),
-  Bool(bool),
-}

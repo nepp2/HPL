@@ -355,13 +355,6 @@ impl TypeDefinition {
   }
 }
 
-#[derive(Debug, Clone)]
-pub enum FunctionImplementation {
-  Normal{body: NodeId, name_for_codegen: RefStr, args : Vec<Reference> },
-  CFunction,
-  Intrinsic,
-}
-
 /// The initialiser for the symbol
 #[derive(Debug, Clone)]
 pub enum SymbolInit {
@@ -656,7 +649,6 @@ pub struct ResolvedSymbol {
 /// Utility type for finding definitions either in the module being constructed,
 /// or in the other modules in scope.
 pub struct TypeDirectory<'a> {
-  new_unit_id : UnitId,
   import_types : &'a [&'a TypeInfo],
   new_module : &'a mut TypeInfo,
   polytype_bindings : HashMap<RefStr, Type>,
@@ -668,12 +660,11 @@ pub struct TypeDirectory<'a> {
 // be wary of new symbols being added.
 impl <'a> TypeDirectory<'a> {
   pub fn new(
-    new_unit_id : UnitId,
     import_types : &'a [&'a TypeInfo],
     new_module : &'a mut TypeInfo) -> Self
   {
     TypeDirectory{
-      new_unit_id, import_types, new_module,
+      import_types, new_module,
       polytype_bindings: HashMap::new(),
       symbol_results: vec![],
     }

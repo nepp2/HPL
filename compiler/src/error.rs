@@ -11,11 +11,6 @@ pub fn error<T, L : Into<TextLocation>, S : Into<ErrorContent>>(loc : L, message
   Err(Error { message: message.into(), location: loc.into() })
 }
 
-/// Returns an error content wrapped
-pub fn error_content<S : Into<ErrorContent>>(message : S) -> ErrorContent {
-  message.into()
-}
-
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TextMarker {

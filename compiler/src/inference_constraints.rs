@@ -60,11 +60,6 @@ pub enum ConstraintContent {
   },
 }
 
-pub enum Function {
-  Value(TypeSymbol),
-  Name(Reference),
-}
-
 impl  fmt::Display for Constraint {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     use ConstraintContent::*;
@@ -102,10 +97,6 @@ impl Constraints {
       constraints: vec![],
       assertions: vec![],
     }
-  }
-
-  pub fn loc(&self, ts : TypeSymbol) -> TextLocation {
-    *self.symbols.get(&ts).unwrap()
   }
 }
 

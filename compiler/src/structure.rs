@@ -116,7 +116,6 @@ pub struct NodeConverter<'l> {
 
 pub struct FunctionConverter<'l, 'lt> {
   t : &'l mut NodeConverter<'lt>,
-  is_top_level : bool,
   labels_in_scope : Vec<LabelId>,
   block_scope : Vec<Vec<Reference>>,
 }
@@ -177,7 +176,7 @@ pub fn to_nodes(
     symbols: HashMap::new(),
     cache,
   };
-  let mut fc = FunctionConverter::new(&mut nc, true, vec![]);
+  let mut fc = FunctionConverter::new(&mut nc, vec![]);
   let top_level = fc.top_level_expression(expr)?;
   Ok(Nodes{ root: top_level, nodes: nc.nodes, symbols: nc.symbols })
 }
@@ -201,10 +200,10 @@ impl <'l> NodeConverter<'l> {
 
 impl <'l, 'lt> FunctionConverter<'l, 'lt> {
 
-  pub fn new(t : &'l mut NodeConverter<'lt>, is_top_level : bool, args : Vec<Reference>)
+  pub fn new(t : &'l mut NodeConverter<'lt>, args : Vec<Reference>)
    -> FunctionConverter<'l, 'lt>
   {
-    FunctionConverter { t, is_top_level, labels_in_scope : vec![], block_scope: vec![args] }
+    FunctionConverter { t, labels_in_scope : vec![], block_scope: vec![args] }
   }
 
   fn add_var_to_scope(&mut self, var : Reference) {
@@ -336,7 +335,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       }
       else { vec![] }
     };
-    let mut function_checker = FunctionConverter::new(self.t, false, arg_symbols);
+    let mut function_checker = FunctionConverter::new(self.t, arg_symbols);
     let body = function_checker.to_function_body(body)?;
     return Ok(self.node(expr, FunctionDefinition{name, args, type_vars, return_tag, body}));
   }

@@ -3,11 +3,11 @@ use crate::{
   error, c_interface, types, llvm_codegen, code_store, compiler, expr
 };
 
-use error::{Error, error_raw};
+use error::Error;
 use c_interface::CSymbols;
 use types::{UnitId, SymbolId, SymbolInit};
 use code_store::{CodeStore, CodegenId};
-use llvm_codegen::{Gen, dump_module, CompileInfo };
+use llvm_codegen::{Gen, dump_module};
 use expr::RefStr;
 
 use inkwell::context::{Context};
@@ -16,9 +16,6 @@ use inkwell::values::{FunctionValue, GlobalValue};
 use inkwell::OptimizationLevel;
 use inkwell::execution_engine::ExecutionEngine;
 use inkwell::module::Module;
-
-// TODO: Get rid of this static mut?
-static mut LOADED_SYMBOLS : bool = false;
 
 pub enum SymbolLocation {
   CBind(RefStr),
@@ -148,61 +145,4 @@ pub fn link_unit(
   }
   // Finalize unit
   lu.ee.run_static_constructors();
-}
-
-pub fn link_group(
-  units : &[UnitId],
-  code_store : &CodeStore,
-  c_symbols : &CSymbols,
-)
-{
-  let mut globs = vec![];
-  let mut funs = vec![];
-  println!("Getting all addresses");
-  for &unit_id in units {
-    let lu = code_store.llvm_unit(unit_id);
-    // Link globals
-    for (global_value, loc) in lu.globals_to_link.iter() {
-      let address = find_symbol_address(code_store, c_symbols, loc);
-      globs.push((lu, global_value, address));
-    }
-    // Link functions
-    for (function_value, loc) in lu.functions_to_link.iter() {
-      let address = find_symbol_address(code_store, c_symbols, loc);
-      funs.push((lu, function_value, address));
-    }
-  }
-  println!("Linking globals");
-  for (lu, global_value, address) in globs {
-    lu.ee.add_global_mapping(global_value, address);
-  }
-  println!("Linking functions");
-  for (lu, function_value, address) in funs {
-    lu.ee.add_global_mapping(function_value, address);
-  }
-  // for &unit_id in units {
-  //   let lu = code_store.llvm_unit(unit_id);
-  //   println!("   LINKING GLOBALS {:?}", unit_id);
-  //   // Link globals
-  //   for (global_value, loc) in lu.globals_to_link.iter() {
-  //     println!("      LINKING GLOBAL {:?}", global_value.print_to_string());
-  //     let address = find_symbol_address(code_store, c_symbols, loc);
-  //     lu.ee.add_global_mapping(global_value, address);
-  //   }
-  //   println!("   GLOBALS ALL LINKED");
-  //   println!("   LINKING FUNCTIONS {:?}", unit_id);
-  //   // Link functions
-  //   for (function_value, loc) in lu.functions_to_link.iter() {
-  //     println!("      LINKING FUNCTION {:?}", function_value.print_to_string());
-  //     let address = find_symbol_address(code_store, c_symbols, loc);
-  //     lu.ee.add_global_mapping(function_value, address);
-  //   }
-  //   println!("   FUNCTIONS ALL LINKED");
-  // }
-  println!("Running static constructors");
-  let aaa = (); // TODO: Why does this sometimes cause a crash?
-  for &unit_id in units {
-    let lu = code_store.llvm_unit(unit_id);
-    lu.ee.run_static_constructors();
-  }
 }
