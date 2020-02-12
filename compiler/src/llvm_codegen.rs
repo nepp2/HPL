@@ -23,8 +23,8 @@ use inkwell::module::{Module, Linkage};
 use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::passes::PassManager;
 use inkwell::types::{
-  BasicTypeEnum, BasicType, StructType, PointerType, FunctionType, ArrayType,
-  IntType, FloatType };
+  BasicTypeEnum, BasicType, StructType, PointerType,
+  FunctionType, IntType, FloatType };
 use inkwell::values::{
   BasicValueEnum, BasicValue, FloatValue, StructValue, IntValue,
   FunctionValue, PointerValue, GlobalValue };
