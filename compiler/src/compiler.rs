@@ -15,7 +15,6 @@ use graph::DirectedGraph;
 use std::collections::{VecDeque, HashSet};
 
 // TODO: Put these options somewhere more sensible
-pub static DEBUG_PRINTING_EXPRS : bool = false;
 pub static DEBUG_PRINTING_IR : bool = false;
 pub static ENABLE_IR_OPTIMISATION : bool = false;
 
@@ -128,13 +127,17 @@ impl Compiler {
         }
         else {
           // Create a new unit for the function instance and typecheck it
-          let instance_unit_id = self.code_store.create_unit(self.gen.next(), None);
+          let poly_unit_name = {
+            let name = self.code_store.symbol_def(poly_symbol_id).name.as_ref();
+            self.cache.get(format!("@poly[{}][{}]", name, instance_type))
+          };
+          let instance_unit_id = self.code_store.create_unit(self.gen.next(), Some(poly_unit_name));
           self.code_store.add_dependency(instance_unit_id, poly_symbol_id.uid);
           let poly_def = self.code_store.symbol_def(poly_symbol_id);
           let (instance_types, instance_mapping, instance_symbol_id) =
-          inference_solver::typecheck_polymorphic_function_instance(
-            instance_unit_id, poly_def, &instance_type, &self.code_store,
-            &self.cache, &mut self.gen)?;
+            inference_solver::typecheck_polymorphic_function_instance(
+              instance_unit_id, poly_def, &instance_type, &self.code_store,
+              &self.cache, &mut self.gen)?;
           // Register the instance with the code store
           let instances = self.code_store.poly_instances.entry(poly_symbol_id).or_default();
           instances.insert(instance_type, instance_symbol_id);
@@ -153,6 +156,12 @@ impl Compiler {
   }
 
   fn codegen(&mut self, new_units : &[UnitId]) -> Result<(), Error> {
+    println!("units {{");
+    for (i, u) in new_units.iter().cloned().enumerate() {
+      let name = self.code_store.name(u);
+      println!("  {}: {}", i, name);
+    }
+    println!("}}");
     // Use Tarjan's algorithm to get a DAG of the "strongly-connected-components".
     // Codegen these groups together in a valid order.
     let mut g : DirectedGraph = Default::default();
@@ -165,13 +174,16 @@ impl Compiler {
       }
       g.vertex_edges.push(vertex_edges);
     }
+    println!("unit_graph {}", g);
     let strongly_connected_components = graph::get_strongly_connected_components(&g);
+    println!("components {{");
     for c in strongly_connected_components.iter() {
-      println!("component: {:?}", c.iter().map(|&i| self.code_store.name(new_units[i])).collect::<Vec<_>>());
+      println!("  {:?}", c);
     }
+    println!("}}");
     let ordering = {
       let component_graph = graph::graph_of_disjoint_subgraphs(strongly_connected_components.as_slice(), &g);
-      println!("component_graph: {:?}", component_graph.vertex_edges);
+      println!("component_graph {}", component_graph);
       graph::valid_topological_ordering(&component_graph).expect("graph contained cycles!")
     };
     // Codegen the strongly-connected subgraphs together

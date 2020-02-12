@@ -69,8 +69,6 @@ impl fmt::Debug for SStr {
   }
 }
 
-type VoidPtr = *mut ();
-
 #[cfg(not(debug_assertions))]
 static MODE : &'static str = "release";
 #[cfg(debug_assertions)]

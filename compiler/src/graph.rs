@@ -1,5 +1,6 @@
 
 use std::collections::HashMap;
+use std::fmt;
 
 #[derive(Default)]
 pub struct DirectedGraph {
@@ -14,6 +15,16 @@ impl DirectedGraph {
 
   pub fn vertex_count(&self) -> usize {
     self.vertex_edges.len()
+  }
+}
+
+impl  fmt::Display for DirectedGraph {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    writeln!(f, "DirectedGraph{{")?;
+    for (i, edges) in self.vertex_edges.iter().enumerate() {
+      writeln!(f, "  {}: {:?}", i, edges)?;
+    }
+    writeln!(f, "}}")
   }
 }
 
@@ -85,7 +96,7 @@ pub fn get_strongly_connected_components(g : &DirectedGraph) -> Vec<Vec<usize>> 
   let tarjan = Tarjan {
     stack: vec![],
     strongly_connected_components: vec![],
-    vertices: vs.as_mut_slice(),
+    verts: vs.as_mut_slice(),
     g,
   };
   tarjan.to_strongly_connected_components()
@@ -102,52 +113,50 @@ struct TarjanVert {
 struct Tarjan<'l> {
   stack : Vec<usize>,
   strongly_connected_components : Vec<Vec<usize>>,
-  vertices : &'l mut [TarjanVert],
+  verts : &'l mut [TarjanVert],
   g : &'l DirectedGraph,
 }
 
 impl <'l> Tarjan<'l> {
   
   fn to_strongly_connected_components(mut self) -> Vec<Vec<usize>> {
-    for v in 0..self.vertices.len() {
-      if !self.vert(v).visited {
+    for v in 0..self.verts.len() {
+      if !self.verts[v].visited {
         self.strong_connect(v);
       }
     }
     self.strongly_connected_components
   }
 
-  fn vert(&mut self, i : usize) -> &mut TarjanVert {
-    &mut self.vertices[i]
-  }
-
   fn strong_connect(&mut self, v : usize) {
-    self.vertices[v].visited = true;
+    use std::cmp::min;
+
+    self.verts[v].visited = true;
     self.stack.push(v);
-    self.vert(v).on_stack = true;
+    self.verts[v].on_stack = true;
   
     for &w in self.g.edges(v) {
-      if !self.vertices[w].visited {
+      if !self.verts[w].visited {
         // Successor w has not yet been visited; recurse on it
         self.strong_connect(w);
+        self.verts[v].lowlink =
+          min(self.verts[v].lowlink, self.verts[w].lowlink);
       }
-      else if self.vert(w).on_stack {
+      else if self.verts[w].on_stack {
         // Successor w is in stack S and hence in the current SCC
-        // If w is not on stack, then (v, w) is a cross-edge in the DFS tree and must be ignored
-        // Note: The next line may look odd - but is correct.
-        // It says w.index not w.lowlink; that is deliberate and from the original paper
-        let ll = self.vert(v).lowlink;
-        let w_index = self.vert(w).index;
-        self.vert(v).lowlink = std::cmp::min(ll, w_index);
+        // If w is not on stack, then (v, w) is a cross-edge in the
+        // depth-first-search tree and must be ignored.
+        self.verts[v].lowlink =
+          min(self.verts[v].lowlink, self.verts[w].index);
       }
     }
   
     // If v is a root node, pop the stack and generate an SCC
-    if self.vert(v).lowlink == self.vert(v).index {
+    if self.verts[v].lowlink == self.verts[v].index {
       let mut scc = vec![]; // start a new strongly connected component
       loop {
         let w = self.stack.pop().unwrap();
-        self.vert(w).on_stack = false;
+        self.verts[w].on_stack = false;
         scc.push(w);
         if w == v { break }
       }

@@ -1,11 +1,8 @@
 
-#![allow(dead_code)]
+//#![allow(dead_code)]
 
 #[cfg(test)]
 #[macro_use] extern crate rusty_fork;
-
-// #[macro_use] extern crate lazy_static;
-// #[macro_use] extern crate maplit;
 
 mod error;
 mod lexer;
