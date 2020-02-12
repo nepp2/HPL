@@ -54,7 +54,6 @@ pub fn valid_topological_ordering(g : &DirectedGraph) -> Result<Vec<usize>, ()> 
   for i in 0..g.vertex_count() {
     visit(&mut ordering, flags.as_mut_slice(), g, i)?;
   }
-  ordering.reverse();
   Ok(ordering)
 }
 

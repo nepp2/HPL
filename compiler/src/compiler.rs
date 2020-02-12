@@ -186,6 +186,7 @@ impl Compiler {
       println!("component_graph {}", component_graph);
       graph::valid_topological_ordering(&component_graph).expect("graph contained cycles!")
     };
+    println!("ordering: {:?}", ordering);
     // Codegen the strongly-connected subgraphs together
     let mut unit_group = vec![];
     for subgraph_index in ordering {

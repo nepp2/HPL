@@ -492,19 +492,23 @@ rusty_fork_test! {
     assert_result(code, Val::I64(10));
   }
 
-  // TODO: not yet implemented
-  
-  // #[test]
-  // fn test_out_of_order_functions(){
-  //   let code = "
-  //     let a = foo()
-  //     fun foo() {
-  //       10
-  //     }
-  //     a
-  //   ";
-  //   assert_result(code, Val::I64(10));
-  // }
+  #[test]
+  fn test_polymorphism() {
+    let code = r#"
+      let nums = list()
+
+      for x in range(0, 10) {
+        nums.add(x)
+      }
+
+      let total = 0
+      for x in range(0, 10) {
+        total = total + nums[x]
+      }
+      total
+    "#;
+    assert_result(code, Val::I64(45));
+  }
 
   #[test]
   fn test_nonexistent_types(){
