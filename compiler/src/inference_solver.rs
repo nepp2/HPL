@@ -7,7 +7,7 @@
 
 use itertools::Itertools;
 
-use crate::{error, expr, structure, types, inference_constraints, code_store};
+use crate::{error, expr, structure, types, inference_constraints, code_store, compiler};
 
 use error::{Error, error, error_raw, TextLocation, ErrorContent};
 use expr::{UIDGenerator, Uid, RefStr, StringCache};
@@ -24,6 +24,7 @@ use inference_constraints::{
   Constraints, TypeSymbol, Assertion,
 };
 use code_store::CodeStore;
+use compiler::DEBUG_PRINTING_TYPE_INFERENCE as DEBUG;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -511,7 +512,9 @@ impl <'a> Inference<'a> {
   }
 
   fn infer(mut self) {
-    println!("To resolve: {}", self.c.symbols.len());
+    if DEBUG {
+      println!("To resolve: {}", self.c.symbols.len());
+    }
     for a in self.c.assertions.iter() {
       self.process_assertion(a);
     }
@@ -536,8 +539,10 @@ impl <'a> Inference<'a> {
         self.try_harden_type_symbol(literals.pop_back().unwrap());
       }
     }
-    println!("Unique constraints: {}\n", self.c.constraints.len());
-    println!("Constraints processed (including duplicates): {}\n", total_constraints_processed);
+    if DEBUG {
+      println!("Unique constraints: {}\n", self.c.constraints.len());
+      println!("Constraints processed (including duplicates): {}\n", total_constraints_processed);
+    }
 
     // Generate errors if program has unresolved symbols
     let mut unresolved = 0;

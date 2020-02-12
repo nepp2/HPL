@@ -1,17 +1,19 @@
 
 use std::fmt;
 
-use crate::error::{Error, error, error_raw, TextLocation};
-use crate::expr::{Expr, ExprContent, UIDGenerator, Uid, RefStr, StringCache};
-use crate::structure::{
+use crate::{compiler, error, expr, structure, types};
+use error::{Error, error, error_raw, TextLocation};
+use expr::{Expr, ExprContent, UIDGenerator, Uid, RefStr, StringCache};
+use structure::{
   Node, NodeId, ReferenceId, Content, PrimitiveVal, LabelId,
   VarScope, GlobalType, Reference, Nodes,
 };
-use crate::types::{
+use types::{
   Type, PType, TypeDefinition, FunctionInit, SymbolDefinition,
   TypeDirectory, SymbolInit, SymbolId, AbstractType,
   SignatureBuilder, TypeMapping, TypeContent,
 };
+use compiler::DEBUG_PRINTING_TYPE_INFERENCE as DEBUG;
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
@@ -299,18 +301,19 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
     let node = n.node(id);
     match &node.content {
       Content::FunctionDefinition{ name, args, return_tag:_, type_vars, body } => {
-        println!("####################################################");
-        println!("Process polymorphic instance: {}", name);
-        println!("Instance signature: {}", instanced_function_type);
-        print!("Args: [");
-        for (r, e) in args {
-          print!("{} : {:?}, ", r.name, e);
+        if DEBUG {
+          println!("####################################################");
+          println!("Process polymorphic instance: {}", name);
+          println!("Instance signature: {}", instanced_function_type);
+          print!("Args: [");
+          for (r, e) in args {
+            print!("{} : {:?}, ", r.name, e);
+          }
+          println!("]");
+          println!("Type var instances: {:?}",
+            type_vars.iter().zip(instanced_type_vars).collect::<Vec<_>>());
+          println!("####################################################");
         }
-        println!("]");
-        println!("Type var instances: {:?}",
-          type_vars.iter().zip(instanced_type_vars).collect::<Vec<_>>());
-        println!("####################################################");
-        
         self.with_instanced_type_parameters(type_vars.as_slice(), instanced_type_vars, |gc| {
           let args = args.iter().map(|x| x.0.clone()).collect();
           gc.process_function_def(n, id, instanced_function_type, &[], args, *body, name)

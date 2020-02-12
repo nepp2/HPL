@@ -17,6 +17,8 @@ use std::collections::{VecDeque, HashSet};
 // TODO: Put these options somewhere more sensible
 pub static DEBUG_PRINTING_IR : bool = false;
 pub static ENABLE_IR_OPTIMISATION : bool = false;
+pub static DEBUG_PRINTING_DEPENDENCY_GRAPH : bool = false;
+pub static DEBUG_PRINTING_TYPE_INFERENCE : bool = false;
 
 pub struct Compiler {
   pub code_store : CodeStore,
@@ -86,9 +88,7 @@ impl Compiler {
     self.structure(unit_id)?;
     let mut new_units = vec![unit_id];
     self.typecheck(unit_id, imports, &mut new_units)?;
-    println!("ENTERING CODEGEN");
     self.codegen(new_units.as_slice())?;
-    println!("CODEGEN COMPLETE");
     self.initialise(unit_id)?;
     Ok(())
   }
@@ -156,12 +156,14 @@ impl Compiler {
   }
 
   fn codegen(&mut self, new_units : &[UnitId]) -> Result<(), Error> {
-    println!("units {{");
-    for (i, u) in new_units.iter().cloned().enumerate() {
-      let name = self.code_store.name(u);
-      println!("  {}: {}", i, name);
+    if DEBUG_PRINTING_DEPENDENCY_GRAPH {
+      println!("units {{");
+      for (i, u) in new_units.iter().cloned().enumerate() {
+        let name = self.code_store.name(u);
+        println!("  {}: {}", i, name);
+      }
+      println!("}}");
     }
-    println!("}}");
     // Use Tarjan's algorithm to get a DAG of the "strongly-connected-components".
     // Codegen these groups together in a valid order.
     let mut g : DirectedGraph = Default::default();
@@ -174,19 +176,27 @@ impl Compiler {
       }
       g.vertex_edges.push(vertex_edges);
     }
-    println!("unit_graph {}", g);
-    let strongly_connected_components = graph::get_strongly_connected_components(&g);
-    println!("components {{");
-    for c in strongly_connected_components.iter() {
-      println!("  {:?}", c);
+    if DEBUG_PRINTING_DEPENDENCY_GRAPH {
+      println!("unit_graph {}", g);
     }
-    println!("}}");
+    let strongly_connected_components = graph::get_strongly_connected_components(&g);
+    if DEBUG_PRINTING_DEPENDENCY_GRAPH {
+      println!("components {{");
+      for c in strongly_connected_components.iter() {
+        println!("  {:?}", c);
+      }
+      println!("}}");
+    }
     let ordering = {
       let component_graph = graph::graph_of_disjoint_subgraphs(strongly_connected_components.as_slice(), &g);
-      println!("component_graph {}", component_graph);
+      if DEBUG_PRINTING_DEPENDENCY_GRAPH {
+        println!("component_graph {}", component_graph);
+      }
       graph::valid_topological_ordering(&component_graph).expect("graph contained cycles!")
     };
-    println!("ordering: {:?}", ordering);
+    if DEBUG_PRINTING_DEPENDENCY_GRAPH {
+      println!("ordering: {:?}", ordering);
+    }
     // Codegen the strongly-connected subgraphs together
     let mut unit_group = vec![];
     for subgraph_index in ordering {
