@@ -709,6 +709,7 @@ fn float_binary_ops(gf : &mut GenFunction, name: &str, a : TypedNode, b : TypedN
     "-" => binary_op!(build_float_sub, gf, a, b),
     "*" => binary_op!(build_float_mul, gf, a, b),
     "/" => binary_op!(build_float_div, gf, a, b),
+    "%" => binary_op!(build_float_rem, gf, a, b),
     ">" => compare_op!(build_float_compare, FloatPredicate::OGT, gf, a, b),
     ">=" => compare_op!(build_float_compare, FloatPredicate::OGE, gf, a, b),
     "<" => compare_op!(build_float_compare, FloatPredicate::OLT, gf, a, b),
@@ -731,12 +732,12 @@ fn integer_binary_ops(
     "-" => binary_op!(build_int_sub, gf, a, b),
     "*" => binary_op!(build_int_mul, gf, a, b),
     "/" => {
-      if t.signed_int() {
-        binary_op!(build_int_signed_div, gf, a, b)
-      }
-      else {
-        binary_op!(build_int_unsigned_div, gf, a, b)
-      }
+      if t.signed_int() { binary_op!(build_int_signed_div, gf, a, b) }
+      else { binary_op!(build_int_unsigned_div, gf, a, b) }
+    }
+    "%" => {
+      if t.signed_int() { binary_op!(build_int_signed_rem, gf, a, b) }
+      else { binary_op!(build_int_unsigned_rem, gf, a, b) }
     }
     ">" => compare_op!(build_int_compare, IntPredicate::SGT, gf, a, b),
     ">=" => compare_op!(build_int_compare, IntPredicate::SGE, gf, a, b),

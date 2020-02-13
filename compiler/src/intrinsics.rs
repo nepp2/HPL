@@ -17,7 +17,7 @@ pub fn get_intrinsics(intrinsics_id : UnitId, gen : &mut UIDGenerator, cache : &
   let boolean : &Type = &Bool.into();
   for t in prim_number_types {
     add_intrinsic(cache, gen, unit_id, &mut types, "-", &[t], t);
-    for &n in &["+", "-", "*", "/"] {
+    for &n in &["+", "-", "*", "/", "%"] {
       add_intrinsic(cache, gen, unit_id, &mut types, n, &[t, t], t);
     }
     for &n in &["==", ">", "<", ">=", "<=", "!="] {

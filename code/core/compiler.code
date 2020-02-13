@@ -18,24 +18,30 @@ fun load_expression(name) {
 }
 
 // Turn an expression into a compiled module with no imports
+fun load_module(compiler : ptr(u8), imports : array(module_handle), expr : ptr(expr), maybe_name : string) {
+  compiler.load_module(&imports, expr, &maybe_name)
+}
+
+// Turn an expression into a compiled module with no imports
 fun load_module(expr : ptr(expr)) {
-  compiler.load_module(&[], expr, "")
+  compiler.load_module([], expr, "")
 }
 
 // Turn an expression into a compiled module with the given imports
 fun load_module(imports : array(module_handle), expr : ptr(expr)) {
-  compiler.load_module(&imports, expr, "")
+  compiler.load_module(imports, expr, "")
 }
 
 // Load a file as a compiled module with no imports
 fun load_module(name) {
-  load_module(name, [])
+  let expr = load_expression(name)
+  compiler.load_module([], expr, name)
 }
 
 // Load a file as a compiled module with the given imports
 fun load_module(name, imports : array(module_handle)) {
   let expr = load_expression(name)
-  compiler.load_module(&imports, expr, &name)
+  compiler.load_module(imports, expr, name)
 }
 
 // Get a pointer to a function from a given module

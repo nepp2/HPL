@@ -76,6 +76,7 @@ fn parse_config() -> ParseConfig {
   c.infix(&["as"]);
   c.infix(&["&&", "||"]);
   c.infix(&[">", "<", ">=", "<=", "==", "!="]);
+  c.infix(&["%"]);
   c.infix_prefix(&["+", "-"], &["-"]);
   c.infix(&["*", "/", "%"]);
   c.infix_prefix(&["=>"], &["!", "&", "*",]);
