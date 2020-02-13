@@ -8,9 +8,9 @@ use std::io::Read;
 
 // TODO: fix this gross hack
 #[cfg(not(test))]
-static PRELUDE_PATH : &'static str = "code/prelude.code";
+const CODE_PATH : &'static str = "code/";
 #[cfg(test)]
-static PRELUDE_PATH : &'static str = "../code/prelude.code";
+const CODE_PATH : &'static str = "../code/";
 
 pub struct Interpreter {
   pub c : Box<Compiler>,
@@ -21,9 +21,9 @@ pub fn interpreter() -> Interpreter {
   let c = Compiler::new();
   let mut i = Interpreter { c, imports: vec![] };
   
-  // load prelude
-  if let Err(e) = i.load_prelude() {
-    println!("error loading prelude, {}", e);
+  // loading core modules
+  if let Err(e) = i.load_core_modules() {
+    println!("error loading code modules, {}", e);
   }
   
   return i;
@@ -45,11 +45,13 @@ impl Interpreter {
     Ok((unit_id, val))
   }
 
-  fn load_prelude(&mut self) -> Result<(), Error> {
-    let mut f = File::open(PRELUDE_PATH).expect("failed to load prelude");
-    let mut code = String::new();
-    f.read_to_string(&mut code).unwrap();
-    self.load_module(&code, Some("prelude"))?;
+  fn load_core_modules(&mut self) -> Result<(), Error> {
+    for module_name in &["prelude", "list", "compiler"] {
+      let mut f = File::open(format!("{}core/{}.code", CODE_PATH, module_name)).expect("failed to load prelude");
+      let mut code = String::new();
+      f.read_to_string(&mut code).unwrap();
+      self.load_module(&code, Some(module_name))?;
+    }
     Ok(())
   }
 

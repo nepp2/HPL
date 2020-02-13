@@ -1,0 +1,85 @@
+
+cbind malloc : fun(size: u64) => ptr(u8)
+cbind free : fun(ptr: ptr(u8))
+cbind memcpy : fun(dest : ptr(u8), src : ptr(u8), length : u64) => ptr(u8)
+cbind panic : fun(s : ptr(string))
+
+fun panic(s : string) {
+  panic(&s)
+}
+
+struct range {
+  start : i64
+  limit : i64
+}
+
+fun range(start, limit) {
+  range.new(start, limit)
+}
+
+struct range_iter {
+  val : i64
+  limit : i64
+}
+
+fun iter(r : range) {
+  range_iter.new(r.start, r.limit)
+}
+
+fun next(it : ptr(range_iter), i : ptr(i64)) {
+  if it.val < it.limit {
+    *i = it.val
+    it.val = it.val + 1
+    true
+  }
+  else { false }
+}
+
+struct string {
+  data : ptr(u8)
+  length : u64
+}
+
+fun +(a : string, b : string) {
+ let length = a.length + b.length
+ let data = malloc(length)
+ memcpy(data, a.data, a.length)
+ memcpy(&data[a.length as i64], b.data, b.length)
+ string.new(data, length)
+}
+
+struct lib_handle {
+  handle : u64
+}
+
+cbind load_library : fun(name : ptr(string)) => lib_handle
+cbind load_symbol : fun(handle : lib_handle, name : ptr(string)) => ptr(u8)
+
+cbind print_string : fun(s : ptr(string)) // ptr due to ABI issue
+cbind print_i64 : fun(v : i64)
+cbind print_u64 : fun(v : u64)
+cbind print_f64 : fun(v : f64)
+cbind print_bool : fun(v : bool)
+
+fun print(s : string) { print_string(&s) }
+fun print(v : i64) { print_i64(v) }
+fun print(v : u64) { print_u64(v) }
+fun print(v : f64) { print_f64(v) }
+fun print(v : bool) { print_bool(v) }
+fun println() { print("\n") }
+
+fun println(t : T) with T {
+  print(t); println()
+}
+
+cbind thread_sleep : fun(millis : u64)
+
+fun max(a : i64, b : i64) {
+  if a > b { a } else { b }
+}
+
+fun alloc(v : T) => ptr(T) with T {
+  let p = malloc(sizeof(T)) as ptr(T)
+  *p = v
+  p
+}

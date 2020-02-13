@@ -5,45 +5,10 @@ use crate::types::{
   SymbolInit
 };
 
+use PType::*;
+use TypeContent::Polytype;
+
 pub fn get_intrinsics(intrinsics_id : UnitId, gen : &mut UIDGenerator, cache : &StringCache) -> TypeInfo {
-  use PType::*;
-  use TypeContent::Polytype;
-
-  fn create_definition(
-    cache : &StringCache, gen : &mut UIDGenerator, unit_id : UnitId, name : &str,
-    args : &[&Type], return_type : &Type, type_vars : Vec<RefStr>)
-      -> SymbolDefinition
-  {
-    let mut sig = SignatureBuilder::new(return_type.clone());
-    for &a in args {
-      sig.append_arg(a.clone());
-    }
-    let id = unit_id.new_symbol_id(gen);
-    SymbolDefinition {
-      id, unit_id,
-      name: cache.get(name),
-      type_tag: sig.into(),
-      initialiser: SymbolInit::Intrinsic,
-      type_vars,
-    }
-  }
-
-  fn add_intrinsic(
-    cache : &StringCache, gen : &mut UIDGenerator, unit_id : UnitId, t : &mut TypeInfo,
-    name : &str, args : &[&Type], return_type : &Type)
-  {
-    let def = create_definition(cache, gen, unit_id, name, args, return_type, vec![]);
-    t.symbols.insert(def.id, def);
-  }
-  
-  fn add_polymorphic_intrinsic(
-    cache : &StringCache, gen : &mut UIDGenerator, unit_id : UnitId, t : &mut TypeInfo,
-    name : &str, args : &[&Type], return_type : &Type, type_vars : Vec<RefStr>)
-  {
-    let def = create_definition(cache, gen, unit_id, name, args, return_type, type_vars);
-    t.symbols.insert(def.id, def);
-  }
-
   let unit_id = intrinsics_id;
   let mut types = TypeInfo::new(unit_id);
   let prim_number_types : &[Type] =
@@ -87,4 +52,39 @@ pub fn get_intrinsics(intrinsics_id : UnitId, gen : &mut UIDGenerator, cache : &
       cache, gen, unit_id, &mut types, "&", &[&tv], &gptr, vec![tvar.clone()]);
   }
   types
+}
+
+fn create_definition(
+  cache : &StringCache, gen : &mut UIDGenerator, unit_id : UnitId, name : &str,
+  args : &[&Type], return_type : &Type, type_vars : Vec<RefStr>)
+    -> SymbolDefinition
+{
+  let mut sig = SignatureBuilder::new(return_type.clone());
+  for &a in args {
+    sig.append_arg(a.clone());
+  }
+  let id = unit_id.new_symbol_id(gen);
+  SymbolDefinition {
+    id, unit_id,
+    name: cache.get(name),
+    type_tag: sig.into(),
+    initialiser: SymbolInit::Intrinsic,
+    type_vars,
+  }
+}
+
+fn add_intrinsic(
+  cache : &StringCache, gen : &mut UIDGenerator, unit_id : UnitId, t : &mut TypeInfo,
+  name : &str, args : &[&Type], return_type : &Type)
+{
+  let def = create_definition(cache, gen, unit_id, name, args, return_type, vec![]);
+  t.symbols.insert(def.id, def);
+}
+
+fn add_polymorphic_intrinsic(
+  cache : &StringCache, gen : &mut UIDGenerator, unit_id : UnitId, t : &mut TypeInfo,
+  name : &str, args : &[&Type], return_type : &Type, type_vars : Vec<RefStr>)
+{
+  let def = create_definition(cache, gen, unit_id, name, args, return_type, type_vars);
+  t.symbols.insert(def.id, def);
 }

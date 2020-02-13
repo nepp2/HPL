@@ -1,14 +1,10 @@
 
-let nums = list()
+static blah = 0
 
-for x in range(0, 10) {
-  nums.add(x)
+fun update() {
+  blah = blah + 1
+  if blah % 100 == 0 {
+    print("Hello ")
+    println(blah)
+  }
 }
-
-println(nums)
-
-let strings = list()
-strings.add("hello")
-strings.add("world")
-
-println(strings)

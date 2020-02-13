@@ -1,19 +1,16 @@
 
 let prelude = load_module("prelude.code")
-let sdl2 = load_module("sdl2.code")
-let tetris = load_module("tetris.code", [prelude, sdl2])
-let gameloop = load_module("gameloop.code", [prelude, sdl2, tetris])
-
-execute([prelude, sdl2, tetris, gameloop, self], #{
-  run_gameloop()
-})
-
+let sdl2 = load_module("scratchpad.code", [prelude])
 
 while true {
-  for event in poll_event() {
-    if event is ReloadEvent {
-
-    }
+  let time = time_now()
+  let event = malloc(sizeof(watcher_event)) as ptr(watcher_event)
+  while poll_event(event) {
+    handle(event)
   }
-  // sleep a bit
+  // sleep for the rest of the frame
+  let elapsed = time_since(time)
+  let millis = 1000/60
+  let sleep_time = max(millis - elapsed, 0)
+  sleep(sleep_time)
 }

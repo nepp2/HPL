@@ -1,0 +1,111 @@
+
+cbind compiler : ptr(u8)
+
+struct text_marker {
+  line : u64
+  col : u64
+}
+
+struct text_location {
+  start : text_marker
+  end: text_marker
+}
+
+fun sym(e : ptr(expr), loc : text_location) {
+  *e
+}
+
+fun sym(s : string, loc : text_location) {
+  let data = expr_data.new(symbol: s)
+  let c = expr_content.new(symbol_tag, data)
+  expr.new(loc, c)
+}
+
+fun sym(i : i64, loc : text_location) {
+  let data = expr_data.new(literal_int: i)
+  let c = expr_content.new(literal_int_tag, data)
+  expr.new(loc, c)
+}
+
+union expr_data {
+  list : expr_list
+  symbol : string
+  literal_string : string
+  literal_float : f64
+  literal_int : i64
+  literal_bool : bool
+}
+
+// TODO: Is this correct? It used to be a union, but I think that's wrong.
+struct expr_list {
+  s : string
+  array : expr_array
+}
+
+static list_tag : u64 = 0
+static symbol_tag : u64 = 1
+static literal_string_tag : u64 = 2
+static literal_float_tag : u64 = 3
+static literal_int_tag : u64 = 4
+static literal_bool_tag : u64 = 5
+static literal_unit_tag : u64 = 6
+
+// This style of tagged union is not really correct! It happens to work here
+// because a u64 tag never triggers padding, but it will break if I change the
+// tag to u8. To use a u8 tag I'd need to create a struct for each variant with
+// the tag on each, and then a union of those structs. This can result in a
+// more compact representation, but it's also a lot more boilerplate.
+struct expr_content {
+  tag : u64
+  data : expr_data
+}
+
+struct expr_array {
+  data : ptr(expr)
+  length : u64
+}
+
+struct expr {
+  loc : text_location
+  content : expr_content
+}
+
+cbind print_expr : fun(e : ptr(expr))
+fun print(e : ptr(expr)) { print_expr(e) }
+
+struct module_handle {
+  module_id : u64
+}
+
+cbind expr_to_string : fun(out : ptr(string), e : ptr(expr))
+
+fun to_string(e : ptr(expr)) {
+  let out = string.new(0 as u64 as ptr(u8), 0 as u64)
+  expr_to_string(&out, e)
+  out
+}
+
+cbind template_quote : fun(e : ptr(expr), args : ptr(array(ptr(expr)))) => ptr(expr)
+
+fun template_quote(e : ptr(expr), args : array(ptr(expr))) {
+  template_quote(e, &args)
+}
+
+cbind load_expression : fun(compiler : ptr(u8), name : ptr(string)) => ptr(expr)
+
+fun load_expression(name) {
+  load_expression(compiler, &name)
+}
+
+cbind build_module : fun(compiler : ptr(u8), expr : ptr(expr)) => module_handle
+
+fun build_module(expr : ptr(expr)) {
+  build_module(compiler, expr)
+}
+
+cbind get_function :
+  fun(compiler : ptr(u8), module : module_handle, name : ptr(string)) => ptr(u8)
+
+fun get_function(module : module_handle, name : string) {
+  get_function(compiler, module, &name)
+}
