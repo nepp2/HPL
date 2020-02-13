@@ -478,6 +478,9 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
           type_vars: vec![],
         });
       }
+      Content::TypeAlias { alias, type_aliased } => {
+        self.assert(ts, PType::Void);
+      }
       Content::TypeDefinition{ name, kind, fields, type_vars } => {
         self.assert(ts, PType::Void);
         if self.t.find_type_def(name.as_ref()).is_some() {

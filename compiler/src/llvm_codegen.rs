@@ -1453,7 +1453,9 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         return Ok(Void);
       }
       Content::TypeDefinition{ .. } => {
-        // TODO: is nothing required here?
+        return Ok(Void);
+      }
+      Content::TypeAlias { .. } => {
         return Ok(Void);
       }
       Content::TypeConstructor{ name:_, field_values } => {

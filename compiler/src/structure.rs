@@ -44,6 +44,7 @@ pub enum VarScope { Local, Global(GlobalType) }
 pub enum Content {
   Literal(PrimitiveVal),
   VariableInitialise{ name: Reference, type_tag: Option<Box<Expr>>, value: NodeId, var_scope : VarScope },
+  TypeAlias{ alias: Box<Expr>, type_aliased: Box<Expr> },
   Assignment{ assignee: NodeId , value: NodeId },
   IfThen{ condition: NodeId, then_branch: NodeId },
   IfThenElse{ condition: NodeId, then_branch: NodeId, else_branch: NodeId },
@@ -60,7 +61,6 @@ pub enum Content {
   While{ condition: NodeId, body: NodeId },
   Convert{ from_value: NodeId, into_type: Box<Expr> },
   SizeOf{ type_tag: Box<Expr> },
-
   Label{ label: LabelId, body: NodeId },
   BreakToLabel{ label: LabelId, return_value: Option<NodeId> },
 }
@@ -383,6 +383,16 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
           let value = self.to_node(value_expr)?;
           self.add_var_to_scope(name.clone());
           let c = VariableInitialise{ name, type_tag, value, var_scope: VarScope::Local };
+          return Ok(self.node(expr, c));
+        }
+        error(expr, "malformed let expression")
+      }
+      ("type", [e]) => {
+        if let Some(("=", [alias_expr, type_aliased_expr])) = e.try_construct() {
+          let c = TypeAlias{
+            alias: alias_expr.clone().into(),
+            type_aliased: type_aliased_expr.clone().into()
+          };
           return Ok(self.node(expr, c));
         }
         error(expr, "malformed let expression")

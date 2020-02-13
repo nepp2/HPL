@@ -533,27 +533,16 @@ rusty_fork_test! {
     assert_result(code, Val::I64(5));
   }
 
+  // #[test]
+  // fn test_type_alias() {
+  //   let code = "
+  //     type int = i32
+  //     fun blah(a : int) {
+  //       a + 1
+  //     }
+  //     blah(2)
+  //   ";
+  //   assert_result(code, Val::I32(3));
+  // }
+
 }
-
-/*
-
-Features to add:
-
-  * consider making new-lines significant in some cases (relating to semi-colons)
-
-#[test]
-fn test_for_loop() {
-  let range_code = "
-    let t = 0
-    let r = range(0, 5)
-    for x in range(0, 2) {
-      for v in r {
-        t = t + 1
-      }
-    }
-    t
-  ";
-  assert_result(range_code, Val::I64(10));
-}
-
-*/

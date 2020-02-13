@@ -1,0 +1,19 @@
+
+let prelude = load_module("prelude.code")
+let sdl2 = load_module("sdl2.code")
+let tetris = load_module("tetris.code", [prelude, sdl2])
+let gameloop = load_module("gameloop.code", [prelude, sdl2, tetris])
+
+execute([prelude, sdl2, tetris, gameloop, self], #{
+  run_gameloop()
+})
+
+
+while true {
+  for event in poll_event() {
+    if event is ReloadEvent {
+
+    }
+  }
+  // sleep a bit
+}

@@ -538,6 +538,11 @@ fn try_parse_keyword_term(ps : &mut ParseState) -> Result<Option<Expr>, Error> {
       let definition = pratt_parse(ps, kp)?;
       ps.add_list("let", vec![definition], start)
     }
+    "type" => {
+      ps.pop_type(TokenType::Symbol)?;
+      let definition = pratt_parse(ps, kp)?;
+      ps.add_list("type", vec![definition], start)
+    }
     "return" => {
       let start = ps.peek_marker();
       ps.expect("return")?;
