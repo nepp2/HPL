@@ -24,7 +24,7 @@ pub struct SModuleHandle {
   pub id : u64,
 }
 
-/// A borrowed slice that is compatible with the Cauldron's array representation
+/// A borrowed slice that is compatible with the runtime array representation
 #[no_mangle]
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -46,7 +46,7 @@ impl <T> SSlice<T> {
   }
 }
 
-/// A sized string that is compatible with the Cauldron's string representation
+/// A sized string that is compatible with the runtime string representation
 pub type SStr = SSlice<u8>;
 
 impl SStr {
