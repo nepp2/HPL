@@ -105,12 +105,18 @@ pub extern "C" fn load_expression(c : *mut Compiler, s : SStr) -> Box<Expr> {
   Box::new(expr)
 }
 
+// fun(compiler : ptr(u8), imports : ptr(array(module_handle)), expr : ptr(expr), maybe_name : ptr(string)) => module_handle
+
 #[no_mangle]
-pub extern "C" fn build_module(c : *mut Compiler, e : &Expr) -> UnitId {
+pub extern "C" fn load_module(c : *mut Compiler, imports : SSlice<UnitId>, e : &Expr, maybe_name : SStr) -> UnitId {
   let c = unsafe { &mut *c };
-  match c.load_expr_as_module(e) {
+  println!("FAILING LOUDLY IN LOAD_MODULE");
+  let imports = imports.as_slice();
+  let maybe_name = maybe_name.as_str();
+  let name = if maybe_name == "" { None } else { Some(maybe_name) };
+  match c.load_expr_as_module(e, name, imports) {
     Ok((unit_id, _val)) => unit_id,
-    Err(e) => panic!("failed to build module with error:\n{}", e),
+    Err(e) => panic!("failed to load module with error:\n{}", e),
   }
 }
 
@@ -287,7 +293,7 @@ impl CSymbols {
     sym.insert("expr_to_string".into(),  (expr_to_string as *const()) as usize);
 
     sym.insert("load_expression".into(),  (load_expression as *const()) as usize);
-    sym.insert("build_module".into(),  (build_module as *const()) as usize);
+    sym.insert("load_module".into(),  (load_module as *const()) as usize);
     sym.insert("get_function".into(),  (get_function as *const()) as usize);
 
     sym.insert("test_add".into(), (test_add as *const()) as usize);

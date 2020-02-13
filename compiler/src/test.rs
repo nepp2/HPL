@@ -241,10 +241,10 @@ rusty_fork_test! {
   }
 
   #[test]
-  fn test_build_module(){
+  fn test_load_module(){
     let code = format!(r#"
       let q = #(1 + 1)
-      let m = build_module(q)
+      let m = load_module(q)
       let f = m.get_function("{}") as fun() => i64
       f()
     "#, TOP_LEVEL_FUNCTION_NAME);
@@ -258,7 +258,7 @@ rusty_fork_test! {
         let a = #5
         let b = #10
         let q = #($a - $b)
-        let m = build_module(q)
+        let m = load_module(q)
         let f = m.get_function("{}") as fun() => i64
         f()
       }}
@@ -269,7 +269,7 @@ rusty_fork_test! {
         let a = #$v
         let b = #10
         let q = #($a - $b)
-        let m = build_module(q)
+        let m = load_module(q)
         let f = m.get_function("{}") as fun() => i64
         f()
       }}

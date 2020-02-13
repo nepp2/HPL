@@ -48,12 +48,13 @@ impl Compiler {
     c
   }
 
-  pub fn load_expr_as_module(&mut self, expr : &Expr)
+  pub fn load_expr_as_module(&mut self, expr : &Expr, name : Option<&str>, imports : &[UnitId])
     -> Result<(UnitId, Val), Error>
   {
-    let unit_id = self.code_store.create_unit(self.gen.next(), None);
+    let name = name.map(|s| self.cache.get(s));
+    let unit_id = self.code_store.create_unit(self.gen.next(), name);
     self.code_store.exprs.insert(unit_id, expr.clone());
-    self.load_module_from_expr_internal(unit_id, HashSet::new())?;
+    self.load_module_from_expr_internal(unit_id, imports.iter().cloned().collect())?;
     let val = self.code_store.vals.get(&unit_id).unwrap().clone();
     Ok((unit_id, val))
   }

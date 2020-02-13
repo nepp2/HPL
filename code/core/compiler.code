@@ -1,5 +1,59 @@
 
 cbind compiler : ptr(u8)
+cbind template_quote : fun(e : ptr(expr), args : ptr(array(ptr(expr)))) => ptr(expr)
+cbind load_expression : fun(compiler : ptr(u8), name : ptr(string)) => ptr(expr)
+cbind load_module : fun(compiler : ptr(u8), imports : ptr(array(module_handle)), expr : ptr(expr), maybe_name : ptr(string)) => module_handle
+cbind get_function : fun(compiler : ptr(u8), module : module_handle, name : ptr(string)) => ptr(u8)
+cbind print_expr : fun(e : ptr(expr))
+cbind expr_to_string : fun(out : ptr(string), e : ptr(expr))
+
+// Creates a new expression by splicing some expressions into a template expression
+fun template_quote(e : ptr(expr), args : array(ptr(expr))) {
+  template_quote(e, &args)
+}
+
+// Load a file as an expression
+fun load_expression(name) {
+  compiler.load_expression(&name)
+}
+
+// Turn an expression into a compiled module with no imports
+fun load_module(expr : ptr(expr)) {
+  compiler.load_module(&[], expr, "")
+}
+
+// Turn an expression into a compiled module with the given imports
+fun load_module(imports : array(module_handle), expr : ptr(expr)) {
+  compiler.load_module(&imports, expr, "")
+}
+
+// Load a file as a compiled module with no imports
+fun load_module(name) {
+  load_module(name, [])
+}
+
+// Load a file as a compiled module with the given imports
+fun load_module(name, imports : array(module_handle)) {
+  let expr = load_expression(name)
+  compiler.load_module(&imports, expr, &name)
+}
+
+// Get a pointer to a function from a given module
+fun get_function(module : module_handle, name : string) {
+  compiler.get_function(module, &name)
+}
+  
+// Print an expression out as a string
+fun print(e : ptr(expr)) {
+  print_expr(e)
+}
+
+// Convert an expression into a string
+fun to_string(e : ptr(expr)) {
+  let out = string.new(0 as u64 as ptr(u8), 0 as u64)
+  expr_to_string(&out, e)
+  out
+}
 
 struct text_marker {
   line : u64
@@ -70,42 +124,6 @@ struct expr {
   content : expr_content
 }
 
-cbind print_expr : fun(e : ptr(expr))
-fun print(e : ptr(expr)) { print_expr(e) }
-
 struct module_handle {
   module_id : u64
-}
-
-cbind expr_to_string : fun(out : ptr(string), e : ptr(expr))
-
-fun to_string(e : ptr(expr)) {
-  let out = string.new(0 as u64 as ptr(u8), 0 as u64)
-  expr_to_string(&out, e)
-  out
-}
-
-cbind template_quote : fun(e : ptr(expr), args : ptr(array(ptr(expr)))) => ptr(expr)
-
-fun template_quote(e : ptr(expr), args : array(ptr(expr))) {
-  template_quote(e, &args)
-}
-
-cbind load_expression : fun(compiler : ptr(u8), name : ptr(string)) => ptr(expr)
-
-fun load_expression(name) {
-  load_expression(compiler, &name)
-}
-
-cbind build_module : fun(compiler : ptr(u8), expr : ptr(expr)) => module_handle
-
-fun build_module(expr : ptr(expr)) {
-  build_module(compiler, expr)
-}
-
-cbind get_function :
-  fun(compiler : ptr(u8), module : module_handle, name : ptr(string)) => ptr(u8)
-
-fun get_function(module : module_handle, name : string) {
-  get_function(compiler, module, &name)
 }

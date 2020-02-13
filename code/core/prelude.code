@@ -3,6 +3,7 @@ cbind malloc : fun(size: u64) => ptr(u8)
 cbind free : fun(ptr: ptr(u8))
 cbind memcpy : fun(dest : ptr(u8), src : ptr(u8), length : u64) => ptr(u8)
 cbind panic : fun(s : ptr(string))
+cbind thread_sleep : fun(millis : u64)
 
 fun panic(s : string) {
   panic(&s)
@@ -72,10 +73,12 @@ fun println(t : T) with T {
   print(t); println()
 }
 
-cbind thread_sleep : fun(millis : u64)
-
-fun max(a : i64, b : i64) {
+fun max(a : T, b : T) => T with T {
   if a > b { a } else { b }
+}
+
+fun min(a : T, b : T) => T with T {
+  if a < b { a } else { b }
 }
 
 fun alloc(v : T) => ptr(T) with T {

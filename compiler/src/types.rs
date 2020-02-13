@@ -650,7 +650,7 @@ pub struct ResolvedSymbol {
 /// or in the other modules in scope.
 pub struct TypeDirectory<'a> {
   import_types : &'a [&'a TypeInfo],
-  new_module : &'a mut TypeInfo,
+  pub new_module : &'a mut TypeInfo,
   polytype_bindings : HashMap<RefStr, Type>,
   symbol_results : Vec<ResolvedSymbol>,
 }
@@ -668,6 +668,10 @@ impl <'a> TypeDirectory<'a> {
       polytype_bindings: HashMap::new(),
       symbol_results: vec![],
     }
+  }
+
+  pub fn get_symbol(&self, id : SymbolId) -> &SymbolDefinition {
+    self.find_type_info(id.uid).symbols.get(&id).unwrap()
   }
 
   pub fn get_symbol_mut(&mut self, id : SymbolId) -> &mut SymbolDefinition {

@@ -55,7 +55,7 @@ pub enum ConstraintContent {
     symbol_id: SymbolId,
     type_symbol: TypeSymbol,
   },
-  GlobalReference {
+  SymbolReference {
     node : NodeId,
     name : RefStr,
     result : TypeSymbol,
@@ -74,7 +74,7 @@ impl  fmt::Display for Constraint {
       Function { args, .. } =>
         write!(f, "FunctionCall ({} args)", args.len()),
       SymbolDef { .. } => write!(f, "SymbolDef"),
-      GlobalReference { name, .. } => write!(f, "GlobalRef {}", name),
+      SymbolReference { name, .. } => write!(f, "SymbolRef {}", name),
       SizeOf{ .. } => write!(f, "SizeOf"),
     }
   }
@@ -421,7 +421,7 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
           self.equalivalent(ts, var_type);
         }
         else {
-          self.constraint(GlobalReference{ node: id, name: name.clone(), result: ts });
+          self.constraint(SymbolReference{ node: id, name: name.clone(), result: ts });
         }
       }
       Content::FunctionDefinition{ name, args, return_tag, type_vars, body } => {

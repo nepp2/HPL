@@ -194,15 +194,14 @@ impl <'a> Inference<'a> {
         let node_id = *self.mapping.symbol_def_nodes.get(symbol_id).unwrap();
         let loc = self.nodes.node(node_id).loc;
         error_raw(loc,
-          format!("Global definition '{}' not resolved. Inferred type {}.", def.name, def.type_tag))
+          format!("Symbol definition '{}' not resolved. Inferred type {}.", def.name, def.type_tag))
       }
-      GlobalReference { node:_, name, result } => {
+      SymbolReference { node:_, name, result } => {
         let any = Type::any();
         let t = self.resolved.get(result).unwrap_or(&any);
-        let symbols = self.t.find_symbol(&name, t);
-        let cs = &self.code_store;
+        let symbols : Vec<_> = self.t.find_symbol(&name, t).iter().cloned().collect();
         let s = symbols.iter().map(|g| {
-          let def = cs.symbol_def(g.symbol_id);
+          let def = self.t.get_symbol(g.symbol_id);
           format!("      {} : {}", def.name, g.resolved_type)
         }).join("\n");
         error_raw(self.loc(*result),
@@ -427,22 +426,22 @@ impl <'a> Inference<'a> {
       //   }
       // }
       SymbolDef{ symbol_id, type_symbol } => {
-        // Use global def to update the type symbol
+        // Use symbol def to update the type symbol
         let mut t = self.t.get_symbol_mut(*symbol_id).type_tag.clone();
         let def_type_changed = self.update_type_mut(*type_symbol, &mut t);
-        // Use the type symbol to update the global def
+        // Use the type symbol to update the symbol def
         if def_type_changed {
           let def = self.t.get_symbol_mut(*symbol_id);
           def.type_tag = t;
           // Trigger any constraints looking for this name
-          if let Some(cs) = self.dependency_map.global_map.get(&def.name) {
+          if let Some(cs) = self.dependency_map.symbol_map.get(&def.name) {
             for &c in cs.iter() {
               self.next_edge_set.insert(c.id, c);
             }
           }
         }
       }
-      GlobalReference { node, name, result } => {
+      SymbolReference { node, name, result } => {
         let any = Type::any();
         let t = self.get_type(*result).cloned().unwrap_or(any);
         match self.t.find_symbol(&name, &t) {
@@ -600,7 +599,7 @@ impl <'a> Inference<'a> {
 }
 
 struct ConstraintDependencyMap<'a> {
-  global_map : HashMap<RefStr, Vec<&'a Constraint>>,
+  symbol_map : HashMap<RefStr, Vec<&'a Constraint>>,
   typedef_map : HashMap<RefStr, HashMap<Uid, &'a Constraint>>,
   ts_map : HashMap<TypeSymbol, Vec<&'a Constraint>>,
 }
@@ -609,7 +608,7 @@ impl <'a> ConstraintDependencyMap<'a> {
 
   fn new() -> Self {
     ConstraintDependencyMap {
-      global_map: HashMap::new(),
+      symbol_map: HashMap::new(),
       typedef_map: HashMap::new(),
       ts_map: HashMap::new() }
   }
@@ -618,9 +617,9 @@ impl <'a> ConstraintDependencyMap<'a> {
     self.ts_map.entry(*ts).or_insert(vec![]).push(c);
   }
 
-  fn global(&mut self, name : &RefStr, c : &'a Constraint) {
-    if let Some(cs) = self.global_map.get_mut(name) { cs.push(c); }
-    else { self.global_map.insert(name.clone(), vec![c]); }
+  fn symbol(&mut self, name : &RefStr, c : &'a Constraint) {
+    if let Some(cs) = self.symbol_map.get_mut(name) { cs.push(c); }
+    else { self.symbol_map.insert(name.clone(), vec![c]); }
   }
 
   fn register_typedef(&mut self, name : &RefStr, c : &'a Constraint) {
@@ -663,8 +662,8 @@ impl <'a> ConstraintDependencyMap<'a> {
         self.ts(return_type, c);
       },
       SymbolDef { symbol_id:_, type_symbol } => self.ts(type_symbol, c),
-      GlobalReference { node:_, name, result } => {
-        self.global(name, c);
+      SymbolReference { node:_, name, result } => {
+        self.symbol(name, c);
         self.ts(result, c);
       }
       SizeOf { node:_, ts } => {
