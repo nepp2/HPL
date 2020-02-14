@@ -1,16 +1,18 @@
 
-let prelude = load_module("prelude.code")
-let sdl2 = load_module("scratchpad.code", [prelude])
+let prelude = load_module("prelude")
+let sdl2 = load_module([prelude], "scratchpad")
 
-while true {
-  let time = time_now()
-  let event = malloc(sizeof(watcher_event)) as ptr(watcher_event)
-  while poll_event(event) {
-    handle(event)
-  }
-  // sleep for the rest of the frame
-  let elapsed = time_since(time)
-  let millis = 1000/60
-  let sleep_time = max(millis - elapsed, 0)
-  sleep(sleep_time)
-}
+let sdl2 = load_module([prelude], "scratchpad")
+
+// while true {
+//   let time = time_now()
+//   let event = malloc(sizeof(watcher_event)) as ptr(watcher_event)
+//   while poll_event(event) {
+//     handle(event)
+//   }
+//   // sleep for the rest of the frame
+//   let elapsed = time_since(time)
+//   let millis = 1000/60
+//   let sleep_time = max(millis - elapsed, 0)
+//   sleep(sleep_time)
+// }

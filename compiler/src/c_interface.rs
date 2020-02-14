@@ -105,12 +105,9 @@ pub extern "C" fn load_expression(c : *mut Compiler, s : SStr) -> Box<Expr> {
   Box::new(expr)
 }
 
-// fun(compiler : ptr(u8), imports : ptr(array(module_handle)), expr : ptr(expr), maybe_name : ptr(string)) => module_handle
-
 #[no_mangle]
 pub extern "C" fn load_module(c : *mut Compiler, imports : SSlice<UnitId>, e : &Expr, maybe_name : SStr) -> UnitId {
   let c = unsafe { &mut *c };
-  println!("FAILING LOUDLY IN LOAD_MODULE");
   let imports = imports.as_slice();
   let maybe_name = maybe_name.as_str();
   let name = if maybe_name == "" { None } else { Some(maybe_name) };

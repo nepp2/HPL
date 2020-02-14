@@ -7,7 +7,8 @@ cbind get_function : fun(compiler : ptr(u8), module : module_handle, name : ptr(
 cbind print_expr : fun(e : ptr(expr))
 cbind expr_to_string : fun(out : ptr(string), e : ptr(expr))
 
-// Creates a new expression by splicing some expressions into a template expression
+// Creates a new expression by splicing some expressions into a template expression.
+// Calls to this function are usually inserted by the compiler.
 fun template_quote(e : ptr(expr), args : array(ptr(expr))) {
   template_quote(e, &args)
 }
