@@ -24,6 +24,26 @@ pub struct SModuleHandle {
   pub id : u64,
 }
 
+/// A generic option type is compatible with the runtime option representation
+#[no_mangle]
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub struct SOption<T : Copy + Clone> {
+  pub is_some : bool,
+  pub val : T,
+}
+
+impl <T : Copy + Clone> From<Option<T>> for SOption<T> {
+  fn from(o : Option<T>) -> Self {
+    if let Some(val) = o {
+      SOption { is_some: true, val }
+    }
+    else {
+      SOption { is_some: false, val: unsafe { std::mem::zeroed() } }
+    }
+  }
+}
+
 /// A borrowed slice that is compatible with the runtime array representation
 #[no_mangle]
 #[derive(Copy, Clone)]
@@ -103,6 +123,13 @@ pub extern "C" fn load_expression(c : *mut Compiler, s : SStr) -> Box<Expr> {
   let tokens = lexer::lex(&code, &c.cache).unwrap();
   let expr = parser::parse(tokens, &c.cache).unwrap();
   Box::new(expr)
+}
+
+#[no_mangle]
+pub extern "C" fn get_module(c : *mut Compiler, name : SStr, unit_id_out : &mut SOption<UnitId>) {
+  let c = unsafe { &mut *c };
+  let name = name.as_str();
+  *unit_id_out = c.code_store.named_unit(name).into();
 }
 
 #[no_mangle]
@@ -291,6 +318,7 @@ impl CSymbols {
 
     sym.insert("load_expression".into(),  (load_expression as *const()) as usize);
     sym.insert("load_module".into(),  (load_module as *const()) as usize);
+    sym.insert("get_module".into(),  (get_module as *const()) as usize);
     sym.insert("get_function".into(),  (get_function as *const()) as usize);
 
     sym.insert("test_add".into(), (test_add as *const()) as usize);

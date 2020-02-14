@@ -9,7 +9,7 @@ use crate::structure::{
   LabelId, NodeValueType, VarScope, Reference };
 use crate::types::{
   Type, PType, TypeDefinition, SymbolInit, SymbolId, TypeMapping,
-  SymbolDefinition, TypeInfo, TypeContent, UnitId };
+  SymbolDefinition, TypeInfo, TypeContent, UnitId, FunctionSignature };
 use crate::code_store::CodeStore;
 use crate::llvm_compile::SymbolLocation;
 
@@ -294,6 +294,7 @@ impl <'l> Gen<'l> {
     for info in info.iter() {
       for def in info.t.symbols.values() {
         if !def.is_polymorphic() {
+          println!("CODEGEN DEF {}", def.name);
           let t = self.to_basic_type(info, &def.type_tag).unwrap();
           match &def.initialiser {
             SymbolInit::CBind => {
@@ -598,7 +599,10 @@ impl <'l> Gen<'l> {
 
   fn composite_type(&mut self, info : &CompileInfo, def : &TypeDefinition) -> StructType {
     if let Some(t) = self.struct_types.get(&def.name) {
-      return *t;
+      if !def.is_polymorphic() {
+        let aaa = (); // TODO: speculatively fixed a bug. Investigate this more...
+        return *t;
+      }
     }
     let t = match def.kind {
       TypeKind::Struct => {
@@ -772,7 +776,7 @@ fn codegen_index(
   return Ok(pointer(element_ptr).into());
 }
 
-fn codegen_intrinsic_call(gf : &mut GenFunction, node : TypedNode, name : &str, args : &[NodeId])
+fn codegen_intrinsic_call(gf : &mut GenFunction, node : TypedNode, name : &str, args : &[NodeId], sig : FunctionSignature)
   -> Result<MaybeVal, Error>
 {
   use TypeContent::*;
@@ -818,6 +822,10 @@ fn codegen_intrinsic_call(gf : &mut GenFunction, node : TypedNode, name : &str, 
       (_, "&") => gf.codegen_address_of_expression(a)?,
       _ => return error(node, "encountered unrecognised intrinsic"),
     }
+  }
+  else if args.len() == 0 && name == "UnsafeZeroInit" {
+    let t = gf.gen.to_basic_type(node.info, sig.return_type).unwrap();
+    reg(const_zero(t))
   }
   else {
     return error(node, "encountered unrecognised intrinsic");
@@ -1208,7 +1216,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     // Check if it's an intrinsic
     if function.is_intrinsic_function() {
       let name = &function.node_symbol_def().unwrap().name;
-      return codegen_intrinsic_call(self, node, name, args);
+      return codegen_intrinsic_call(self, node, name, args, function.type_tag().sig().unwrap());
     }
 
     // Check if it's a static call or a function value

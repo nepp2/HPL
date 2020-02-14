@@ -1,6 +1,12 @@
 
 let prelude = load_module("prelude")
-let sdl2 = load_module([prelude], "scratchpad")
+let scratchpad = load_module([prelude], "scratchpad")
+
+let update = scratchpad.get_function("update") as fun()
+
+for i in range(0, 1000) {
+  update()
+}
 
 let sdl2 = load_module([prelude], "scratchpad")
 

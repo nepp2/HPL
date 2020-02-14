@@ -1,3 +1,24 @@
+# LOG - 14/02/2020
+
+Design for tagged unions:
+
+```rust
+type LinkedList(T) = Item(T) | Nil;
+struct Item(T) { value : T, next : LinkedList(T) }
+
+fun contains(l : LinkedList(T), value : T) {
+  if n is Item {
+    if n.value == v {
+      return true
+    }
+    contains(n.tail, )
+  }
+  else {
+    false
+  }
+}
+```
+
 # LOG - 04/02/2020
 
 I was wondering why linking is such a pain in the first place. I wondered about swapping over to use OrcJIT, but it's probably a lot of work. I'd have to figure out how to create an execution environment, or the OrcJIT equivalent, and either patch it into Inkwell, or patch Inkwell so that I can get at the raw references of the modules I generate.

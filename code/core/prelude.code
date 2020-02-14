@@ -53,6 +53,19 @@ struct lib_handle {
   handle : u64
 }
 
+struct option(T) {
+  is_some : bool
+  val : T
+}
+
+fun some(val : T) => option(T) with T {
+  option.new(is_some: true, val)
+}
+
+fun none() => option(T) with T {
+  option.new(is_some: false, val: UnsafeZeroInit())
+}
+
 cbind load_library : fun(name : ptr(string)) => lib_handle
 cbind load_symbol : fun(handle : lib_handle, name : ptr(string)) => ptr(u8)
 

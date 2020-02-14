@@ -51,6 +51,11 @@ pub fn get_intrinsics(intrinsics_id : UnitId, gen : &mut UIDGenerator, cache : &
     add_polymorphic_intrinsic(
       cache, gen, unit_id, &mut types, "&", &[&tv], &gptr, vec![tvar.clone()]);
   }
+  {
+    let tv : Type = Polytype(tvar.clone()).into();
+    add_polymorphic_intrinsic(
+      cache, gen, unit_id, &mut types, "UnsafeZeroInit", &[], &tv, vec![tvar.clone()]);
+  }
   types
 }
 
