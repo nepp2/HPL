@@ -333,6 +333,16 @@ impl TypeDefinition {
     self.type_vars.len() > 0
   }
 
+  pub fn instanced_fields(&self, type_var_instances : &[Type]) -> Vec<Type> {
+    let mut fields = vec![];
+    for (_, t) in self.fields.iter() {
+      let mut t = t.clone();
+      self.instance_type(&mut t, type_var_instances);
+      fields.push(t);      
+    }
+    fields
+  }
+
   pub fn instanced_field_type(&self, name : &str, type_var_instances : &[Type]) -> Option<Type> {
     for (r, t) in self.fields.iter() {
       if r.name.as_ref() == name {

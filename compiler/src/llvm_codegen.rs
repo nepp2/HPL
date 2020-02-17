@@ -294,7 +294,6 @@ impl <'l> Gen<'l> {
     for info in info.iter() {
       for def in info.t.symbols.values() {
         if !def.is_polymorphic() {
-          println!("CODEGEN DEF {}", def.name);
           let t = self.to_basic_type(info, &def.type_tag).unwrap();
           match &def.initialiser {
             SymbolInit::CBind => {
@@ -500,7 +499,7 @@ impl <'l> Gen<'l> {
       }
       TypeContent::Def(name, unit_id) => {
         if let Some(def) = info.find_type_def(name, *unit_id) {
-          Some(self.composite_type(info, &def).as_basic_type_enum())
+          Some(self.composite_type(info, &def, t).as_basic_type_enum())
         }
         else {
           panic!("type `{}` not found", name);
@@ -539,7 +538,6 @@ impl <'l> Gen<'l> {
       arg_types.iter().map(|t| self.to_basic_type(info, t).unwrap())
       .collect::<Vec<BasicTypeEnum>>();
     let arg_types = arg_types.as_slice();
-
     let return_type = self.to_basic_type(info, return_type);
     self.function_type(return_type, arg_types)
   }
@@ -597,37 +595,41 @@ impl <'l> Gen<'l> {
     }
   }
 
-  fn composite_type(&mut self, info : &CompileInfo, def : &TypeDefinition) -> StructType {
+  fn composite_type(&mut self, info : &CompileInfo, def : &TypeDefinition, t : &Type) -> StructType {
     if let Some(t) = self.struct_types.get(&def.name) {
       if !def.is_polymorphic() {
-        let aaa = (); // TODO: speculatively fixed a bug. Investigate this more...
+        // Avoid caching polymorphic definitions, because they can't be cached just by name.
+        let aaa = (); // TODO: maybe get rid of this cache entirely? It seems like a premature optimisation.
         return *t;
       }
     }
+    let field_basic_types : Vec<_> = {
+      if def.is_polymorphic() {
+        def.instanced_fields(t.children()).iter()
+          .map(|t| self.to_basic_type_no_cycle(info, t).unwrap()).collect()
+      }
+      else {
+        def.fields.iter()
+          .map(|(_, t)| self.to_basic_type_no_cycle(info, t).unwrap()).collect()
+      }
+    };
     let t = match def.kind {
       TypeKind::Struct => {
-        let types =
-          def.fields.iter().map(|(_, t)| {
-            self.to_basic_type_no_cycle(info, t).unwrap()
-          })
-          .collect::<Vec<BasicTypeEnum>>();
-        self.context.struct_type(&types, false)
+        self.context.struct_type(&field_basic_types, false)
       }
       TypeKind::Union => {
         let mut union_bitwidth = 0;
         let mut bt : Option<BasicTypeEnum> = None;
         let mut widest_alignment = 0;
-        for (_, t) in def.fields.iter() {
-          if let Some(t) = self.to_basic_type_no_cycle(info, t) {
-            let alignment = self.target_data.get_preferred_alignment(&t);
-            if alignment > widest_alignment {
-              widest_alignment = alignment;
-              bt = Some(t)
-            }
-            let width = self.target_data.get_bit_size(&t);
-            if width > union_bitwidth {
-              union_bitwidth = width;
-            }
+        for t in field_basic_types {
+          let alignment = self.target_data.get_preferred_alignment(&t);
+          if alignment > widest_alignment {
+            widest_alignment = alignment;
+            bt = Some(t)
+          }
+          let width = self.target_data.get_bit_size(&t);
+          if width > union_bitwidth {
+            union_bitwidth = width;
           }
         }
         if let Some(t) = bt {
@@ -1075,8 +1077,8 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     return Ok(reg(phi.as_basic_value()));
   }
 
-  fn codegen_struct_initialise(&mut self, info : &CompileInfo, def : &TypeDefinition, args : &[BasicValueEnum]) -> GenVal {
-    let t = self.gen.composite_type(info, def);
+
+  fn codegen_struct_initialise(&mut self, t : StructType, args : &[BasicValueEnum]) -> GenVal {
     let mut sv = t.get_undef();
     for (i, v) in args.iter().enumerate() {
       let field_val = if let BasicValueEnum::PointerValue(pv) = v {
@@ -1092,9 +1094,8 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     reg(sv.into())
   }
 
-  fn codegen_union_initialise(&mut self, info : &CompileInfo, def : &TypeDefinition, val : BasicValueEnum) -> GenVal {
-    let union_type = self.gen.composite_type(info, def).as_basic_type_enum();
-    let ptr = self.create_entry_block_alloca(union_type, &def.name);
+  fn codegen_union_initialise(&mut self, union_type : BasicTypeEnum, val : BasicValueEnum) -> GenVal {
+    let ptr = self.create_entry_block_alloca(union_type, "union_init");
     let variant_type = self.gen.pointer_to_type(Some(val.get_type()));
     let variant_ptr = self.builder.build_pointer_cast(ptr, variant_type, "union_cast");
     self.builder.build_store(variant_ptr, val);
@@ -1472,12 +1473,13 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         let a : Result<Vec<BasicValueEnum>, Error> =
           field_values.iter().map(|(_, a)| self.codegen_value(node.get(*a))).collect();
         let def = node.node_type_def().unwrap();
+        let t = self.gen.composite_type(info, def, node.type_tag());
         match def.kind {
           TypeKind::Struct => {
-            self.codegen_struct_initialise(info, &def, a?.as_slice())
+            self.codegen_struct_initialise(t, a?.as_slice())
           }
           TypeKind::Union => {
-            self.codegen_union_initialise(info, &def, a?[0])
+            self.codegen_union_initialise(t.into(), a?[0])
           }
         }
       }
@@ -1665,7 +1667,8 @@ impl <'l, 'a> GenFunction<'l, 'a> {
             let string_pointer = self.builder.build_pointer_cast(ptr, cast_to, "string_pointer");
             let string_length = self.gen.context.i64_type().const_int(vs.len() as u64, false);
             let def = node.node_type_def().unwrap();
-            self.codegen_struct_initialise(info, &def, &[string_pointer.into(), string_length.into()])
+            let t = self.gen.composite_type(info, def, node.type_tag());
+            self.codegen_struct_initialise(t, &[string_pointer.into(), string_length.into()])
           }
           _ => reg(self.gen.codegen_static(node)?),
         }
