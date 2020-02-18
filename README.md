@@ -4,23 +4,30 @@ Project to create a live programming environment for game development, built on 
 
 ## Goals
 
-- Simple, high-level language
+- Expressive, general-purpose, memory-safe language
 - High throughput (good cache behaviour)
 - No unpredictable garbage collection pauses
+- Reactive, node-based programming model, with hot code reloading in nodes
 - Immediate feedback in response to all changes, with live visualisations
-- Extensible editor, supporting asset pipelines and even asset creation
+- Extensible node editor, supporting asset pipelines and asset creation
 
-## Plan
+## Planned language semantics
 
-- Reactive programming model, where events are handled in memory regions
-- Restrict aliasing across region boundaries (surviving pointers are unique when the region ends)
-- Cheap memory allocation and zero-latency collection within regions
-- High-level programming constructs available within region without lifetime analysis
-- Regions make state transitions explicit in a high-level way
+- Each node's state is isolated in a memory region
+- A region can be dropped or garbage-collected
+- High-level programming constructs available within regions without lifetime analysis
+
+## Current Progress (Jan 2020)
+
+The language in its current state could be summarised as C with type-inference, templates and a very simple module system. It is JIT-compiled with LLVM, but could also be AoT compiled to a binary without much difficulty. Modules can be hotloaded. This is all very pre-alpha, however.
+
+The language does not yet aim for memory safety, as settling on a design for the reactive programming model and hotloadable modules takes priority. I am currently working on the modules and reloading, in order to prototype a basic node graph system.
 
 # Building
 
-- Install LLVM 8 on your system (instructions for Windows below)
+_(Note: I would not recommend that anyone else attempt to build or run this software yet. It is at a very early stage of development, lacks documentation and is frequently broken.)_
+
+- Install LLVM 8 (instructions for Windows below)
 - Just run `cargo build`
 
 ## Installing LLVM on Windows
