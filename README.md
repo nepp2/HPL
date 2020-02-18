@@ -1,4 +1,4 @@
-# Programming language research prototype
+# Reactive game development research prototype
 
 Project to create a live programming environment for game development, built on top of a custom programming language and reactive programming model.
 
