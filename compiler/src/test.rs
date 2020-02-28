@@ -42,7 +42,6 @@ fn assert_error(code : &str, error_substring : &str){
 
 // Runs the tests in isolated processes, because they do unsafe things and could pollute each other.
 rusty_fork_test! {
-
   #[test]
   fn test_basics() {
     let cases = vec![
@@ -531,6 +530,14 @@ rusty_fork_test! {
       5
     ";
     assert_result(code, Val::I64(5));
+  }
+
+  #[test]
+  fn test_local_variable_error_checking() {
+    let code = "
+      let a : i32 = b
+    ";
+    assert_error(code, "");
   }
 
   // #[test]

@@ -66,6 +66,13 @@ fun none() => option(T) with T {
   option.new(is_some: false, val: UnsafeZeroInit())
 }
 
+fun unwrap(o : option(T)) => T with T {
+  if !o.is_some {
+    panic("tried to unwrap empty option")
+  }
+  o.val
+}
+
 cbind load_library : fun(name : ptr(string)) => lib_handle
 cbind load_symbol : fun(handle : lib_handle, name : ptr(string)) => ptr(u8)
 

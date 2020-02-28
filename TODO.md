@@ -2,7 +2,7 @@
 # Immediate TODO list
 
 - Implement basic module dependencies
-  - To solve the polymorphism linking problem
+  - ~~To solve the polymorphism linking problem~~
   - To prevent instanced function definitions from contaminating type resolution
   - For correctness when hotloading
 - Finish polymorphism

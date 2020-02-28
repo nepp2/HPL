@@ -1,5 +1,5 @@
 
-let prelude = load_module("prelude")
+let prelude = get_module("prelude").unwrap()
 let scratchpad = load_module([prelude], "scratchpad")
 
 let update = scratchpad.get_function("update") as fun()
@@ -8,7 +8,7 @@ for i in range(0, 1000) {
   update()
 }
 
-let sdl2 = load_module([prelude], "scratchpad")
+let sdl2 = load_module([prelude], "sdl2")
 
 // while true {
 //   let time = time_now()

@@ -1,3 +1,7 @@
+# LOG - 28/02/2020
+
+I need a first-pass system for specifying which units link together. Doing it dynamically with library calls to the compiler should work, but I don't want to accidentally load multiple instances of the core modules. I should just be calling `get_module` for those, instead of `load_module`.
+
 # LOG - 14/02/2020
 
 Design for tagged unions:

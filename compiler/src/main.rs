@@ -67,7 +67,10 @@ fn main(){
     }
     ["watch"] => watcher::watch("code/scratchpad.code"),
     ["repl"] => repl::run_repl(),
-    ["run", f] => load_and_run(f),
+    ["run", f] => {
+      let path = format!("code/{}.code", f);
+      load_and_run(path.as_ref())
+    }
     ["infer"] => {
       let code = load("code/prelude.code");
       compiler::run_program(&code).expect("infer failed");
