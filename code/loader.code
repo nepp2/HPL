@@ -1,24 +1,32 @@
-
+  
 let prelude = get_module("prelude").unwrap()
-let scratchpad = load_module([prelude], "scratchpad")
+let sdl2 = load_module([prelude], "sdl2")
+let sdl2_example = load_module([prelude, sdl2], "sdl2_example")
+let update = sdl2_example.get_function("update") as fun()
 
-let update = scratchpad.get_function("update") as fun()
-
-for i in range(0, 1000) {
+while true {
   update()
+  thread_sleep(16 as u64)
 }
 
-let sdl2 = load_module([prelude], "sdl2")
+struct watcher_event {
+  bloop : i32
+  // ...
+}
 
-// while true {
-//   let time = time_now()
-//   let event = malloc(sizeof(watcher_event)) as ptr(watcher_event)
-//   while poll_event(event) {
-//     handle(event)
-//   }
-//   // sleep for the rest of the frame
-//   let elapsed = time_since(time)
-//   let millis = 1000/60
-//   let sleep_time = max(millis - elapsed, 0)
-//   sleep(sleep_time)
-// }
+cbind time_now : fun() => u64
+cbind milliseconds_since : fun(u64) => u64
+cbind poll_watcher_event : fun(ptr(watcher_event)) => bool
+
+fun poll_watcher_events() {
+  let time = time_now()
+  let s = sizeof(watcher_event)
+  let event = malloc(s) as ptr(watcher_event)
+  while poll_watcher_event(event) {
+    // handle event
+  }
+  // sleep for the rest of the frame
+  let elapsed = milliseconds_since(time) as i64
+  let sleep_time = max(16 - elapsed, 0)
+  thread_sleep(sleep_time as u64)
+}

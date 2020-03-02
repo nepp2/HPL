@@ -1,64 +1,44 @@
 
-// print_expr(e)
+sdl_init(SDL_INIT_VIDEO);
 
-let sdl2 = load_expression(compiler, &"sdl2")
+static c = malloc(4)
+c[0] = 65 as u8
+c[1] = 65 as u8
+c[2] = 65 as u8
+c[3] = 0 as u8
 
-build_module(sdl2)
+static win =
+  sdl_create_window(
+    c,
+    SDL_WINDOWPOS_UNDEFINED,
+    SDL_WINDOWPOS_UNDEFINED,
+    500 as i32,
+    400 as i32,
+    SDL_WINDOW_SHOWN);
 
-build_module(#{
+static renderer = sdl_create_renderer(win, -1 as i32, SDL_RENDERER_ACCELERATED as u32)
 
-  fun run_sdl_thing() {
+static event = malloc(sizeof(sdl_event)) as ptr(sdl_event)
+*event =
+  sdl_event.new(
+    event_type: 0 as u32,
+    timestamp: 0 as u32,
+    content: sdl_event_content.new(none: 0))
+static s = "a"
 
-    sdl_init(SDL_INIT_VIDEO);
-
-    let c = malloc(4)
-    c[0] = 65 as u8
-    c[1] = 65 as u8
-    c[2] = 65 as u8
-    c[3] = 0 as u8
-
-    let win =
-      sdl_create_window(
-        c,
-        SDL_WINDOWPOS_UNDEFINED,
-        SDL_WINDOWPOS_UNDEFINED,
-        500 as i32,
-        400 as i32,
-        SDL_WINDOW_SHOWN);
-
-    let renderer = sdl_create_renderer(win, -1 as i32, SDL_RENDERER_ACCELERATED as u32)
-
-    let event = malloc(sizeof(sdl_event)) as ptr(sdl_event)
-    *event =
-      sdl_event.new(
-        event_type: 0 as u32,
-        timestamp: 0 as u32,
-        content: sdl_event_content.new(none: 0))
-    let s = "a"
-
-    while true {
-      sdl_poll_event(event)
-      let t = event[0].event_type as i64
-      if t == SDL_QUIT {
-        break
-      }
-      else if t == SDL_KEYDOWN {
-        let c = event[0].content.keyboard.keysym.sym as u8
-        s.data[0] = c
-        print(s)
-      }
-
-      sdl_set_draw_color(renderer, 255 as u8, 0 as u8, 0 as u8, 255 as u8)
-      sdl_clear(renderer)
-      sdl_present(renderer)
-
-      thread_sleep(16 as u64)
-    }
-
+fun update() {
+  sdl_poll_event(event)
+  let t = event[0].event_type as i64
+  if t == SDL_QUIT {
+    break
+  }
+  else if t == SDL_KEYDOWN {
+    let c = event[0].content.keyboard.keysym.sym as u8
+    s.data[0] = c
+    println(s)
   }
 
-  run_sdl_thing()
-
-})
-
-()
+  sdl_set_draw_color(renderer, 255 as u8, 0 as u8, 0 as u8, 255 as u8)
+  sdl_clear(renderer)
+  sdl_present(renderer)
+}
