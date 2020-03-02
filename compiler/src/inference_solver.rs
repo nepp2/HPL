@@ -22,6 +22,7 @@ use types::{
 use inference_constraints::{
   Constraint, ConstraintContent,
   Constraints, TypeSymbol, Assertion,
+  Errors,
 };
 use code_store::CodeStore;
 use compiler::DEBUG_PRINTING_TYPE_INFERENCE as DEBUG;
@@ -40,7 +41,7 @@ pub fn infer_types(
   -> Result<(TypeInfo, TypeMapping), Error>
 {
   let mut mapping = TypeMapping::new();
-  let mut errors = vec![];
+  let mut errors = Errors::new();
   let mut new_types = TypeInfo::new(unit_id);
   let imports : Vec<_> =
     imports.iter().map(|&uid| code_store.types(uid)).collect();
@@ -54,8 +55,8 @@ pub fn infer_types(
     &nodes, &mut type_directory,
     &mut mapping, &c, &mut errors);
   i.infer();
-  if errors.len() > 0 {    
-    let c = ErrorContent::InnerErrors("type errors".into(), errors);
+  if !errors.is_empty() {    
+    let c = ErrorContent::InnerErrors("type errors".into(), errors.concrete_errors);
     error(nodes.root().loc, c)
   }
   else {
@@ -74,7 +75,7 @@ pub fn typecheck_polymorphic_function_instance(
   -> Result<(TypeInfo, TypeMapping, SymbolId), Error>
 {
   let mut mapping = TypeMapping::new();
-  let mut errors = vec![];
+  let mut errors = Errors::new();
   let mut new_types = TypeInfo::new(instance_unit);
   let aaa = (); // TODO: type directory should just take the code store, and be a lot simpler
   let imports : Vec<_> = code_store.types.values().collect();
@@ -93,8 +94,8 @@ pub fn typecheck_polymorphic_function_instance(
     &nodes, &mut type_directory,
     &mut mapping, &c, &mut errors);
   i.infer();
-  if errors.len() > 0 {
-    let c = ErrorContent::InnerErrors("type errors".into(), errors);
+  if !errors.is_empty() {
+    let c = ErrorContent::InnerErrors("type errors".into(), errors.concrete_errors);
     error(nodes.root().loc, c)
   }
   else {
@@ -102,24 +103,12 @@ pub fn typecheck_polymorphic_function_instance(
   }
 }
 
-struct ErrorInfo {
-  content : ErrorInfoContent,
-  loc : TextLocation,
-}
-
-enum ErrorInfoContent {
-  UnresolvedSymbol(RefStr)
-}
-
-use ErrorInfoContent::*;
-
 struct Inference<'a> {
   nodes : &'a Nodes,
   t : &'a mut TypeDirectory<'a>,
   mapping : &'a mut TypeMapping,
   c : &'a Constraints,
-  errors : &'a mut Vec<Error>,
-  error_info : Vec<ErrorInfo>,
+  errors : &'a mut Errors,
   dependency_map : ConstraintDependencyMap<'a>,
   next_edge_set : HashMap<Uid, &'a Constraint>,
   resolved : HashMap<TypeSymbol, Type>,
@@ -132,12 +121,11 @@ impl <'a> Inference<'a> {
     t : &'a mut TypeDirectory<'a>,
     mapping : &'a mut TypeMapping,
     c : &'a Constraints,
-    errors : &'a mut Vec<Error>)
+    errors : &'a mut Errors)
       -> Self
   {
     Inference {
       nodes, t, mapping, c, errors,
-      error_info: vec![],
       dependency_map: ConstraintDependencyMap::new(),
       next_edge_set: HashMap::new(),
       resolved: HashMap::new(),
@@ -193,6 +181,10 @@ impl <'a> Inference<'a> {
   }
 
   fn unresolved_constraint_error(&mut self, c : &Constraint) {
+    if self.errors.failed_constraint_ids.contains(&c.id) {
+      return;
+    }
+    self.errors.failed_constraint_ids.insert(c.id);
     use ConstraintContent::*;
     let e = match &c.content  {
       Equalivalent(_a, _b) => return,
@@ -416,26 +408,6 @@ impl <'a> Inference<'a> {
           }
         }
       }
-      // TODO: improve this and make it work again
-      // TypeDefField { container, field_index, field_type } => {
-      //   if let Some(ctype) = self.resolved.get(container) {
-      //     if let Def(name, _) = &ctype.as_type().content {
-      //       let def = self.t.get_type_def_mut(name);
-      //       if let Some(inferred_type) = self.resolved.get(field_type) {
-      //         let t = &mut def.fields[*field_index].1;
-      //         let r = incremental_unify_polymorphic(inferred_type, t);
-      //         if r.new_type_changed {
-      //           // Trigger any constraints looking for this def
-      //           if let Some(cs) = self.dependency_map.typedef_map.get(name) {
-      //             for &c in cs.values() {
-      //               self.next_edge_set.insert(c.id, c);
-      //             }
-      //           }
-      //         }
-      //       }
-      //     }
-      //   }
-      // }
       SymbolDef{ symbol_id, type_symbol } => {
         // Use symbol def to update the type symbol
         let mut t = self.t.get_symbol_mut(*symbol_id).type_tag.clone();
@@ -463,8 +435,8 @@ impl <'a> Inference<'a> {
             self.update_type(*result, &resolved_type);
           }
           [] => {
-            // Global will never be resolved, but if an error is generated
-            // here it may be recorded several times.
+            // Symbol will never be resolved
+            self.unresolved_constraint_error(c);
           }
           _ => (), // Multiple matches. Global can't be resolved yet.
         }
@@ -538,7 +510,7 @@ impl <'a> Inference<'a> {
     }
     let mut total_constraints_processed = 0;
     let mut active_edge_set = HashMap::new();
-    while (self.next_edge_set.len() > 0 || literals.len() > 0) && self.errors.len() == 0 {
+    while (self.next_edge_set.len() > 0 || literals.len() > 0) && self.errors.is_empty() {
       std::mem::swap(&mut self.next_edge_set, &mut active_edge_set);
       for (_, c) in active_edge_set.drain() {
         total_constraints_processed += 1;
@@ -565,11 +537,11 @@ impl <'a> Inference<'a> {
             for c in cs { active_edge_set.insert(c.id, c); }
           }
           // Generate errors for unresolved constraints
-          let error_count = self.errors.len();
+          let error_count = self.errors.concrete_errors.len();
           for (_, c) in active_edge_set.drain() {
             self.unresolved_constraint_error(c);
           }
-          if error_count == self.errors.len() {
+          if error_count == self.errors.concrete_errors.len() {
             self.errors.push(error_raw(self.loc(*ts), "unresolved type"));
           }
         }
