@@ -51,7 +51,7 @@ pub fn infer_types(
     inference_constraints::get_module_constraints(
       &nodes, &mut type_directory, &mut mapping, cache, gen, &mut errors);
   let i = Inference::new(
-    &nodes, code_store, &mut type_directory,
+    &nodes, &mut type_directory,
     &mut mapping, &c, &mut errors);
   i.infer();
   if errors.len() > 0 {    
@@ -90,7 +90,7 @@ pub fn typecheck_polymorphic_function_instance(
       &nodes, source_node, instance_type.clone(), instanced_type_vars.as_slice(),
       &mut type_directory, &mut mapping, cache, gen, &mut errors);
   let i = Inference::new(
-    &nodes, code_store, &mut type_directory,
+    &nodes, &mut type_directory,
     &mut mapping, &c, &mut errors);
   i.infer();
   if errors.len() > 0 {
@@ -102,13 +102,24 @@ pub fn typecheck_polymorphic_function_instance(
   }
 }
 
+struct ErrorInfo {
+  content : ErrorInfoContent,
+  loc : TextLocation,
+}
+
+enum ErrorInfoContent {
+  UnresolvedSymbol(RefStr)
+}
+
+use ErrorInfoContent::*;
+
 struct Inference<'a> {
   nodes : &'a Nodes,
-  code_store : &'a CodeStore,
   t : &'a mut TypeDirectory<'a>,
   mapping : &'a mut TypeMapping,
   c : &'a Constraints,
   errors : &'a mut Vec<Error>,
+  error_info : Vec<ErrorInfo>,
   dependency_map : ConstraintDependencyMap<'a>,
   next_edge_set : HashMap<Uid, &'a Constraint>,
   resolved : HashMap<TypeSymbol, Type>,
@@ -118,7 +129,6 @@ impl <'a> Inference<'a> {
 
   fn new(
     nodes : &'a Nodes,
-    code_store : &'a CodeStore,
     t : &'a mut TypeDirectory<'a>,
     mapping : &'a mut TypeMapping,
     c : &'a Constraints,
@@ -126,7 +136,8 @@ impl <'a> Inference<'a> {
       -> Self
   {
     Inference {
-      nodes, code_store, t, mapping, c, errors,
+      nodes, t, mapping, c, errors,
+      error_info: vec![],
       dependency_map: ConstraintDependencyMap::new(),
       next_edge_set: HashMap::new(),
       resolved: HashMap::new(),
