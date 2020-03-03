@@ -299,7 +299,7 @@ impl CSymbols {
     let sym = &mut self.local_symbol_table;
     sym.insert("load_library".into(), (load_library_c as *const()) as usize);
     sym.insert("load_symbol".into(), (load_symbol as *const()) as usize);
-    sym.insert("malloc".into(), (malloc as *const()) as usize);
+    sym.insert("malloc64".into(), (malloc as *const()) as usize);
     sym.insert("free".into(), (free as *const()) as usize);
     sym.insert("memcpy".into(), (memcpy as *const()) as usize);
     sym.insert("panic".into(), (panic as *const()) as usize);

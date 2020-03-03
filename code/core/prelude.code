@@ -1,9 +1,11 @@
 
-cbind malloc : fun(size: u64) => ptr(u8)
+cbind malloc64 : fun(size: u64) => ptr(u8)
 cbind free : fun(ptr: ptr(u8))
 cbind memcpy : fun(dest : ptr(u8), src : ptr(u8), length : u64) => ptr(u8)
 cbind panic : fun(s : ptr(string))
 cbind thread_sleep : fun(millis : u64)
+
+fun malloc(size) { malloc64(size) }
 
 fun panic(s : string) {
   panic(&s)
