@@ -11,6 +11,8 @@ use std::ffi::CString;
 use std::collections::HashMap;
 use std::path::Path;
 use std::fmt;
+use std::mem::ManuallyDrop;
+use std::time::{Instant, Duration};
 
 use libloading::{Library, Symbol};
 
@@ -206,6 +208,91 @@ pub extern "C" fn print_string(s : SStr) {
   print!("{}", s.as_str());
 }
 
+pub type TimerHandle = ManuallyDrop<Box<Instant>>;
+
+pub extern "C" fn start_timer() -> TimerHandle {
+  ManuallyDrop::new(Box::new(Instant::now()))
+}
+
+pub extern "C" fn drop_timer(t : TimerHandle) {
+  ManuallyDrop::into_inner(t);
+}
+
+pub extern "C" fn millis_elapsed(timer : TimerHandle) -> u64 {
+  let v = Instant::now();
+  v.duration_since(**timer).as_millis() as u64
+}
+
+// fun(e, "create_watcher", vec![], |e, mut _vs| {
+//   let v = e.ext_val(WATCHER, create_watcher());
+//   Ok(Value::External(v))
+// });
+// fun(e, "watch_module", vec![watcher_type.clone(), Type::String], |_e, mut vs| {
+//   let v = vs[0].get().convert::<ExternalVal>()?;
+//   let mut v = v.val.borrow_mut();
+//   let w = v.downcast_mut::<FileWatcher>().unwrap();
+//   let module_name = vs[1].get().convert::<RefStr>()?;
+//   let path = format!("code/{}.code", module_name);
+//   w.watcher.watch(path.as_str(), RecursiveMode::Recursive)
+//     .map_err(|_| format!("failed to watch file '{}'", path))?;
+//   Ok(Value::Unit)
+// });
+// fun(e, "poll_watcher_event", vec![watcher_type], |e, mut vs| {
+//   let v = vs[0].get().convert::<ExternalVal>()?;
+//   let mut v = v.val.borrow_mut();
+//   let w = v.downcast_mut::<FileWatcher>().unwrap();
+//   if let Some(s) = poll_watcher_event(w) {
+//     Ok(Value::from(e.sym.get(s)))
+//   }
+//   else {
+//     Ok(Value::Unit)
+//   }
+// });
+
+use notify::{Watcher, RecursiveMode, watcher, DebouncedEvent, ReadDirectoryChangesWatcher};
+use std::sync::mpsc::{channel, TryRecvError, Receiver};
+
+struct FileWatcher {
+  watcher : ReadDirectoryChangesWatcher,
+  rx : Receiver<DebouncedEvent>,
+}
+
+pub type WatcherHandle = ManuallyDrop<Box<FileWatcher>>;
+
+fn poll_watcher_event(w : &mut FileWatcher) -> Option<String> {
+}
+
+pub extern "C" fn create_watcher() -> WatcherHandle {
+  let (tx, rx) = channel();
+  let watcher = watcher(tx, Duration::from_millis(500)).unwrap();
+  ManuallyDrop::new(Box::new(FileWatcher { watcher, rx}))
+}
+
+pub extern "C" fn watch_file() {
+  w.watcher.watch(path.as_str(), RecursiveMode::Recursive)
+    .expect(|_| format!("failed to watch file '{}'", path))?;
+}
+
+pub extern "C" fn poll_watcher_event() {
+  match w.rx.try_recv() {
+    Ok(event) => {
+      match event {
+        DebouncedEvent::Write(path) => {
+          let module_name = path.file_stem().unwrap().to_str().unwrap();
+          Some(module_name.into())
+        }
+        _ => None
+      }
+    },
+    Err(e) => match e {
+      TryRecvError::Disconnected => None,
+      TryRecvError::Empty => None,
+    },
+  }
+}
+
+// cbind poll_watcher_event : fun(ptr(watcher_event)) => bool
+
 pub extern "C" fn print_type<T : std::fmt::Display>(t : T) {
   print!("{}", t);
 }
@@ -321,6 +408,10 @@ impl CSymbols {
     sym.insert("load_module".into(),  (load_module as *const()) as usize);
     sym.insert("get_module".into(),  (get_module as *const()) as usize);
     sym.insert("get_function".into(),  (get_function as *const()) as usize);
+
+    sym.insert("start_timer".into(),  (start_timer as *const()) as usize);
+    sym.insert("drop_timer".into(),  (drop_timer as *const()) as usize);
+    sym.insert("millis_elapsed".into(),  (millis_elapsed as *const()) as usize);
 
     sym.insert("test_add".into(), (test_add as *const()) as usize);
     sym.insert("test_global".into(), (&TEST_GLOBAL as *const i64) as usize);

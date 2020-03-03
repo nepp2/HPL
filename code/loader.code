@@ -14,19 +14,27 @@ struct watcher_event {
   // ...
 }
 
-cbind time_now : fun() => u64
-cbind milliseconds_since : fun(u64) => u64
+struct timer_handle {
+  _ : ptr(u8)
+}
+
+cbind start_timer : fun() => timer_handle
+cbind drop_timer : fun(timer_handle)
+cbind millis_elapsed : fun(timer_handle) => u64
 cbind poll_watcher_event : fun(ptr(watcher_event)) => bool
 
+static timer = start_timer()
+
 fun poll_watcher_events() {
-  let time = time_now()
+  let start_time = timer.millis_elapsed()
   let s = sizeof(watcher_event)
   let event = malloc(s) as ptr(watcher_event)
   while poll_watcher_event(event) {
     // handle event
   }
   // sleep for the rest of the frame
-  let elapsed = milliseconds_since(time) as i64
+  let end_time = timer.millis_elapsed()
+  let elapsed = (end_time - start_time) as i64
   let sleep_time = max(16 - elapsed, 0)
   thread_sleep(sleep_time as u64)
 }
