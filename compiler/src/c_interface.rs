@@ -13,7 +13,9 @@ use std::path::Path;
 use std::fmt;
 use std::mem::ManuallyDrop;
 use std::time::{Instant, Duration};
+use std::sync::mpsc::{channel, TryRecvError, Receiver};
 
+use notify::{Watcher, RecursiveMode, watcher, DebouncedEvent, ReadDirectoryChangesWatcher};
 use libloading::{Library, Symbol};
 
 use std::{thread, time};
@@ -75,6 +77,10 @@ impl SStr {
   pub fn from_str(s : &str) -> Self {
     let data = (s as *const str) as *mut u8;
     SStr { data, length: s.len() as u64 }
+  }
+
+  pub fn from_string(s : ManuallyDrop<String>) -> Self {
+    Self::from_str(&s)
   }
 
   pub fn as_str(&self) -> &str {
@@ -151,6 +157,14 @@ pub extern "C" fn load_module(c : *mut Compiler, imports : SSlice<UnitId>, e : &
 // are provided to narrow the search, and it would be very unsafe to return
 // the wrong one.
 #[no_mangle]
+pub extern "C" fn unload_module(c : *mut Compiler, unit_id : UnitId) {
+  println!("Tried to unload module; not yet implemented!")
+}
+
+// TODO: panics if there is more than one overload, because no argument types
+// are provided to narrow the search, and it would be very unsafe to return
+// the wrong one.
+#[no_mangle]
 pub extern "C" fn get_function(
   c : *mut Compiler,
   unit_id : UnitId,
@@ -210,88 +224,67 @@ pub extern "C" fn print_string(s : SStr) {
 
 pub type TimerHandle = ManuallyDrop<Box<Instant>>;
 
+#[no_mangle]
 pub extern "C" fn start_timer() -> TimerHandle {
   ManuallyDrop::new(Box::new(Instant::now()))
 }
 
+#[no_mangle]
 pub extern "C" fn drop_timer(t : TimerHandle) {
   ManuallyDrop::into_inner(t);
 }
 
+#[no_mangle]
 pub extern "C" fn millis_elapsed(timer : TimerHandle) -> u64 {
   let v = Instant::now();
   v.duration_since(**timer).as_millis() as u64
 }
 
-// fun(e, "create_watcher", vec![], |e, mut _vs| {
-//   let v = e.ext_val(WATCHER, create_watcher());
-//   Ok(Value::External(v))
-// });
-// fun(e, "watch_module", vec![watcher_type.clone(), Type::String], |_e, mut vs| {
-//   let v = vs[0].get().convert::<ExternalVal>()?;
-//   let mut v = v.val.borrow_mut();
-//   let w = v.downcast_mut::<FileWatcher>().unwrap();
-//   let module_name = vs[1].get().convert::<RefStr>()?;
-//   let path = format!("code/{}.code", module_name);
-//   w.watcher.watch(path.as_str(), RecursiveMode::Recursive)
-//     .map_err(|_| format!("failed to watch file '{}'", path))?;
-//   Ok(Value::Unit)
-// });
-// fun(e, "poll_watcher_event", vec![watcher_type], |e, mut vs| {
-//   let v = vs[0].get().convert::<ExternalVal>()?;
-//   let mut v = v.val.borrow_mut();
-//   let w = v.downcast_mut::<FileWatcher>().unwrap();
-//   if let Some(s) = poll_watcher_event(w) {
-//     Ok(Value::from(e.sym.get(s)))
-//   }
-//   else {
-//     Ok(Value::Unit)
-//   }
-// });
-
-use notify::{Watcher, RecursiveMode, watcher, DebouncedEvent, ReadDirectoryChangesWatcher};
-use std::sync::mpsc::{channel, TryRecvError, Receiver};
-
-struct FileWatcher {
+pub struct FileWatcher {
   watcher : ReadDirectoryChangesWatcher,
   rx : Receiver<DebouncedEvent>,
 }
 
 pub type WatcherHandle = ManuallyDrop<Box<FileWatcher>>;
 
-fn poll_watcher_event(w : &mut FileWatcher) -> Option<String> {
-}
-
-pub extern "C" fn create_watcher() -> WatcherHandle {
-  let (tx, rx) = channel();
-  let watcher = watcher(tx, Duration::from_millis(500)).unwrap();
-  ManuallyDrop::new(Box::new(FileWatcher { watcher, rx}))
-}
-
-pub extern "C" fn watch_file() {
-  w.watcher.watch(path.as_str(), RecursiveMode::Recursive)
-    .expect(|_| format!("failed to watch file '{}'", path))?;
-}
-
-pub extern "C" fn poll_watcher_event() {
-  match w.rx.try_recv() {
+#[no_mangle]
+pub extern "C" fn poll_watcher_event(w : WatcherHandle, path_out : &mut SOption<SStr>) {
+  let out = match w.rx.try_recv() {
     Ok(event) => {
       match event {
         DebouncedEvent::Write(path) => {
-          let module_name = path.file_stem().unwrap().to_str().unwrap();
-          Some(module_name.into())
+          let module_name : String = path.file_stem().unwrap().to_str().unwrap().into();
+          Some(SStr::from_string(ManuallyDrop::new(module_name)))
         }
-        _ => None
+        _ => None,
       }
     },
     Err(e) => match e {
       TryRecvError::Disconnected => None,
       TryRecvError::Empty => None,
     },
-  }
+  };
+  *path_out = out.into();
 }
 
-// cbind poll_watcher_event : fun(ptr(watcher_event)) => bool
+#[no_mangle]
+pub extern "C" fn create_watcher(millisecond_interval : u64) -> WatcherHandle {
+  let (tx, rx) = channel();
+  let watcher = watcher(tx, Duration::from_millis(millisecond_interval)).unwrap();
+  ManuallyDrop::new(Box::new(FileWatcher { watcher, rx}))
+}
+
+#[no_mangle]
+pub extern "C" fn drop_watcher(w : WatcherHandle) {
+  ManuallyDrop::into_inner(w);
+}
+
+#[no_mangle]
+pub extern "C" fn watch_file(mut w : WatcherHandle, path : SStr) {
+  if w.watcher.watch(path.as_str(), RecursiveMode::Recursive).is_err() {
+    panic!("failed to watch file '{}'", path.as_str())
+  }
+}
 
 pub extern "C" fn print_type<T : std::fmt::Display>(t : T) {
   print!("{}", t);
@@ -399,19 +392,25 @@ impl CSymbols {
     sym.insert("print_f64".into(), (print_type::<f64> as *const()) as usize);
     sym.insert("print_bool".into(), (print_type::<bool> as *const()) as usize);
 
-    sym.insert("template_quote".into(),  (template_quote as *const()) as usize);
+    sym.insert("template_quote".into(), (template_quote as *const()) as usize);
     sym.insert("thread_sleep".into(), (thread_sleep as *const()) as usize);
 
-    sym.insert("expr_to_string".into(),  (expr_to_string as *const()) as usize);
+    sym.insert("expr_to_string".into(), (expr_to_string as *const()) as usize);
 
-    sym.insert("load_expression".into(),  (load_expression as *const()) as usize);
-    sym.insert("load_module".into(),  (load_module as *const()) as usize);
-    sym.insert("get_module".into(),  (get_module as *const()) as usize);
-    sym.insert("get_function".into(),  (get_function as *const()) as usize);
+    sym.insert("load_expression".into(), (load_expression as *const()) as usize);
+    sym.insert("load_module".into(), (load_module as *const()) as usize);
+    sym.insert("unload_module".into(), (unload_module as *const()) as usize);
+    sym.insert("get_module".into(), (get_module as *const()) as usize);
+    sym.insert("get_function".into(), (get_function as *const()) as usize);
 
-    sym.insert("start_timer".into(),  (start_timer as *const()) as usize);
-    sym.insert("drop_timer".into(),  (drop_timer as *const()) as usize);
-    sym.insert("millis_elapsed".into(),  (millis_elapsed as *const()) as usize);
+    sym.insert("start_timer".into(), (start_timer as *const()) as usize);
+    sym.insert("drop_timer".into(), (drop_timer as *const()) as usize);
+    sym.insert("millis_elapsed".into(), (millis_elapsed as *const()) as usize);
+
+    sym.insert("poll_watcher_event".into(), (poll_watcher_event as *const()) as usize);
+    sym.insert("create_watcher".into(), (create_watcher as *const()) as usize);
+    sym.insert("drop_watcher".into(), (drop_watcher as *const()) as usize);
+    sym.insert("watch_file".into(), (watch_file as *const()) as usize);
 
     sym.insert("test_add".into(), (test_add as *const()) as usize);
     sym.insert("test_global".into(), (&TEST_GLOBAL as *const i64) as usize);

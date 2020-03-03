@@ -4,11 +4,6 @@ let sdl2 = load_module([prelude], "sdl2")
 let sdl2_example = load_module([prelude, sdl2], "sdl2_example")
 let update = sdl2_example.get_function("update") as fun()
 
-while true {
-  update()
-  thread_sleep(16 as u64)
-}
-
 struct watcher_event {
   bloop : i32
   // ...
@@ -21,17 +16,47 @@ struct timer_handle {
 cbind start_timer : fun() => timer_handle
 cbind drop_timer : fun(timer_handle)
 cbind millis_elapsed : fun(timer_handle) => u64
-cbind poll_watcher_event : fun(ptr(watcher_event)) => bool
 
-static timer = start_timer()
+struct watcher_handle {
+  _ : ptr(u8)
+}
 
-fun poll_watcher_events() {
+cbind poll_watcher_event : fun(w: watcher_handle, path_out : ptr(option(string)))
+cbind create_watcher : fun(millisecond_interval : u64) => watcher_handle
+cbind drop_watcher : fun(w : watcher_handle)
+cbind watch_file : fun(w : watcher_handle, path : ptr(string))
+
+fun poll_watcher_event(w: watcher_handle) => option(string) {
+  let out = none() ; poll_watcher_event(w, &out) ; out
+}
+
+fun watch_file(w : watcher_handle, path : string) {
+  watch_file(w, &path)
+}
+
+let timer = start_timer()
+let watcher = create_watcher(100)
+
+watcher.watch_file("code/sdl2_example.code")
+
+while true {
+  // process any watcher events
   let start_time = timer.millis_elapsed()
   let s = sizeof(watcher_event)
-  let event = malloc(s) as ptr(watcher_event)
-  while poll_watcher_event(event) {
-    // handle event
+  while true {
+    let path = watcher.poll_watcher_event()
+    if path.is_some {
+      let path = path.val
+      // handle event
+      print(path); println(" changed!")
+      unload_module(sdl2_example)
+      sdl2_example = load_module([prelude, sdl2], "sdl2_example")
+      update = sdl2_example.get_function("update") as fun()
+    }
+    else { break }
   }
+  // call the update function
+  update()
   // sleep for the rest of the frame
   let end_time = timer.millis_elapsed()
   let elapsed = (end_time - start_time) as i64

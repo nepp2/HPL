@@ -3,6 +3,7 @@ cbind compiler : ptr(u8)
 cbind template_quote : fun(e : ptr(expr), args : ptr(array(ptr(expr)))) => ptr(expr)
 cbind load_expression : fun(compiler : ptr(u8), name : ptr(string)) => ptr(expr)
 cbind load_module : fun(compiler : ptr(u8), imports : ptr(array(module_handle)), expr : ptr(expr), maybe_name : ptr(string)) => module_handle
+cbind unload_module : fun(compiler : ptr(u8), module : module_handle)
 cbind get_module : fun(compiler : ptr(u8), name : ptr(string), module_handle_out : ptr(option(module_handle)))
 cbind get_function : fun(compiler : ptr(u8), module : module_handle, name : ptr(string)) => ptr(u8)
 cbind print_expr : fun(e : ptr(expr))
@@ -22,6 +23,11 @@ fun load_expression(name) {
 // Turn an expression into a compiled module with no imports
 fun load_module(compiler : ptr(u8), imports : array(module_handle), expr : ptr(expr), maybe_name : string) {
   compiler.load_module(&imports, expr, &maybe_name)
+}
+
+// Unload a compiled module
+fun unload_module(module : module_handle) {
+  compiler.unload_module(module)
 }
 
 // Turn an expression into a compiled module with no imports
