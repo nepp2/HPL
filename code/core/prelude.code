@@ -86,7 +86,11 @@ cbind print_bool : fun(v : bool)
 
 fun print(s : string) { print_string(&s) }
 fun print(v : i64) { print_i64(v) }
+fun print(v : i32) { print_i64(v as i64) }
 fun print(v : u64) { print_u64(v) }
+fun print(v : u32) { print_u64(v as u64) }
+fun print(v : u16) { print_u64(v as u64) }
+fun print(v : u8) { print_u64(v as u64) }
 fun print(v : f64) { print_f64(v) }
 fun print(v : bool) { print_bool(v) }
 fun println() { print("\n") }

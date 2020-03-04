@@ -75,6 +75,9 @@ fn main(){
       let code = load("code/prelude.code");
       compiler::run_program(&code).expect("infer failed");
     }
-    _ => load_and_run("code/scratchpad.code"),
+    _ => {
+      //load_and_run("code/scratchpad.code")
+      watcher::watch("code/loader.code");
+    },
   }
 }

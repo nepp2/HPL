@@ -90,9 +90,15 @@ static sdl_create_window =
   load_symbol(sdl2, &"SDL_CreateWindow") as
     fun(title: ptr(u8), x : i32, y : i32, w : i32, h : i32, flags : u32) => sdl_window_handle
 
+static sdl_destroy_window =
+  load_symbol(sdl2, &"SDL_DestroyWindow") as fun(sdl_window_handle)
+
 static sdl_create_renderer =
   load_symbol(sdl2, &"SDL_CreateRenderer") as
     fun(window : sdl_window_handle, index : i32, flags : u32) => sdl_renderer_handle
+
+static sdl_destroy_renderer =
+  load_symbol(sdl2, &"SDL_DestroyRenderer") as fun(sdl_renderer_handle)
 
 static sdl_clear =
   load_symbol(sdl2, &"SDL_RenderClear") as

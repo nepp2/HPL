@@ -18,24 +18,34 @@ static win =
 
 static renderer = sdl_create_renderer(win, -1 as i32, SDL_RENDERER_ACCELERATED as u32)
 
-static event = malloc(sizeof(sdl_event)) as ptr(sdl_event)
-*event =
-  sdl_event.new(
-    event_type: 0 as u32,
-    timestamp: 0 as u32,
-    content: sdl_event_content.new(none: 0))
+static event : sdl_event = UnsafeZeroInit()
 static s = "a"
 
-fun update() {
-  sdl_poll_event(event)
-  let t = event[0].event_type as i64
-  if t == SDL_QUIT {
-    break
+static active = true
+
+fun terminate() {
+  if active {
+    active = false
+    sdl_destroy_renderer(renderer)
+    sdl_destroy_window(win)
   }
-  else if t == SDL_KEYDOWN {
-    let c = event[0].content.keyboard.keysym.sym as u8
-    s.data[0] = c
-    println(s)
+}
+
+fun update() {
+  if !active {
+    return
+  }
+
+  while sdl_poll_event(&event) == 1 {
+    let t = event.event_type as i64
+    if t == SDL_QUIT {
+      terminate()
+      return
+    }
+    else if t == SDL_KEYDOWN {
+      let c = event.content.keyboard.keysym.sym as u8
+      print("char code: "); println(c)
+    }
   }
 
   sdl_set_draw_color(renderer, 255 as u8, 0 as u8, 0 as u8, 255 as u8)
