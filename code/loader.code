@@ -1,14 +1,9 @@
   
 let prelude = get_module("prelude").unwrap()
-let sdl2 = load_module([prelude], "sdl2")
-let sdl2_example = load_module([prelude, sdl2], "sdl2_example")
+let sdl2 = load_module("sdl2", [prelude])
+let sdl2_example = load_module("sdl2_example", [prelude, sdl2],)
 let update = sdl2_example.get_function("update") as fun()
 let terminate = sdl2_example.get_function("terminate") as fun()
-
-struct watcher_event {
-  bloop : i32
-  // ...
-}
 
 struct timer_handle {
   _ : ptr(u8)
@@ -43,7 +38,6 @@ watcher.watch_file("code/sdl2_example.code")
 while true {
   // process any watcher events
   let start_time = timer.millis_elapsed()
-  let s = sizeof(watcher_event)
   while true {
     let path = watcher.poll_watcher_event()
     if path.is_some {
@@ -52,7 +46,7 @@ while true {
       print(path); println(" changed!")
       terminate()
       unload_module(sdl2_example)
-      sdl2_example = load_module([prelude, sdl2], "sdl2_example")
+      sdl2_example = load_module("sdl2_example", [prelude, sdl2])
       update = sdl2_example.get_function("update") as fun()
       terminate = sdl2_example.get_function("terminate") as fun()
     }

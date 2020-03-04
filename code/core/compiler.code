@@ -2,7 +2,7 @@
 cbind compiler : ptr(u8)
 cbind template_quote : fun(e : ptr(expr), args : ptr(array(ptr(expr)))) => ptr(expr)
 cbind load_expression : fun(compiler : ptr(u8), name : ptr(string)) => ptr(expr)
-cbind load_module : fun(compiler : ptr(u8), imports : ptr(array(module_handle)), expr : ptr(expr), maybe_name : ptr(string)) => module_handle
+cbind load_module : fun(compiler : ptr(u8), name : ptr(string), imports : ptr(array(module_handle)), expr : ptr(expr)) => module_handle
 cbind unload_module : fun(compiler : ptr(u8), module : module_handle)
 cbind get_module : fun(compiler : ptr(u8), name : ptr(string), module_handle_out : ptr(option(module_handle)))
 cbind get_function : fun(compiler : ptr(u8), module : module_handle, name : ptr(string)) => ptr(u8)
@@ -21,8 +21,8 @@ fun load_expression(name) {
 }
 
 // Turn an expression into a compiled module with no imports
-fun load_module(compiler : ptr(u8), imports : array(module_handle), expr : ptr(expr), maybe_name : string) {
-  compiler.load_module(&imports, expr, &maybe_name)
+fun load_module(compiler : ptr(u8), name : string, imports : array(module_handle), expr : ptr(expr)) {
+  compiler.load_module(&name, &imports, expr)
 }
 
 // Unload a compiled module
@@ -32,24 +32,24 @@ fun unload_module(module : module_handle) {
 
 // Turn an expression into a compiled module with no imports
 fun load_module(expr : ptr(expr)) {
-  compiler.load_module([], expr, "")
+  compiler.load_module("", [], expr)
 }
 
 // Turn an expression into a compiled module with the given imports
 fun load_module(imports : array(module_handle), expr : ptr(expr)) {
-  compiler.load_module(imports, expr, "")
+  compiler.load_module("", imports, expr)
 }
 
 // Load a file as a compiled module with no imports
 fun load_module(name) {
   let expr = load_expression(name)
-  compiler.load_module([], expr, name)
+  compiler.load_module(name, [], expr)
 }
 
 // Load a file as a compiled module with the given imports
-fun load_module(imports : array(module_handle), name) {
+fun load_module(name, imports : array(module_handle)) {
   let expr = load_expression(name)
-  compiler.load_module(imports, expr, name)
+  compiler.load_module(name, imports, expr)
 }
 
 fun get_module(name : string) {

@@ -142,7 +142,7 @@ pub extern "C" fn get_module(c : *mut Compiler, name : SStr, unit_id_out : &mut 
 }
 
 #[no_mangle]
-pub extern "C" fn load_module(c : *mut Compiler, imports : SSlice<UnitId>, e : &Expr, maybe_name : SStr) -> UnitId {
+pub extern "C" fn load_module(c : *mut Compiler, maybe_name : SStr, imports : SSlice<UnitId>, e : &Expr) -> UnitId {
   let c = unsafe { &mut *c };
   let imports = imports.as_slice();
   let maybe_name = maybe_name.as_str();

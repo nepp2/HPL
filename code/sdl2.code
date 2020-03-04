@@ -93,6 +93,11 @@ static sdl_create_window =
 static sdl_destroy_window =
   load_symbol(sdl2, &"SDL_DestroyWindow") as fun(sdl_window_handle)
 
+// void SDL_SetWindowPosition(SDL_Window* window, int x, int y)
+static sdl_set_window_position =
+  load_symbol(sdl2, &"SDL_SetWindowPosition") as
+    fun(sdl_window_handle, x : i32, y : i32)
+
 static sdl_create_renderer =
   load_symbol(sdl2, &"SDL_CreateRenderer") as
     fun(window : sdl_window_handle, index : i32, flags : u32) => sdl_renderer_handle

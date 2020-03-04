@@ -16,6 +16,8 @@ static win =
     400 as i32,
     SDL_WINDOW_SHOWN);
 
+win.sdl_set_window_position(1300, 200)
+
 static renderer = sdl_create_renderer(win, -1 as i32, SDL_RENDERER_ACCELERATED as u32)
 
 static event : sdl_event = UnsafeZeroInit()
