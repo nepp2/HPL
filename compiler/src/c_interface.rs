@@ -158,7 +158,8 @@ pub extern "C" fn load_module(c : *mut Compiler, imports : SSlice<UnitId>, e : &
 // the wrong one.
 #[no_mangle]
 pub extern "C" fn unload_module(c : *mut Compiler, unit_id : UnitId) {
-  println!("Tried to unload module; not yet implemented!")
+  let c = unsafe { &mut *c };
+  c.code_store.remove_unit(unit_id);
 }
 
 // TODO: panics if there is more than one overload, because no argument types

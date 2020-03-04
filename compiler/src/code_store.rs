@@ -63,6 +63,24 @@ impl CodeStore {
     id
   }
 
+  pub fn remove_unit(&mut self, uid : UnitId) {
+    let aaa = (); // TODO: remove the source. I'm not sure if the source ID is stored anywhere yet. It's supposed to be stored in TextLocations.
+    self.names.remove(&uid);
+    self.exprs.remove(&uid);
+    self.nodes.remove(&uid);
+    self.types.remove(&uid);
+    self.type_mappings.remove(&uid);
+    if let Some(codegen_id) = self.codegen_mapping.remove(&uid) {
+      let aaa = (); // TODO: I'm not convinced that this is sufficient to clean up the llvm module & its jitted binary code
+      self.llvm_units.remove(&codegen_id);
+    }
+    self.vals.remove(&uid);
+    if let Some(sid) = self.poly_parents.remove(&uid) {
+      let map = self.poly_instances.get_mut(&sid).unwrap();
+      map.retain(|_, sid| sid.uid != uid);
+    }
+  }
+
   pub fn name(&self, unit_id : UnitId) -> RefStr {
     self.names.get(&unit_id).unwrap().clone()
   }
