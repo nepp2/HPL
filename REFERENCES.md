@@ -24,11 +24,19 @@ A high-performance live coding system implemented on top of Scheme. Quite simila
 
 https://scopes.readthedocs.io/en/latest/about.html
 
-Another programming system similar to Terra and Extempore. However, it attempts to present a single, unified language which can control its own code generation, much like my system. It is based on lisp-style s-expressions, but uses an alternative front-end syntax based on whitespace instead of parens, which also has some support for infix operators.
+Another programming system similar to Terra and Extempore. However, it attempts to present a single, unified language which can control its own code generation, much like this system. It is based on lisp-style s-expressions, but uses an alternative front-end syntax based on whitespace instead of parens, which also has some support for infix operators.
 
 It is designed for game development and seems to be pursuing a borrow-checking approach to memory management inspired by Rust's, but with full type inference. Although it has full type inference, it is forward-inference only. So, much like a C++ template, the type checker can only provide feedback in response to a template instantiation.
 
 It has an interesting opt-in approach to function overloading whose behaviour can be altered separately within the scope of each module that imports the function.
+
+Scopes seem to have a smaller and more powerful core language than this project. Some trade-offs:
+
+- Scopes is a REPL-based language; its top level is executed sequentially, and can modify the environment at will. This is simple and powerful.
+- BORGOL is not REPL-based, although it can emulate a REPL quite easily. It is based around modules with precisely tracked dependencies, rather than a global environment (or a nested series of scoped environments). In other words, it is more like Java than Python. Interactivity comes from hot-swapping modules.
+- Scopes does forward type inference. I'm not sure if it type-checks a function before it's called? BORGOL does full type inference (within each module).
+- The forward type inference in Scopes means that parametric polymorphism is straightforward. _All_ functions are code generated on-demand. BORGOL has separate machinary for polymorphic functions (currently they behave like C++ templates).
+- The Scopes language (presumably) behaves differently within functions. A function body cannot introduce new symbols based on variable runtime data and then immediately make use of them, whereas top-level code can. In BORGOL, top-level scope is the same as function scope; a symbol can be dynamically loaded and called, but this will be very explicit in the code (as in C).
 
 # GOAL (Game-Oriented Assembly Lisp)
 

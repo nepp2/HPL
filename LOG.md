@@ -1,3 +1,34 @@
+# LOG - 05/03/2020
+
+I have a loader script which loads and links some modules together to run the simple sdl2 example. It also detects changes to the example and reloads it if necessary. However, it doesn't detect changes to any of the other modules. It also doesn't store any event state upon reload. So how would I make all of this work seamlessly for tetris?
+
+prelude -> sdl2
+sdl2 -> tetris
+sdl2 -> event_log
+prelude -> sdl2
+event_log -> tetris
+
+The event log will store the events, and tetris will take care of reading them all when it reloads.
+
+So then how does the loader figure out which modules need to be reloaded when a file is modified?
+
+Initial loading:
+- Build a dependency graph
+- Choose the module that will be pumped by the event loop
+- Create an ordered list of the module and everything it depends on
+- Load them all in order
+- Find the main Update function symbol
+- Run the event loop
+
+On change:
+- File x has changed
+- Lookup the corresponding module id in a map
+- Create an ordered list of the module and everything that depends on it
+- Unload them in reverse (find and call their Terminate functions, if they exist)
+- Reload them all in order
+- Find the main Update function symbol
+- Resume calling the event loop
+
 # LOG - 28/02/2020
 
 I need a first-pass system for specifying which units link together. Doing it dynamically with library calls to the compiler should work, but I don't want to accidentally load multiple instances of the core modules. I should just be calling `get_module` for those, instead of `load_module`.

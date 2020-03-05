@@ -1,15 +1,19 @@
 
-# Design - January 2020
+# Design - March 2020
 
-I'm still trying to implement polymorphism. I got stuck when I started thinking about how to integrate it with a system of hotloadable modules. Now I'm not sure how this system should work.
+There are two language features I need to add at some point, and they should complement each other very neatly. These are:
 
-I discovered the Scopes programming language and I feel as though I have overcomplicated things. It has a similar design, but I believe it has far fewer features in the core language. I am also wondering whether I really could make the whole language somewhat REPL-based. What core commands are needed? Why did I steer away from using a REPL?
+- A runtime `Type` type, allowing the fields of structs to be queried.
+- Some kind of inline macro expansion
 
-- Bind value to symbol
-- Create function value
-- Code blocks
-- Primitive
-- local variable
+I think that, in combination with polymorphism, this can be used to implement features like auto-derived functions for equality, hash, etc. And potentially this can also be used to support tracing garbage collection.
+
+
+# Design - the smallest possible core language?
+
+It is expensive to implement compiler features. Ideally, as much of the language would be self-bootstrapped as possible, in the style of Lisp.
+
+But what is the smallest set of core language features required to do this?
 
 ## Language primitives
 

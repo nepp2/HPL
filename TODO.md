@@ -26,7 +26,7 @@
 
 # Roadmap
 
-- Support polymorphism
+- ~~Support polymorphism~~
 - Port tetris demo
 - Make a time-travelling UI for demo
 - Make a node-based module loading system
