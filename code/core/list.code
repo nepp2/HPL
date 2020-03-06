@@ -24,7 +24,7 @@ fun add(list : list(T), item : T) with T {
     let new_data = malloc(next_capacity * sizeof(T))
     memcpy(new_data, list.data as ptr(u8), list.capacity * sizeof(T))
     if (list.data as u64) != 0 {
-      free(list.data as ptr(u8))
+      dealloc(list.data)
     }
     list.data = new_data as ptr(T)
     list.capacity = next_capacity

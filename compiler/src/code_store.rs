@@ -110,6 +110,10 @@ impl CodeStore {
     self.types.get(&unit_id).unwrap()
   }
 
+  pub fn dependencies(&self, unit_id : UnitId) -> &HashSet<UnitId> {
+    self.dependencies.get(&unit_id).unwrap()
+  }
+
   pub fn symbol_def(&self, symbol_id : SymbolId) -> &SymbolDefinition {
     self.types(symbol_id.uid).symbols.get(&symbol_id).unwrap()
   }

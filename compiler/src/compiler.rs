@@ -86,6 +86,9 @@ impl Compiler {
     -> Result<(), Error>
   {
     imports.insert(self.intrinsics);
+    for &i in imports.iter() {
+      self.code_store.add_dependency(unit_id, i);
+    }
     self.structure(unit_id)?;
     let mut new_units = vec![unit_id];
     self.typecheck(unit_id, imports, &mut new_units)?;
@@ -107,9 +110,6 @@ impl Compiler {
         unit_id, &self.code_store, &self.cache, &mut self.gen, &imports)?;
         self.code_store.types.insert(unit_id, types);
         self.code_store.type_mappings.insert(unit_id, mapping);
-    for &i in imports.iter() {
-      self.code_store.add_dependency(unit_id, i);
-    }
     self.typecheck_new_polymorphic_instances(unit_id, new_units)?;
     Ok(())
   }
@@ -133,7 +133,9 @@ impl Compiler {
             self.cache.get(format!("@poly[{}][{}]", name, instance_type))
           };
           let instance_unit_id = self.code_store.create_unit(self.gen.next(), Some(poly_unit_name));
-          self.code_store.add_dependency(instance_unit_id, poly_symbol_id.uid);
+          let mut instance_dependencies = self.code_store.dependencies(poly_symbol_id.uid).clone();
+          instance_dependencies.insert(poly_symbol_id.uid);
+          self.code_store.dependencies.insert(instance_unit_id, instance_dependencies);
           let poly_def = self.code_store.symbol_def(poly_symbol_id);
           let (instance_types, instance_mapping, instance_symbol_id) =
             inference_solver::typecheck_polymorphic_function_instance(

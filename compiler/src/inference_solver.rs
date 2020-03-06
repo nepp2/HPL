@@ -78,7 +78,9 @@ pub fn typecheck_polymorphic_function_instance(
   let mut errors = Errors::new();
   let mut new_types = TypeInfo::new(instance_unit);
   let aaa = (); // TODO: type directory should just take the code store, and be a lot simpler
-  let imports : Vec<_> = code_store.types.values().collect();
+  let imports : Vec<_> =
+    code_store.dependencies(instance_unit).iter()
+    .map(|&uid| code_store.types(uid)).collect();
   let mut type_directory =
     TypeDirectory::new(imports.as_slice(), &mut new_types);
   let nodes = code_store.nodes(poly_function.unit_id);
@@ -526,10 +528,11 @@ impl <'a> Inference<'a> {
       println!("Constraints processed (including duplicates): {}\n", total_constraints_processed);
     }
 
-    // Generate errors if program has unresolved symbols
-    let mut unresolved = 0;
-    active_edge_set.clear();
+    // Look for errors
     if self.errors.is_empty() {
+      // Generate errors if program has unresolved types
+      let mut unresolved = 0;
+      active_edge_set.clear();
       for (ts, _) in self.c.symbols.iter() {
         if !self.resolved.get(ts).map(|t| t.is_concrete()).unwrap_or(false) {
           unresolved += 1;
@@ -546,10 +549,18 @@ impl <'a> Inference<'a> {
           }
         }
       }
-    }
-
-    if self.errors.is_empty() && unresolved > 0 {
-      panic!("Unresolved types found, but no errors generated!");
+      if self.errors.is_empty() && unresolved > 0 {
+        panic!("Unresolved types found, but no errors generated!");
+      }
+  
+      // Generate errors if program has unresolved symbols
+      for c in self.c.constraints.iter() {
+        if let ConstraintContent::SymbolReference{node, ..} = &c.content {
+          if !self.mapping.symbol_references.contains_key(node) {
+            self.unresolved_constraint_error(c);
+          }
+        }
+      }
     }
 
     // Assign types to all of the nodes
