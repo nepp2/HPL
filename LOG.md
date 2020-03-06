@@ -1,3 +1,10 @@
+# LOG - 06/03/2020
+
+Minimum features required for tetris demo? They possibly already exist, though some minor tweaks would help:
+
+- Remove the hack that uses shorthand paths (e.g. "loader" instead of "code/loader.code")
+  - still use relative paths though, for now (even though it means they technically aren't unique identifiers)
+
 # LOG - 05/03/2020
 
 I have a loader script which loads and links some modules together to run the simple sdl2 example. It also detects changes to the example and reloads it if necessary. However, it doesn't detect changes to any of the other modules. It also doesn't store any event state upon reload. So how would I make all of this work seamlessly for tetris?

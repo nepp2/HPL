@@ -61,19 +61,13 @@ fn main(){
   let args: Vec<String> = env::args().collect();
   let args: Vec<&str> = args.iter().map(|s| s.as_ref()).collect();
   match args[1..] {
-    ["watch", f] => {
-      let path = format!("code/{}.code", f);
+    ["watch", path] => {
       watcher::watch(path.as_ref())
     }
     ["watch"] => watcher::watch("code/scratchpad.code"),
     ["repl"] => repl::run_repl(),
-    ["run", f] => {
-      //let path = format!("code/{}.code", f);
-      load_and_run(f)
-    }
-    ["infer"] => {
-      let code = load("code/prelude.code");
-      compiler::run_program(&code).expect("infer failed");
+    ["run", path] => {
+      load_and_run(path)
     }
     _ => {
       //load_and_run("code/scratchpad.code")

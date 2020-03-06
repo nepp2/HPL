@@ -47,10 +47,11 @@ impl Interpreter {
 
   fn load_core_modules(&mut self) -> Result<(), Error> {
     for module_name in &["prelude", "list", "compiler"] {
-      let mut f = File::open(format!("{}core/{}.code", CODE_PATH, module_name)).expect("failed to load prelude");
+      let path = format!("{}core/{}.code", CODE_PATH, module_name);
+      let mut f = File::open(&path).expect("failed to load prelude");
       let mut code = String::new();
       f.read_to_string(&mut code).unwrap();
-      self.load_module(&code, Some(module_name))?;
+      self.load_module(&code, Some(&path))?;
     }
     Ok(())
   }

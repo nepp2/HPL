@@ -258,12 +258,6 @@ impl Compiler {
 
 }
 
-pub fn run_program(code : &str) -> Result<Val, Error> {
-  let mut c = Compiler::new();
-  let (_, val) = c.load_module(code, None, &[])?;
-  Ok(val)
-}
-
 #[derive(Clone, PartialEq, Debug)]
 pub enum Val {
   Void,

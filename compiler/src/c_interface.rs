@@ -118,14 +118,12 @@ extern {
 
 #[no_mangle]
 pub extern "C" fn panic(s : SStr) {
-  panic!("{}", s.as_str())
+  panic!("EXPLICIT PANIC: {}", s.as_str())
 }
 
 #[no_mangle]
-pub extern "C" fn load_expression(c : *mut Compiler, s : SStr) -> Box<Expr> {
-  let code_path = format!("{}code/{}.code", ROOT, s.as_str());
-  let code_path = &code_path;
-  let mut f = File::open(code_path).unwrap_or_else(|_| panic!("load_expression failed. file '{}' not found", code_path));
+pub extern "C" fn load_expression(c : *mut Compiler, code_path : SStr) -> Box<Expr> {
+  let mut f = File::open(code_path.as_str()).unwrap_or_else(|_| panic!("load_expression failed. file '{}' not found", code_path.as_str()));
   let mut code = String::new();
   f.read_to_string(&mut code).unwrap();
   let c = unsafe { &mut *c };

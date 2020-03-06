@@ -1,7 +1,9 @@
-  
-let prelude = get_module("prelude").unwrap()
-let sdl2 = load_module("sdl2", [prelude])
-let sdl2_example = load_module("sdl2_example", [prelude, sdl2],)
+
+// code/.code
+
+let prelude = get_module("code/core/prelude.code").unwrap()
+let sdl2 = load_module("code/sdl2.code", [prelude])
+let sdl2_example = load_module("code/sdl2_example.code", [prelude, sdl2],)
 let update = sdl2_example.get_function("update") as fun()
 let terminate = sdl2_example.get_function("terminate") as fun()
 
@@ -46,7 +48,7 @@ while true {
       print(path); println(" changed!")
       terminate()
       unload_module(sdl2_example)
-      sdl2_example = load_module("sdl2_example", [prelude, sdl2])
+      sdl2_example = load_module("code/sdl2_example.code", [prelude, sdl2])
       update = sdl2_example.get_function("update") as fun()
       terminate = sdl2_example.get_function("terminate") as fun()
     }

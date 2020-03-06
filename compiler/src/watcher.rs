@@ -33,7 +33,6 @@ pub fn run_process(path : &str) -> Popen {
 }
 
 pub fn watch(path : &str) {
-
   let mut process = Some(run_process(path));
 
   // Create a channel to receive the events.
@@ -46,7 +45,9 @@ pub fn watch(path : &str) {
   // Add a path to be watched. All files and directories at that path and
   // below will be monitored for changes.
   watcher.watch(path, RecursiveMode::Recursive).unwrap();
-  watcher.watch("code/core/prelude.code", RecursiveMode::Recursive).unwrap();
+  for &path in &["code/core/prelude.code", "code/core/list.code", "code/core/compiler.code"] {
+    watcher.watch(path, RecursiveMode::Recursive).unwrap();
+  }
 
   loop {
     //println!("loop");
