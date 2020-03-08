@@ -564,6 +564,16 @@ rusty_fork_test! {
     assert_result(code, Val::Void);
   }
 
+  #[test]
+  fn test_literal_hardening_bug() {
+    let code = "
+      fun foo(p : ptr(u8)) {
+        p[0] = 65
+      }
+    ";
+    assert_result(code, Val::Void);
+  }
+
   // #[test]
   // fn test_type_alias() {
   //   let code = "

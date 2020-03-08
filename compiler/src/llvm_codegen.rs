@@ -813,16 +813,29 @@ fn codegen_intrinsic_call(gf : &mut GenFunction, node : TypedNode, name : &str, 
   }
   else if let [a] = args {
     let a = node.get(*a);
-    match (&a.type_tag().content, name) {
-      (Prim(F64), "-") => unary_op!(build_float_neg, FloatValue, gf, a),
-      (Prim(I64), "-") => unary_op!(build_int_neg, IntValue, gf, a),
-      (Prim(Bool), "!") => unary_op!(build_not, IntValue, gf, a),
-      (Ptr, "*") => {
-        let ptr = gf.codegen_pointer(a)?;
-        pointer(ptr)
+    if name == "-" {
+      let t = a.type_tag();
+      if t.float() {
+        unary_op!(build_float_neg, FloatValue, gf, a)
       }
-      (_, "&") => gf.codegen_address_of_expression(a)?,
-      _ => return error(node, "encountered unrecognised intrinsic"),
+      else if t.int() {
+        unary_op!(build_int_neg, IntValue, gf, a)
+      }
+      else {
+        return error(node,
+          format!("encountered unrecognised intrinsic, -{}.", t));
+      }
+    }
+    else {
+      match (&a.type_tag().content, name) {
+        (Prim(Bool), "!") => unary_op!(build_not, IntValue, gf, a),
+        (Ptr, "*") => {
+          let ptr = gf.codegen_pointer(a)?;
+          pointer(ptr)
+        }
+        (_, "&") => gf.codegen_address_of_expression(a)?,
+        _ => return error(node, format!("encountered unrecognised intrinsic, {}", name)),
+      }
     }
   }
   else if args.len() == 0 && name == "UnsafeZeroInit" {
@@ -830,7 +843,7 @@ fn codegen_intrinsic_call(gf : &mut GenFunction, node : TypedNode, name : &str, 
     reg(const_zero(t))
   }
   else {
-    return error(node, "encountered unrecognised intrinsic");
+    return error(node, format!("encountered unrecognised intrinsic {}", name));
   };
   Ok(gv.into())
 }

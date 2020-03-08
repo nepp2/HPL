@@ -2,23 +2,23 @@
 sdl_init(SDL_INIT_VIDEO);
 
 static c = malloc(4)
-c[0] = 65 as u8
-c[1] = 65 as u8
-c[2] = 65 as u8
-c[3] = 0 as u8
+c[0] = 65
+c[1] = 65
+c[2] = 65
+c[3] = 0
 
 static win =
   sdl_create_window(
     c,
     SDL_WINDOWPOS_UNDEFINED,
     SDL_WINDOWPOS_UNDEFINED,
-    500 as i32,
-    400 as i32,
+    500,
+    400,
     SDL_WINDOW_SHOWN);
 
-win.sdl_set_window_position(1300, 200)
+win.sdl_set_window_position(850, 200)
 
-static renderer = sdl_create_renderer(win, -1 as i32, SDL_RENDERER_ACCELERATED as u32)
+static renderer = sdl_create_renderer(win, -1, SDL_RENDERER_ACCELERATED as u32)
 
 static event : sdl_event = UnsafeZeroInit()
 static s = "a"
@@ -45,12 +45,12 @@ fun update() {
       return
     }
     else if t == SDL_KEYDOWN {
-      let c = event.content.keyboard.keysym.sym as u8
+      let c = event.content.keyboard.keysym.sym
       print("char code: "); println(c)
     }
   }
 
-  sdl_set_draw_color(renderer, 255 as u8, 0 as u8, 0 as u8, 255 as u8)
+  sdl_set_draw_color(renderer, 255, 0, 0, 255)
   sdl_clear(renderer)
   sdl_present(renderer)
 }

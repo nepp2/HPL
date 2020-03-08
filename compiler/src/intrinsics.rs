@@ -30,11 +30,11 @@ pub fn get_intrinsics(intrinsics_id : UnitId, gen : &mut UIDGenerator, cache : &
   add_intrinsic(cache, gen, unit_id, &mut types, "!", &[boolean], boolean);
 
   let tvar = cache.get("A");
-  for prim in &[I64.into(), I32.into(), U64.into(), U32.into()] {
+  for index_type in &[I64.into(), I32.into(), U64.into(), U32.into()] {
     for container in &[Type::ptr_to, Type::array_of] {
       let tv : Type = Polytype(tvar.clone()).into();
       let gcontainer = container(tv.clone());
-      let args = &[&gcontainer, prim];
+      let args = &[&gcontainer, index_type];
       add_polymorphic_intrinsic(
         cache, gen, unit_id, &mut types, "Index", args, &tv, vec![tvar.clone()]);
     }

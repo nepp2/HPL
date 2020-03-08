@@ -520,7 +520,7 @@ impl <'a> Inference<'a> {
       }
       // If nothing was resolved, try to harden a literal (in lexical order)
       if self.next_edge_set.is_empty() && literals.len() > 0 {
-        self.try_harden_type_symbol(literals.pop_back().unwrap());
+        self.try_harden_type_symbol(literals.pop_front().unwrap());
       }
     }
     if DEBUG {
