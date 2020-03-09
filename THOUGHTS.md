@@ -8,6 +8,19 @@ There are two language features I need to add at some point, and they should com
 
 I think that, in combination with polymorphism, this can be used to implement features like auto-derived functions for equality, hash, etc. And potentially this can also be used to support tracing garbage collection.
 
+```rust
+  fun print(a : T) with T {
+    $(
+      let t = type(T)
+      let b = block_expr()
+      for f in t.field_names {
+        b.push(#(println(a.$f)))
+      }
+      b
+    )
+  }
+```
+
 
 # Design - the smallest possible core language?
 
