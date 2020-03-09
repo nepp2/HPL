@@ -204,3 +204,14 @@ fun poll_watcher_event(w: watcher_handle) => option(string) {
 fun watch_file(w : watcher_handle, path : string) {
   watch_file(w, &path)
 }
+
+// ######## RNG stuff ########
+
+struct rng_handle {
+  _ : ptr(u8)
+}
+
+cbind seeded_rng : fun(seed : u64) => rng_handle
+cbind drop_seeded_rng : fun(rng : rng_handle)
+cbind rand_f64 : fun(rng : rng_handle) => f64
+cbind rand_u64 : fun(rng : rng_handle) => u64

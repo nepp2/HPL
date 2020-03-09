@@ -12,7 +12,7 @@ pub fn error<T, L : Into<TextLocation>, S : Into<ErrorContent>>(loc : L, message
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TextMarker {
   pub line : usize,
   pub col : usize,
@@ -40,7 +40,7 @@ impl <'l> Into<TextLocation> for &'l TextLocation {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TextLocation {
   pub start : TextMarker,
   pub end : TextMarker,

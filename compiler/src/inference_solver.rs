@@ -318,12 +318,14 @@ impl <'a> Inference<'a> {
       Function{ function, args, return_type } => {
         if let Some(t) = self.get_type(*function) {
           if let Some(mut sig) = t.sig_builder() {
-            for (i, t) in sig.args().iter_mut().enumerate() {
-              self.update_type_mut(args[i], t);
+            if sig.args().len() == args.len() {
+              for (i, t) in sig.args().iter_mut().enumerate() {
+                self.update_type_mut(args[i], t);
+              }
+              let rt = sig.return_type();
+              self.update_type_mut(*return_type, rt);
+              self.update_type(*function, &sig.into());
             }
-            let rt = sig.return_type();
-            self.update_type_mut(*return_type, rt);
-            self.update_type(*function, &sig.into());
           }
         }
         else {
@@ -588,6 +590,11 @@ impl <'a> Inference<'a> {
           }
         }
       }
+    }
+
+    // Sort any errors lexically
+    if !self.errors.is_empty() {
+      self.errors.concrete_errors.sort_unstable_by_key(|e| e.location);
     }
   }
 }

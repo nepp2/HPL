@@ -285,6 +285,30 @@ pub extern "C" fn watch_file(mut w : WatcherHandle, path : SStr) {
   }
 }
 
+use rand::{Rng, SeedableRng, rngs::SmallRng};
+
+pub type RNGHandle = ManuallyDrop<Box<SmallRng>>;
+
+#[no_mangle]
+pub extern "C" fn seeded_rng(seed : u64) -> RNGHandle {
+  ManuallyDrop::new(Box::new(SmallRng::seed_from_u64(seed)))
+}
+
+#[no_mangle]
+pub extern "C" fn drop_seeded_rng(rng : RNGHandle) {
+  ManuallyDrop::into_inner(rng);
+}
+
+#[no_mangle]
+pub extern "C" fn rand_f64(mut rng : RNGHandle) -> f64 {
+  rng.gen()
+}
+
+#[no_mangle]
+pub extern "C" fn rand_u64(mut rng : RNGHandle) -> u64 {
+  rng.gen()
+}
+
 pub extern "C" fn print_type<T : std::fmt::Display>(t : T) {
   print!("{}", t);
 }
@@ -410,6 +434,11 @@ impl CSymbols {
     sym.insert("create_watcher".into(), (create_watcher as *const()) as usize);
     sym.insert("drop_watcher".into(), (drop_watcher as *const()) as usize);
     sym.insert("watch_file".into(), (watch_file as *const()) as usize);
+
+    sym.insert("seeded_rng".into(), (seeded_rng as *const()) as usize);
+    sym.insert("drop_seeded_rng".into(), (drop_seeded_rng as *const()) as usize);
+    sym.insert("rand_f64".into(), (rand_f64 as *const()) as usize);
+    sym.insert("rand_u64".into(), (rand_u64 as *const()) as usize);
 
     sym.insert("test_add".into(), (test_add as *const()) as usize);
     sym.insert("test_global".into(), (&TEST_GLOBAL as *const i64) as usize);

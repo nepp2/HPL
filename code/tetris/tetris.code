@@ -41,7 +41,7 @@ struct game {
   grid: grid
   tetronimos: array(tetronimo)
   tetronimo_bag: array(tetronimo)
-  rng: random_generator
+  rng: rng_handle
   palette: palette
 }
 
@@ -196,7 +196,7 @@ fun init(view : view, width : i64, height : i64) {
       grid,
       tetronimos: tetronimos,
       tetronimo_bag: [],
-      rng: random_generator(),
+      rng: rng_handle(),
       palette: p,
     )
   game.next_tetronimo(config.grid_width)
