@@ -33,6 +33,18 @@ fun add(list : list(T), item : T) with T {
   list.len = list.len + 1
 }
 
+fun pop(list : list(T)) => T with T {
+  if list.p.len == 0 {
+    panic("can't pop from empty list")
+  }
+  list.p.len = list.p.len - 1
+  list[list.p.len]
+}
+
+fun len(list : list(T)) => u64 with T {
+  list.p.len
+}
+
 fun Index(list : list(T), i : Int) => T with T, Int {
   let list = list.p;
   let i = i as u64

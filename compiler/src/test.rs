@@ -574,6 +574,23 @@ rusty_fork_test! {
     assert_result(code, Val::Void);
   }
 
+  /// Infers conflicting types because the last line is `return i` instead of `i`,
+  /// and the expression `return i` evaluates to void, which defines the type of the
+  /// block expression. The inference doesn't understand that this block always exits
+  /// "early", and so will never return void.
+  #[test]
+  fn test_return_bug() {
+    let code = "
+      fun foo(i : i64) {
+        if i > 50 {
+          return 50
+        }
+        return i
+      }
+    ";
+    assert_result(code, Val::Void);
+  }
+
   // #[test]
   // fn test_type_alias() {
   //   let code = "

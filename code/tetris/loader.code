@@ -3,8 +3,9 @@
 // code/.code
 
 let prelude = get_module("code/core/prelude.code").unwrap()
+let list = get_module("code/core/list.code").unwrap()
 let sdl2 = load_module("code/sdl2.code", [prelude])
-let tetris = load_module("code/tetris/tetris.code", [prelude, sdl2],)
+let tetris = load_module("code/tetris/tetris.code", [prelude, list, sdl2],)
 let update = tetris.get_function("update") as fun()
 let terminate = tetris.get_function("terminate") as fun()
 
@@ -24,7 +25,7 @@ while true {
       print(path); println(" changed!")
       terminate()
       unload_module(tetris)
-      tetris = load_module("code/tetris/tetris.code", [prelude, sdl2])
+      tetris = load_module("code/tetris/tetris.code", [prelude, list, sdl2])
       update = tetris.get_function("update") as fun()
       terminate = tetris.get_function("terminate") as fun()
     }

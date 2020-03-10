@@ -8,16 +8,17 @@ struct color {
 }
 
 struct tetronimo {
-  tiles : array(array(i64))
+  tiles : list(list(i64))
   color : color
 }
 
 struct view {
-  handle : sdl_window_handle
+  window : sdl_window_handle
+  render : sdl_renderer_handle
 }
 
 struct grid {
-  cells : array(option(color))
+  cells : list(option(color))
 }
 
 struct palette {
@@ -39,8 +40,8 @@ struct game {
   ticks_per_drop: i64
   tick_count: i64
   grid: grid
-  tetronimos: array(tetronimo)
-  tetronimo_bag: array(tetronimo)
+  tetronimos: list(tetronimo)
+  tetronimo_bag: list(tetronimo)
   rng: rng_handle
   palette: palette
 }
@@ -54,28 +55,28 @@ struct config {
 }
 
 fun set_draw_color(view : view, r : i64, g : i64, b : i64, a : i64) {
-  view.handle.sdl_set_draw_color(r as u8, g as u8, b as u8, a as u8)
+  view.render.sdl_set_draw_color(r as u8, g as u8, b as u8, a as u8)
 }
 
-fun fill_rect(view : view, x : i64, y : i64, w : i64, h : i64) {
+fun fill_rect(view : view, x, y, w, h) {
   let r = sdl_rect.new(x, y, w, h)
-  view.handle.sdl_fill_rect(&r)
+  view.render.sdl_fill_rect(&r)
 }
 
-fun set_color(view : view, c : array(i64)) {
-  view.set_draw_color(c[0], c[1], c[2], c[3])
+fun set_color(view : view, c : color) {
+  view.set_draw_color(c.r, c.g, c.b, c.a)
 }
 
 fun next_tetronimo(game : game, grid_width : i64){
   if game.tetronimo_bag.len() == 0 {
     for i in range(0, 2) {
-      for i in range(0, len(game.tetronimos)) {
+      for i in range(0, game.tetronimos.len() as i64) {
         game.tetronimo_bag.add(i)
       }
     }
   }
   let tets = game.tetronimo_bag.len()
-  let i = (game.rng.next_f64() * (tets as f64)) as i64
+  let i = (game.rng.rand_f64() * (tets as f64)) as i64
   let next_tet = game.tetronimo_bag[i]
   game.tetronimo_bag[i] = game.tetronimo_bag[tets-1]
   game.tetronimo_bag.pop()
@@ -157,7 +158,7 @@ fun init(view : view, width : i64, height : i64) {
 
   let tetronimos = {
     let ts = []
-    for i in range(0, shape_color_pairs.len()) {
+    for i in range(0, shape_color_pairs.len() as i64) {
       let pair = shape_color_pairs[i]
       let c = pair.v1
       let s1 = pair.v0
@@ -182,7 +183,7 @@ fun init(view : view, width : i64, height : i64) {
 
   let grid = []
   for i in range(0, config.grid_width * config.grid_height) {
-    grid.add(none())
+    grid.cells.add(none())
   }
   let game =
     game.new(
@@ -196,7 +197,7 @@ fun init(view : view, width : i64, height : i64) {
       grid,
       tetronimos: tetronimos,
       tetronimo_bag: [],
-      rng: rng_handle(),
+      rng: seeded_rng(0),
       palette: p,
     )
   game.next_tetronimo(config.grid_width)
@@ -205,7 +206,7 @@ fun init(view : view, width : i64, height : i64) {
 }
 
 fun draw_tetronimo(
-  view : view, shape : array(i64), color : color, size : i64,
+  view : view, shape : list(i64), color : color, size : i64,
   xpos : i64, ypos : i64, xoffset : i64, yoffset : i64)
 {
   view.set_color(color)
@@ -230,7 +231,7 @@ static CONTACT_BOTTOM = 3
 static CONTACT_TOP = 4
 static CONTACT_OVERLAP = 5
 
-fun contact_type(grid : grid, grid_width : i64, grid_height : i64, shape : array(i64), pos_x : i64, pos_y : i64){
+fun contact_type(grid : grid, grid_width : i64, grid_height : i64, shape : list(i64), pos_x : i64, pos_y : i64) {
   let shape_size = shape.shape_size()
   for y in range(0, shape_size) {
     for x in range(0, shape_size) {
@@ -248,40 +249,42 @@ fun contact_type(grid : grid, grid_width : i64, grid_height : i64, shape : array
         }
         if ypos >= 0 {
           let i = xpos + ypos * grid_width
-          if grid[i] != () {
+          if grid.cells[i].is_some {
             return CONTACT_OVERLAP
           }
         }
       }
     }
   }
-  return CONTACT_NONE
+  CONTACT_NONE
 }
 
-fun check_contact(grid : array(color), grid_width : i64, grid_height : i64, shape : array(i64), pos_x : i64, pos_y : i64){
-  let c = contact_type( grid, grid_width, grid_height, shape, pos_x, pos_y)
+fun check_contact(grid, grid_width, grid_height, shape, pos_x, pos_y){
+  let c = contact_type(grid, grid_width, grid_height, shape, pos_x, pos_y)
   c != CONTACT_NONE
 }
 
-fun draw_all_shapes(){
-  for i in range(0, len(all_shapes)) {
-    for j in range(0, 4) {
-      let s = all_shapes[i]
-      draw_tetronimo(
-        view, s.tiles[j], s.color,
-        20, 1 + j * 4, 1 + i * 5)
-    }
-  }
-}
+// TODO: old debug function. delete?
+// fun draw_all_shapes(){
+//   for i in range(0, all_shapes.len() as i64) {
+//     for j in range(0, 4) {
+//       let s = all_shapes[i]
+//       draw_tetronimo(
+//         view, s.tiles[j], s.color,
+//         20, 1 + j * 4, 1 + i * 5)
+//     }
+//   }
+// }
 
-fun draw_background_grid(view, width, height, gap){
-  for x in range(0, width/gap) {
-    draw_line(view, x * gap, 0, x * gap, height)
-  }
-  for y in range(0, height/gap) {
-    draw_line(view, 0, y * gap, width, y * gap)
-  }
-}
+// TODO: old debug function. delete?
+// fun draw_background_grid(view, width, height, gap){
+//   for x in range(0, width/gap) {
+//     draw_line(view, x * gap, 0, x * gap, height)
+//   }
+//   for y in range(0, height/gap) {
+//     draw_line(view, 0, y * gap, width, y * gap)
+//   }
+// }
 
 fun init_tetronimo_state(game, grid_width) {
   game.pos_y = 0
@@ -318,11 +321,11 @@ fun max(a, b) {
 fun check_line(grid, y, grid_width) {
   let i = y * grid_width
   for i in range(i, i + grid_width) {
-    if grid[i] == () {
+    if !grid.cells[i].is_some {
       return false
     }
   }
-  return true
+  true
 }
 
 fun erase_lines(grid, y, shape_size, grid_width, grid_height) {
@@ -381,7 +384,7 @@ fun rotate(game, grid_width, grid_height) {
     let c = contact_type(
       game.grid, grid_width, grid_height,
       shape, game.pos_x, game.pos_y)
-    if c == () {
+    if c == CONTACT_NONE {
       break
     }
     else if c == CONTACT_LEFT {
@@ -398,38 +401,45 @@ fun rotate(game, grid_width, grid_height) {
 }
 
 fun update_tick(game) {
-  let tet = tetronimos[game.tet_index]
+  let tet = game.tetronimos[game.tet_index]
   let shape = tet.tiles[game.orientation]
 
   game.tick_count = game.tick_count + 1
   if game.tick_count >= game.ticks_per_drop {
-    move_down(game, shape, tet.color, grid_width, grid_height)
+    move_down(game, shape, tet.color, game.grid_width, game.grid_height)
   }
 }
 
-fun update(game, e) {
+static UP_KEY = 24
+static DOWN_KEY = 25
+static RIGHT_KEY = 26
+static LEFT_KEY = 27
+
+fun update_tetris(game, e) {
   let tet = game.tetronimos[game.tet_index]
   let shape = tet.tiles[game.orientation]
   let c = game.config
   let grid_width = c.grid_width
   let grid_height = c.grid_height
-  let t = type_name(e)
-  if t == "sdl_event_keydown" {
-    if e.key == "Up" {
+
+  let t = event.event_type as i64
+  if t == SDL_KEYDOWN {
+    let c = event.content.keyboard.keysym.sym
+    if c == UP_KEY {
       rotate(game, grid_width, grid_height)
     }
-    if e.key == "Left" {
+    if c == LEFT_KEY {
       move_horizontal(
         game, grid_width, grid_height, shape, -1)
     }
-    if e.key == "Right" {
+    if c == RIGHT_KEY {
       move_horizontal(
         game, grid_width, grid_height, shape, 1)
     }
-    if e.key == "Down" {
+    if c == DOWN_KEY {
       move_down(game, shape, tet.color, grid_width, grid_height)
     }
-    if e.key == "Space" {
+    if c == SPACE_KEY {
       while true {
         if move_down(game, shape, tet.color, grid_width, grid_height) {
           break
