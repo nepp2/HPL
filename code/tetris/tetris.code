@@ -41,7 +41,7 @@ struct game {
   tick_count: i64
   grid: grid
   tetronimos: list(tetronimo)
-  tetronimo_bag: list(tetronimo)
+  tetronimo_bag: list(i64)
   rng: rng_handle
   palette: palette
 }
@@ -83,6 +83,9 @@ fun next_tetronimo(game : game, grid_width : i64){
   game.tet_index = next_tet
   game.init_tetronimo_state(grid_width)
 }
+
+cbind sqrt : fun(f64) => f64
+cbind floor : fun(f64) => f64
 
 fun shape_size(shape){
   sqrt(shape.len() as f64) as i64
@@ -215,10 +218,10 @@ fun draw_tetronimo(
     for x in range(0, shape_size) {
       let v = shape[x + y * shape_size]
       if v == 1 {
-        view.fill_rect(
+        view.render.sdl_fill_rect(rect(
           size * (x + xpos) + xoffset,
           size * (y + ypos) + yoffset,
-          size, size)
+          size, size))
       }
     }    
   }
@@ -292,7 +295,7 @@ fun init_tetronimo_state(game, grid_width) {
   game.orientation = 0
   let tet = game.tetronimos[game.tet_index]
   let shape = tet.tiles[game.orientation]
-  let half_size = floor(shape_size(shape) / 2)
+  let half_size = floor(shape_size(shape) / 2.0)
   game.pos_x = grid_width/2 - half_size
 }
 
@@ -400,22 +403,13 @@ fun rotate(game, grid_width, grid_height) {
   }
 }
 
-fun update_tick(game) {
-  let tet = game.tetronimos[game.tet_index]
-  let shape = tet.tiles[game.orientation]
-
-  game.tick_count = game.tick_count + 1
-  if game.tick_count >= game.ticks_per_drop {
-    move_down(game, shape, tet.color, game.grid_width, game.grid_height)
-  }
-}
-
 static UP_KEY = 24
 static DOWN_KEY = 25
 static RIGHT_KEY = 26
 static LEFT_KEY = 27
+static SPACE_KEY = 32
 
-fun update_tetris(game, e) {
+fun update_sdl_event(game, event) {
   let tet = game.tetronimos[game.tet_index]
   let shape = tet.tiles[game.orientation]
   let c = game.config
@@ -447,27 +441,37 @@ fun update_tetris(game, e) {
       }
     }
   }
-  else if t == "tick" {
-    game.tick_count = game.tick_count + 1
-    if game.tick_count >= game.ticks_per_drop {
-      move_down(game, shape, tet.color, grid_width, grid_height)
-    }
+}
+
+fun update_tick(game) {
+  let tet = game.tetronimos[game.tet_index]
+  let shape = tet.tiles[game.orientation]
+
+  game.tick_count = game.tick_count + 1
+  if game.tick_count >= game.ticks_per_drop {
+    move_down(game, shape, tet.color, game.grid_width, game.grid_height)
   }
+}
+
+fun rect(x : i64, y : i64, w : i64, h : i64) {
+  sdl_rect.new(x as i32, y as i32, w as i32, h as i32)
 }
 
 fun render(view, game) {
   set_draw_color(view, 40, 40, 40, 255)
-  clear(view)
+  sdl_clear(view.render)
   set_draw_color(view, 120, 120, 120, 255)
   let c = game.config
-  let rx = c.rx
-  let ry = c.ry
-  let tile_size = c.tile_size
+  let rx : i64 = c.rx
+  let ry : i64 = c.ry
+  let tile_size : i64 = c.tile_size
   let grid_width = c.grid_width
   let grid_height = c.grid_height
-  draw_rect(view, rx, ry,
-    tile_size * grid_width,
-    tile_size * grid_height)
+  sdl_draw_rect(view.render,
+    &rect(
+      rx, ry,
+      tile_size * grid_width,
+      tile_size * grid_height))
 
   let tet = game.tetronimos[game.tet_index]
   let shape = tet.tiles[game.orientation]
@@ -476,13 +480,14 @@ fun render(view, game) {
     for x in range(0, grid_width) {
       let i = y * grid_width + x
       let color = game.grid[i]
-      if color != () {
-        set_color(view, color)
-        fill_rect(
-          view,
-          tile_size * x + rx,
-          tile_size * y + ry,
-          tile_size, tile_size)
+      if color.is_some {
+        set_color(view, color.val)
+        sdl_fill_rect(
+          view.render,
+          &rect(
+            tile_size * x + rx,
+            tile_size * y + ry,
+            tile_size, tile_size))
       }
     }
   }
@@ -501,7 +506,7 @@ fun render(view, game) {
 
   // draw ghost
   draw_tetronimo(
-    view, shape, [60, 60, 60, 255],
+    view, shape, color.new(60, 60, 60, 255),
     tile_size, game.pos_x, ghost_y,
     rx, ry)
 
@@ -511,5 +516,5 @@ fun render(view, game) {
     tile_size, game.pos_x, game.pos_y,
     rx, ry)
 
-  present(view)
+  sdl_present(view.render)
 }

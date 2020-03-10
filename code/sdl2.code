@@ -121,6 +121,10 @@ static sdl_fill_rect =
   load_symbol(sdl2, &"SDL_RenderFillRect") as
     fun(renderer : sdl_renderer_handle, rect : ptr(sdl_rect))
 
+static sdl_draw_rect =
+  load_symbol(sdl2, &"SDL_RenderDrawRect") as
+    fun(renderer : sdl_renderer_handle, rect : ptr(sdl_rect))
+
 static sdl_poll_event =
   load_symbol(sdl2, &"SDL_PollEvent") as
     fun(event : ptr(sdl_event)) => i32
