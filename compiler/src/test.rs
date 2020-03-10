@@ -243,8 +243,8 @@ rusty_fork_test! {
   fn test_load_module(){
     let code = format!(r#"
       let q = #(1 + 1)
-      let m = load_module(q)
-      let f = m.get_function("{}") as fun() => i64
+      let m = load_module(q).unwrap()
+      let f = m.get_function("{}").unwrap() as fun() => i64
       f()
     "#, TOP_LEVEL_FUNCTION_NAME);
     assert_result(code.as_str(), Val::I64(2));
@@ -257,8 +257,8 @@ rusty_fork_test! {
         let a = #5
         let b = #10
         let q = #($a - $b)
-        let m = load_module(q)
-        let f = m.get_function("{}") as fun() => i64
+        let m = load_module(q).unwrap()
+        let f = m.get_function("{}").unwrap() as fun() => i64
         f()
       }}
       test()
@@ -268,8 +268,8 @@ rusty_fork_test! {
         let a = #$v
         let b = #10
         let q = #($a - $b)
-        let m = load_module(q)
-        let f = m.get_function("{}") as fun() => i64
+        let m = load_module(q).unwrap()
+        let f = m.get_function("{}").unwrap() as fun() => i64
         f()
       }}
       test(3)

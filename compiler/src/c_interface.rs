@@ -140,15 +140,18 @@ pub extern "C" fn get_module(c : *mut Compiler, name : SStr, unit_id_out : &mut 
 }
 
 #[no_mangle]
-pub extern "C" fn load_module(c : *mut Compiler, maybe_name : SStr, imports : SSlice<UnitId>, e : &Expr) -> UnitId {
+pub extern "C" fn load_module(c : *mut Compiler, maybe_name : SStr, imports : SSlice<UnitId>, e : &Expr, out : &mut SOption<UnitId>) {
   let c = unsafe { &mut *c };
   let imports = imports.as_slice();
   let maybe_name = maybe_name.as_str();
   let name = if maybe_name == "" { None } else { Some(maybe_name) };
-  match c.load_expr_as_module(e, name, imports) {
-    Ok((unit_id, _val)) => unit_id,
-    Err(e) => panic!("failed to load module with error:\n{}", e),
-  }
+  *out = match c.load_expr_as_module(e, name, imports) {
+    Ok((unit_id, _val)) => Some(unit_id).into(),
+    Err(e) => {
+      println!("failed to load module with error:\n{}", e);
+      None.into()
+    }
+  };
 }
 
 // TODO: panics if there is more than one overload, because no argument types
@@ -168,8 +171,8 @@ pub extern "C" fn get_function(
   c : *mut Compiler,
   unit_id : UnitId,
   name : SStr,
+  out : &mut SOption<*mut u8>
 )
-    -> *mut u8
 {
   let c = unsafe { &mut *c };
   let types = c.code_store.types(unit_id);
@@ -180,13 +183,17 @@ pub extern "C" fn get_function(
   let lu = c.code_store.llvm_unit(unit_id);
   let address =
     i.next().and_then(|codegen_name|
-      unsafe { lu.ee.get_function_address(codegen_name) })
-    .expect("could not find function address");
-  if i.next().is_some() {
-    panic!("two matching overloads for '{}' in get_function_address", name);
+      unsafe { lu.ee.get_function_address(codegen_name) });
+  *out = if i.next().is_some() {
+    println!("two matching overloads for '{}' in get_function_address", name);
+    None.into()
   }
-  address as *mut u8
+  else {
+    address.map(|u| u as *mut u8).into()
+  };
 }
+
+//out : &mut SOption<UnitId>
 
 #[no_mangle]
 pub extern "C" fn template_quote(e : &Expr, args : SSlice<&Expr>) -> Box<Expr> {

@@ -2,10 +2,10 @@
 cbind compiler : ptr(u8)
 cbind template_quote : fun(e : ptr(expr), args : ptr(array(ptr(expr)))) => ptr(expr)
 cbind load_expression : fun(compiler : ptr(u8), name : ptr(string)) => ptr(expr)
-cbind load_module : fun(compiler : ptr(u8), name : ptr(string), imports : ptr(array(module_handle)), expr : ptr(expr)) => module_handle
+cbind load_module : fun(compiler : ptr(u8), name : ptr(string), imports : ptr(array(module_handle)), expr : ptr(expr), module_handle_out : ptr(option(module_handle)))
 cbind unload_module : fun(compiler : ptr(u8), module : module_handle)
 cbind get_module : fun(compiler : ptr(u8), name : ptr(string), module_handle_out : ptr(option(module_handle)))
-cbind get_function : fun(compiler : ptr(u8), module : module_handle, name : ptr(string)) => ptr(u8)
+cbind get_function : fun(compiler : ptr(u8), module : module_handle, name : ptr(string), function_ptr_out : ptr(option(ptr(u8))))
 cbind print_expr : fun(e : ptr(expr))
 cbind expr_to_string : fun(out : ptr(string), e : ptr(expr))
 
@@ -22,7 +22,9 @@ fun load_expression(name) {
 
 // Turn an expression into a compiled module with no imports
 fun load_module(compiler : ptr(u8), name : string, imports : array(module_handle), expr : ptr(expr)) {
-  compiler.load_module(&name, &imports, expr)
+  let module_handle = none()
+  compiler.load_module(&name, &imports, expr, &module_handle)
+  module_handle
 }
 
 // Unload a compiled module
@@ -60,7 +62,9 @@ fun get_module(name : string) {
 
 // Get a pointer to a function from a given module
 fun get_function(module : module_handle, name : string) {
-  compiler.get_function(module, &name)
+  let function_pointer = none()
+  compiler.get_function(module, &name, &function_pointer)
+  function_pointer
 }
   
 // Print an expression out as a string

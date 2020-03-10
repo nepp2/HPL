@@ -4,39 +4,64 @@
 
 let prelude = get_module("code/core/prelude.code").unwrap()
 let list = get_module("code/core/list.code").unwrap()
-let sdl2 = load_module("code/sdl2.code", [prelude])
-let tetris = load_module("code/tetris/tetris.code", [prelude, list, sdl2],)
-let update = tetris.get_function("update") as fun()
-let terminate = tetris.get_function("terminate") as fun()
+let sdl2 = load_module("code/sdl2.code", [prelude]).unwrap()
 
 let timer = start_timer()
 let watcher = create_watcher(100)
 
-watcher.watch_file("code/tetris.code")
+watcher.watch_file("code/tetris/tetris.code")
+
+fun dummy_update() {}
 
 while true {
-  // process any watcher events
-  let start_time = timer.millis_elapsed()
-  while true {
-    let path = watcher.poll_watcher_event()
-    if path.is_some {
-      let path = path.val
-      // handle event
-      print(path); println(" changed!")
-      terminate()
-      unload_module(tetris)
-      tetris = load_module("code/tetris/tetris.code", [prelude, list, sdl2])
-      update = tetris.get_function("update") as fun()
-      terminate = tetris.get_function("terminate") as fun()
+  // Load tetris
+  println("Loading tetris")
+  let tetris = load_module("code/tetris/tetris.code", [prelude, list, sdl2])
+  let update = dummy_update
+  if tetris.is_some {
+    let f = tetris.val.get_function("update")
+    if f.is_some {
+      update = f.val as fun()
     }
-    else { break }
   }
-  // call the update function
-  update()
-  // sleep for the rest of the frame
-  let end_time = timer.millis_elapsed()
-  let elapsed = (end_time - start_time) as i64
-  let sleep_time = max(16 - elapsed, 0)
-  thread_sleep(sleep_time as u64)
+  else {
+    println("Failed to load tetris :(")
+  }
+  while true {
+    // process any watcher events
+    let module_dirty = false
+    let start_time = timer.millis_elapsed()
+    while true {
+      let path = watcher.poll_watcher_event()
+      if path.is_some {
+        let path = path.val
+        // handle event
+        print(path); println(" changed!")
+        module_dirty = true
+      }
+      else { break }
+    }
+    // Break if the module needs to be reloaded
+    if module_dirty {
+      break
+    }
+    // call the update function
+    update()
+    // sleep for the rest of the frame
+    let end_time = timer.millis_elapsed()
+    let elapsed = (end_time - start_time) as i64
+    let sleep_time = max(16 - elapsed, 0)
+    thread_sleep(sleep_time as u64)
+  }
+  // Cleanup tetris
+  println("Cleaning up tetris")
+  if tetris.is_some {
+    let f = tetris.val.get_function("terminate")
+    if f.is_some {
+      let terminate = f.val as fun()
+      terminate()
+    }
+    unload_module(tetris.val)
+  }
 }
 
