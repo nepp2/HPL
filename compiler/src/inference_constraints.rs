@@ -34,6 +34,7 @@ pub struct Constraint {
 
 pub enum ConstraintContent {
   Equalivalent(TypeSymbol, TypeSymbol),
+  EqualivalentOrDiscard{ value_into: TypeSymbol, value_from: TypeSymbol },
   Array{ array : TypeSymbol, element : TypeSymbol },
   Convert{ val : TypeSymbol, into_type_ts : TypeSymbol },
   SizeOf{ node : NodeId, ts : TypeSymbol },
@@ -67,6 +68,7 @@ impl  fmt::Display for Constraint {
     use ConstraintContent::*;
     match &self.content {
       Equalivalent(_, _) => write!(f, "Equalivalent"),
+      EqualivalentOrDiscard{ .. } => write!(f, "EqualivalentOrDiscard"),
       Array{ .. } => write!(f, "Array"),
       Convert{ .. } => write!(f, "Convert"),
       FieldAccess { field, .. } => write!(f, "FieldAccess {}", field.name),
@@ -425,6 +427,7 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
             self.process_node(n, *child);
           }
           let c = self.process_node(n, ns[len-1]);
+          self.constraint(EqualivalentOrDiscard{ value_into: ts, value_from: c });
           self.equalivalent(ts, c);
         }
         else {
@@ -499,6 +502,7 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
         });
       }
       Content::TypeAlias { alias, type_aliased } => {
+        // TODO: not yet implemented
         self.assert(ts, PType::Void);
       }
       Content::TypeDefinition{ name, kind, fields, type_vars } => {

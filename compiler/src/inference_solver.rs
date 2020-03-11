@@ -15,7 +15,7 @@ use structure::{
   NodeId, TypeKind, Nodes,
 };
 use types::{
-  Type, TypeContent, TypeInfo, TypeDirectory, SymbolId,
+  Type, PType, TypeContent, TypeInfo, TypeDirectory, SymbolId,
   SignatureBuilder, incremental_unify, TypeMapping,
   UnifyResult, UnitId, AbstractType, SymbolInit, SymbolDefinition,
 };
@@ -190,6 +190,7 @@ impl <'a> Inference<'a> {
     use ConstraintContent::*;
     let e = match &c.content  {
       Equalivalent(_a, _b) => return,
+      EqualivalentOrDiscard{ value_into:_, value_from:_ } => return,
       // this error should always be accompanied by other unresolved constraints
       Function{ function:_, args:_, return_type:_ } => return,
       Constructor { def_ts:_ , fields:_ } => return,
@@ -302,18 +303,31 @@ impl <'a> Inference<'a> {
     }
   }
 
+  fn process_equivalence_constraint(&mut self, a : TypeSymbol, b : TypeSymbol) {
+    if let Some(t) = self.get_type(a) {
+      let t = t.clone();
+      self.update_type(b, &t);
+    }
+    if let Some(t) = self.get_type(b) {
+      let t = t.clone();
+      self.update_type(a, &t);
+    }
+  }
+
   fn process_constraint(&mut self, c : &'a Constraint) {
     use ConstraintContent::*;
     match &c.content  {
-      Equalivalent(a, b) => {
-        if let Some(t) = self.get_type(*a) {
-          let t = t.clone();
-          self.update_type(*b, &t);
+      Equalivalent(a, b) =>
+        self.process_equivalence_constraint(*a, *b),
+      EqualivalentOrDiscard{ value_into, value_from } => {
+        if let Some(t) = self.get_type(*value_into) {
+          // If `value_into` is void, the result of `value_from` can be discarded.
+          // The types don't have to match if the value is being discarded.
+          if t.content == TypeContent::Prim(PType::Void) {
+            return;
+          }
         }
-        if let Some(t) = self.get_type(*b) {
-          let t = t.clone();
-          self.update_type(*a, &t);
-        }
+        self.process_equivalence_constraint(*value_into, *value_from);
       }
       Function{ function, args, return_type } => {
         if let Some(t) = self.get_type(*function) {
@@ -640,6 +654,10 @@ impl <'a> ConstraintDependencyMap<'a> {
       Equalivalent(a, b) => {
         self.ts(a, c);
         self.ts(b, c);
+      }
+      EqualivalentOrDiscard{ value_into, value_from } => {
+        self.ts(value_into, c);
+        self.ts(value_from, c);
       }
       Array{ array, element } => {
         self.ts(array, c);
