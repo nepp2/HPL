@@ -8,7 +8,7 @@ struct color {
 }
 
 struct tetronimo {
-  tiles : list(list(i64))
+  tiles : array(list(i64))
   color : color
 }
 
@@ -87,13 +87,13 @@ fun next_tetronimo(game : game, grid_width : i64){
 cbind sqrt : fun(f64) => f64
 cbind floor : fun(f64) => f64
 
-fun shape_size(shape){
+fun shape_size(shape : list(i64)){
   sqrt(shape.len() as f64) as i64
 }
 
 fun rotate_90(shape){
   let size = shape_size(shape)
-  let s = []
+  let s = list()
   for i in range(0, size * size) {
     let y = i / size
     let x = i % size
@@ -160,7 +160,7 @@ fun init(view : view, width : i64, height : i64) {
   ]
 
   let tetronimos = {
-    let ts = []
+    let ts = list()
     for i in range(0, shape_color_pairs.len as i64) {
       let pair = shape_color_pairs[i]
       let c = pair.v1
@@ -184,7 +184,7 @@ fun init(view : view, width : i64, height : i64) {
     grid_width: 10,       
   )
 
-  let grid = []
+  let grid = list()
   for i in range(0, config.grid_width * config.grid_height) {
     grid.cells.add(none())
   }
@@ -199,7 +199,7 @@ fun init(view : view, width : i64, height : i64) {
       tick_count: 0,
       grid,
       tetronimos: tetronimos,
-      tetronimo_bag: [],
+      tetronimo_bag: list(),
       rng: seeded_rng(0),
       palette: p,
     )
@@ -449,7 +449,8 @@ fun update_tick(game) {
 
   game.tick_count = game.tick_count + 1
   if game.tick_count >= game.ticks_per_drop {
-    move_down(game, shape, tet.color, game.grid_width, game.grid_height)
+    let c = &game.config;
+    move_down(game, shape, tet.color, c.grid_width, c.grid_height)
   }
 }
 
