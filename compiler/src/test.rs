@@ -579,13 +579,15 @@ rusty_fork_test! {
   /// doesn't understand that evaluated values can be implicitly ignored in block scope.
   #[test]
   fn test_implicit_ignore_block_scope_bug() {
-    let code = "
-    if 20 > 10 {
-      3
-      ()
+    let cases = vec![
+      "if true { 3 }",
+      "for i in range(0, 10) { 3 }",
+      "while false { 3 }",
+      "if true { 3 } else {}",
+    ];
+    for code in cases {
+      assert_result(code, Val::Void);
     }
-    ";
-    assert_result(code, Val::Void);
   }
 
   /// Infers conflicting types because the last line is `return i` instead of `i`,

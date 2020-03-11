@@ -1,3 +1,38 @@
+# LOG - 11/03/2020
+
+Ran into an issue with type inference:
+
+```rust
+  if true { 3 }
+```
+
+This produces a type error, because the solver tries to unify `Void` with `I64`. This seems like reasonable behaviour since the expression is pointless, but the same thing happens if the expression is a function call:
+
+```rust
+  if true {
+    fire_missile() // returns bool that we don't care about, but has side-effect we _do_ care about.
+  }
+```
+
+In this case the `fire_missile` symbol won't even resolve, because the solver searches for a symbol with a void return type. The problem doesn't occur in the following case:
+
+```rust
+  if true {
+    fire_missile()
+    ()
+  }
+```
+
+This is because only the last expression in a block is constrained to match the type of the block. In this case, I think the type of the block should not be constrained to `Void`. However, having done this, it is still easy trigger an error:
+
+```rust
+  if true { 3 } else {}
+```
+
+This time the type checker doesn't know that the type of the first block isn't needed until the solving stage, and has already created a constraint saying that the two branches must be equivalent.
+
+I added a special branch constraint to handle this case for now. This may be the only edge case that can't just be solved by asserting no constraint.
+
 # LOG - 06/03/2020
 
 Minimum features required for tetris demo? They possibly already exist, though some minor tweaks would help:

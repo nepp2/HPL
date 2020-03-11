@@ -34,7 +34,7 @@ pub struct Constraint {
 
 pub enum ConstraintContent {
   Equalivalent(TypeSymbol, TypeSymbol),
-  EqualivalentOrDiscard{ value_into: TypeSymbol, value_from: TypeSymbol },
+  Branch { output : TypeSymbol, cases : Vec<TypeSymbol> },
   Array{ array : TypeSymbol, element : TypeSymbol },
   Convert{ val : TypeSymbol, into_type_ts : TypeSymbol },
   SizeOf{ node : NodeId, ts : TypeSymbol },
@@ -68,7 +68,7 @@ impl  fmt::Display for Constraint {
     use ConstraintContent::*;
     match &self.content {
       Equalivalent(_, _) => write!(f, "Equalivalent"),
-      EqualivalentOrDiscard{ .. } => write!(f, "EqualivalentOrDiscard"),
+      Branch{ .. } => write!(f, "Branch"),
       Array{ .. } => write!(f, "Array"),
       Convert{ .. } => write!(f, "Convert"),
       FieldAccess { field, .. } => write!(f, "FieldAccess {}", field.name),
@@ -408,17 +408,15 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
       Content::IfThen{ condition, then_branch } => {
         self.assert(ts, PType::Void);
         let cond = self.process_node(n, *condition);
-        let then_br = self.process_node(n, *then_branch);
         self.assert(cond, PType::Bool);
-        self.assert(then_br, PType::Void);
+        self.process_node(n, *then_branch);
       }
       Content::IfThenElse{ condition, then_branch, else_branch } => {
         let cond = self.process_node(n, *condition);
         let then_br = self.process_node(n, *then_branch);
         let else_br = self.process_node(n, *else_branch);
-        self.equalivalent(ts, then_br);
         self.assert(cond, PType::Bool);
-        self.equalivalent(then_br, else_br);
+        self.constraint(Branch { output: ts, cases: vec![then_br, else_br]});
       }
       Content::Block(ns) => {
         let len = ns.len();
@@ -427,7 +425,6 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
             self.process_node(n, *child);
           }
           let c = self.process_node(n, ns[len-1]);
-          self.constraint(EqualivalentOrDiscard{ value_into: ts, value_from: c });
           self.equalivalent(ts, c);
         }
         else {
@@ -576,9 +573,8 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
       Content::While{ condition, body } => {
         self.assert(ts, PType::Void);
         let cond = self.process_node(n, *condition);
-        let body = self.process_node(n, *body);
+        self.process_node(n, *body);
         self.assert(cond, PType::Bool);
-        self.assert(body, PType::Void);
       }
       Content::Convert{ from_value, into_type } => {
         let v = self.process_node(n, *from_value);

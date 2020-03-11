@@ -190,7 +190,7 @@ impl <'a> Inference<'a> {
     use ConstraintContent::*;
     let e = match &c.content  {
       Equalivalent(_a, _b) => return,
-      EqualivalentOrDiscard{ value_into:_, value_from:_ } => return,
+      Branch{ output:_, cases:_ } => return,
       // this error should always be accompanied by other unresolved constraints
       Function{ function:_, args:_, return_type:_ } => return,
       Constructor { def_ts:_ , fields:_ } => return,
@@ -303,7 +303,7 @@ impl <'a> Inference<'a> {
     }
   }
 
-  fn process_equivalence_constraint(&mut self, a : TypeSymbol, b : TypeSymbol) {
+  fn force_equivalence(&mut self, a : TypeSymbol, b : TypeSymbol) {
     if let Some(t) = self.get_type(a) {
       let t = t.clone();
       self.update_type(b, &t);
@@ -318,16 +318,39 @@ impl <'a> Inference<'a> {
     use ConstraintContent::*;
     match &c.content  {
       Equalivalent(a, b) =>
-        self.process_equivalence_constraint(*a, *b),
-      EqualivalentOrDiscard{ value_into, value_from } => {
-        if let Some(t) = self.get_type(*value_into) {
-          // If `value_into` is void, the result of `value_from` can be discarded.
-          // The types don't have to match if the value is being discarded.
+        self.force_equivalence(*a, *b),
+      Branch{ output, cases } => {
+        if let Some(t) = self.get_type(*output) {
           if t.content == TypeContent::Prim(PType::Void) {
             return;
           }
+          if t.is_concrete() {
+            for ts in cases {
+              self.force_equivalence(*output, *ts);
+            }
+            return;
+          }
         }
-        self.process_equivalence_constraint(*value_into, *value_from);
+        // Check if the branch types are all known, and none are void
+        for ts in cases {
+          if let Some(t) = self.get_type(*ts) {
+            if t.content == TypeContent::Prim(PType::Void) {
+              // One of the branches is void, so the output is void
+              let t = t.clone();
+              self.update_type(*output, &t);
+              return;
+            }
+            if t.is_concrete() {
+              continue;
+            }
+          }
+          // This type isn't known/concrete yet, so cannot assert the output type
+          return;
+        }
+        // The branch types are all known. Unify each one with the output.
+        for ts in cases {
+          self.force_equivalence(*output, *ts);
+        }
       }
       Function{ function, args, return_type } => {
         if let Some(t) = self.get_type(*function) {
@@ -655,9 +678,11 @@ impl <'a> ConstraintDependencyMap<'a> {
         self.ts(a, c);
         self.ts(b, c);
       }
-      EqualivalentOrDiscard{ value_into, value_from } => {
-        self.ts(value_into, c);
-        self.ts(value_from, c);
+      Branch{ output, cases } => {
+        self.ts(output, c);
+        for ts in cases {
+          self.ts(ts, c);
+        }
       }
       Array{ array, element } => {
         self.ts(array, c);
