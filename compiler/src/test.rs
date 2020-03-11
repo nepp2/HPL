@@ -574,6 +574,22 @@ rusty_fork_test! {
     assert_result(code, Val::Void);
   }
 
+  /// The inference engine incorrectly assumes that the return type of `foo(40)`
+  /// is Void, when really it's just ignored. This means that the type signatures
+  /// don't match, so `foo` can't be resolved.
+  #[test]
+  fn test_ignore_return_inference_bug() {
+    let code = "
+    fun foo(i : i64) {
+      i * 2
+    }
+    if foo(20) > 10 {
+      foo(40)
+    }
+    ";
+    assert_result(code, Val::Void);
+  }
+
   /// Infers conflicting types because the last line is `return i` instead of `i`,
   /// and the expression `return i` evaluates to void, which defines the type of the
   /// block expression. The type checker doesn't understand that this the return

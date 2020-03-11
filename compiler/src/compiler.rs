@@ -82,19 +82,31 @@ impl Compiler {
     Ok(())
   }
 
-  fn load_module_from_expr_internal(&mut self, unit_id : UnitId, mut imports : HashSet<UnitId>)
+  fn load_module_from_expr_internal(&mut self, unit_id : UnitId, imports : HashSet<UnitId>)
     -> Result<(), Error>
   {
-    imports.insert(self.intrinsics);
-    for &i in imports.iter() {
-      self.code_store.add_dependency(unit_id, i);
+    fn inner(c : &mut Compiler, unit_id : UnitId, mut imports : HashSet<UnitId>, new_units : &mut Vec<UnitId>) -> Result<(), Error> {
+      imports.insert(c.intrinsics);
+      for &i in imports.iter() {
+        c.code_store.add_dependency(unit_id, i);
+      }
+      c.structure(unit_id)?;
+      c.typecheck(unit_id, imports, new_units)?;
+      c.codegen(new_units.as_slice())?;
+      c.initialise(unit_id)?;
+      Ok(())
     }
-    self.structure(unit_id)?;
     let mut new_units = vec![unit_id];
-    self.typecheck(unit_id, imports, &mut new_units)?;
-    self.codegen(new_units.as_slice())?;
-    self.initialise(unit_id)?;
-    Ok(())
+    match inner(self, unit_id, imports, &mut new_units) {
+      Ok(()) => Ok(()),
+      Err(e) => {
+        // If something failed to compile, delete all the new units
+        for uid in new_units {
+          self.code_store.remove_unit(uid);
+        }
+        Err(e)
+      }
+    }
   }
 
   fn structure(&mut self, unit_id : UnitId) -> Result<(), Error> {
@@ -127,15 +139,21 @@ impl Compiler {
           self.code_store.add_dependency(psid, id.uid);
         }
         else {
-          // Create a new unit for the function instance and typecheck it
+          // Create a unique name for the new unit
           let poly_unit_name = {
             let name = self.code_store.symbol_def(poly_symbol_id).name.as_ref();
             self.cache.get(format!("@poly[{}][{}]", name, instance_type))
           };
+          // Create the new unit and register it
           let instance_unit_id = self.code_store.create_unit(self.gen.next(), Some(poly_unit_name));
+          new_units.push(instance_unit_id);
+          search_queue.push_back(instance_unit_id);
+          // The new poly instance unit inherits all dependencies
+          // from the unit that defined it, and it depends on that unit
           let mut instance_dependencies = self.code_store.dependencies(poly_symbol_id.uid).clone();
           instance_dependencies.insert(poly_symbol_id.uid);
           self.code_store.dependencies.insert(instance_unit_id, instance_dependencies);
+          let aaa = (); // TODO: Should it also depend on the unit that instantiated it? Maybe depends on the type parameters?
           let poly_def = self.code_store.symbol_def(poly_symbol_id);
           let (instance_types, instance_mapping, instance_symbol_id) =
             inference_solver::typecheck_polymorphic_function_instance(
@@ -147,10 +165,7 @@ impl Compiler {
           self.code_store.poly_parents.insert(instance_unit_id, poly_symbol_id);
           self.code_store.types.insert(instance_unit_id, instance_types);
           self.code_store.type_mappings.insert(instance_unit_id, instance_mapping);
-          // Register the new unit
-          new_units.push(instance_unit_id);
-          search_queue.push_back(instance_unit_id);
-          // Register the dependency
+          // The unit that instantiated it also depends on it
           self.code_store.add_dependency(psid, instance_unit_id);
         }
       }

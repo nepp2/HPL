@@ -161,7 +161,7 @@ fun init(view : view, width : i64, height : i64) {
 
   let tetronimos = {
     let ts = []
-    for i in range(0, shape_color_pairs.len() as i64) {
+    for i in range(0, shape_color_pairs.len as i64) {
       let pair = shape_color_pairs[i]
       let c = pair.v1
       let s1 = pair.v0
@@ -218,7 +218,7 @@ fun draw_tetronimo(
     for x in range(0, shape_size) {
       let v = shape[x + y * shape_size]
       if v == 1 {
-        view.render.sdl_fill_rect(rect(
+        view.render.sdl_fill_rect(&rect(
           size * (x + xpos) + xoffset,
           size * (y + ypos) + yoffset,
           size, size))
@@ -295,7 +295,7 @@ fun init_tetronimo_state(game, grid_width) {
   game.orientation = 0
   let tet = game.tetronimos[game.tet_index]
   let shape = tet.tiles[game.orientation]
-  let half_size = floor(shape_size(shape) / 2.0)
+  let half_size = shape_size(shape) / 2
   game.pos_x = grid_width/2 - half_size
 }
 
