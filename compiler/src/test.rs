@@ -574,17 +574,15 @@ rusty_fork_test! {
     assert_result(code, Val::Void);
   }
 
-  /// The inference engine incorrectly assumes that the return type of `foo(40)`
-  /// is Void, when really it's just ignored. This means that the type signatures
-  /// don't match, so `foo` can't be resolved.
+  /// The inference engine expects the block to return void, and complains when the
+  /// user tries to return something else. This is because the type checker currently
+  /// doesn't understand that evaluated values can be implicitly ignored in block scope.
   #[test]
-  fn test_ignore_return_inference_bug() {
+  fn test_implicit_ignore_block_scope_bug() {
     let code = "
-    fun foo(i : i64) {
-      i * 2
-    }
-    if foo(20) > 10 {
-      foo(40)
+    if 20 > 10 {
+      3
+      ()
     }
     ";
     assert_result(code, Val::Void);
