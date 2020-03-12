@@ -71,7 +71,7 @@ fn main(){
     }
     _ => {
       //load_and_run("code/scratchpad.code")
-      watcher::watch("code/loader.code");
+      watcher::watch("code/tetris/loader.code");
     },
   }
 }

@@ -184,7 +184,7 @@ fun init(view : view, width : i64, height : i64) {
     grid_width: 10,       
   )
 
-  let grid = list()
+  let grid = grid.new(list())
   for i in range(0, config.grid_width * config.grid_height) {
     grid.cells.add(none())
   }

@@ -1,3 +1,19 @@
+# LOG - 12/03/2020
+
+The array type is heap allocated and there is currently no way to get its length.
+
+A literal array has a fixed length, known at compile time, so this could be part of its type:
+
+```rust
+  let a : array(i64, 3) = [1, 2, 3]
+```
+
+Or, since the number isn't really a type parameter, it could use a different syntax:
+
+```rust
+  let a : i64[3] = [1, 2, 3]
+```
+
 # LOG - 11/03/2020
 
 Ran into an issue with type inference:
