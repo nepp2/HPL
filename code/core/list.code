@@ -13,6 +13,14 @@ fun list() => list(T) with T {
   list.new(alloc(inner))
 }
 
+fun list(a : array(T)) => list(T) with T {
+  let l = list()
+  for i in range(0, a.len()) {
+    l.add(a[i])
+  }
+  l
+}
+
 fun add(list : list(T), item : T) with T {
   let list = list.p;
   let len = list.len

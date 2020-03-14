@@ -164,7 +164,7 @@ fun init(view : view, width : i64, height : i64) {
     for i in range(0, shape_color_pairs.len() as i64) {
       let pair = shape_color_pairs[i]
       let c = pair.v1
-      let s1 = pair.v0
+      let s1 = pair.v0.list()
       let s2 = s1.rotate_90()
       let s3 = s2.rotate_90()
       let s4 = s3.rotate_90()
