@@ -2,17 +2,7 @@
 
 The array type is heap allocated and there is currently no way to get its length.
 
-A literal array has a fixed length, known at compile time, so this could be part of its type:
-
-```rust
-  let a : array(i64, 3) = [1, 2, 3]
-```
-
-Or, since the number isn't really a type parameter, it could use a different syntax:
-
-```rust
-  let a : i64[3] = [1, 2, 3]
-```
+The first step is to make its length available, either through an array struct defined in the prelude (in the style of `string`) or with an intrinsic `len(array)` function.
 
 # LOG - 11/03/2020
 

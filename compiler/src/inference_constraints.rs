@@ -35,7 +35,7 @@ pub struct Constraint {
 pub enum ConstraintContent {
   Equalivalent(TypeSymbol, TypeSymbol),
   Branch { output : TypeSymbol, cases : Vec<TypeSymbol> },
-  Array{ array : TypeSymbol, element : TypeSymbol },
+  TypeParameter{ parent : TypeSymbol, parameter : TypeSymbol },
   Convert{ val : TypeSymbol, into_type_ts : TypeSymbol },
   SizeOf{ node : NodeId, ts : TypeSymbol },
   FieldAccess {
@@ -69,7 +69,7 @@ impl  fmt::Display for Constraint {
     match &self.content {
       Equalivalent(_, _) => write!(f, "Equalivalent"),
       Branch{ .. } => write!(f, "Branch"),
-      Array{ .. } => write!(f, "Array"),
+      TypeParameter{ .. } => write!(f, "TypeParameter"),
       Convert{ .. } => write!(f, "Convert"),
       FieldAccess { field, .. } => write!(f, "FieldAccess {}", field.name),
       Constructor { .. } => write!(f, "Constructor"),
@@ -559,7 +559,10 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
           let el = self.process_node(n, *element);
           self.equalivalent(el, element_ts);
         }
-        self.constraint(Array{ array: ts, element: element_ts });
+        let mut array_type = Type::unresolved_def(self.cache.get("array"));
+        array_type.children.push(Type::any());
+        self.assert_type(ts, array_type);
+        self.constraint(TypeParameter{ parent: ts, parameter: element_ts });
       }
       Content::FunctionCall{ function, args } => {
         let function = self.process_node(n, *function);
@@ -684,12 +687,6 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
               if let [t] = &exprs[1..] {
                 let t = expr_to_type_internal(gc, t)?;
                 return Ok(t.ptr_to())
-              }
-            }
-            "array" => {
-              if let [t] = &exprs[1..] {
-                let t = expr_to_type_internal(gc, t)?;
-                return Ok(t.array_of())
               }
             }
             name => {

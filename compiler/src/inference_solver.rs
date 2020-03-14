@@ -217,8 +217,11 @@ impl <'a> Inference<'a> {
         error_raw(field.loc,
           format!("field access '{}' not resolved", field.name))
       }
-      Array{ array, element:_ } => {
-        error_raw(self.loc(*array), "array literal not resolved")
+      TypeParameter{ parent, parameter } => {
+        let any = Type::any();
+        let a = self.resolved.get(parent).unwrap_or(&any);
+        let b = self.resolved.get(parameter).unwrap_or(&any);
+        error_raw(self.loc(*parent), format!("type parameter not resolved - {}, {}", a, b))
       }
       SizeOf { node:_, ts } => {
         error_raw(self.loc(*ts), "sizeof type not resolved")
@@ -504,15 +507,17 @@ impl <'a> Inference<'a> {
           }
         }
       }
-      Array{ array, element } => {
-        if let Some(element_type) = self.get_type(*element) {
-          let et = element_type.clone();
-          self.update_type(*array, &et.array_of());
+      TypeParameter{ parent, parameter } => {
+        if let Some(parameter_type) = self.get_type(*parameter) {
+          let mut new_parent_type = self.get_type(*parent).cloned().unwrap_or(Type::any());
+          new_parent_type.children.clear();
+          new_parent_type.children.push(parameter_type.clone());
+          self.update_type(*parent, &new_parent_type);
         }
-        else if let Some(array_type) = self.get_type(*array) {
-          if let Some(element_type) = array_type.array() {
-            let et = element_type.clone();
-            self.update_type(*element, &et);
+        if let Some(parent_type) = self.get_type(*parent) {
+          if let [param] = parent_type.children() {
+            let new_param = param.clone();
+            self.update_type(*parameter, &new_param);
           }
         }
       }
@@ -684,9 +689,9 @@ impl <'a> ConstraintDependencyMap<'a> {
           self.ts(ts, c);
         }
       }
-      Array{ array, element } => {
-        self.ts(array, c);
-        self.ts(element, c);
+      TypeParameter{ parent, parameter } => {
+        self.ts(parent, c);
+        self.ts(parameter, c);
       },
       Convert{ val, into_type_ts } => {
         self.ts(val, c);

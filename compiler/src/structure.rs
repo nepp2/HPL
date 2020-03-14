@@ -21,6 +21,10 @@ pub struct LabelId(Uid);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ReferenceId(Uid);
 
+impl From<Uid> for ReferenceId {
+  fn from(uid : Uid) -> Self { ReferenceId(uid) }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TypeKind {
   Struct, Union

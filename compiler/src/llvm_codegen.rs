@@ -505,10 +505,6 @@ impl <'l> Gen<'l> {
           panic!("type `{}` not found", name);
         }
       }
-      TypeContent::Array => {
-        let t = t.array().unwrap();
-        Some(self.bounded_array_type(info, t).into())
-      }
       TypeContent::Ptr => {
         let t = t.ptr().unwrap();
         let bt = self.to_basic_type(info, t);
@@ -517,20 +513,6 @@ impl <'l> Gen<'l> {
       TypeContent::Polytype(_) => panic!("polytype encountered in codegen"),
       TypeContent::Abstract(_) => panic!("abstract type encountered in codegen"),
     }
-  }
-
-  /// Creates an array struct roughly like this:
-  /// 
-  /// struct array(T) {
-  ///   ptr : ptr(T)
-  ///   length : u64
-  /// }
-  /// 
-  fn bounded_array_type(&mut self, info : &CompileInfo, t : &Type) -> StructType {
-    let bt = self.to_basic_type(info, t);
-    let t = self.pointer_to_type(bt).into();
-    let i64_type = self.context.i64_type();
-    self.context.struct_type(&[t, i64_type.into()], false)
   }
 
   fn to_function_type(&mut self, info : &CompileInfo, arg_types : &[Type], return_type : &Type) -> FunctionType {
@@ -761,18 +743,33 @@ fn codegen_index(
   gf : &mut GenFunction, container : TypedNode, index : TypedNode)
     -> Result<MaybeVal, Error>
 {
-  let ptr = match (&container.type_tag().content, index.type_tag().int()) {
-    (TypeContent::Ptr, true) => {
-      gf.codegen_pointer(container)?
+  fn get_data_ptr(gf : &mut GenFunction, container : TypedNode, index : TypedNode) -> Result<PointerValue, Error> {
+    if index.type_tag().int() {
+      match &container.type_tag().content {
+        TypeContent::Ptr => {
+          return gf.codegen_pointer(container);
+        }
+        TypeContent::Def(name, _)=> {
+          if name.as_ref() == "array" {
+            // TODO: add bounds checks?
+            let array = gf.codegen_struct(container)?;
+            let ptr = gf.builder.build_extract_value(array, 0, "array_pointer")
+              .unwrap().into_pointer_value();
+            let corrected_type = {
+              let element_type = &container.type_tag().children[0];
+              let element_type = gf.gen.to_basic_type(container.info, element_type);
+              gf.gen.pointer_to_type(element_type)
+            };
+            let ptr = gf.builder.build_pointer_cast(ptr, corrected_type, "field cast");
+            return Ok(ptr);
+          }
+        }
+        _ => ()
+      }
     }
-    (TypeContent::Array, true) => {
-      // TODO: add bounds checks
-      let array = gf.codegen_struct(container)?;
-      gf.builder.build_extract_value(array, 0, "array_pointer")
-        .unwrap().into_pointer_value()
-    }
-    _ => panic!("unsupported index intrinsic"),
-  };
+    panic!("unsupported index intrinsic")
+  }
+  let ptr = get_data_ptr(gf, container, index)?;
   let index = gf.codegen_int(index)?;
   let element_ptr = unsafe { gf.builder.build_gep(ptr, &[index], "element_ptr") };
   return Ok(pointer(element_ptr).into());
@@ -1519,9 +1516,11 @@ impl <'l, 'a> GenFunction<'l, 'a> {
             match v.storage {
               Storage::Register => {
                 // if the struct is in a register, dereference the field into a register
+                println!("DOES THIS EVER HAPPEN?????");
                 let reg_val =
                   self.builder.build_extract_value(
                     *v.value.as_struct_value(), field_index as u32, &field.name).unwrap();
+                let aaa = (); // TODO: Doesn't a cast need to happen here? I think it does.
                 reg(reg_val)
               }
               Storage::Pointer => {
@@ -1533,6 +1532,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
                 let t = self.gen.to_basic_type(info, node.type_tag());
                 // this cast is necessary because all pointer fields are tagged as void pointers
                 // in the IR, due to an issue with generating cyclic references
+                let aaa = (); // TODO: is this correct? it looks wrong. I think this is accidentally correct.
                 let field_ptr =
                   self.builder.build_pointer_cast(
                     field_ptr_untyped, self.gen.pointer_to_type(t), "field_cast");
@@ -1559,8 +1559,17 @@ impl <'l, 'a> GenFunction<'l, 'a> {
           }
         }
       }
-      Content::ArrayLiteral(elements) => {
-        if let Some(inner_type) = node.type_tag().array() {
+      Content::ArrayLiteral(elements) => {        
+        // Assumes an array struct roughly like this:
+        // 
+        // struct array(T) {
+        //   ptr : ptr(T)
+        //   length : u64
+        // }
+        // 
+        // This struct should be defined in the prelude (turn it into an intrinsic?)
+        //
+        if let [inner_type] = node.type_tag().children() {
           let element_type = self.gen.to_basic_type(info, inner_type).unwrap();
           let length = self.gen.context.i32_type().const_int(elements.len() as u64, false).into();
           let array_ptr = self.builder.build_array_malloc(element_type, length, "array_malloc");
@@ -1570,11 +1579,18 @@ impl <'l, 'a> GenFunction<'l, 'a> {
             let element_ptr = unsafe { self.builder.build_gep(array_ptr, &[index], "element_ptr") };
             self.builder.build_store(element_ptr, v);
           }
-          let array_type = self.gen.bounded_array_type(info, inner_type);
-          let mut sv = array_type.get_undef();
-          sv = self.builder.build_insert_value(sv, array_ptr, 0, "array_ptr").unwrap().into_struct_value();
+          let array_type = self.gen.to_basic_type(info, node.type_tag()).unwrap();
+          let mut sv = array_type.as_struct_type().get_undef();
+          let u8_ptr_type = self.gen.pointer_to_type(Some(self.gen.context.i8_type().into()));
+          let array_ptr_as_u8 =
+            self.builder.build_pointer_cast(array_ptr, u8_ptr_type, "field_cast");;
+          sv =
+            self.builder.build_insert_value(sv, array_ptr_as_u8, 0, "array_ptr")
+            .unwrap().into_struct_value();
           let length = self.gen.context.i64_type().const_int(elements.len() as u64, false);
-          sv = self.builder.build_insert_value(sv, length, 1, "array_length").unwrap().into_struct_value();
+          sv =
+            self.builder.build_insert_value(sv, length, 1, "array_length")
+            .unwrap().into_struct_value();
           reg(sv.into())
         }
         else{

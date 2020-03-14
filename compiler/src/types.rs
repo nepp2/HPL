@@ -99,7 +99,6 @@ pub enum TypeContent {
   Prim(PType),
   Fun,
   Def(RefStr, UnitId),
-  Array,
   Ptr,
   Abstract(AbstractType),
   Polytype(RefStr),
@@ -267,18 +266,18 @@ impl Type {
     None
   }
 
-  pub fn array(&self) -> Option<&Type> {
-    if self.content == Array {
-      if let [t] = self.children.as_slice() {
-        return Some(t);
-      }
-    }
-    None
-  }
+  // pub fn array(&self) -> Option<&Type> {
+  //   if self.content == Array {
+  //     if let [t] = self.children.as_slice() {
+  //       return Some(t);
+  //     }
+  //   }
+  //   None
+  // }
 
-  pub fn array_of(self) -> Self {
-    Type { content: Array, children: vec![self]}
-  }
+  // pub fn array_of(self) -> Self {
+  //   Type { content: Array, children: vec![self]}
+  // }
 
   pub fn children(&self) -> &[Type] {
     self.children.as_slice()
@@ -442,7 +441,6 @@ impl  fmt::Display for Type {
         }
         Ok(())
       },
-      Array => write!(f, "array({})", self.array().unwrap()),
       Ptr => write!(f, "ptr({})", self.ptr().unwrap()),
       Prim(t) => write!(f, "{:?}", t),
       Polytype(id) => write!(f, "@Polytype({})", id),
