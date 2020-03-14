@@ -149,7 +149,7 @@ fun init(view : view, width : i64, height : i64) {
     magenta: color.new(255, 80, 255, 255),
   )
 
-  let shape_color_pairs = [
+  let shape_color_pairs : array(tup2(array(i64), color)) = [
     tup(shape_l1, p.orange),
     tup(shape_l2, p.blue),
     tup(shape_bar, p.sky_blue),
@@ -161,7 +161,7 @@ fun init(view : view, width : i64, height : i64) {
 
   let tetronimos = {
     let ts = list()
-    for i in range(0, shape_color_pairs.len as i64) {
+    for i in range(0, shape_color_pairs.len() as i64) {
       let pair = shape_color_pairs[i]
       let c = pair.v1
       let s1 = pair.v0
@@ -289,7 +289,7 @@ fun check_contact(grid, grid_width, grid_height, shape, pos_x, pos_y){
 //   }
 // }
 
-fun init_tetronimo_state(game, grid_width) {
+fun init_tetronimo_state(game : game, grid_width : i64) {
   game.pos_y = 0
   game.tick_count = 0
   game.orientation = 0
@@ -299,7 +299,7 @@ fun init_tetronimo_state(game, grid_width) {
   game.pos_x = grid_width/2 - half_size
 }
 
-fun blit(game, shape, color, grid_width) {
+fun blit(game : game, shape, color : color, grid_width) {
   let shape_size = shape_size(shape)
   for y in range(0, shape_size) {
     for x in range(0, shape_size) {
@@ -307,21 +307,13 @@ fun blit(game, shape, color, grid_width) {
         let xpos = x + game.pos_x
         let ypos = y + game.pos_y
         let i = xpos + ypos * grid_width
-        game.grid[i] = color
+        game.grid.cells[i] = some(color)
       }
     }
   }
 }
 
-fun min(a, b) {
-  if a < b { a} else { b }
-}
-
-fun max(a, b) {
-  if a > b { a} else { b }
-}
-
-fun check_line(grid, y, grid_width) {
+fun check_line(grid : grid, y, grid_width) {
   let i = y * grid_width
   for i in range(i, i + grid_width) {
     if !grid.cells[i].is_some {
@@ -331,21 +323,21 @@ fun check_line(grid, y, grid_width) {
   true
 }
 
-fun erase_lines(grid, y, shape_size, grid_width, grid_height) {
+fun erase_lines(grid : grid, y, shape_size, grid_width, grid_height) {
   for y in range(y, min(y + shape_size, grid_height)) {
     if check_line(grid, y, grid_width) {
       let end = (y + 1) * grid_width
       for i in range(1, (end + 1) - grid_width) {
-        grid[end - i] = grid[(end - i) - grid_width]
+        grid.cells[end - i] = grid.cells[(end - i) - grid_width]
       }
       for i in range(0, grid_width) {
-        grid[i] = ()
+        grid.cells[i] = none()
       }
     }
   }
 }
 
-fun move_horizontal(game, grid_width, grid_height, shape, offset) {
+fun move_horizontal(game : game, grid_width, grid_height, shape, offset) {
   let new_x = game.pos_x + offset
   let c = check_contact(
     game.grid, grid_width, grid_height,
@@ -379,7 +371,7 @@ fun move_down(game, shape, color, grid_width, grid_height) {
   }
 }
 
-fun rotate(game, grid_width, grid_height) {
+fun rotate(game : game, grid_width, grid_height) {
   game.orientation = (game.orientation + 1) % 4
   let tet = game.tetronimos[game.tet_index]
   let shape = tet.tiles[game.orientation]
@@ -403,13 +395,13 @@ fun rotate(game, grid_width, grid_height) {
   }
 }
 
-static UP_KEY = 24
-static DOWN_KEY = 25
-static RIGHT_KEY = 26
-static LEFT_KEY = 27
-static SPACE_KEY = 32
+static UP_KEY = 24 as u32
+static DOWN_KEY = 25 as u32
+static RIGHT_KEY = 26 as u32
+static LEFT_KEY = 27 as u32
+static SPACE_KEY = 32 as u32
 
-fun update_sdl_event(game, event) {
+fun update_sdl_event(game : game, event : sdl_event) {
   let tet = game.tetronimos[game.tet_index]
   let shape = tet.tiles[game.orientation]
   let c = game.config
@@ -458,7 +450,7 @@ fun rect(x : i64, y : i64, w : i64, h : i64) {
   sdl_rect.new(x as i32, y as i32, w as i32, h as i32)
 }
 
-fun render(view, game) {
+fun render(view, game : game) {
   set_draw_color(view, 40, 40, 40, 255)
   sdl_clear(view.render)
   set_draw_color(view, 120, 120, 120, 255)
@@ -480,7 +472,7 @@ fun render(view, game) {
   for y in range(0, grid_height) {
     for x in range(0, grid_width) {
       let i = y * grid_width + x
-      let color = game.grid[i]
+      let color = game.grid.cells[i]
       if color.is_some {
         set_color(view, color.val)
         sdl_fill_rect(
