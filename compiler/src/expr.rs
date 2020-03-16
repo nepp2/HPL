@@ -1,40 +1,8 @@
 
 use std::fmt;
-use std::rc::Rc;
-use std::cell::RefCell;
-use std::collections::HashSet;
 
 use crate::error::{Error, TextLocation, error_raw };
 use crate::c_interface::SStr;
-
-/// An immutable, reference counted string
-pub type RefStr = Rc<str>;
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct Uid(u64);
-
-impl  fmt::Display for Uid {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let Uid(id) = *self;
-    write!(f, "{:X}", id)
-  }
-}
-
-pub struct UIDGenerator {
-  gen : u64,
-}
-
-impl UIDGenerator {
-  pub fn new() -> Self {
-    UIDGenerator { gen : 0 }
-  }
-
-  pub fn next(&mut self) -> Uid {
-    let uid = self.gen;
-    self.gen += 1;
-    Uid(uid)
-  }
-}
 
 #[repr(u64)]
 #[derive(Debug)]
@@ -248,32 +216,5 @@ impl fmt::Display for Expr {
       }
     }
     display_inner(&self, f, 0)
-  }
-}
-
-/// This cache uses internal mutability to cache strings. It should be safe,
-/// because the strings themselves are immutable.
-/// It's not threadsafe, but I think RefCell should prevent it from being
-/// passed to multiple threads.
-#[derive(Default, Clone)]
-pub struct StringCache {
-  symbols : RefCell<HashSet<RefStr>>,
-}
-
-impl StringCache {
-  pub fn new() -> StringCache {
-    Default::default()
-  }
-
-  pub fn get<T : AsRef<str> + Into<RefStr>>(&self, s : T) -> RefStr {
-    let mut symbols = self.symbols.borrow_mut();
-    if let Some(symbol) = symbols.get(s.as_ref()) {
-      symbol.clone()
-    }
-    else{
-      let string : RefStr = s.into();
-      symbols.insert(string.clone());
-      string
-    }
   }
 }

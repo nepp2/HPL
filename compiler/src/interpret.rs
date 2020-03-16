@@ -1,7 +1,7 @@
 
+use crate::common::*;
 use crate::error::Error;
 use crate::compiler::{Val, Compiler};
-use crate::types::UnitId;
 
 use std::fs::File;
 use std::io::Read;
@@ -23,7 +23,7 @@ pub fn interpreter() -> Interpreter {
   
   // loading core modules
   if let Err(e) = i.load_core_modules() {
-    println!("error loading code modules, {}", e);
+    println!("Failed to load core modules.");
   }
   
   return i;

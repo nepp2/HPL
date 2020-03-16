@@ -1,15 +1,15 @@
 
 // TODO: Carlos says I should have more comments than the occasional TODO
 
+use crate::common::*;
 use crate::error::{Error, error, error_raw, TextLocation};
-use crate::expr::RefStr;
 
 use crate::structure::{
   Node, NodeId, Nodes, Content, PrimitiveVal, TypeKind, ReferenceId,
   LabelId, NodeValueType, VarScope, Reference };
 use crate::types::{
   Type, PType, TypeDefinition, SymbolInit, SymbolId, TypeMapping,
-  SymbolDefinition, TypeInfo, TypeContent, UnitId, FunctionSignature };
+  SymbolDefinition, TypeInfo, TypeContent, FunctionSignature };
 use crate::code_store::CodeStore;
 use crate::llvm_compile::SymbolLocation;
 

@@ -4,6 +4,7 @@
 #[cfg(test)]
 #[macro_use] extern crate rusty_fork;
 
+mod common;
 mod error;
 mod lexer;
 mod parser;
@@ -38,7 +39,7 @@ use crate::error::Error;
 pub fn print_result(r : Result<Val, Error>) -> String {
   match r {
     Ok(v) => format!("{:?}", v),
-    Err(e) => format!( "{}", e),
+    Err(e) => format!( "{}", e.display()),
   }
 }
 

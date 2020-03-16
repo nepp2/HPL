@@ -1,5 +1,6 @@
 
 use std::fmt;
+use crate::common::*;
 
 /// Returns an error that isn't wrapped in Result::Err
 pub fn error_raw<L : Into<TextLocation>, S : Into<ErrorContent>>(loc : L, message : S) -> Error {
@@ -20,10 +21,7 @@ pub struct TextMarker {
 
 impl TextMarker {
   fn order(a : Self, b : Self) -> (Self, Self) {
-    if a.line < b.line { (a, b) }
-    else if b.line < a.line { (b, a) }
-    else if a.col < b.col { (a, b) }
-    else { (b, a) }
+    if b < a { (b, a) } else { (a, b) }
   }
 }
 
@@ -40,16 +38,18 @@ impl <'l> Into<TextLocation> for &'l TextLocation {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct TextLocation {
+  pub source : SourceId,
   pub start : TextMarker,
   pub end : TextMarker,
 }
 
 impl TextLocation {
   
-  pub fn new<T : Into<TextMarker>>(start : T, end : T) -> TextLocation {
+  pub fn new<T : Into<TextMarker>>(source : SourceId, start : T, end : T) -> TextLocation {
     TextLocation {
+      source,
       start: start.into(),
       end: end.into(),
     }
@@ -57,13 +57,16 @@ impl TextLocation {
   
   pub fn zero() -> TextLocation {
     let z = TextMarker{ line: 0, col: 0 };
-    TextLocation::new(z, z)
+    TextLocation { source: None, start: z, end: z }
   }
 
   pub fn merge(self, x : Self) -> Self {
+    if self.source != x.source {
+      panic!("tried to merge text locations from different sources")
+    }
     let (start, _) = TextMarker::order(self.start, x.start);
     let (_, end) = TextMarker::order(self.end, x.end);
-    TextLocation { start, end }
+    TextLocation { source: self.source, start, end }
   }
 
   /// TODO: move this somewhere else?
@@ -106,6 +109,34 @@ pub struct Error {
   pub location : TextLocation,
 }
 
+impl Error {
+  pub fn display(&self) -> UnsourcedError {
+    UnsourcedError{ e: self }
+  }
+}
+
+pub struct UnsourcedError<'l> {
+  e : &'l Error,
+}
+
+impl <'l> fmt::Display for UnsourcedError<'l> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "{}", self.e.location)?;
+    match &self.e.message {
+      ErrorContent::Message(m) => {
+        write!(f, ", message: {}", m)
+      },
+      ErrorContent::InnerErrors(m, es) => {
+        writeln!(f, ", message: {}", m)?;
+        writeln!(f, "  inner errors:")?;
+        for e in es.iter() {
+          writeln!(f, "    {}", e.display())?
+        }
+        Ok(())
+      },
+    }
+  }
+}
 
 impl fmt::Display for TextMarker {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -124,23 +155,3 @@ impl fmt::Display for TextLocation {
     }
   }
 }
-
-impl fmt::Display for Error {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "{}", self.location)?;
-    match &self.message {
-      ErrorContent::Message(m) => {
-        write!(f, ", message: {}", m)
-      },
-      ErrorContent::InnerErrors(m, es) => {
-        writeln!(f, ", message: {}", m)?;
-        writeln!(f, "  inner errors:")?;
-        for e in es.iter() {
-          writeln!(f, "    {}", e)?
-        }
-        Ok(())
-      },
-    }
-  }
-}
-

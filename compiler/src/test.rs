@@ -8,7 +8,7 @@ use crate::c_interface::SStr;
 fn result_string(r : Result<Val, Error>) -> String {
   match r {
     Ok(v) => format!("{:?}", v),
-    Err(e) => format!("{}", e),
+    Err(e) => format!("{}", e.display()),
   }
 }
 
@@ -30,7 +30,7 @@ fn assert_error(code : &str, error_substring : &str){
   let mut i = interpreter();
   let result = i.eval(code);
   if let Err(e) = &result {
-    let s = format!("{}", e);
+    let s = format!("{}", e.display());
     if s.contains(error_substring) {
       return; // success
     }
@@ -352,9 +352,9 @@ rusty_fork_test! {
     let code = "
       let a = [0, 1, 2, 3, 6]
       a[1] = 50
-      a[1] + a[4]
+      a[1] + a[4] + (a.length as i64)
     ";
-    assert_result(code, Val::I64(56));
+    assert_result(code, Val::I64(61));
   }
 
   #[test]

@@ -1,9 +1,9 @@
 
+use crate::common::*;
 use crate::error::TextLocation;
-use crate::expr::{StringCache, UIDGenerator, RefStr};
 use crate::types::{
   Type, PType, TypeInfo, TypeContent,
-  UnitId, SignatureBuilder, SymbolDefinition,
+  SignatureBuilder, SymbolDefinition,
   SymbolInit, TypeDefinition,
 };
 use crate::structure::{TypeKind, Reference};

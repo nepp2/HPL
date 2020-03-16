@@ -1,9 +1,10 @@
 
 use std::fmt;
 
-use crate::{compiler, error, expr, structure, types};
+use crate::{common, compiler, error, expr, structure, types};
+use common::*;
 use error::{Error, error, error_raw, TextLocation};
-use expr::{Expr, ExprContent, UIDGenerator, Uid, RefStr, StringCache};
+use expr::{Expr, ExprContent};
 use structure::{
   Node, NodeId, ReferenceId, Content, PrimitiveVal, LabelId,
   VarScope, GlobalType, Reference, Nodes,

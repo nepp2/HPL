@@ -1,5 +1,6 @@
+use crate::common::*;
 use crate::lexer::{Token, TokenType};
-use crate::expr::{StringCache, Expr, ExprContent, RefStr};
+use crate::expr::{Expr, ExprContent};
 use crate::error::{Error, TextLocation, TextMarker, error};
 use std::collections::{HashSet, HashMap};
 use std::str::FromStr;
@@ -88,6 +89,7 @@ fn parse_config() -> ParseConfig {
 
 // TODO: this might be better implemented with a ring buffer (or just a backwards vec)
 struct ParseState<'l> {
+  source : SourceId,
   tokens : Vec<Token>,
   pos : usize,
   config : &'l ParseConfig,
@@ -114,8 +116,10 @@ fn contains<'l>(m : &'l HashSet<RefStr>, k : Option<&RefStr>) -> bool {
 
 impl <'l> ParseState<'l> {
 
-  fn new(tokens : Vec<Token>, config : &'l ParseConfig, cache : &'l StringCache) -> ParseState<'l> {
-    ParseState { tokens, pos: 0, config, cache }
+  fn new(source : SourceId, tokens : Vec<Token>, config : &'l ParseConfig, cache : &'l StringCache)
+    -> ParseState<'l>
+  {
+    ParseState { source, tokens, pos: 0, config, cache }
   }
 
   fn has_tokens(&self) -> bool {
@@ -135,7 +139,7 @@ impl <'l> ParseState<'l> {
     }
     else if self.pos > 0 {
       let m = self.tokens[self.pos-1].loc.end;
-      error(TextLocation::new(m, m), EXPECTED_TOKEN_ERROR)
+      error(TextLocation::new(self.source, m, m), EXPECTED_TOKEN_ERROR)
     }
     else {
       error(TextLocation::zero(), EXPECTED_TOKEN_ERROR)
@@ -166,7 +170,7 @@ impl <'l> ParseState<'l> {
   fn loc(&self, start : TextMarker) -> TextLocation {
     if self.pos > 0 {
       let end = self.tokens[self.pos-1].loc.end;
-      TextLocation::new(start, end)
+      TextLocation::new(self.source, start, end)
     }
     else {
       TextLocation::zero()
@@ -640,9 +644,9 @@ fn parse_top_level(ps : &mut ParseState) -> Result<Expr, Error> {
   parse_list(ps, vec![], ";", "block".into())
 }
 
-pub fn parse(tokens : Vec<Token>, cache : &StringCache) -> Result<Expr, Error> {
+pub fn parse(source : SourceId, tokens : Vec<Token>, cache : &StringCache) -> Result<Expr, Error> {
   let config = parse_config();
-  let mut ps = ParseState::new(tokens, &config, cache);
+  let mut ps = ParseState::new(source, tokens, &config, cache);
   let e = parse_top_level(&mut ps)?;
   if ps.has_tokens() {
     let t = ps.peek()?;

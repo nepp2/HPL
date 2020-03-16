@@ -1,3 +1,9 @@
+# LOG - 16/03/2020
+
+Ran into a bug with type checking, which I think is caused by a symbol failing to resolve too quickly. This should not be possible, as potential symbol matches should only ever shrink with each pass, not widen. This suggests there is another problem.
+
+Also, early error reporting on symbols with no matches was added to make sure I spot when a symbol is never resolved, which seems a little bit crude.
+
 # LOG - 12/03/2020
 
 The array type is heap allocated and there is currently no way to get its length.

@@ -1,9 +1,9 @@
 // external C interface for the compiler (so that the language can use it)
 
+use crate::common::*;
 use crate::{lexer, parser};
 use crate::compiler::Compiler;
-use crate::types::UnitId;
-use crate::expr::{RefStr, Expr, ExprContent};
+use crate::expr::{Expr, ExprContent};
 
 use std::fs::File;
 use std::io::Read;
@@ -127,8 +127,9 @@ pub extern "C" fn load_expression(c : *mut Compiler, code_path : SStr) -> Box<Ex
   let mut code = String::new();
   f.read_to_string(&mut code).unwrap();
   let c = unsafe { &mut *c };
-  let tokens = lexer::lex(&code, &c.cache).unwrap();
-  let expr = parser::parse(tokens, &c.cache).unwrap();
+  let aaa = (); // TODO: this is wrong. Use the code store to do this, so that the source id is logged properly.
+  let tokens = lexer::lex(None, &code, &c.cache).unwrap();
+  let expr = parser::parse(None, tokens, &c.cache).unwrap();
   Box::new(expr)
 }
 
@@ -147,8 +148,8 @@ pub extern "C" fn load_module(c : *mut Compiler, maybe_name : SStr, imports : SS
   let name = if maybe_name == "" { None } else { Some(maybe_name) };
   *out = match c.load_expr_as_module(e, name, imports) {
     Ok((unit_id, _val)) => Some(unit_id).into(),
-    Err(e) => {
-      println!("failed to load module with error:\n{}", e);
+    Err(_e) => {
+      println!("Failed to load module");
       None.into()
     }
   };

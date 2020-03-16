@@ -7,17 +7,17 @@
 
 use itertools::Itertools;
 
-use crate::{error, expr, structure, types, inference_constraints, code_store, compiler};
+use crate::{common, error, structure, types, inference_constraints, code_store, compiler};
 
+use common::*;
 use error::{Error, error, error_raw, TextLocation, ErrorContent};
-use expr::{UIDGenerator, Uid, RefStr, StringCache};
 use structure::{
   NodeId, TypeKind, Nodes,
 };
 use types::{
   Type, PType, TypeContent, TypeInfo, TypeDirectory, SymbolId,
   SignatureBuilder, incremental_unify, TypeMapping,
-  UnifyResult, UnitId, AbstractType, SymbolInit, SymbolDefinition,
+  UnifyResult, AbstractType, SymbolInit, SymbolDefinition,
 };
 use inference_constraints::{
   Constraint, ConstraintContent,
@@ -206,9 +206,9 @@ impl <'a> Inference<'a> {
         let any = Type::any();
         let t = self.resolved.get(result).unwrap_or(&any);
         let symbols : Vec<_> = self.t.find_symbol(&name, t).iter().cloned().collect();
-        let s = symbols.iter().map(|g| {
-          let def = self.t.get_symbol(g.symbol_id);
-          format!("      {} : {}", def.name, g.resolved_type)
+        let s = symbols.iter().map(|rs| {
+          let def = self.t.get_symbol(rs.id);
+          format!("      {} : {}", def.name, rs.resolved_type)
         }).join("\n");
         error_raw(self.loc(*result),
           format!("Reference '{}' of type '{}' not resolved\n   Symbols available:\n{}", name, t, s))
@@ -471,18 +471,38 @@ impl <'a> Inference<'a> {
       SymbolReference { node, name, result } => {
         let any = Type::any();
         let t = self.get_type(*result).cloned().unwrap_or(any);
+        if name.as_ref() == "len" {
+          println!("({:?}) Looking for len : {}", node, t);
+        }
         match self.t.find_symbol(&name, &t) {
-          [rs] => {
-            let resolved_type = rs.resolved_type.clone();
-            let id = rs.symbol_id;
+          [resolved_symbol] => {
+            let resolved_type = resolved_symbol.resolved_type.clone();
+            let id = resolved_symbol.id;
             self.register_def(*node, id);
             self.update_type(*result, &resolved_type);
+            if name.as_ref() == "len" {
+              println!("({:?}) Found len : {}", node, resolved_type);
+            }
           }
           [] => {
-            // Symbol will never be resolved
+            if name.as_ref() == "len" {
+              println!("({:?}) Found nothing.", node);
+            }
+            // Symbol will never be resolved. Report error, because at the moment it's the only guaranteed
+            // way to catch symbols that don't exist (their type might still be resolved).
+            // TODO: This is a bit too subtle for comfort, and should possibly be made clearer later.
             self.unresolved_constraint_error(c);
           }
-          _ => (), // Multiple matches. Global can't be resolved yet.
+          syms => {
+            if name.as_ref() == "len" {
+              println!("({:?}) Found multiple matches.", node);
+            }
+            let mut t = types::type_intersection(&syms[0].resolved_type, &syms[1].resolved_type);
+            for sym in &syms[2..] {
+              t = types::type_intersection(&t, &sym.resolved_type);
+            }
+            self.update_type(*result, &t);
+          }, // Multiple matches. Global can't be resolved yet.
         }
       }
       FieldAccess{ container, field, result } => {

@@ -1,12 +1,13 @@
 
 use crate::{
-  expr, structure,
+  common, expr, structure,
   llvm_compile, types,
   compiler,
 };
-use expr::{Expr, Uid, RefStr};
+use common::*;
+use expr::Expr;
 use types::{
-  UnitId, TypeInfo, SymbolId, Type, TypeMapping,
+  TypeInfo, SymbolId, Type, TypeMapping,
   SymbolDefinition, TypeDefinition,
 };
 use llvm_compile::LlvmUnit;
@@ -16,18 +17,13 @@ use structure::Nodes;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct SourceId(Uid);
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct CodegenId(Uid);
-
-impl From<Uid> for SourceId { fn from(v : Uid) -> Self { SourceId(v) } }
 
 impl From<Uid> for CodegenId { fn from(v : Uid) -> Self { CodegenId(v) } }
 
 #[derive(Default)]
 pub struct CodeStore {
-  pub code : HashMap<SourceId, RefStr>,
+  pub code : HashMap<UnitId, RefStr>,
   pub names : HashMap<UnitId, RefStr>,
   pub dependencies : HashMap<UnitId, HashSet<UnitId>>,
   pub exprs : HashMap<UnitId, Expr>,
@@ -37,6 +33,7 @@ pub struct CodeStore {
   pub codegen_mapping : HashMap<UnitId, CodegenId>,
   pub llvm_units : HashMap<CodegenId, LlvmUnit>,
   pub vals : HashMap<UnitId, Val>,
+  pub tombstones : HashSet<UnitId>,
 
   /// Map from the id of a polymorphic symbol to its various instances,
   /// and their instanced types.
@@ -54,7 +51,7 @@ impl CodeStore {
   }
 
   pub fn create_unit(&mut self, uid : Uid, name : Option<RefStr>) -> UnitId {
-    let id = types::create_unit(uid);
+    let id = create_unit(uid);
     let name =  name.unwrap_or_else(|| format!("unit_{:?}", uid).into());
     if self.named_unit(&name).is_some() {
       panic!("tried to load two modules called '{}'", name);

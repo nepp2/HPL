@@ -1,6 +1,7 @@
 
+use crate::common::*;
 use crate::error::{Error, error, TextLocation};
-use crate::expr::{StringCache, RefStr, Expr, ExprContent, UIDGenerator, Uid};
+use crate::expr::{Expr, ExprContent};
 
 use std::collections::HashMap;
 

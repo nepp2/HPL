@@ -2,19 +2,12 @@
 use std::fmt;
 use itertools::Itertools;
 
-use crate::expr::{RefStr, UIDGenerator, Uid};
+use crate::common::*;
 use crate::structure::{
   NodeId, TypeKind, Reference
 };
 
 use std::collections::{HashMap, HashSet};
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct UnitId(Uid);
-
-pub fn create_unit(uid : Uid) -> UnitId {
-  UnitId(uid)
-}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct SymbolId {
@@ -538,6 +531,19 @@ pub fn incremental_unify(old : &Type, new : &mut Type) -> UnifyResult {
   result
 }
 
+pub fn type_intersection(a : &Type, b : &Type) -> Type {
+  if a.content == b.content {
+    let mut t = Type::new(a.content.clone(), vec![]);
+    if a.children().len() == b.children().len() {
+      for (a, b) in a.children.iter().zip(b.children.iter()) {
+        t.children.push(type_intersection(a, b));
+      }
+      return t;
+    }
+  }
+  Type::any()
+}
+
 fn incremental_unify_internal(old_mono : &Type, new : &mut Type, result : &mut UnifyResult)
   -> Result<(), ()>
 {
@@ -631,12 +637,12 @@ impl TypeInfo {
           polytypes.clear();
           if polytype_match(polytypes, t, &sym.type_tag) {
             let resolved_type = polytype_replace(polytypes, &sym.type_tag);
-            results.push(ResolvedSymbol { symbol_id: sym.id, resolved_type });
+            results.push(ResolvedSymbol { id: sym.id, resolved_type });
           }
         }
         else {
           if let Some(resolved_type) = unify_types(&t, &sym.type_tag) {
-            results.push(ResolvedSymbol { symbol_id: sym.id, resolved_type });
+            results.push(ResolvedSymbol { id: sym.id, resolved_type });
           }
         }
       }
@@ -650,7 +656,7 @@ impl TypeInfo {
 
 #[derive(Clone, Debug)]
 pub struct ResolvedSymbol {
-  pub symbol_id : SymbolId,
+  pub id : SymbolId,
   pub resolved_type : Type,
 }
 

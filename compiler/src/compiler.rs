@@ -1,17 +1,19 @@
 
 use crate::{
-  error, expr, c_interface, llvm_compile, types, code_store,
+  common, error, expr, c_interface, llvm_compile, types, code_store,
   structure, lexer, parser, inference_solver, intrinsics, graph,
 };
-use expr::{StringCache, Expr, UIDGenerator };
+use common::*;
+use expr::Expr;
 use c_interface::CSymbols;
-use code_store::{CodeStore, SourceId};
-use types::{TypeContent, PType, UnitId};
+use code_store::CodeStore;
+use types::{TypeContent, PType };
 use llvm_compile::{LlvmCompiler, execute_function};
-use error::{Error, error};
+use error::{Error, error, ErrorContent};
 use structure::TOP_LEVEL_FUNCTION_NAME;
 use graph::DirectedGraph;
 
+use std::fmt;
 use std::collections::{VecDeque, HashSet};
 
 // TODO: Put these options somewhere more sensible
@@ -64,20 +66,19 @@ impl Compiler {
   {
     let name = name.map(|s| self.cache.get(s));
     let unit_id = self.code_store.create_unit(self.gen.next(), name);
-    let source_id = self.gen.next().into();
-    self.code_store.code.insert(source_id, code.into());
-    self.parse(source_id, unit_id)?;
+    self.code_store.code.insert(unit_id, code.into());
+    self.parse(unit_id)?;
     self.load_module_from_expr_internal(unit_id, imports.iter().cloned().collect())?;
     let val = self.code_store.vals.get(&unit_id).unwrap().clone();
     Ok((unit_id, val))
   }
 
-  fn parse(&mut self, source_id : SourceId, unit_id : UnitId) -> Result<(), Error> {
-    let code = self.code_store.code.get(&source_id).unwrap();
+  fn parse(&mut self, unit_id : UnitId) -> Result<(), Error> {
+    let code = self.code_store.code.get(&unit_id).unwrap();
     let tokens =
-      lexer::lex(&code, &self.cache)
+      lexer::lex(Some(unit_id), &code, &self.cache)
       .map_err(|mut es| es.remove(0))?;
-    let expr = parser::parse(tokens, &self.cache)?;
+    let expr = parser::parse(Some(unit_id), tokens, &self.cache)?;
     self.code_store.exprs.insert(unit_id, expr);
     Ok(())
   }
@@ -100,6 +101,7 @@ impl Compiler {
     match inner(self, unit_id, imports, &mut new_units) {
       Ok(()) => Ok(()),
       Err(e) => {
+        println!("{}", self.display_error(&e));
         // If something failed to compile, delete all the new units
         for uid in new_units {
           self.code_store.remove_unit(uid);
@@ -273,6 +275,10 @@ impl Compiler {
     Ok(value)
   }
 
+  fn display_error<'l>(&'l self, error : &'l Error) -> SourcedError<'l> {
+    SourcedError { e: error, c: &self.code_store }
+  }
+
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -289,3 +295,37 @@ pub enum Val {
   String(String),
   Bool(bool),
 }
+
+pub struct SourcedError<'l> {
+  e : &'l Error,
+  c : &'l CodeStore,
+}
+
+impl <'l> fmt::Display for SourcedError<'l> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    let mut errors = vec![];
+    fn find_errors<'e>(e : &'e Error, errors : &mut Vec<&'e Error>) {
+      match &e.message {
+        ErrorContent::Message(_) => {
+          errors.push(e);
+        },
+        ErrorContent::InnerErrors(_, es) => {
+          for e in es {
+            find_errors(e, errors);
+          }
+        },
+      }
+    }
+    find_errors(&self.e, &mut errors);
+    errors.sort_by_key(|e| e.location);
+    for e in errors {
+      if let Some(name) = e.location.source.and_then(|uid| self.c.names.get(&uid)) {
+        writeln!(f, "In unit {}:", name)?;
+      }
+      writeln!(f, "{}", e.display())?;
+      writeln!(f);
+    }
+    Ok(())
+  }
+}
+

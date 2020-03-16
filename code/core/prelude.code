@@ -128,31 +128,31 @@ fun tup(v0 : V0, v1 : V1)
   => tup2(V0, V1)
   with V0, V1
 {
-  tup2(v0, v1)
+  tup2.new(v0, v1)
 }
 fun tup(v0 : V0, v1 : V1, v2 : V2)
   => tup3(V0, V1, V2)
   with V0, V1, V2
 {
-  tup3(v0, v1, v2)
+  tup3.new(v0, v1, v2)
 }
 fun tup(v0 : V0, v1 : V1, v2 : V2, v3 : V3)
   => tup4(V0, V1, V2, V3)
   with V0, V1, V2, V3
 {
-  tup4(v0, v1, v2, v3)
+  tup4.new(v0, v1, v2, v3)
 }
 fun tup(v0 : V0, v1 : V1, v2 : V2, v3 : V3, v4 : V4)
   => tup5(V0, V1, V2, V3, V4)
   with V0, V1, V2, V3, V4
 {
-  tup5(v0, v1, v2, v3, v4)
+  tup5.new(v0, v1, v2, v3, v4)
 }
 fun tup(v0 : V0, v1 : V1, v2 : V2, v3 : V3, v4 : V4, v5 : V5)
   => tup6(V0, V1, V2, V3, V4, V5)
   with V0, V1, V2, V3, V4, V5
 {
-  tup6(v0, v1, v2, v3, v4, v5)
+  tup6.new(v0, v1, v2, v3, v4, v5)
 }
 
 // ######## Option type ########

@@ -52,7 +52,7 @@ pub fn run_repl() {
         }
         Failed(e) => {
           rl.add_history_entry(input_line);
-          println!("Error occured: {}", e);
+          println!("Error occured: {}", e.display());
           break;
         }
       }

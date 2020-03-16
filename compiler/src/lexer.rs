@@ -1,5 +1,5 @@
 
-use crate::expr::{StringCache, RefStr};
+use crate::common::*;
 use crate::error::{Error, TextLocation, TextMarker, error_raw};
 use std::fmt;
 
@@ -48,6 +48,7 @@ impl Token {
 }
 
 struct CStream<'l> {
+  source : SourceId,
   chars : Vec<char>,
   loc : StreamLocation,
   tokens : Vec<Token>,
@@ -71,8 +72,9 @@ impl From<StreamLocation> for TextMarker {
 
 impl <'l> CStream<'l> {
 
-  fn new(chars : Vec<char>, symbols : &StringCache) -> CStream {
+  fn new(source : SourceId, chars : Vec<char>, symbols : &StringCache) -> CStream {
     CStream {
+      source,
       chars,
       loc : StreamLocation { pos: 0, line: 1, line_start: 0 },
       tokens: vec!(),
@@ -99,7 +101,7 @@ impl <'l> CStream<'l> {
   }
 
   fn get_text_location(&mut self, start_loc : StreamLocation) -> TextLocation {
-    TextLocation::new(start_loc, self.loc)
+    TextLocation::new(self.source, start_loc, self.loc)
   }
 
   fn complete_token(&mut self, start_loc : StreamLocation, token_type : TokenType) {
@@ -342,7 +344,7 @@ impl <'l> CStream<'l> {
   }
 }
 
-pub fn lex(code : &str, symbols : &StringCache) -> Result<Vec<Token>, Vec<Error>> {
+pub fn lex(source : SourceId, code : &str, symbols : &StringCache) -> Result<Vec<Token>, Vec<Error>> {
 
   fn lex_with_errors(cs : &mut CStream) -> Result<(), Error> {
     while cs.has_chars() {
@@ -360,7 +362,7 @@ pub fn lex(code : &str, symbols : &StringCache) -> Result<Vec<Token>, Vec<Error>
     Ok(())
   }
 
-  let mut cs = CStream::new(code.chars().collect(), symbols);
+  let mut cs = CStream::new(source, code.chars().collect(), symbols);
   while cs.has_chars() {
     match lex_with_errors(&mut cs) {
       Ok(_) => (),
