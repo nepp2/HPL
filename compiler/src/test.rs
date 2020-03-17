@@ -215,8 +215,8 @@ rusty_fork_test! {
     // The expr type returned by "sym" makes use of a union
     let b = "
       let a = {
-        let zero = text_marker.new(0 as u64, 0 as u64)
-        let loc = text_location.new(zero, zero)
+        let zero = text_marker.new(0, 0)
+        let loc = text_location.new(0, zero, zero)
         sym(5, loc)
       }
       //let b = &a

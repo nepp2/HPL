@@ -57,7 +57,7 @@ impl TextLocation {
   
   pub fn zero() -> TextLocation {
     let z = TextMarker{ line: 0, col: 0 };
-    TextLocation { source: None, start: z, end: z }
+    TextLocation { source: no_source(), start: z, end: z }
   }
 
   pub fn merge(self, x : Self) -> Self {

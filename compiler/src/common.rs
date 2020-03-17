@@ -10,10 +10,19 @@ pub type RefStr = Rc<str>;
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Ord, PartialOrd)]
 pub struct Uid(u64);
 
+impl Uid {
+  pub fn null() -> Uid {
+    Uid(0)
+  }
+
+  pub fn inner(self) -> u64 {
+    self.0
+  }
+}
+
 impl  fmt::Display for Uid {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let Uid(id) = *self;
-    write!(f, "{:X}", id)
+    write!(f, "{:X}", self.0)
   }
 }
 
@@ -23,7 +32,7 @@ pub struct UIDGenerator {
 
 impl UIDGenerator {
   pub fn new() -> Self {
-    UIDGenerator { gen : 0 }
+    UIDGenerator { gen : 1 }
   }
 
   pub fn next(&mut self) -> Uid {
@@ -36,7 +45,17 @@ impl UIDGenerator {
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Ord, PartialOrd)]
 pub struct UnitId(Uid);
 
-pub type SourceId = Option<UnitId>;
+impl UnitId {
+  pub fn inner(self) -> Uid {
+    self.0
+  }
+}
+
+pub type SourceId = UnitId;
+
+pub fn no_source() -> SourceId {
+  create_unit(Uid::null())
+}
 
 pub fn create_unit(uid : Uid) -> UnitId {
   UnitId(uid)

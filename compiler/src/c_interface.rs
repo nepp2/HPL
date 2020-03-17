@@ -128,8 +128,8 @@ pub extern "C" fn load_expression(c : *mut Compiler, code_path : SStr) -> Box<Ex
   f.read_to_string(&mut code).unwrap();
   let c = unsafe { &mut *c };
   let aaa = (); // TODO: this is wrong. Use the code store to do this, so that the source id is logged properly.
-  let tokens = lexer::lex(None, &code, &c.cache).unwrap();
-  let expr = parser::parse(None, tokens, &c.cache).unwrap();
+  let tokens = lexer::lex(no_source(), &code, &c.cache).unwrap();
+  let expr = parser::parse(no_source(), tokens, &c.cache).unwrap();
   Box::new(expr)
 }
 

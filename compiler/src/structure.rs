@@ -635,6 +635,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
   }
 
   fn loc_struct(&mut self, expr : &Expr) -> NodeId {
+    let source = self.int_literal(expr, expr.loc.source.inner().inner() as i64);
     let start = {
       let col = self.int_literal(expr, expr.loc.start.col as i64);
       let line = self.int_literal(expr, expr.loc.start.line as i64);
@@ -648,7 +649,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
       self.type_constructor(expr, text_marker, vec![col, line])
     };
     let text_location = self.t.symbol("text_location", expr);
-    self.type_constructor(expr, text_location, vec![start, end])
+    self.type_constructor(expr, text_location, vec![source, start, end])
   }
 
   fn let_var(&mut self, expr : &Expr, name : Reference, val : NodeId) -> NodeId {

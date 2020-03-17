@@ -368,16 +368,6 @@ impl <'a> Inference<'a> {
             }
           }
         }
-        else {
-          let any = Type::any();
-          let return_type = self.get_type(*return_type).cloned().unwrap_or(any.clone());
-          let mut sig = SignatureBuilder::new(return_type.into());
-          for &arg in args {
-            let arg = self.get_type(arg).cloned().unwrap_or(any.clone());
-            sig.append_arg(arg);
-          }
-          self.update_type(*function, &sig.into());
-        }
       }
       Constructor { def_ts, fields } => {
         if let Some(t) = self.resolved.get(def_ts) {
@@ -471,38 +461,27 @@ impl <'a> Inference<'a> {
       SymbolReference { node, name, result } => {
         let any = Type::any();
         let t = self.get_type(*result).cloned().unwrap_or(any);
-        if name.as_ref() == "len" {
-          println!("({:?}) Looking for len : {}", node, t);
-        }
         match self.t.find_symbol(&name, &t) {
           [resolved_symbol] => {
             let resolved_type = resolved_symbol.resolved_type.clone();
             let id = resolved_symbol.id;
             self.register_def(*node, id);
             self.update_type(*result, &resolved_type);
-            if name.as_ref() == "len" {
-              println!("({:?}) Found len : {}", node, resolved_type);
-            }
           }
           [] => {
-            if name.as_ref() == "len" {
-              println!("({:?}) Found nothing.", node);
-            }
             // Symbol will never be resolved. Report error, because at the moment it's the only guaranteed
             // way to catch symbols that don't exist (their type might still be resolved).
             // TODO: This is a bit too subtle for comfort, and should possibly be made clearer later.
             self.unresolved_constraint_error(c);
           }
           syms => {
-            if name.as_ref() == "len" {
-              println!("({:?}) Found multiple matches.", node);
-            }
+            // Multiple matches. Global can't be resolved yet, but it can be narrowed where all of the possibilities agree.
             let mut t = types::type_intersection(&syms[0].resolved_type, &syms[1].resolved_type);
             for sym in &syms[2..] {
               t = types::type_intersection(&t, &sym.resolved_type);
             }
             self.update_type(*result, &t);
-          }, // Multiple matches. Global can't be resolved yet.
+          }
         }
       }
       FieldAccess{ container, field, result } => {

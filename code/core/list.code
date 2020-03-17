@@ -15,7 +15,7 @@ fun list() => list(T) with T {
 
 fun list(a : array(T)) => list(T) with T {
   let l = list()
-  for i in range(0, a.len()) {
+  for i in range(0, a.len() as i64) {
     l.add(a[i])
   }
   l

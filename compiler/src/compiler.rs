@@ -76,9 +76,9 @@ impl Compiler {
   fn parse(&mut self, unit_id : UnitId) -> Result<(), Error> {
     let code = self.code_store.code.get(&unit_id).unwrap();
     let tokens =
-      lexer::lex(Some(unit_id), &code, &self.cache)
+      lexer::lex(unit_id, &code, &self.cache)
       .map_err(|mut es| es.remove(0))?;
-    let expr = parser::parse(Some(unit_id), tokens, &self.cache)?;
+    let expr = parser::parse(unit_id, tokens, &self.cache)?;
     self.code_store.exprs.insert(unit_id, expr);
     Ok(())
   }
@@ -319,7 +319,7 @@ impl <'l> fmt::Display for SourcedError<'l> {
     find_errors(&self.e, &mut errors);
     errors.sort_by_key(|e| e.location);
     for e in errors {
-      if let Some(name) = e.location.source.and_then(|uid| self.c.names.get(&uid)) {
+      if let Some(name) = self.c.names.get(&e.location.source) {
         writeln!(f, "In unit {}:", name)?;
       }
       writeln!(f, "{}", e.display())?;

@@ -572,6 +572,11 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
           args: args.iter().map(|id| self.process_node(n, *id)).collect(),
           return_type: ts,
         };
+        let mut sig = SignatureBuilder::new(Type::any());
+        for _ in args {
+          sig.append_arg(Type::any());
+        }
+        self.assert_type(function, sig.into());
         self.constraint(fc);
       }
       Content::While{ condition, body } => {

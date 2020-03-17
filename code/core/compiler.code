@@ -85,6 +85,7 @@ struct text_marker {
 }
 
 struct text_location {
+  source : u64
   start : text_marker
   end: text_marker
 }
