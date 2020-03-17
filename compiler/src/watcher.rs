@@ -32,11 +32,27 @@ pub fn run_process(path : &str) -> Popen {
   p
 }
 
+use std::io;
+use std::sync::mpsc;
+use std::sync::mpsc::Receiver;
+
+fn spawn_stdin_channel() -> Receiver<String> {
+    let (tx, rx) = mpsc::channel::<String>();
+    thread::spawn(move || loop {
+        let mut buffer = String::new();
+        io::stdin().read_line(&mut buffer).unwrap();
+        tx.send(buffer).unwrap();
+    });
+    rx
+}
+
 pub fn watch(path : &str) {
   let mut process = Some(run_process(path));
 
   // Create a channel to receive the events.
   let (tx, rx) = channel();
+
+  let mut stdin_channel = Some(spawn_stdin_channel());
 
   // Create a watcher object, delivering debounced events.
   // The notification back-end is selected based on the platform.
@@ -50,7 +66,6 @@ pub fn watch(path : &str) {
   }
 
   loop {
-    //println!("loop");
     if let Some(mut p) = process {
       // check if the process is still alive
       let exit_status = p.poll();
@@ -69,7 +84,24 @@ pub fn watch(path : &str) {
         process = Some(p);
       }
     }
-    //println!("loop2");
+
+    // Read stdin, to restart the process from the terminal
+    if let Some(c) = &stdin_channel {
+      match c.try_recv() {
+        Ok(_input_line) => {
+          if process.is_none() {
+            process = Some(run_process(path));
+          }
+        }
+        Err(TryRecvError::Empty) => (),
+        Err(TryRecvError::Disconnected) => {
+          println!("stdin channel disconnected");
+          stdin_channel = None;
+        }
+      }
+    }
+
+    // Read watch events, to restart the process
     match rx.try_recv() {
       Ok(event) => {
         match event {

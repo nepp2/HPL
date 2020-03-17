@@ -1774,8 +1774,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
               vs.iter().map(|v|
                 byte.const_int(*v as u64, false).into()).collect();
             let const_array : BasicValueEnum = self.gen.context.i8_type().const_array(vs.as_slice()).into();
-            let name = &s.as_str()[0..std::cmp::min(s.len(), 10)];
-            let ptr = self.gen.add_global(const_array, true, name);
+            let ptr = self.gen.add_global(const_array, true, "literal_string");
             let cast_to = self.gen.context.i8_type().ptr_type(AddressSpace::Generic);
             let string_pointer = self.builder.build_pointer_cast(ptr, cast_to, "string_pointer");
             let string_length = self.gen.context.i64_type().const_int(vs.len() as u64, false);

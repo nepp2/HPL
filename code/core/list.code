@@ -45,8 +45,9 @@ fun pop(list : list(T)) => T with T {
   if list.p.len == 0 {
     panic("can't pop from empty list")
   }
+  let val = list.p.data[list.p.len]
   list.p.len = list.p.len - 1
-  list[list.p.len]
+  val
 }
 
 fun len(list : list(T)) => u64 with T {
@@ -57,6 +58,11 @@ fun Index(list : list(T), i : Int) => T with T, Int {
   let list = list.p;
   let i = i as u64
   if i >= list.len {
+    print("tried to access index ");
+    print(i);
+    print(" in list of length ")
+    print(list.len);
+    println()
     panic("list access out of bounds")
   }
   list.data[i]
@@ -66,6 +72,11 @@ fun SetIndex(list : list(T), i : Int, value : T) => () with T, Int {
   let list = list.p;
   let i = i as u64
   if i >= list.len {
+    print("tried to access index ");
+    print(i);
+    print(" in list of length ")
+    print(list.len);
+    println()
     panic("list access out of bounds")
   }
   list.data[i] = value

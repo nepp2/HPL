@@ -323,6 +323,7 @@ impl <'l> CStream<'l> {
           'n' => self.current_token.push('\n'),
           't' => self.current_token.push('\t'),
           '"' => self.current_token.push('"'),
+          '0' => self.current_token.push('\0'),
           _ => return Err(self.raise_error(start_loc, format!("unexpected pattern '\\{}' in string literal", c))),
         }
         self.skip_char();

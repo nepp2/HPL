@@ -185,6 +185,7 @@ fun init(view : view, width : i64, height : i64) {
   for i in range(0, config.grid_width * config.grid_height) {
     grid.cells.add(none())
   }
+
   let game =
     game.new(
       config: config,
@@ -201,7 +202,6 @@ fun init(view : view, width : i64, height : i64) {
       palette: p,
     )
   game.next_tetronimo(config.grid_width)
-
   game
 }
 
@@ -508,3 +508,65 @@ fun render(view, game : game) {
 
   sdl_present(view.render)
 }
+
+let width = 400
+let height = 600
+
+sdl_init(SDL_INIT_VIDEO);
+
+static c = malloc(4)
+c[0] = 65
+c[1] = 65
+c[2] = 65
+c[3] = 0
+
+static win =
+  sdl_create_window(
+    "Tetris\0".data,
+    SDL_WINDOWPOS_UNDEFINED,
+    SDL_WINDOWPOS_UNDEFINED,
+    width as i32,
+    height as i32,
+    SDL_WINDOW_SHOWN);
+
+win.sdl_set_window_position(1250, 200)
+
+static renderer = sdl_create_renderer(win, -1, SDL_RENDERER_ACCELERATED as u32)
+
+static event : sdl_event = UnsafeZeroInit()
+static s = "a"
+
+static active = true
+
+static view = view.new(win, renderer)
+
+static state = init(view, width, height)
+
+fun terminate() {
+  if active {
+    active = false
+    sdl_destroy_renderer(renderer)
+    sdl_destroy_window(win)
+  }
+}
+
+fun update() {
+  if !active {
+    return
+  }
+
+  while sdl_poll_event(&event) == 1 {
+    let t = event.event_type as i64
+    if t == SDL_QUIT {
+      terminate()
+      return
+    }
+    update_sdl_event(state, event)
+  }
+
+  update_tick(state)
+
+  // draw the game
+  render(view, state)
+}
+
