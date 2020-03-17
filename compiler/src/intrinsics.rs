@@ -42,6 +42,15 @@ pub fn get_intrinsics(intrinsics_id : UnitId, gen : &mut UIDGenerator, cache : &
     add_intrinsic(cache, gen, unit_id, &mut types, n, &[boolean, boolean], boolean);
   }
   add_intrinsic(cache, gen, unit_id, &mut types, "!", &[boolean], boolean);
+  
+  for t in &[F64.into(), F32.into()] {
+    add_intrinsic(cache, gen, unit_id, &mut types, "sqrt", &[t], t);
+    add_intrinsic(cache, gen, unit_id, &mut types, "floor", &[t], t);
+    add_intrinsic(cache, gen, unit_id, &mut types, "cos", &[t], t);
+    add_intrinsic(cache, gen, unit_id, &mut types, "sin", &[t], t);
+    add_intrinsic(cache, gen, unit_id, &mut types, "pow", &[t], t);
+    add_intrinsic(cache, gen, unit_id, &mut types, "log", &[t], t);
+  }
 
   // Add polymorphic instrinsic operations
   let tvar = cache.get("A");
@@ -50,9 +59,17 @@ pub fn get_intrinsics(intrinsics_id : UnitId, gen : &mut UIDGenerator, cache : &
   let array_type = Type::new(TypeContent::Def(cache.get("array"), unit_id), vec![tv.clone()]);
   for &container in &[&pointer_type, &array_type] {
     for index_type in &[I64.into(), I32.into(), U64.into(), U32.into()] {
-      let args = &[container, index_type];
+      // Index intrinsic
       add_polymorphic_intrinsic(
-        cache, gen, unit_id, &mut types, "Index", args, &tv, vec![tvar.clone()]);
+        cache, gen, unit_id, &mut types,
+        "Index", &[container, index_type], &tv,
+        vec![tvar.clone()]);
+      // SetIndex intrinsic
+      let void = PType::Void.into();
+      add_polymorphic_intrinsic(
+        cache, gen, unit_id, &mut types,
+        "SetIndex", &[container, index_type, &tv], &void,
+        vec![tvar.clone()]);
     }
   }
   add_polymorphic_intrinsic(

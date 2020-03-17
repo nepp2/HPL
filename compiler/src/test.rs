@@ -184,14 +184,14 @@ rusty_fork_test! {
     let code = "
       struct point {
         x : i64
-        y : i64
+        y : ptr(i64)
       }
       fun foo(a : point, b : point) {
-        point.new(x: a.x + b.x, y: a.y + b.y)
+        point.new(x: a.x + b.x, y: alloc(*a.y + *b.y))
       }
-      let a = point.new(x: 10, y: 1)
-      let b = point.new(2, 20)
-      foo(a, b).y
+      let a = point.new(x: 10, y: alloc(1))
+      let b = point.new(2, alloc(20))
+      *foo(a, b).y
     ";
     assert_result(code, Val::I64(21));
   }
@@ -538,6 +538,14 @@ rusty_fork_test! {
       let a : i32 = b
     ";
     assert_error(code, "");
+  }
+
+  #[test]
+  fn test_llvm_intrinsics() {
+    let code = "
+      sqrt(16.0) + sin(0.0) + cos(0.0) + floor(1.5)
+    ";
+    assert_result(code, Val::F64(6.0));
   }
 
   /// This sometimes failed in code generation, because the functions could be generated in

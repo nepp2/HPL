@@ -62,6 +62,16 @@ fun Index(list : list(T), i : Int) => T with T, Int {
   list.data[i]
 }
 
+fun SetIndex(list : list(T), i : Int, value : T) => () with T, Int {
+  let list = list.p;
+  let i = i as u64
+  if i >= list.len {
+    panic("list access out of bounds")
+  }
+  list.data[i] = value
+}
+
+
 fun print(list : list(T)) with T {
   print("[")
   if list.p.len > 0 {

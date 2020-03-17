@@ -84,9 +84,6 @@ fun next_tetronimo(game : game, grid_width : i64){
   game.init_tetronimo_state(grid_width)
 }
 
-cbind sqrt : fun(f64) => f64
-cbind floor : fun(f64) => f64
-
 fun shape_size(shape : list(i64)){
   sqrt(shape.len() as f64) as i64
 }

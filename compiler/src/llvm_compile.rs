@@ -8,7 +8,7 @@ use error::Error;
 use c_interface::CSymbols;
 use types::{SymbolId, SymbolInit};
 use code_store::{CodeStore, CodegenId};
-use llvm_codegen::{Gen, dump_module};
+use llvm_codegen::Gen;
 
 use inkwell::context::{Context};
 use inkwell::passes::PassManager;
@@ -86,7 +86,7 @@ impl LlvmCompiler {
     };
 
     if compiler::DEBUG_PRINTING_IR {
-      dump_module(&llvm_module);
+      println!("{}", llvm_module.print_to_string());
     }
 
     let lu = LlvmUnit { codegen_id, ee, llvm_module, globals_to_link, functions_to_link };

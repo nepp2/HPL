@@ -488,6 +488,10 @@ impl  Type {
     match self.content { Prim(F32) | Prim(F64) => true, _ => false }
   }
 
+  pub fn boolean(&self) -> bool {
+    self.content == Prim(Bool)
+  }
+
   pub fn unsigned_int(&self) -> bool {
     match self.content { Prim(U64) | Prim(U32) | Prim(U16) | Prim(U8) => true, _ => false }
   }

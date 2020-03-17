@@ -17,7 +17,7 @@ use std::collections::HashMap;
 
 use inkwell::AddressSpace;
 use inkwell::basic_block::BasicBlock;
-use inkwell::builder::Builder;
+use inkwell::builder::{Builder};
 use inkwell::context::{Context};
 use inkwell::module::{Module, Linkage};
 use inkwell::attributes::{Attribute, AttributeLoc};
@@ -30,10 +30,6 @@ use inkwell::values::{
   FunctionValue, PointerValue, GlobalValue };
 use inkwell::{FloatPredicate, IntPredicate};
 use inkwell::targets::TargetData;
-
-pub fn dump_module(module : &Module) {
-  println!("{}", module.print_to_string().to_string())
-}
 
 // TODO: maybe add this macro to a utils lib?
 // macro_rules! unwrap_enum {
@@ -340,7 +336,7 @@ impl <'l> Gen<'l> {
     info : &CompileInfo,
     name : &str,
     return_type : &Type,
-    args : Option<&[Reference]>,
+    arg_names : Option<&[Reference]>,
     arg_types : &[Type])
       -> FunctionValue
   {
@@ -359,9 +355,9 @@ impl <'l> Gen<'l> {
     function.add_attribute(i, self.context.create_string_attribute("target-cpu", "x86-64"));
 
     // set arguments names
-    if let Some(args) = args {
+    if let Some(arg_names) = arg_names {
       for (i, arg) in function.get_param_iter().enumerate() {
-        name_basic_type(&arg, args[i].name.as_ref());
+        name_basic_type(&arg, arg_names[i].name.as_ref());
       }
     }
     function
@@ -397,7 +393,10 @@ impl <'l> Gen<'l> {
         Ok(())
       }
       else {
-        error(body, "invalid generated function.")
+        let error_string =
+          format!("invalid generated function:\n\n{}",
+            genf.gen.module.print_to_string());
+        error(body, error_string)
       }
     }
 
@@ -405,16 +404,19 @@ impl <'l> Gen<'l> {
     let mut gen_function = GenFunction::new(self, builder, prototype_handle);
 
     match generate(body, args, &mut gen_function) {
-      Ok(_) => Ok(prototype_handle),
+      Ok(()) => Ok(prototype_handle),
       Err(e) => {
-        dump_module(self.module);
+        // TODO: is this cleanup still necessary? The functions are part of a module in the version of
+        // the JIT that this project uses, so they will be cleaned up when the module and execution environment
+        // are cleaned up.
+        let aaa = ();
         // This library uses copy semantics for a resource can be deleted,
         // because it is usually not deleted. As a result, it's possible to
         // get use-after-free bugs, so this operation is unsafe. I'm sure
         // this design could be improved.
-        unsafe {
-          prototype_handle.delete();
-        }
+        // unsafe {
+        //   prototype_handle.delete();
+        // }
         Err(e)
       }
     }
@@ -673,7 +675,8 @@ macro_rules! unary_op {
     {
       let a = codegen_type!($type_name, $a, $gen)?;
       let v = ($gen).builder.$op_name(a, "op_result");
-      reg(v.into())
+      let mv : MaybeVal = reg(v.into()).into();
+      mv
     }
   }
 }
@@ -687,11 +690,11 @@ macro_rules! compare_op {
   }
 }
 
-fn float_binary_ops(gf : &mut GenFunction, name: &str, a : TypedNode, b : TypedNode)
+fn float_binary_ops(gf : &mut GenFunction, name: &str, na : TypedNode, nb : TypedNode)
   -> Result<GenVal, Error>
 {
-  let a = gf.codegen_float(a)?;
-  let b = gf.codegen_float(b)?;
+  let a = gf.codegen_float(na)?;
+  let b = gf.codegen_float(nb)?;
   match name {
     "+" => binary_op!(build_float_add, gf, a, b),
     "-" => binary_op!(build_float_sub, gf, a, b),
@@ -703,7 +706,7 @@ fn float_binary_ops(gf : &mut GenFunction, name: &str, a : TypedNode, b : TypedN
     "<" => compare_op!(build_float_compare, FloatPredicate::OLT, gf, a, b),
     "<=" => compare_op!(build_float_compare, FloatPredicate::OLE, gf, a, b),
     "==" => compare_op!(build_float_compare, FloatPredicate::OEQ, gf, a, b),
-    _ => panic!("invalid intrinsic"),
+    _ => panic!("COMPILER BUG: encountered invalid intrinsic {}", name),
   }
 }
 
@@ -734,115 +737,173 @@ fn integer_binary_ops(
     "==" => compare_op!(build_int_compare, IntPredicate::EQ, gf, a, b),
     "!=" => compare_op!(build_int_compare, IntPredicate::NE, gf, a, b),
     _ =>
-      panic!("invalid intrinsic '{} {} {}'",
+      panic!("COMPILER BUG: encountered invalid intrinsic '{} {} {}'",
         node_a.type_tag(), name, node_b.type_tag()),
   }
 }
 
-fn codegen_index(
-  gf : &mut GenFunction, container : TypedNode, index : TypedNode)
+fn get_index_data_ptr(gf : &mut GenFunction, container : TypedNode, index : TypedNode) -> Result<PointerValue, Error> {
+  if index.type_tag().int() {
+    match &container.type_tag().content {
+      TypeContent::Ptr => {
+        return gf.codegen_pointer(container);
+      }
+      TypeContent::Def(name, _)=> {
+        if name.as_ref() == "array" {
+          // TODO: add bounds checks?
+          let array = gf.codegen_struct(container)?;
+          let ptr = gf.builder.build_extract_value(array, 0, "array_pointer")
+            .unwrap().into_pointer_value();
+          let corrected_type = {
+            let element_type = &container.type_tag().children[0];
+            let element_type = gf.gen.to_basic_type(container.info, element_type);
+            gf.gen.pointer_to_type(element_type)
+          };
+          let ptr = gf.builder.build_pointer_cast(ptr, corrected_type, "field cast");
+          return Ok(ptr);
+        }
+      }
+      _ => ()
+    }
+  }
+  panic!("COMPILER BUG: unsupported index intrinsic {}({})", container.type_tag(), index.type_tag())
+}
+
+fn codegen_set_index(
+  gf : &mut GenFunction, container : TypedNode, index : TypedNode, new_value : TypedNode)
     -> Result<MaybeVal, Error>
 {
-  fn get_data_ptr(gf : &mut GenFunction, container : TypedNode, index : TypedNode) -> Result<PointerValue, Error> {
-    if index.type_tag().int() {
-      match &container.type_tag().content {
-        TypeContent::Ptr => {
-          return gf.codegen_pointer(container);
-        }
-        TypeContent::Def(name, _)=> {
-          if name.as_ref() == "array" {
-            // TODO: add bounds checks?
-            let array = gf.codegen_struct(container)?;
-            let ptr = gf.builder.build_extract_value(array, 0, "array_pointer")
-              .unwrap().into_pointer_value();
-            let corrected_type = {
-              let element_type = &container.type_tag().children[0];
-              let element_type = gf.gen.to_basic_type(container.info, element_type);
-              gf.gen.pointer_to_type(element_type)
-            };
-            let ptr = gf.builder.build_pointer_cast(ptr, corrected_type, "field cast");
-            return Ok(ptr);
-          }
-        }
-        _ => ()
-      }
-    }
-    panic!("unsupported index intrinsic")
-  }
-  let ptr = get_data_ptr(gf, container, index)?;
+  let ptr = get_index_data_ptr(gf, container, index)?;
+  let index = gf.codegen_int(index)?;
+  let element_ptr = unsafe { gf.builder.build_gep(ptr, &[index], "element_ptr") };
+  let new_value = gf.codegen_value(new_value)?;
+  gf.builder.build_store(element_ptr, new_value);
+  return Ok(MaybeVal::Void);
+}
+
+fn codegen_index(
+  gf : &mut GenFunction, container : TypedNode, index : TypedNode)
+    -> Result<GenVal, Error>
+{
+  let ptr = get_index_data_ptr(gf, container, index)?;
   let index = gf.codegen_int(index)?;
   let element_ptr = unsafe { gf.builder.build_gep(ptr, &[index], "element_ptr") };
   return Ok(pointer(element_ptr).into());
 }
 
-fn codegen_intrinsic_call(gf : &mut GenFunction, node : TypedNode, name : &str, args : &[NodeId], sig : FunctionSignature)
-  -> Result<MaybeVal, Error>
+fn codegen_binary_intrinsic_call(gf : &mut GenFunction, node : TypedNode, name : &str, a : NodeId, b : NodeId)
+-> Result<GenVal, Error>
+{
+  let (a, b) = (node.get(a), node.get(b));
+  if name == "Index" {
+    return codegen_index(gf, a, b);
+  }
+  let (ta, tb) = (a.type_tag(), b.type_tag());
+  if ta == tb {
+    if ta.float() {
+      return float_binary_ops(gf, name, a, b);
+    }
+    else if ta.int() {
+      return integer_binary_ops(gf, name, a, b);
+    }
+    else if ta.boolean() {
+      match name {
+        "&&" => return gf.codegen_short_circuit_op(a, b, ShortCircuitOp::And),
+        "||" => return gf.codegen_short_circuit_op(a, b, ShortCircuitOp::Or),
+        _ => (),
+      }
+    }
+  }
+  panic!("COMPILER BUG: encountered unrecognised intrinsic, {}({}, {}).",
+    name, a.type_tag(), b.type_tag())
+}
+
+fn llvm_instrinsic_call(
+  gf : &mut GenFunction, info : &CompileInfo, name : &str,
+  arg : &TypeContent, sig : FunctionSignature,
+)
+  -> Option<FunctionValue>
 {
   use TypeContent::*;
   use PType::*;
-  let gv : GenVal = if let [a, b] = args {
-    let (a, b) = (node.get(*a), node.get(*b));
-    if name == "Index" {
-      return codegen_index(gf, a, b);
+  let n = match (name, arg) {
+    ("sqrt", Prim(F64)) => Some("llvm.sqrt.f64"),
+    ("sqrt", Prim(F32)) => Some("llvm.sqrt.f32"),
+    ("floor", Prim(F64)) => Some("llvm.floor.f64"),
+    ("floor", Prim(F32)) => Some("llvm.floor.f32"),
+    ("cos", Prim(F64)) => Some("llvm.cos.f64"),
+    ("cos", Prim(F32)) => Some("llvm.cos.f32"),
+    ("sin", Prim(F64)) => Some("llvm.sin.f64"),
+    ("sin", Prim(F32)) => Some("llvm.sin.f32"),
+    ("pow", Prim(F64)) => Some("llvm.pow.f64"),
+    ("pow", Prim(F32)) => Some("llvm.pow.f32"),
+    ("log", Prim(F64)) => Some("llvm.log.f64"),
+    ("log", Prim(F32)) => Some("llvm.log.f32"),
+    _ => None,
+  };
+  n.map(|codegen_name| {
+    gf.get_linked_llvm_instrinsic_reference(info, codegen_name, sig)
+  })
+}
+
+fn codegen_unary_intrinsic_call(
+  gf : &mut GenFunction, node : TypedNode, name : &str,
+  arg : NodeId, sig : FunctionSignature,
+)
+  -> Result<MaybeVal, Error>
+{
+let a = node.get(arg);
+let t = a.type_tag();
+if name == "-" {
+  if t.float() {
+    return Ok(unary_op!(build_float_neg, FloatValue, gf, a));
+  }
+  else if t.int() {
+    return Ok(unary_op!(build_int_neg, IntValue, gf, a));
+  }
+}
+else {
+  let c = &a.type_tag().content;
+  match (c, name) {
+    (TypeContent::Prim(PType::Bool), "!") =>
+      return Ok(unary_op!(build_not, IntValue, gf, a)),
+    (TypeContent::Ptr, "*") => {
+      let ptr = gf.codegen_pointer(a)?;
+      return Ok(pointer(ptr).into());
     }
-    let (ta, tb) = (a.type_tag(), b.type_tag());
-    if ta != tb {
-      panic!("invalid intrinsic {} {} {}", ta, name, tb);
+    (_, "&") => return Ok(gf.codegen_address_of_expression(a)?.into()),
+    _ => (),
+  }
+  if let Some(f) = llvm_instrinsic_call(gf, node.info, name, c, sig) {
+    let v = gf.codegen_float(a)?;
+    return Ok(gf.build_function_value_call(f, &[v.into()], name));
+  }
+}
+panic!("COMPILER BUG: encountered unrecognised intrinsic, {}({}).", name, t);
+}
+
+fn codegen_intrinsic_call(gf : &mut GenFunction, node : TypedNode, name : &str, args : &[NodeId], sig : FunctionSignature)
+  -> Result<MaybeVal, Error>
+{
+  if let [a, b, c] = args {
+    let (a, b, c) = (node.get(*a), node.get(*b), node.get(*c));
+    if name == "SetIndex" {
+      return codegen_set_index(gf, a, b, c);
     }
-    if ta.float() {
-      float_binary_ops(gf, name, a, b)?
-    }
-    else if ta.int() {
-      integer_binary_ops(gf, name, a, b)?
-    }
-    else if ta.content == Prim(Bool) {
-      match name {
-        "&&" => gf.codegen_short_circuit_op(a, b, ShortCircuitOp::And)?,
-        "||" => gf.codegen_short_circuit_op(a, b, ShortCircuitOp::Or)?,
-        _ => panic!("invalid intrinsic"),
-      }
-    }
-    else {
-      return error(node,
-        format!("encountered unrecognised intrinsic, {} {} {}.",
-          a.type_tag(), name, b.type_tag()));
-    }
+    panic!("COMPILER BUG: encountered unrecognised intrinsic, {}({}, {}, {}).",
+      name, a.type_tag(), b.type_tag(), c.type_tag());
+  }
+  else if let [a, b] = args {
+    return Ok(codegen_binary_intrinsic_call(gf, node, name, *a, *b)?.into());
   }
   else if let [a] = args {
-    let a = node.get(*a);
-    if name == "-" {
-      let t = a.type_tag();
-      if t.float() {
-        unary_op!(build_float_neg, FloatValue, gf, a)
-      }
-      else if t.int() {
-        unary_op!(build_int_neg, IntValue, gf, a)
-      }
-      else {
-        return error(node,
-          format!("encountered unrecognised intrinsic, -{}.", t));
-      }
-    }
-    else {
-      match (&a.type_tag().content, name) {
-        (Prim(Bool), "!") => unary_op!(build_not, IntValue, gf, a),
-        (Ptr, "*") => {
-          let ptr = gf.codegen_pointer(a)?;
-          pointer(ptr)
-        }
-        (_, "&") => gf.codegen_address_of_expression(a)?,
-        _ => return error(node, format!("encountered unrecognised intrinsic, {}", name)),
-      }
-    }
+    return codegen_unary_intrinsic_call(gf, node, name, *a, sig);
   }
   else if args.len() == 0 && name == "UnsafeZeroInit" {
     let t = gf.gen.to_basic_type(node.info, sig.return_type).unwrap();
-    reg(const_zero(t))
+    return Ok(reg(const_zero(t)).into())
   }
-  else {
-    return error(node, format!("encountered unrecognised intrinsic {}", name));
-  };
-  Ok(gv.into())
+  panic!("COMPILER BUG: encountered unrecognised intrinsic {}", name)
 }
 
 impl <'l, 'a> GenFunction<'l, 'a> {
@@ -1215,7 +1276,24 @@ impl <'l, 'a> GenFunction<'l, 'a> {
     }
   }
 
-  fn build_function_call(&mut self, f : PointerValue, args : &[BasicValueEnum], name : &str) -> MaybeVal {
+  fn get_linked_llvm_instrinsic_reference(&mut self, info : &CompileInfo, name : &str, sig : FunctionSignature) -> FunctionValue {
+    // Check if it was already added
+    if let Some(f) = self.gen.module.get_function(name) {
+      f
+    }
+    // Else generate the prototype
+    else {
+      self.gen.codegen_prototype(info, name, sig.return_type, None, sig.args)
+    }
+  }
+
+  fn build_function_pointer_call(&mut self, f : PointerValue, args : &[BasicValueEnum], name : &str) -> MaybeVal {
+    let call = self.builder.build_call(f, args, name);
+    let r = call.try_as_basic_value().left();
+    return r.map(reg).map(IsVal).unwrap_or(Void);
+  }
+
+  fn build_function_value_call(&mut self, f : FunctionValue, args : &[BasicValueEnum], name : &str) -> MaybeVal {
     let call = self.builder.build_call(f, args, name);
     let r = call.try_as_basic_value().left();
     return r.map(reg).map(IsVal).unwrap_or(Void);
@@ -1244,7 +1322,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
       let v = self.codegen_value(a)?;
       arg_vals.push(v);
     }
-    Ok(self.build_function_call(function_pointer, arg_vals.as_slice(), "return_val"))
+    Ok(self.build_function_pointer_call(function_pointer, arg_vals.as_slice(), "return_val"))
   }
 
   fn get_linked_drop_reference(&mut self, _info : &CompileInfo, _t : &Type) -> Option<FunctionValue> {
@@ -1293,8 +1371,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
       // do not auto-clone recursively
       if clone != self.fn_val {
         let val = self.codegen_address_of_genval(val.unwrap())?;
-        let fun_ptr = clone.as_global_value().as_pointer_value();
-        return Ok(self.build_function_call(fun_ptr, &[val.into()], "cloned"));
+        return Ok(self.build_function_value_call(clone, &[val.into()], "cloned"));
       }
     }
     Ok(val)
@@ -1311,8 +1388,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
   }
 
   fn codegen_drop_value(&mut self, d : Destructible) {
-    let fp = d.drop_reference.as_global_value().as_pointer_value();
-    self.build_function_call(fp, &[d.value.into()], "void");
+    self.build_function_value_call(d.drop_reference, &[d.value.into()], "void");
   }
 
 
@@ -1513,13 +1589,21 @@ impl <'l, 'a> GenFunction<'l, 'a> {
             let (field_index, _) =
               def.fields.iter().enumerate()
               .find(|(_, (n, _))| n.name.as_ref() == field.name.as_ref()).unwrap();
+            let field_type = self.gen.to_basic_type(info, node.type_tag());
             match v.storage {
               Storage::Register => {
                 // if the struct is in a register, dereference the field into a register
-                println!("DOES THIS EVER HAPPEN?????");
-                let reg_val =
+                let mut reg_val =
                   self.builder.build_extract_value(
                     *v.value.as_struct_value(), field_index as u32, &field.name).unwrap();
+                if node.type_tag().pointer() {
+                  // this cast is necessary because all pointer fields are tagged as void pointers
+                  // in the IR, due to an issue with generating cyclic references.
+                  reg_val =
+                    self.builder.build_pointer_cast(
+                      reg_val.into_pointer_value(),
+                      field_type.unwrap().into_pointer_type(), "ptr_cast").into();
+                }
                 let aaa = (); // TODO: Doesn't a cast need to happen here? I think it does.
                 reg(reg_val)
               }
@@ -1529,13 +1613,14 @@ impl <'l, 'a> GenFunction<'l, 'a> {
                 let field_ptr_untyped = unsafe {
                   self.builder.build_struct_gep(ptr, field_index as u32, &field.name)
                 };
-                let t = self.gen.to_basic_type(info, node.type_tag());
                 // this cast is necessary because all pointer fields are tagged as void pointers
-                // in the IR, due to an issue with generating cyclic references
-                let aaa = (); // TODO: is this correct? it looks wrong. I think this is accidentally correct.
+                // in the IR, due to an issue with generating cyclic references.
+                // This is a pointer to a field, and the fields which need to be fixed are also pointers.
+                // So, slightly confusingly, this corrects them by turning `**void` into `**type`. Normal
+                // fields will get a redundant cast from `*Type` to `*Type`.
                 let field_ptr =
                   self.builder.build_pointer_cast(
-                    field_ptr_untyped, self.gen.pointer_to_type(t), "field_cast");
+                    field_ptr_untyped, self.gen.pointer_to_type(field_type), "field_cast");
                 pointer(field_ptr)
               }
             }
@@ -1567,7 +1652,7 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         //   length : u64
         // }
         // 
-        // This struct should be defined in the prelude (turn it into an intrinsic?)
+        // This struct is defined in the intrinsics unit.
         //
         if let [inner_type] = node.type_tag().children() {
           let element_type = self.gen.to_basic_type(info, inner_type).unwrap();
@@ -1598,7 +1683,6 @@ impl <'l, 'a> GenFunction<'l, 'a> {
         }
       }
       Content::Assignment{ assignee, value } => {
-        // TODO: WHAT IS BEING ASSIGNED TO? Should only work for FIELDS and ARRAYS
         let (assignee, value) = (node.get(*assignee), node.get(*value));
         let assign_location = self.codegen_expression(assignee)?.unwrap();
         let assign_ptr = match assign_location.storage {
