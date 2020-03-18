@@ -16,8 +16,8 @@ use structure::{
 };
 use types::{
   Type, PType, TypeContent, TypeInfo, TypeDirectory, SymbolId,
-  SignatureBuilder, incremental_unify, TypeMapping,
-  UnifyResult, AbstractType, SymbolInit, SymbolDefinition,
+  incremental_unify, TypeMapping, UnifyResult, AbstractType,
+  SymbolInit, SymbolDefinition,
 };
 use inference_constraints::{
   Constraint, ConstraintContent,
@@ -79,7 +79,7 @@ pub fn typecheck_polymorphic_function_instance(
   let mut new_types = TypeInfo::new(instance_unit);
   let aaa = (); // TODO: type directory should just take the code store, and be a lot simpler
   let imports : Vec<_> =
-    code_store.dependencies(instance_unit).iter()
+    code_store.get_imports(instance_unit)
     .map(|&uid| code_store.types(uid)).collect();
   let mut type_directory =
     TypeDirectory::new(imports.as_slice(), &mut new_types);

@@ -25,7 +25,7 @@ impl From<Uid> for CodegenId { fn from(v : Uid) -> Self { CodegenId(v) } }
 pub struct CodeStore {
   pub code : HashMap<UnitId, RefStr>,
   pub names : HashMap<UnitId, RefStr>,
-  pub dependencies : HashMap<UnitId, HashSet<UnitId>>,
+  pub imports : HashSet<(UnitId, UnitId)>,
   pub exprs : HashMap<UnitId, Expr>,
   pub nodes : HashMap<UnitId, Nodes>,
   pub types : HashMap<UnitId, TypeInfo>,
@@ -94,8 +94,8 @@ impl CodeStore {
 
   }
 
-  pub fn add_dependency(&mut self, unit : UnitId, depends_on : UnitId) {
-    self.dependencies.entry(unit).or_default().insert(depends_on);
+  pub fn add_import(&mut self, unit : UnitId, imported_unit : UnitId) {
+    self.imports.insert((unit, imported_unit));
   }
 
   pub fn llvm_unit(&self, unit_id : UnitId) -> &LlvmUnit {
@@ -107,8 +107,12 @@ impl CodeStore {
     self.types.get(&unit_id).unwrap()
   }
 
-  pub fn dependencies(&self, unit_id : UnitId) -> &HashSet<UnitId> {
-    self.dependencies.get(&unit_id).unwrap()
+  pub fn get_imports<'l>(&'l self, unit_id : UnitId) -> impl Iterator<Item=&'l UnitId> {
+    self.imports.iter().filter(move |(a, _)| *a == unit_id).map(|(_, b)| b)
+  }
+
+  pub fn get_importers<'l>(&'l self, unit_id : UnitId) -> impl Iterator<Item=&'l UnitId> {
+    self.imports.iter().filter(move |(_, b)| *b == unit_id).map(|(a, _)| a)
   }
 
   pub fn symbol_def(&self, symbol_id : SymbolId) -> &SymbolDefinition {

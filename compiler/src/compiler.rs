@@ -73,6 +73,10 @@ impl Compiler {
     Ok((unit_id, val))
   }
 
+  pub fn find_all_dependents(&mut self, uid : UnitId) {
+    TODO // FIND ALL DEPENDENTS
+  }
+
   fn parse(&mut self, unit_id : UnitId) -> Result<(), Error> {
     let code = self.code_store.code.get(&unit_id).unwrap();
     let tokens =
@@ -89,7 +93,7 @@ impl Compiler {
     fn inner(c : &mut Compiler, unit_id : UnitId, mut imports : HashSet<UnitId>, new_units : &mut Vec<UnitId>) -> Result<(), Error> {
       imports.insert(c.intrinsics);
       for &i in imports.iter() {
-        c.code_store.add_dependency(unit_id, i);
+        c.code_store.add_import(unit_id, i);
       }
       c.structure(unit_id)?;
       c.typecheck(unit_id, imports, new_units)?;
@@ -138,7 +142,7 @@ impl Compiler {
       for (poly_symbol_id, instance_type) in polymorphic_references {
         let existing_poly_instance = self.code_store.poly_instance(poly_symbol_id, &instance_type);
         if let Some(id) = existing_poly_instance {
-          self.code_store.add_dependency(psid, id.uid);
+          self.code_store.add_import(psid, id.uid);
         }
         else {
           // Create a unique name for the new unit
@@ -152,9 +156,13 @@ impl Compiler {
           search_queue.push_back(instance_unit_id);
           // The new poly instance unit inherits all dependencies
           // from the unit that defined it, and it depends on that unit
-          let mut instance_dependencies = self.code_store.dependencies(poly_symbol_id.uid).clone();
-          instance_dependencies.insert(poly_symbol_id.uid);
-          self.code_store.dependencies.insert(instance_unit_id, instance_dependencies);
+          let mut instance_dependencies =
+            self.code_store.get_imports(poly_symbol_id.uid)
+            .cloned().collect::<Vec<_>>();
+          instance_dependencies.push(poly_symbol_id.uid);
+          for dependency in instance_dependencies {
+            self.code_store.add_import(instance_unit_id, dependency);
+          }
           let aaa = (); // TODO: Should it also depend on the unit that instantiated it? Maybe depends on the type parameters?
           let poly_def = self.code_store.symbol_def(poly_symbol_id);
           let (instance_types, instance_mapping, instance_symbol_id) =
@@ -168,7 +176,7 @@ impl Compiler {
           self.code_store.types.insert(instance_unit_id, instance_types);
           self.code_store.type_mappings.insert(instance_unit_id, instance_mapping);
           // The unit that instantiated it also depends on it
-          self.code_store.add_dependency(psid, instance_unit_id);
+          self.code_store.add_import(psid, instance_unit_id);
         }
       }
     }
@@ -189,7 +197,7 @@ impl Compiler {
     let mut g : DirectedGraph = Default::default();
     for uid in new_units.iter() {
       let mut vertex_edges = vec![];
-      for d in self.code_store.dependencies.get(uid).unwrap() {
+      for d in self.code_store.get_imports(*uid) {
         if let Some(w) = new_units.iter().position(|id| id == d) {
           vertex_edges.push(w);
         }
@@ -323,7 +331,7 @@ impl <'l> fmt::Display for SourcedError<'l> {
         writeln!(f, "In unit {}:", name)?;
       }
       writeln!(f, "{}", e.display())?;
-      writeln!(f);
+      writeln!(f)?;
     }
     Ok(())
   }
