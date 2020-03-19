@@ -188,7 +188,7 @@ fun init(view : view, width : i64, height : i64) {
       tet_index: 0,
       pos_x: 0,
       pos_y: 0,
-      ticks_per_drop: 200,
+      ticks_per_drop: 50,
       tick_count: 0,
       grid,
       tetronimos: tetronimos,
@@ -403,7 +403,6 @@ fun update_sdl_event(game : ptr(game), event : sdl_event) {
   let t = event.event_type as i64
   if t == SDL_KEYDOWN {
     let c = event.content.keyboard.keysym.sym
-    print("Key down "); println(c)
     if c == UP_KEY {
       rotate(game, grid_width, grid_height)
     }
