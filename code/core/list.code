@@ -21,6 +21,10 @@ fun list(a : array(T)) => list(T) with T {
   l
 }
 
+fun drop(list : list(T)) => () with T {
+  dealloc(list.p.data)
+}
+
 fun add(list : list(T), item : T) with T {
   let list = list.p;
   let len = list.len

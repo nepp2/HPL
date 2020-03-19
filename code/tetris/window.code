@@ -1,0 +1,30 @@
+
+static initial_width = 400
+static initial_height = 600
+
+sdl_init(SDL_INIT_VIDEO);
+
+struct view {
+  window : sdl_window_handle
+  render : sdl_renderer_handle
+}
+
+static win =
+  sdl_create_window(
+    "Tetris\0".data,
+    SDL_WINDOWPOS_UNDEFINED,
+    SDL_WINDOWPOS_UNDEFINED,
+    initial_width as i32,
+    initial_height as i32,
+    SDL_WINDOW_SHOWN);
+
+win.sdl_set_window_position(1250, 200)
+
+static renderer = sdl_create_renderer(win, -1, SDL_RENDERER_ACCELERATED as u32)
+
+static view = view.new(win, renderer)
+
+fun terminate() {
+  sdl_destroy_renderer(renderer)
+  sdl_destroy_window(win)
+}

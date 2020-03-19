@@ -73,8 +73,9 @@ impl CodeStore {
     }
     self.vals.remove(&uid);
     if let Some(sid) = self.poly_parents.remove(&uid) {
-      let map = self.poly_instances.get_mut(&sid).unwrap();
-      map.retain(|_, sid| sid.uid != uid);
+      if let Some(map) = self.poly_instances.get_mut(&sid) {
+        map.retain(|_, sid| sid.uid != uid);
+      }
     }
   }
 

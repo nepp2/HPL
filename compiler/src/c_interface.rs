@@ -48,6 +48,47 @@ impl <T : Copy + Clone> From<Option<T>> for SOption<T> {
   }
 }
 
+/// Owned array, compatible with the runtime array implementation
+#[repr(C)]
+pub struct SArray<T>(SSlice<T>);
+
+impl <T> SArray<T> {
+  pub fn new(mut v : Vec<T>) -> SArray<T> {
+    let a = SArray(SSlice { length: v.len() as u64, data: v.as_mut_ptr() });
+    std::mem::forget(v);
+    a
+  }
+
+  pub fn as_slice(&self) -> &[T] {
+    self.0.as_slice()
+  }
+}
+
+impl <T : fmt::Debug> fmt::Debug for SArray<T> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "{:?}", self.as_slice())
+  }
+}
+
+impl <T> Drop for SArray<T> {
+  fn drop(&mut self) {
+    unsafe {
+      Vec::from_raw_parts(self.0.data, self.0.length as usize, self.0.length as usize)
+    };
+  }
+}
+
+impl <T : Clone> Clone for SArray<T> {
+  fn clone(&self) -> Self {
+    let v = unsafe {
+      Vec::from_raw_parts(self.0.data, self.0.length as usize, self.0.length as usize)
+    };
+    let a = SArray::new(v.clone());
+    std::mem::forget(v);
+    a
+  }
+}
+
 /// A borrowed slice that is compatible with the runtime array representation
 #[no_mangle]
 #[derive(Copy, Clone)]
@@ -155,13 +196,15 @@ pub extern "C" fn load_module(c : *mut Compiler, maybe_name : SStr, imports : SS
   };
 }
 
-// TODO: panics if there is more than one overload, because no argument types
-// are provided to narrow the search, and it would be very unsafe to return
-// the wrong one.
-#[no_mangle]
 pub extern "C" fn unload_module(c : *mut Compiler, unit_id : UnitId) {
   let c = unsafe { &mut *c };
   c.code_store.remove_unit(unit_id);
+}
+
+pub extern "C" fn find_all_dependents(c : *mut Compiler, unit_id : UnitId, out : &mut SArray<UnitId>) {
+  let c = unsafe { &mut *c };
+  let deps = c.find_all_dependents(unit_id);
+  *out = SArray::new(deps);
 }
 
 // TODO: panics if there is more than one overload, because no argument types
@@ -431,6 +474,7 @@ impl CSymbols {
     sym.insert("load_expression".into(), (load_expression as *const()) as usize);
     sym.insert("load_module".into(), (load_module as *const()) as usize);
     sym.insert("unload_module".into(), (unload_module as *const()) as usize);
+    sym.insert("find_all_dependents".into(), (find_all_dependents as *const()) as usize);
     sym.insert("get_module".into(), (get_module as *const()) as usize);
     sym.insert("get_function".into(), (get_function as *const()) as usize);
 

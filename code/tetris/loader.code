@@ -5,6 +5,7 @@
 let prelude = get_module("code/core/prelude.code").unwrap()
 let list = get_module("code/core/list.code").unwrap()
 let sdl2 = load_module("code/sdl2.code", [prelude]).unwrap()
+let window = load_module("code/tetris/window.code", [prelude, sdl2]).unwrap()
 
 let timer = start_timer()
 let watcher = create_watcher(100)
@@ -16,7 +17,7 @@ fun dummy_update() {}
 while true {
   // Load tetris
   println("Loading tetris")
-  let tetris = load_module("code/tetris/tetris.code", [prelude, list, sdl2])
+  let tetris = load_module("code/tetris/tetris.code", [prelude, list, sdl2, window])
   let update = dummy_update
   if tetris.is_some {
     let f = tetris.val.get_function("update")
@@ -61,7 +62,10 @@ while true {
       let terminate = f.val as fun()
       terminate()
     }
-    unload_module(tetris.val)
+    let deps = find_all_dependents(tetris.val)
+    for i in range(0, deps.len() as i64) {
+      unload_module(deps[i])
+    }
   }
 }
 

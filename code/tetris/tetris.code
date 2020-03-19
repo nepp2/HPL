@@ -12,11 +12,6 @@ struct tetronimo {
   color : color
 }
 
-struct view {
-  window : sdl_window_handle
-  render : sdl_renderer_handle
-}
-
 struct grid {
   cells : list(option(color))
 }
@@ -67,7 +62,7 @@ fun set_color(view : view, c : color) {
   view.set_draw_color(c.r, c.g, c.b, c.a)
 }
 
-fun next_tetronimo(game : game, grid_width : i64){
+fun next_tetronimo(game : ptr(game), grid_width : i64){
   if game.tetronimo_bag.len() == 0 {
     for i in range(0, 2) {
       for i in range(0, game.tetronimos.len() as i64) {
@@ -201,7 +196,7 @@ fun init(view : view, width : i64, height : i64) {
       rng: seeded_rng(0),
       palette: p,
     )
-  game.next_tetronimo(config.grid_width)
+  next_tetronimo(&game, config.grid_width)
   game
 }
 
@@ -286,7 +281,7 @@ fun check_contact(grid, grid_width, grid_height, shape, pos_x, pos_y){
 //   }
 // }
 
-fun init_tetronimo_state(game : game, grid_width : i64) {
+fun init_tetronimo_state(game : ptr(game), grid_width : i64) {
   game.pos_y = 0
   game.tick_count = 0
   game.orientation = 0
@@ -296,7 +291,7 @@ fun init_tetronimo_state(game : game, grid_width : i64) {
   game.pos_x = grid_width/2 - half_size
 }
 
-fun blit(game : game, shape, color : color, grid_width) {
+fun blit(game : ptr(game), shape, color : color, grid_width) {
   let shape_size = shape_size(shape)
   for y in range(0, shape_size) {
     for x in range(0, shape_size) {
@@ -334,7 +329,7 @@ fun erase_lines(grid : grid, y, shape_size, grid_width, grid_height) {
   }
 }
 
-fun move_horizontal(game : game, grid_width, grid_height, shape, offset) {
+fun move_horizontal(game : ptr(game), grid_width, grid_height, shape, offset) {
   let new_x = game.pos_x + offset
   let c = check_contact(
     game.grid, grid_width, grid_height,
@@ -368,7 +363,7 @@ fun move_down(game, shape, color, grid_width, grid_height) {
   }
 }
 
-fun rotate(game : game, grid_width, grid_height) {
+fun rotate(game : ptr(game), grid_width, grid_height) {
   game.orientation = (game.orientation + 1) % 4
   let tet = game.tetronimos[game.tet_index]
   let shape = tet.tiles[game.orientation]
@@ -392,13 +387,13 @@ fun rotate(game : game, grid_width, grid_height) {
   }
 }
 
-static UP_KEY = 24 as u32
-static DOWN_KEY = 25 as u32
-static RIGHT_KEY = 26 as u32
-static LEFT_KEY = 27 as u32
+static UP_KEY = 1073741906 as u32
+static DOWN_KEY = 1073741905 as u32
+static RIGHT_KEY = 1073741903 as u32
+static LEFT_KEY = 1073741904 as u32
 static SPACE_KEY = 32 as u32
 
-fun update_sdl_event(game : game, event : sdl_event) {
+fun update_sdl_event(game : ptr(game), event : sdl_event) {
   let tet = game.tetronimos[game.tet_index]
   let shape = tet.tiles[game.orientation]
   let c = game.config
@@ -408,6 +403,7 @@ fun update_sdl_event(game : game, event : sdl_event) {
   let t = event.event_type as i64
   if t == SDL_KEYDOWN {
     let c = event.content.keyboard.keysym.sym
+    print("Key down "); println(c)
     if c == UP_KEY {
       rotate(game, grid_width, grid_height)
     }
@@ -432,7 +428,7 @@ fun update_sdl_event(game : game, event : sdl_event) {
   }
 }
 
-fun update_tick(game) {
+fun update_tick(game : ptr(game)) {
   let tet = game.tetronimos[game.tet_index]
   let shape = tet.tiles[game.orientation]
 
@@ -447,7 +443,7 @@ fun rect(x : i64, y : i64, w : i64, h : i64) {
   sdl_rect.new(x as i32, y as i32, w as i32, h as i32)
 }
 
-fun render(view, game : game) {
+fun render(view, game : ptr(game)) {
   set_draw_color(view, 40, 40, 40, 255)
   sdl_clear(view.render)
   set_draw_color(view, 120, 120, 120, 255)
@@ -509,64 +505,22 @@ fun render(view, game : game) {
   sdl_present(view.render)
 }
 
-let width = 400
-let height = 600
-
-sdl_init(SDL_INIT_VIDEO);
-
-static c = malloc(4)
-c[0] = 65
-c[1] = 65
-c[2] = 65
-c[3] = 0
-
-static win =
-  sdl_create_window(
-    "Tetris\0".data,
-    SDL_WINDOWPOS_UNDEFINED,
-    SDL_WINDOWPOS_UNDEFINED,
-    width as i32,
-    height as i32,
-    SDL_WINDOW_SHOWN);
-
-win.sdl_set_window_position(1250, 200)
-
-static renderer = sdl_create_renderer(win, -1, SDL_RENDERER_ACCELERATED as u32)
-
-static event : sdl_event = UnsafeZeroInit()
-static s = "a"
-
-static active = true
-
-static view = view.new(win, renderer)
-
-static state = init(view, width, height)
-
-fun terminate() {
-  if active {
-    active = false
-    sdl_destroy_renderer(renderer)
-    sdl_destroy_window(win)
-  }
-}
+static state = init(view, initial_width, initial_height)
 
 fun update() {
-  if !active {
-    return
-  }
-
+  let event = UnsafeZeroInit()
   while sdl_poll_event(&event) == 1 {
     let t = event.event_type as i64
     if t == SDL_QUIT {
       terminate()
       return
     }
-    update_sdl_event(state, event)
+    update_sdl_event(&state, event)
   }
 
-  update_tick(state)
+  update_tick(&state)
 
   // draw the game
-  render(view, state)
+  render(view, &state)
 }
 

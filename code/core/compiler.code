@@ -1,11 +1,16 @@
 
-cbind compiler : ptr(u8)
+struct compiler_handle {
+  _ : ptr(u8)
+}
+
+cbind compiler : compiler_handle
 cbind template_quote : fun(e : ptr(expr), args : ptr(array(ptr(expr)))) => ptr(expr)
-cbind load_expression : fun(compiler : ptr(u8), name : ptr(string)) => ptr(expr)
-cbind load_module : fun(compiler : ptr(u8), name : ptr(string), imports : ptr(array(module_handle)), expr : ptr(expr), module_handle_out : ptr(option(module_handle)))
-cbind unload_module : fun(compiler : ptr(u8), module : module_handle)
-cbind get_module : fun(compiler : ptr(u8), name : ptr(string), module_handle_out : ptr(option(module_handle)))
-cbind get_function : fun(compiler : ptr(u8), module : module_handle, name : ptr(string), function_ptr_out : ptr(option(ptr(u8))))
+cbind load_expression : fun(c : compiler_handle, name : ptr(string)) => ptr(expr)
+cbind load_module : fun(c : compiler_handle, name : ptr(string), imports : ptr(array(module_handle)), expr : ptr(expr), module_handle_out : ptr(option(module_handle)))
+cbind unload_module : fun(c : compiler_handle, module : module_handle)
+cbind find_all_dependents : fun(c : compiler_handle, m : module_handle, out : ptr(array(module_handle)))
+cbind get_module : fun(c : compiler_handle, name : ptr(string), module_handle_out : ptr(option(module_handle)))
+cbind get_function : fun(c : compiler_handle, module : module_handle, name : ptr(string), function_ptr_out : ptr(option(ptr(u8))))
 cbind print_expr : fun(e : ptr(expr))
 cbind expr_to_string : fun(out : ptr(string), e : ptr(expr))
 
@@ -21,15 +26,22 @@ fun load_expression(name) {
 }
 
 // Turn an expression into a compiled module with no imports
-fun load_module(compiler : ptr(u8), name : string, imports : array(module_handle), expr : ptr(expr)) {
+fun load_module(c : compiler_handle, name : string, imports : array(module_handle), expr : ptr(expr)) {
   let module_handle = none()
-  compiler.load_module(&name, &imports, expr, &module_handle)
+  c.load_module(&name, &imports, expr, &module_handle)
   module_handle
 }
 
 // Unload a compiled module
 fun unload_module(module : module_handle) {
   compiler.unload_module(module)
+}
+
+// Find every module that depends on the given module (including itself)
+fun find_all_dependents(m : module_handle) {
+  let out = []
+  compiler.find_all_dependents(m, &out)
+  out
 }
 
 // Turn an expression into a compiled module with no imports

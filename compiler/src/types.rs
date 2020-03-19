@@ -258,22 +258,31 @@ impl Type {
     }
     None
   }
-
-  // pub fn array(&self) -> Option<&Type> {
-  //   if self.content == Array {
-  //     if let [t] = self.children.as_slice() {
-  //       return Some(t);
-  //     }
-  //   }
-  //   None
-  // }
-
-  // pub fn array_of(self) -> Self {
-  //   Type { content: Array, children: vec![self]}
-  // }
-
+  
   pub fn children(&self) -> &[Type] {
     self.children.as_slice()
+  }
+
+  /// Find the ids of the units referenced by this type.
+  /// Accepts Polytypes, but will panic if the type is Abstract.
+  pub fn units_referenced(&self) -> Vec<UnitId> {
+    fn find(t : &Type, uids : &mut Vec<UnitId>) {
+      match &t.content {
+        Def(_, uid) => uids.push(*uid),
+        Prim(_) | Fun | Ptr | Polytype(_) => (),
+        Abstract(_) =>
+          panic!("units_referenced can't be called on abstract types. '{}' is abstract.", t),
+      }
+      for c in t.children() {
+        find(c, uids);
+      }
+    }
+    let mut uids = vec![];
+    find(self, &mut uids);
+    // remove duplicates without allocating again
+    uids.sort_unstable();
+    uids.dedup();
+    uids
   }
 }
 

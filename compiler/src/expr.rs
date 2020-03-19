@@ -2,7 +2,7 @@
 use std::fmt;
 
 use crate::error::{Error, TextLocation, error_raw };
-use crate::c_interface::SStr;
+use crate::c_interface::{SStr, SArray};
 
 #[repr(u64)]
 #[derive(Debug)]
@@ -52,50 +52,6 @@ impl ExprContent {
     let content = ExprContent::List(SStr::from_str(s.as_str()), SArray::new(children));
     std::mem::forget(s);
     content
-  }
-}
-
-/// Owned array, compatible with Cauldron's array implementation
-#[repr(C)]
-pub struct SArray<T> {
-  pub data : *mut T,
-  pub length : u64,
-}
-
-impl <T> SArray<T> {
-  fn new(mut v : Vec<T>) -> SArray<T> {
-    let a = SArray { length: v.len() as u64, data: v.as_mut_ptr() };
-    std::mem::forget(v);
-    a
-  }
-
-  pub fn as_slice(&self) -> &[T] {
-    unsafe { std::slice::from_raw_parts(self.data, self.length as usize) }
-  }
-}
-
-impl <T : fmt::Debug> fmt::Debug for SArray<T> {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "{:?}", self.as_slice())
-  }
-}
-
-impl <T> Drop for SArray<T> {
-  fn drop(&mut self) {
-    unsafe {
-      Vec::from_raw_parts(self.data, self.length as usize, self.length as usize)
-    };
-  }
-}
-
-impl <T : Clone> Clone for SArray<T> {
-  fn clone(&self) -> Self {
-    let v = unsafe {
-      Vec::from_raw_parts(self.data, self.length as usize, self.length as usize)
-    };
-    let a = SArray::new(v.clone());
-    std::mem::forget(v);
-    a
   }
 }
 

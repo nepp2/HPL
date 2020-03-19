@@ -73,8 +73,20 @@ impl Compiler {
     Ok((unit_id, val))
   }
 
-  pub fn find_all_dependents(&mut self, uid : UnitId) {
-    TODO // FIND ALL DEPENDENTS
+  pub fn find_all_dependents(&mut self, uid : UnitId) -> Vec<UnitId> {
+    let mut uids = HashSet::new();
+    let mut queue = VecDeque::new();
+    uids.insert(uid);
+    queue.push_back(uid);
+    while let Some(uid) = queue.pop_front() {
+      for &i in self.code_store.get_importers(uid) {
+        if !uids.contains(&i) {
+          uids.insert(i);
+          queue.push_back(i);
+        }
+      }
+    }
+    uids.into_iter().collect()
   }
 
   fn parse(&mut self, unit_id : UnitId) -> Result<(), Error> {
@@ -132,10 +144,10 @@ impl Compiler {
     Ok(())
   }
 
-  fn typecheck_new_polymorphic_instances(&mut self, unit_id : UnitId, new_units : &mut Vec<UnitId>) -> Result<(), Error> {
+  fn typecheck_new_polymorphic_instances(&mut self, calling_unit : UnitId, new_units : &mut Vec<UnitId>) -> Result<(), Error> {
     // Typecheck any new polymorphic function instances
     let mut search_queue = VecDeque::new();
-    search_queue.push_back(unit_id);
+    search_queue.push_back(calling_unit);
     while let Some(psid) = search_queue.pop_front() {
       let mapping = self.code_store.type_mappings.get(&psid).unwrap();
       let polymorphic_references : Vec<_> = mapping.polymorphic_references.iter().cloned().collect();
@@ -154,8 +166,8 @@ impl Compiler {
           let instance_unit_id = self.code_store.create_unit(self.gen.next(), Some(poly_unit_name));
           new_units.push(instance_unit_id);
           search_queue.push_back(instance_unit_id);
-          // The new poly instance unit inherits all dependencies
-          // from the unit that defined it, and it depends on that unit
+          // The new poly instance unit inherits all dependencies from the unit that defined it,
+          // and it depends on that unit, as it may reference types or symbols from any of these units.
           let mut instance_dependencies =
             self.code_store.get_imports(poly_symbol_id.uid)
             .cloned().collect::<Vec<_>>();
@@ -163,7 +175,11 @@ impl Compiler {
           for dependency in instance_dependencies {
             self.code_store.add_import(instance_unit_id, dependency);
           }
-          let aaa = (); // TODO: Should it also depend on the unit that instantiated it? Maybe depends on the type parameters?
+          // Import any unit referenced in the instance type
+          for referenced_uid in instance_type.units_referenced() {
+            self.code_store.add_import(instance_unit_id, referenced_uid);
+          }
+          // Typecheck the new instance
           let poly_def = self.code_store.symbol_def(poly_symbol_id);
           let (instance_types, instance_mapping, instance_symbol_id) =
             inference_solver::typecheck_polymorphic_function_instance(
