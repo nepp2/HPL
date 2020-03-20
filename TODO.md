@@ -1,11 +1,11 @@
 
 # Immediate TODO list
 
-- Implement basic module dependencies
+- ~~Implement basic module dependencies~~
   - ~~To solve the polymorphism linking problem~~
-  - To prevent instanced function definitions from contaminating type resolution
-  - For correctness when hotloading
-- Finish polymorphism
+  - ~~To prevent instanced function definitions from contaminating type resolution~~
+  - ~~For correctness when hotloading~~
+- ~~Finish polymorphism~~
   - ~~Typecheck generic functions and structs~~
   - ~~Find set of functions to monomorphise~~
   - ~~Add a code store that centralises information about all loaded code~~
@@ -15,14 +15,11 @@
   - ~~Codegen the monomorphised functions~~
 - ~~Solve implicit reference problem~~
   - ~~For now, just pass heap-types around as reference types (like in Java)~~
-- Load and replace modules in basic DLL style
-  - Load & codegen modules dynamically
-    - May work already
-  - Retrieve function pointers from loaded modules
-    - May work already
-  - Fix module unloading if necessary
-    - Might not be required. Depends how quickly memory leakage becomes a problem.
-- Update old tetris code
+- ~~Load and replace modules in basic DLL style~~
+  - ~~Load & codegen modules dynamically~~
+  - ~~Retrieve function pointers from loaded modules~~
+  - ~~Fix module unloading if necessary~~
+- ~~Update old tetris code~~
 
 # Roadmap
 

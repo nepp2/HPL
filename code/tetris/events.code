@@ -1,0 +1,44 @@
+
+static GAME_TICK_EVENT : i32 = 0
+static GAME_SDL_EVENT : i32 = 1
+
+struct game_event {
+  tag : i32
+  sdl : sdl_event
+}
+
+static event_log : list(game_event) = list()
+
+fun poll_game_event() => game_event {
+  let ge = UnsafeZeroInit()
+  if sdl_poll_event(&ge.sdl) == 1 {
+    ge.tag = GAME_SDL_EVENT
+  }
+  else {
+    ge.tag = GAME_TICK_EVENT
+  }
+  ge
+}
+
+fun is_tick_event(ge : ptr(game_event)) {
+  ge.tag == GAME_TICK_EVENT
+}
+
+fun is_quit_event(ge : ptr(game_event)) {
+  if ge.tag == GAME_SDL_EVENT {
+    let t = ge.sdl.event_type as i64
+    return t == SDL_QUIT
+  }
+  false
+}
+
+fun get_key_down(ge : ptr(game_event)) {
+  if ge.tag == GAME_SDL_EVENT {
+    let t = ge.sdl.event_type as i64
+    if t == SDL_KEYDOWN {
+      let c = ge.sdl.content.keyboard.keysym.sym
+      return some(c)
+    }
+  }
+  none()
+}

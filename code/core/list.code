@@ -21,6 +21,10 @@ fun list(a : array(T)) => list(T) with T {
   l
 }
 
+fun clear(l : list(T)) => () with T {
+  l.p.len = 0
+}
+
 fun drop(list : list(T)) => () with T {
   dealloc(list.p.data)
 }

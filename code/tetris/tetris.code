@@ -392,17 +392,25 @@ static DOWN_KEY = 1073741905 as u32
 static RIGHT_KEY = 1073741903 as u32
 static LEFT_KEY = 1073741904 as u32
 static SPACE_KEY = 32 as u32
+static ENTER_KEY = 13 as u32
 
-fun update_sdl_event(game : ptr(game), event : sdl_event) {
+fun handle_game_event(game : ptr(game), e : ptr(game_event)) {
   let tet = game.tetronimos[game.tet_index]
   let shape = tet.tiles[game.orientation]
-  let c = game.config
+  let c = &game.config
   let grid_width = c.grid_width
   let grid_height = c.grid_height
 
-  let t = event.event_type as i64
-  if t == SDL_KEYDOWN {
-    let c = event.content.keyboard.keysym.sym
+  if e.is_tick_event() {
+    game.tick_count = game.tick_count + 1
+    if game.tick_count >= game.ticks_per_drop {
+      let c = &game.config;
+      move_down(game, shape, tet.color, c.grid_width, c.grid_height)
+    }
+  }
+  let key = e.get_key_down()
+  if key.is_some {
+    let c = key.val
     if c == UP_KEY {
       rotate(game, grid_width, grid_height)
     }
@@ -424,17 +432,6 @@ fun update_sdl_event(game : ptr(game), event : sdl_event) {
         }
       }
     }
-  }
-}
-
-fun update_tick(game : ptr(game)) {
-  let tet = game.tetronimos[game.tet_index]
-  let shape = tet.tiles[game.orientation]
-
-  game.tick_count = game.tick_count + 1
-  if game.tick_count >= game.ticks_per_drop {
-    let c = &game.config;
-    move_down(game, shape, tet.color, c.grid_width, c.grid_height)
   }
 }
 
@@ -504,22 +501,46 @@ fun render(view, game : ptr(game)) {
   sdl_present(view.render)
 }
 
-static state = init(view, initial_width, initial_height)
+static state = init(get_view(), initial_width, initial_height)
+
+static active = true
+
+for i in range(0, event_log.len() as i64) {
+  let e = event_log[i]
+  handle_game_event(&state, &e)
+}
 
 fun update() {
-  let event = UnsafeZeroInit()
-  while sdl_poll_event(&event) == 1 {
-    let t = event.event_type as i64
-    if t == SDL_QUIT {
-      terminate()
-      return
-    }
-    update_sdl_event(&state, event)
+  if !active {
+    return
   }
 
-  update_tick(&state)
+  // Update the game
+  while true {
+    let event = poll_game_event()
+    if is_quit_event(&event) {
+      close_view()
+      active = false
+      return      
+    }
+    let key = get_key_down(&event)
+    if key.is_some {
+      let c = key.val
+      if c == ENTER_KEY {
+        event_log.clear()
+        state = init(get_view(), initial_width, initial_height)
+        break
+      }
+    }
+    event_log.add(event)
+    handle_game_event(&state, &event)
+    if is_tick_event(&event) {
+      break
+    }
+  }
 
   // draw the game
+  let view = get_view()
   render(view, &state)
 }
 

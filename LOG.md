@@ -1,3 +1,28 @@
+
+# LOG - 19/03/2020
+
+Tetris works, so I am retiring this TODO list:
+
+- ~~Implement basic module dependencies~~
+  - ~~To solve the polymorphism linking problem~~
+  - ~~To prevent instanced function definitions from contaminating type resolution~~
+  - ~~For correctness when hotloading~~
+- ~~Finish polymorphism~~
+  - ~~Typecheck generic functions and structs~~
+  - ~~Find set of functions to monomorphise~~
+  - ~~Add a code store that centralises information about all loaded code~~
+  - ~~_Don't_ try to codegen the polymorphic versions~~
+  - ~~Add a new linking step, which happens _after_ code generation.~~
+  - ~~Typecheck the monomorphised functions~~
+  - ~~Codegen the monomorphised functions~~
+- ~~Solve implicit reference problem~~
+  - ~~For now, just pass heap-types around as reference types (like in Java)~~
+- ~~Load and replace modules in basic DLL style~~
+  - ~~Load & codegen modules dynamically~~
+  - ~~Retrieve function pointers from loaded modules~~
+  - ~~Fix module unloading if necessary~~
+- ~~Update old tetris code~~
+
 # LOG - 16/03/2020
 
 Ran into a bug with type checking, which I think is caused by a symbol failing to resolve too quickly. This should not be possible, as potential symbol matches should only ever shrink with each pass, not widen. This suggests there is another problem.

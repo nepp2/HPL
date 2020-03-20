@@ -9,22 +9,34 @@ struct view {
   render : sdl_renderer_handle
 }
 
-static win =
-  sdl_create_window(
-    "Tetris\0".data,
-    SDL_WINDOWPOS_UNDEFINED,
-    SDL_WINDOWPOS_UNDEFINED,
-    initial_width as i32,
-    initial_height as i32,
-    SDL_WINDOW_SHOWN);
+static active_view : view = UnsafeZeroInit()
+static active_view_exists = false
 
-win.sdl_set_window_position(1250, 200)
+fun get_view() {
+  if active_view_exists {
+    active_view
+  }
+  else {
+    active_view_exists = true
+    let window =
+      sdl_create_window(
+        "Tetris\0".data,
+        SDL_WINDOWPOS_UNDEFINED,
+        SDL_WINDOWPOS_UNDEFINED,
+        initial_width as i32,
+        initial_height as i32,
+        SDL_WINDOW_SHOWN);
+    window.sdl_set_window_position(1250, 200)
+    let render = sdl_create_renderer(window, -1, SDL_RENDERER_ACCELERATED as u32)
+    active_view = view.new(window, render)
+    active_view
+  }
+}
 
-static renderer = sdl_create_renderer(win, -1, SDL_RENDERER_ACCELERATED as u32)
-
-static view = view.new(win, renderer)
-
-fun terminate() {
-  sdl_destroy_renderer(renderer)
-  sdl_destroy_window(win)
+fun close_view() {
+  if active_view_exists {
+    sdl_destroy_renderer(active_view.render)
+    sdl_destroy_window(active_view.window)
+    active_view_exists = false
+  }
 }
