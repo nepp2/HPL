@@ -1,7 +1,7 @@
 
 use std::fmt;
 
-use crate::{common, compiler, error, expr, structure, types};
+use crate::{common, compiler, error, expr, structure, types, code_store};
 use common::*;
 use error::{Error, error, error_raw, TextLocation};
 use expr::{Expr, ExprContent};
@@ -11,10 +11,13 @@ use structure::{
 };
 use types::{
   Type, PType, TypeDefinition, FunctionInit, SymbolDefinition,
-  TypeDirectory, SymbolInit, SymbolId, AbstractType,
+  SymbolInit, SymbolId, AbstractType,
   SignatureBuilder, TypeMapping, TypeContent,
+  ResolvedSymbol, TypeInfo,
 };
 use compiler::DEBUG_PRINTING_TYPE_INFERENCE as DEBUG;
+use code_store::CodeStore;
+
 use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
@@ -252,7 +255,7 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
   }
 
   fn create_symbol_id(&mut self, node_id : NodeId) -> SymbolId {
-    let symbol_id = self.t.new_unit_id().new_symbol_id(self.gen);
+    let symbol_id = self.t.new_unit_id.new_symbol_id(self.gen);
     self.mapping.symbol_def_nodes.insert(symbol_id, node_id);
     symbol_id
   }
@@ -303,7 +306,7 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
       };
       SymbolDefinition {
         id: symbol_id,
-        unit_id: self.t.new_unit_id(),
+        unit_id: self.t.new_unit_id,
         name: name.clone(),
         type_tag: Type::any(),
         initialiser: SymbolInit::Function(f),
@@ -388,7 +391,7 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
           let symbol_id = self.create_symbol_id(id);
           self.t.create_symbol(SymbolDefinition {
             id: symbol_id,
-            unit_id: self.t.new_unit_id(),
+            unit_id: self.t.new_unit_id,
             name: name.name.clone(),
             type_tag: Type::any(),
             initialiser,
@@ -492,7 +495,7 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
         });
         self.t.create_symbol(SymbolDefinition {
           id: symbol_id,
-          unit_id: self.t.new_unit_id(),
+          unit_id: self.t.new_unit_id,
           name: name.clone(),
           initialiser: SymbolInit::CBind,
           type_tag: Type::any(),
@@ -524,7 +527,7 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
             });
             let def = TypeDefinition {
               name: name.clone(),
-              unit_id: gc.t.new_unit_id(),
+              unit_id: gc.t.new_unit_id,
               fields: fields.iter().map(|(f, _)| (f.clone(), Type::any())).collect(),
               kind: *kind,
               type_vars,
@@ -711,4 +714,85 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
     let r = expr_to_type_internal(self, expr);
     self.log_error(r)
   }
-}  
+}
+
+/// Utility type for finding definitions either in the module being constructed,
+/// or in the other modules in scope.
+pub struct TypeDirectory<'a> {
+  pub imports : Vec<UnitId>,
+  pub new_unit_id : UnitId,
+  pub types : &'a mut HashMap<UnitId, TypeInfo>,
+  polytype_bindings : HashMap<RefStr, Type>,
+  symbol_results : Vec<ResolvedSymbol>,
+}
+
+// TODO: A lot of these functions are slow because they iterate through everything.
+// This could probably be improved with some caching, although any caching needs to
+// be wary of new symbols being added.
+impl <'a> TypeDirectory<'a> {
+  pub fn new(imports : Vec<UnitId>, new_unit_id : UnitId, types : &'a mut HashMap<UnitId, TypeInfo>) -> Self {
+    TypeDirectory {
+      imports, new_unit_id, types,
+      polytype_bindings: HashMap::new(),
+      symbol_results: vec![],
+    }
+  }
+
+  pub fn get_symbol(&self, id : SymbolId) -> &SymbolDefinition {
+    self.types.get(&id.uid).unwrap().symbols.get(&id).unwrap()
+  }
+
+  pub fn get_symbol_mut(&mut self, id : SymbolId) -> &mut SymbolDefinition {
+    self.types.get_mut(&id.uid).unwrap()
+      .symbols.get_mut(&id).unwrap()
+  }
+
+  pub fn get_type_def(&self, name : &str, unit_id : UnitId) -> &TypeDefinition {
+    self.types.get(&unit_id).unwrap()
+      .type_defs.get(name).unwrap()
+  }
+
+  pub fn get_type_def_mut(&mut self, name : &str) -> &mut TypeDefinition {
+    self.types.get_mut(&self.new_unit_id).unwrap()
+      .type_defs.get_mut(name).unwrap()
+  }
+
+  pub fn create_type_def(&mut self, def : TypeDefinition) {
+    self.types.get_mut(&self.new_unit_id).unwrap()
+      .type_defs.insert(def.name.clone(), def);
+  }
+
+  pub fn create_symbol(&mut self, def : SymbolDefinition) {
+    self.types.get_mut(&self.new_unit_id).unwrap()
+      .symbols.insert(def.id, def);
+  }
+
+  /// Returns a slice of all matching definitions
+  pub fn find_symbol(
+    &mut self,
+    name : &str,
+    t : &Type,
+  )
+    -> &[ResolvedSymbol]
+  {
+    self.polytype_bindings.clear();
+    self.symbol_results.clear();
+    self.types.get(&self.new_unit_id).unwrap()
+      .find_symbol(name, t, &mut self.polytype_bindings, &mut self.symbol_results);
+    for uid in self.imports.iter() {
+      let type_info = self.types.get(uid).unwrap();
+      type_info.find_symbol(name, t, &mut self.polytype_bindings, &mut self.symbol_results);
+    }
+    self.symbol_results.as_slice()
+  }
+
+  pub fn find_type_def(&self, name : &str) -> Option<&TypeDefinition> {
+    self.types.get(&self.new_unit_id).unwrap()
+      .find_type_def(name).or_else(||
+        self.imports.iter().rev().flat_map(|uid| {
+          let type_info = self.types.get(uid).unwrap();
+          type_info.find_type_def(name)
+        }).next()
+      )
+  }
+}

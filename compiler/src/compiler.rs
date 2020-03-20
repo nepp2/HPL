@@ -7,7 +7,7 @@ use common::*;
 use expr::Expr;
 use c_interface::CSymbols;
 use code_store::CodeStore;
-use types::{TypeContent, PType };
+use types::{TypeContent, PType, TypeInfo, TypeMapping };
 use llvm_compile::{LlvmCompiler, execute_function};
 use error::{Error, error, ErrorContent};
 use structure::TOP_LEVEL_FUNCTION_NAME;
@@ -99,11 +99,14 @@ impl Compiler {
     Ok(())
   }
 
-  fn load_module_from_expr_internal(&mut self, unit_id : UnitId, imports : HashSet<UnitId>)
+  fn load_module_from_expr_internal(&mut self, unit_id : UnitId, imports : Vec<UnitId>)
     -> Result<(), Error>
   {
-    fn inner(c : &mut Compiler, unit_id : UnitId, mut imports : HashSet<UnitId>, new_units : &mut Vec<UnitId>) -> Result<(), Error> {
-      imports.insert(c.intrinsics);
+    fn inner(c : &mut Compiler, unit_id : UnitId, mut imports : Vec<UnitId>, new_units : &mut Vec<UnitId>) -> Result<(), Error> {
+      imports.push(c.intrinsics);
+      // Remove duplicates
+      imports.sort_unstable();
+      imports.dedup();
       for &i in imports.iter() {
         c.code_store.add_import(unit_id, i);
       }
@@ -134,12 +137,9 @@ impl Compiler {
     Ok(())
   }
 
-  fn typecheck(&mut self, unit_id : UnitId, imports : HashSet<UnitId>, new_units : &mut Vec<UnitId>) -> Result<(), Error> {
-    let (types, mapping) =
-      inference_solver::infer_types(
-        unit_id, &self.code_store, &self.cache, &mut self.gen, &imports)?;
-        self.code_store.types.insert(unit_id, types);
-        self.code_store.type_mappings.insert(unit_id, mapping);
+  fn typecheck(&mut self, unit_id : UnitId, imports : Vec<UnitId>, new_units : &mut Vec<UnitId>) -> Result<(), Error> {
+    inference_solver::infer_types(
+      unit_id, &mut self.code_store, &self.cache, &mut self.gen, imports)?;
     self.typecheck_new_polymorphic_instances(unit_id, new_units)?;
     Ok(())
   }
@@ -180,17 +180,14 @@ impl Compiler {
             self.code_store.add_import(instance_unit_id, referenced_uid);
           }
           // Typecheck the new instance
-          let poly_def = self.code_store.symbol_def(poly_symbol_id);
-          let (instance_types, instance_mapping, instance_symbol_id) =
+          let instance_symbol_id =
             inference_solver::typecheck_polymorphic_function_instance(
-              instance_unit_id, poly_def, &instance_type, &self.code_store,
+              instance_unit_id, poly_symbol_id, &instance_type, &mut self.code_store,
               &self.cache, &mut self.gen)?;
           // Register the instance with the code store
           let instances = self.code_store.poly_instances.entry(poly_symbol_id).or_default();
           instances.insert(instance_type, instance_symbol_id);
           self.code_store.poly_parents.insert(instance_unit_id, poly_symbol_id);
-          self.code_store.types.insert(instance_unit_id, instance_types);
-          self.code_store.type_mappings.insert(instance_unit_id, instance_mapping);
           // The unit that instantiated it also depends on it
           self.code_store.add_import(psid, instance_unit_id);
         }

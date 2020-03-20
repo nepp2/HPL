@@ -15,39 +15,37 @@ use structure::{
   NodeId, TypeKind, Nodes,
 };
 use types::{
-  Type, PType, TypeContent, TypeInfo, TypeDirectory, SymbolId,
+  Type, PType, TypeContent, TypeInfo, SymbolId,
   incremental_unify, TypeMapping, UnifyResult, AbstractType,
   SymbolInit, SymbolDefinition,
 };
 use inference_constraints::{
   Constraint, ConstraintContent,
   Constraints, TypeSymbol, Assertion,
-  Errors,
+  Errors, TypeDirectory,
 };
 use code_store::CodeStore;
 use compiler::DEBUG_PRINTING_TYPE_INFERENCE as DEBUG;
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 use TypeContent::*;
 
 pub fn infer_types(
   unit_id : UnitId,
-  code_store : &CodeStore,
+  code_store : &mut CodeStore,
   cache : &StringCache,
   gen : &mut UIDGenerator,
-  imports : &HashSet<UnitId>,
+  imports : Vec<UnitId>,
 )
-  -> Result<(TypeInfo, TypeMapping), Error>
+  -> Result<(), Error>
 {
+  code_store.types.insert(unit_id, TypeInfo::new(unit_id));
   let mut mapping = TypeMapping::new();
   let mut errors = Errors::new();
-  let mut new_types = TypeInfo::new(unit_id);
-  let imports : Vec<_> =
-    imports.iter().map(|&uid| code_store.types(uid)).collect();
   let mut type_directory =
-    TypeDirectory::new(imports.as_slice(), &mut new_types);
-  let nodes = code_store.nodes(unit_id);
+    TypeDirectory::new(imports, unit_id, &mut code_store.types);
+  let nodes = code_store.nodes.get(&unit_id).unwrap();
   let c =
     inference_constraints::get_module_constraints(
       &nodes, &mut type_directory, &mut mapping, cache, gen, &mut errors);
@@ -57,37 +55,34 @@ pub fn infer_types(
   i.infer();
   if !errors.is_empty() {    
     let c = ErrorContent::InnerErrors("type errors".into(), errors.concrete_errors);
-    error(nodes.root().loc, c)
+    return error(nodes.root().loc, c);
   }
-  else {
-    Ok((new_types, mapping))
-  }
+  code_store.type_mappings.insert(unit_id, mapping);
+  Ok(())
 }
 
 pub fn typecheck_polymorphic_function_instance(
   instance_unit : UnitId,
-  poly_function : &SymbolDefinition,
+  poly_function_id : SymbolId,
   instance_type : &Type,
-  code_store : &CodeStore,
+  code_store : &mut CodeStore,
   cache : &StringCache,
   gen : &mut UIDGenerator,
 )
-  -> Result<(TypeInfo, TypeMapping, SymbolId), Error>
+  -> Result<SymbolId, Error>
 {
+  code_store.types.insert(instance_unit, TypeInfo::new(instance_unit));
   let mut mapping = TypeMapping::new();
   let mut errors = Errors::new();
-  let mut new_types = TypeInfo::new(instance_unit);
-  let aaa = (); // TODO: type directory should just take the code store, and be a lot simpler
-  let imports : Vec<_> =
-    code_store.get_imports(instance_unit)
-    .map(|&uid| code_store.types(uid)).collect();
+  let imports : Vec<_> = code_store.get_imports(instance_unit).cloned().collect();
+  let instanced_type_vars =
+    code_store.symbol_def(poly_function_id).instanced_type_vars(instance_type);
   let mut type_directory =
-    TypeDirectory::new(imports.as_slice(), &mut new_types);
-  let nodes = code_store.nodes(poly_function.unit_id);
+    TypeDirectory::new(imports, instance_unit, &mut code_store.types);
+  let nodes = code_store.nodes.get(&poly_function_id.uid).unwrap();
   let source_node =
-    *code_store.type_mapping(poly_function.unit_id)
-    .symbol_def_nodes.get(&poly_function.id).unwrap();
-  let instanced_type_vars = poly_function.instanced_type_vars(instance_type);
+    *code_store.type_mappings.get(&poly_function_id.uid).unwrap()
+    .symbol_def_nodes.get(&poly_function_id).unwrap();
   let (c, symbol_id) =
     inference_constraints::get_polymorphic_function_instance_constraints(
       &nodes, source_node, instance_type.clone(), instanced_type_vars.as_slice(),
@@ -98,11 +93,10 @@ pub fn typecheck_polymorphic_function_instance(
   i.infer();
   if !errors.is_empty() {
     let c = ErrorContent::InnerErrors("type errors".into(), errors.concrete_errors);
-    error(nodes.root().loc, c)
+    return error(nodes.root().loc, c);
   }
-  else {
-    Ok((new_types, mapping, symbol_id))
-  }
+  code_store.type_mappings.insert(instance_unit, mapping);
+  Ok(symbol_id)
 }
 
 struct Inference<'a> {
@@ -623,7 +617,7 @@ impl <'a> Inference<'a> {
     // Find polymorphic definitions
     if self.errors.is_empty() {
       for (node_id, symbol_id) in self.mapping.symbol_references.iter() {
-        let def = self.t.find_type_info(symbol_id.uid).symbols.get(symbol_id).unwrap().clone();
+        let def = self.t.get_symbol(*symbol_id);
         if def.is_polymorphic() {
           if let SymbolInit::Function(_) = def.initialiser {
             let t = self.mapping.node_type.get(node_id).unwrap();

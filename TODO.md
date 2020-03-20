@@ -1,30 +1,11 @@
 
 # Immediate TODO list
 
-- ~~Implement basic module dependencies~~
-  - ~~To solve the polymorphism linking problem~~
-  - ~~To prevent instanced function definitions from contaminating type resolution~~
-  - ~~For correctness when hotloading~~
-- ~~Finish polymorphism~~
-  - ~~Typecheck generic functions and structs~~
-  - ~~Find set of functions to monomorphise~~
-  - ~~Add a code store that centralises information about all loaded code~~
-  - ~~_Don't_ try to codegen the polymorphic versions~~
-  - ~~Add a new linking step, which happens _after_ code generation.~~
-  - ~~Typecheck the monomorphised functions~~
-  - ~~Codegen the monomorphised functions~~
-- ~~Solve implicit reference problem~~
-  - ~~For now, just pass heap-types around as reference types (like in Java)~~
-- ~~Load and replace modules in basic DLL style~~
-  - ~~Load & codegen modules dynamically~~
-  - ~~Retrieve function pointers from loaded modules~~
-  - ~~Fix module unloading if necessary~~
-- ~~Update old tetris code~~
 
 # Roadmap
 
 - ~~Support polymorphism~~
-- Port tetris demo
+- ~~Port tetris demo~~
 - Make a time-travelling UI for demo
 - Make a node-based module loading system
 

@@ -80,6 +80,16 @@ impl PType {
   }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub struct TypeId {
+  id : Uid,
+  unit : UnitId,
+}
+
+pub struct Types {
+  types : HashMap<TypeId, Type>,
+}
+
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Type {
   pub content : TypeContent,
@@ -672,87 +682,3 @@ pub struct ResolvedSymbol {
   pub id : SymbolId,
   pub resolved_type : Type,
 }
-
-/// Utility type for finding definitions either in the module being constructed,
-/// or in the other modules in scope.
-pub struct TypeDirectory<'a> {
-  import_types : &'a [&'a TypeInfo],
-  pub new_module : &'a mut TypeInfo,
-  polytype_bindings : HashMap<RefStr, Type>,
-  symbol_results : Vec<ResolvedSymbol>,
-}
-
-// TODO: A lot of these functions are slow because they iterate through everything.
-// This could probably be improved with some caching, although any caching needs to
-// be wary of new symbols being added.
-impl <'a> TypeDirectory<'a> {
-  pub fn new(
-    import_types : &'a [&'a TypeInfo],
-    new_module : &'a mut TypeInfo) -> Self
-  {
-    TypeDirectory{
-      import_types, new_module,
-      polytype_bindings: HashMap::new(),
-      symbol_results: vec![],
-    }
-  }
-
-  pub fn get_symbol(&self, id : SymbolId) -> &SymbolDefinition {
-    self.find_type_info(id.uid).symbols.get(&id).unwrap()
-  }
-
-  pub fn get_symbol_mut(&mut self, id : SymbolId) -> &mut SymbolDefinition {
-    self.new_module.symbols.get_mut(&id).unwrap()
-  }
-
-  pub fn get_type_def(&self, name : &str, unit_id : UnitId) -> &TypeDefinition {
-    self.find_type_info(unit_id).find_type_def(name).unwrap()
-  }
-
-  pub fn get_type_def_mut(&mut self, name : &str) -> &mut TypeDefinition {
-    self.new_module.type_defs.get_mut(name).unwrap()
-  }
-
-  pub fn create_type_def(&mut self, def : TypeDefinition) {
-    self.new_module.type_defs.insert(def.name.clone(), def);
-  }
-
-  pub fn create_symbol(&mut self, def : SymbolDefinition) {
-    self.new_module.symbols.insert(def.id, def);
-  }
-
-  /// Returns a slice of all matching definitions
-  pub fn find_symbol(
-    &mut self,
-    name : &str,
-    t : &Type,
-  )
-    -> &[ResolvedSymbol]
-  {
-    self.polytype_bindings.clear();
-    self.symbol_results.clear();
-    self.new_module.find_symbol(name, t, &mut self.polytype_bindings, &mut self.symbol_results);
-    for m in self.import_types.iter().rev() {
-      m.find_symbol(name, t, &mut self.polytype_bindings, &mut self.symbol_results);
-    }
-    self.symbol_results.as_slice()
-  }
-
-  pub fn find_type_def(&self, name : &str) -> Option<&TypeDefinition> {
-    self.new_module.find_type_def(name).or_else(||
-      self.import_types.iter().rev().flat_map(|m| m.find_type_def(name)).next())
-  }
-
-  pub fn new_unit_id(&self) -> UnitId {
-    self.new_module.unit_id
-  }
-
-  pub fn find_type_info(&self, unit_id : UnitId) -> &TypeInfo {
-    [&*self.new_module].iter()
-      .chain(self.import_types.iter().rev())
-      .find(|t| t.unit_id == unit_id)
-      .expect("module not found")
-  }
-}
-
-
