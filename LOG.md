@@ -1,4 +1,19 @@
 
+# LOG - 20/03/2020
+
+The old hotloading, event-sourced tetris demo works again. It's not a very convincing demo though.
+
+I could try to make a better demo, in a similar, hacked-together way, or I could make a more general hotloading system first. A more general hotloading system seems like a better long-term investment, but I do need something interesting to show in the short term. There is also the problem that my current implementation is quite fragile. It is missing a lot of things:
+
+- Tagged union types
+- Auto-derived generics (e.g. hash, copy, etc)
+- Reference types
+- Memory safety via regions
+  - Guaranteed memory isolation
+  - Tracing for collection
+
+I do not necessarily need to do any of these things in order to work on hot reloading or the node graph. In fact, they might be heavily informed by such work. This is also more likely to lead to demos quickly. So it may represent the best compromise between communication progress.
+
 # LOG - 19/03/2020
 
 Tetris works, so I am retiring this TODO list:
