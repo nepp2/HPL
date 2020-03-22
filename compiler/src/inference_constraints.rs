@@ -1,7 +1,7 @@
 
 use std::fmt;
 
-use crate::{common, compiler, error, expr, structure, types, code_store};
+use crate::{common, compiler, error, expr, structure, types};
 use common::*;
 use error::{Error, error, error_raw, TextLocation};
 use expr::{Expr, ExprContent};
@@ -16,15 +16,15 @@ use types::{
   ResolvedSymbol, TypeInfo,
 };
 use compiler::DEBUG_PRINTING_TYPE_INFERENCE as DEBUG;
-use code_store::CodeStore;
 
 use std::collections::{HashMap, HashSet};
 
+// A position in the program which requires a type
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub struct TypeSymbol(Uid);
+pub struct TypeSlot(Uid);
 
 pub enum Assertion {
-  Assert(TypeSymbol, Type),
+  Assert(TypeSlot, Type),
   AssertTypeDef {
     typename: RefStr,
     fields : Vec<Option<(Type, TextLocation)>>,
@@ -37,33 +37,33 @@ pub struct Constraint {
 }
 
 pub enum ConstraintContent {
-  Equalivalent(TypeSymbol, TypeSymbol),
-  Branch { output : TypeSymbol, cases : Vec<TypeSymbol> },
-  TypeParameter{ parent : TypeSymbol, parameter : TypeSymbol },
-  Convert{ val : TypeSymbol, into_type_ts : TypeSymbol },
-  SizeOf{ node : NodeId, ts : TypeSymbol },
+  Equalivalent(TypeSlot, TypeSlot),
+  Branch { output : TypeSlot, cases : Vec<TypeSlot> },
+  TypeParameter{ parent : TypeSlot, parameter : TypeSlot },
+  Convert{ val : TypeSlot, into_type_slot : TypeSlot },
+  SizeOf{ node : NodeId, slot : TypeSlot },
   FieldAccess {
-    container : TypeSymbol,
+    container : TypeSlot,
     field : Reference,
-    result : TypeSymbol,
+    result : TypeSlot,
   },
   Constructor {
-    def_ts : TypeSymbol,
-    fields : Vec<(Option<Reference>, TypeSymbol)>,
+    def_slot : TypeSlot,
+    fields : Vec<(Option<Reference>, TypeSlot)>,
   },
   Function {
-    function : TypeSymbol,
-    args : Vec<TypeSymbol>,
-    return_type : TypeSymbol,
+    function : TypeSlot,
+    args : Vec<TypeSlot>,
+    return_type : TypeSlot,
   },
   SymbolDef {
     symbol_id: SymbolId,
-    type_symbol: TypeSymbol,
+    slot: TypeSlot,
   },
   SymbolReference {
     node : NodeId,
     name : RefStr,
-    result : TypeSymbol,
+    result : TypeSlot,
   },
 }
 
@@ -87,10 +87,10 @@ impl  fmt::Display for Constraint {
 }
 
 pub struct Constraints {
-  pub symbols : HashMap<TypeSymbol, TextLocation>,
-  pub node_symbols : HashMap<NodeId, TypeSymbol>,
+  pub slots : HashMap<TypeSlot, TextLocation>,
+  pub node_slots : HashMap<NodeId, TypeSlot>,
   pub literals : Vec<NodeId>,
-  pub variable_symbols : HashMap<ReferenceId, TypeSymbol>,
+  pub variable_slots : HashMap<ReferenceId, TypeSlot>,
   pub constraints : Vec<Constraint>,
   pub assertions : Vec<Assertion>,
 }
@@ -98,10 +98,10 @@ pub struct Constraints {
 impl Constraints {
   pub fn new() -> Self {
     Constraints {
-      symbols: HashMap::new(),
-      node_symbols: HashMap::new(),
+      slots: HashMap::new(),
+      node_slots: HashMap::new(),
       literals: vec![],
-      variable_symbols: HashMap::new(),
+      variable_slots: HashMap::new(),
       constraints: vec![],
       assertions: vec![],
     }
@@ -166,7 +166,7 @@ pub fn get_polymorphic_function_instance_constraints(
 }
 
 pub struct ConstraintGenerator<'l, 't> {
-  labels : HashMap<LabelId, TypeSymbol>,
+  labels : HashMap<LabelId, TypeSlot>,
   type_parameters : &'l mut Vec<(RefStr, Type)>,
   t : &'l mut TypeDirectory<'t>,
   mapping : &'l mut TypeMapping,
@@ -203,27 +203,27 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
     }
   }
 
-  fn type_symbol(&mut self, loc : TextLocation) -> TypeSymbol {
-    let ts = TypeSymbol(self.gen.next().into());
-    self.c.symbols.insert(ts, loc);
-    ts
+  fn new_slot(&mut self, loc : TextLocation) -> TypeSlot {
+    let slot = TypeSlot(self.gen.next().into());
+    self.c.slots.insert(slot, loc);
+    slot
   }
 
-  fn node_to_symbol(&mut self, n : &Node) -> TypeSymbol {
-    if let Some(ts) = self.c.node_symbols.get(&n.id) { *ts }
+  fn node_to_slot(&mut self, n : &Node) -> TypeSlot {
+    if let Some(slot) = self.c.node_slots.get(&n.id) { *slot }
     else {
-      let ts = self.type_symbol(n.loc);
-      self.c.node_symbols.insert(n.id, ts);
-      ts
+      let slot = self.new_slot(n.loc);
+      self.c.node_slots.insert(n.id, slot);
+      slot
     }
   }
 
-  fn variable_to_type_symbol(&mut self, v : &Reference) -> TypeSymbol {
-    if let Some(ts) = self.c.variable_symbols.get(&v.id) { *ts }
+  fn variable_to_slot(&mut self, v : &Reference) -> TypeSlot {
+    if let Some(slot) = self.c.variable_slots.get(&v.id) { *slot }
     else {
-      let ts = self.type_symbol(v.loc);
-      self.c.variable_symbols.insert(v.id, ts);
-      ts
+      let slot = self.new_slot(v.loc);
+      self.c.variable_slots.insert(v.id, slot);
+      slot
     }
   }
 
@@ -232,7 +232,7 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
     self.c.constraints.push(c);
   }
 
-  fn equalivalent(&mut self, a : TypeSymbol, b : TypeSymbol) {
+  fn equalivalent(&mut self, a : TypeSlot, b : TypeSlot) {
     self.constraint(ConstraintContent::Equalivalent(a, b));
   }
 
@@ -240,17 +240,17 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
     self.c.assertions.push(a);
   }
 
-  fn assert_type(&mut self, ts : TypeSymbol, t : Type) {
-    self.assertion(Assertion::Assert(ts, t));
+  fn assert_type(&mut self, slot : TypeSlot, t : Type) {
+    self.assertion(Assertion::Assert(slot, t));
   }
 
-  fn assert(&mut self, ts : TypeSymbol, t : PType) {
-    self.assert_type(ts, t.into());
+  fn assert(&mut self, slot : TypeSlot, t : PType) {
+    self.assert_type(slot, t.into());
   }
 
-  fn tag_symbol(&mut self, ts : TypeSymbol, type_expr : &Expr) {
+  fn tag_slot(&mut self, slot : TypeSlot, type_expr : &Expr) {
     if let Some(t) = self.expr_to_type(type_expr) {
-      self.assert_type(ts, t);
+      self.assert_type(slot, t);
     }
   }
 
@@ -273,13 +273,13 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
     use ConstraintContent::*;
     let node = n.node(id);
     // Assert type of the symbol
-    let symbol_ts = self.type_symbol(node.loc);
-    self.assert_type(symbol_ts, function_type);
+    let symbol_slot = self.new_slot(node.loc);
+    self.assert_type(symbol_slot, function_type);
     // Process the body
     let is_polymorphic_def = type_vars.len() > 0;
     if !is_polymorphic_def {
       // Register argument types. MUST happen before gathering the body constraints.
-      let args = args.iter().map(|arg| self.variable_to_type_symbol(arg)).collect();
+      let args = args.iter().map(|arg| self.variable_to_slot(arg)).collect();
       // Need new scope stack for new function body.
       let mut ngc = ConstraintGenerator::new(
         self.type_parameters, self.t, self.mapping, self.cache,
@@ -287,11 +287,11 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
       );
       // Gather constraints for the body of the function. The arguments MUST be processed
       // first so that their type symbols are available.
-      let body_ts = ngc.process_node(n, body);
+      let body_slot = ngc.process_node(n, body);
       ngc.constraint(Function {
-        function: symbol_ts,
+        function: symbol_slot,
         args,
-        return_type: body_ts,
+        return_type: body_slot,
       });
     }
     // Register the symbol definition
@@ -316,7 +316,7 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
     // Bind the symbol definition to its type symbol
     self.constraint(SymbolDef {
       symbol_id,
-      type_symbol: symbol_ts,
+      slot: symbol_slot,
     });
     symbol_id
   }
@@ -349,10 +349,10 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
     }
   }
 
-  pub fn process_node(&mut self, n : &Nodes, id : NodeId)-> TypeSymbol {
+  pub fn process_node(&mut self, n : &Nodes, id : NodeId)-> TypeSlot {
     use ConstraintContent::*;
     let node = n.node(id);
-    let ts = self.node_to_symbol(node);
+    let slot = self.node_to_slot(node);
     match &node.content {
       Content::Literal(val) => {
         use PrimitiveVal::*;
@@ -369,20 +369,20 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
             Type::unresolved_def(self.cache.get("string"))
           }
         };
-        self.assert_type(ts, t);
+        self.assert_type(slot, t);
         self.c.literals.push(id);
       }
       Content::VariableInitialise{ name, type_tag, value, var_scope } => {
-        self.assert(ts, PType::Void);
-        let var_type_symbol = match var_scope {
-          VarScope::Local => self.variable_to_type_symbol(name),
-          VarScope::Global(_) => self.type_symbol(name.loc),
+        self.assert(slot, PType::Void);
+        let var_slot = match var_scope {
+          VarScope::Local => self.variable_to_slot(name),
+          VarScope::Global(_) => self.new_slot(name.loc),
         };
         if let Some(t) = type_tag {
-          self.tag_symbol(var_type_symbol, t);
+          self.tag_slot(var_slot, t);
         }
         let vid = self.process_node(n, *value);
-        self.equalivalent(var_type_symbol, vid);
+        self.equalivalent(var_slot, vid);
         if let VarScope::Global(global_type) = *var_scope {
           let initialiser = match global_type {
             GlobalType::CBind => SymbolInit::CBind,
@@ -399,18 +399,18 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
           });
           self.constraint(SymbolDef{
             symbol_id,
-            type_symbol: var_type_symbol,
+            slot: var_slot,
           });          
         }
       }
       Content::Assignment{ assignee , value } => {
-        self.assert(ts, PType::Void);
+        self.assert(slot, PType::Void);
         let a = self.process_node(n, *assignee);
         let b = self.process_node(n, *value);
         self.equalivalent(a, b);
       }
       Content::IfThen{ condition, then_branch } => {
-        self.assert(ts, PType::Void);
+        self.assert(slot, PType::Void);
         let cond = self.process_node(n, *condition);
         self.assert(cond, PType::Bool);
         self.process_node(n, *then_branch);
@@ -420,7 +420,7 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
         let then_br = self.process_node(n, *then_branch);
         let else_br = self.process_node(n, *else_branch);
         self.assert(cond, PType::Bool);
-        self.constraint(Branch { output: ts, cases: vec![then_br, else_br]});
+        self.constraint(Branch { output: slot, cases: vec![then_br, else_br]});
       }
       Content::Block(ns) => {
         let len = ns.len();
@@ -429,27 +429,27 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
             self.process_node(n, *child);
           }
           let c = self.process_node(n, ns[len-1]);
-          self.equalivalent(ts, c);
+          self.equalivalent(slot, c);
         }
         else {
-          self.assert(ts, PType::Void);
+          self.assert(slot, PType::Void);
         }
       }
       Content::Quote(_e) => {
         let t = Type::unresolved_def(self.cache.get("expr"));
-        self.assert_type(ts, Type::ptr_to(t));
+        self.assert_type(slot, Type::ptr_to(t));
       }
       Content::Reference{ name, refers_to } => {
         if let Some(refers_to) = refers_to {
-          let var_type = self.variable_to_type_symbol(n.symbol(*refers_to));
-          self.equalivalent(ts, var_type);
+          let var_type = self.variable_to_slot(n.symbol(*refers_to));
+          self.equalivalent(slot, var_type);
         }
         else {
-          self.constraint(SymbolReference{ node: id, name: name.clone(), result: ts });
+          self.constraint(SymbolReference{ node: id, name: name.clone(), result: slot });
         }
       }
       Content::FunctionDefinition{ name, args, return_tag, type_vars, body } => {
-        self.assert(ts, PType::Void);
+        self.assert(slot, PType::Void);
         self.with_type_parameters(type_vars.as_slice(), |gc, polytypes| {
           let is_polymorphic_def = polytypes.len() > 0;
           // Determine return type
@@ -483,15 +483,15 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
         });
       }
       Content::CBind { name, type_tag } => {
-        self.assert(ts, PType::Void);
-        let cbind_ts = self.type_symbol(node.loc);
+        self.assert(slot, PType::Void);
+        let cbind_slot = self.new_slot(node.loc);
         if let Some(t) = self.expr_to_type(type_tag) {
-          self.assert_type(cbind_ts, t);
+          self.assert_type(cbind_slot, t);
         }
         let symbol_id = self.create_symbol_id(id);
         self.constraint(SymbolDef {
           symbol_id,
-          type_symbol: cbind_ts,
+          slot: cbind_slot,
         });
         self.t.create_symbol(SymbolDefinition {
           id: symbol_id,
@@ -504,10 +504,10 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
       }
       Content::TypeAlias { alias, type_aliased } => {
         // TODO: not yet implemented
-        self.assert(ts, PType::Void);
+        self.assert(slot, PType::Void);
       }
       Content::TypeDefinition{ name, kind, fields, type_vars } => {
-        self.assert(ts, PType::Void);
+        self.assert(slot, PType::Void);
         if self.t.find_type_def(name.as_ref()).is_some() {
           let e = error_raw(node.loc, "type with this name already defined");
           self.errors.push(e)
@@ -540,40 +540,40 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
       Content::TypeConstructor{ name, field_values } => {
         let mut fields = vec![];
         for (field, value) in field_values.iter() {
-          let field_type_symbol = self.process_node(n, *value);
+          let field_slot = self.process_node(n, *value);
           let field = field.clone();
-          fields.push((field, field_type_symbol));
+          fields.push((field, field_slot));
         }
         let def_type = Type::unresolved_def(name.name.clone());
-        self.assert_type(ts, def_type);
-        let tc = Constructor{ def_ts: ts, fields };
+        self.assert_type(slot, def_type);
+        let tc = Constructor{ def_slot: slot, fields };
         self.constraint(tc);
       }
       Content::FieldAccess{ container, field } => {
         let fa = FieldAccess {
           container: self.process_node(n, *container),
           field: field.clone(),
-          result: ts,
+          result: slot,
         };
         self.constraint(fa);
       }
       Content::ArrayLiteral(ns) => {
-        let element_ts = self.type_symbol(node.loc);
+        let element_slot = self.new_slot(node.loc);
         for element in ns.iter() {
           let el = self.process_node(n, *element);
-          self.equalivalent(el, element_ts);
+          self.equalivalent(el, element_slot);
         }
         let mut array_type = Type::unresolved_def(self.cache.get("array"));
         array_type.children.push(Type::any());
-        self.assert_type(ts, array_type);
-        self.constraint(TypeParameter{ parent: ts, parameter: element_ts });
+        self.assert_type(slot, array_type);
+        self.constraint(TypeParameter{ parent: slot, parameter: element_slot });
       }
       Content::FunctionCall{ function, args } => {
         let function = self.process_node(n, *function);
         let fc = Function {
           function,
           args: args.iter().map(|id| self.process_node(n, *id)).collect(),
-          return_type: ts,
+          return_type: slot,
         };
         let mut sig = SignatureBuilder::new(Type::any());
         for _ in args {
@@ -583,44 +583,44 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
         self.constraint(fc);
       }
       Content::While{ condition, body } => {
-        self.assert(ts, PType::Void);
+        self.assert(slot, PType::Void);
         let cond = self.process_node(n, *condition);
         self.process_node(n, *body);
         self.assert(cond, PType::Bool);
       }
       Content::Convert{ from_value, into_type } => {
         let v = self.process_node(n, *from_value);
-        self.tag_symbol(ts, into_type);
-        let c = Convert { val: v, into_type_ts: ts };
+        self.tag_slot(slot, into_type);
+        let c = Convert { val: v, into_type_slot: slot };
         self.constraint(c);
       }
       Content::SizeOf{ type_tag } => {
-        let size_ts = self.type_symbol(type_tag.loc);
-        self.tag_symbol(size_ts, type_tag);
+        let size_slot = self.new_slot(type_tag.loc);
+        self.tag_slot(size_slot, type_tag);
         self.constraint(SizeOf{
           node: id,
-          ts : size_ts
+          slot : size_slot
         });
-        self.assert(ts, PType::U64);
+        self.assert(slot, PType::U64);
       }
       Content::Label{ label, body } => {
-        self.labels.insert(*label, ts);
+        self.labels.insert(*label, slot);
         let body = self.process_node(n, *body);
-        self.equalivalent(ts, body);
+        self.equalivalent(slot, body);
       }
       Content::BreakToLabel{ label, return_value } => {
-        self.assert(ts, PType::Void);
-        let label_ts = *self.labels.get(label).unwrap();
+        self.assert(slot, PType::Void);
+        let label_slot = *self.labels.get(label).unwrap();
         if let Some(v) = return_value {
           let v = self.process_node(n, *v);
-          self.equalivalent(label_ts, v);
+          self.equalivalent(label_slot, v);
         }
         else {
-          self.assert(label_ts, PType::Void);
+          self.assert(label_slot, PType::Void);
         }
       }
     }
-    ts
+    slot
   }
 
   fn with_instanced_type_parameters<F, T>(

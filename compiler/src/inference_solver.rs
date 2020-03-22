@@ -15,13 +15,12 @@ use structure::{
   NodeId, TypeKind, Nodes,
 };
 use types::{
-  Type, PType, TypeContent, TypeInfo, SymbolId,
-  incremental_unify, TypeMapping, UnifyResult, AbstractType,
-  SymbolInit, SymbolDefinition,
+  Type, PType, TypeContent, TypeInfo, SymbolId, incremental_unify,
+  TypeMapping, UnifyResult, AbstractType, SymbolInit,
 };
 use inference_constraints::{
   Constraint, ConstraintContent,
-  Constraints, TypeSymbol, Assertion,
+  Constraints, TypeSlot, Assertion,
   Errors, TypeDirectory,
 };
 use code_store::CodeStore;
@@ -107,7 +106,7 @@ struct Inference<'a> {
   errors : &'a mut Errors,
   dependency_map : ConstraintDependencyMap<'a>,
   next_edge_set : HashMap<Uid, &'a Constraint>,
-  resolved : HashMap<TypeSymbol, Type>,
+  resolved : HashMap<TypeSlot, Type>,
 }
 
 impl <'a> Inference<'a> {
@@ -128,42 +127,42 @@ impl <'a> Inference<'a> {
     }
   }
 
-  fn get_type(&self, ts : TypeSymbol) -> Option<&Type> {
-    self.resolved.get(&ts)
+  fn get_type(&self, slot : TypeSlot) -> Option<&Type> {
+    self.resolved.get(&slot)
   }
 
-  fn type_updated(&mut self, ts : TypeSymbol) {
-    if let Some(cs) = self.dependency_map.ts_map.get(&ts) {
+  fn type_updated(&mut self, slot : TypeSlot) {
+    if let Some(cs) = self.dependency_map.ts_map.get(&slot) {
       for &c in cs.iter() {
         self.next_edge_set.insert(c.id, c);
       }
     }
   }
 
-  fn update_type(&mut self, ts : TypeSymbol, t : &Type) -> UnifyResult {
-    let ts_type = if let Some(t) = self.resolved.get_mut(&ts) {
+  fn update_type(&mut self, slot : TypeSlot, t : &Type) -> UnifyResult {
+    let ts_type = if let Some(t) = self.resolved.get_mut(&slot) {
       t
     }
     else {
-      self.resolved.entry(ts).or_insert(Type::any())
+      self.resolved.entry(slot).or_insert(Type::any())
     };
     let r = incremental_unify(t, ts_type);
     if !r.unify_success {
       let s = format!("conflicting types inferred; {} and {}.", t, ts_type);
-      let e = error_raw(self.loc(ts), s);
+      let e = error_raw(self.loc(slot), s);
       self.errors.push(e);
     }
     if r.mutable_type_changed {
-      self.type_updated(ts);
+      self.type_updated(slot);
     }
     r
   }
 
   /// returns true if the input type `t` was mutated
-  fn update_type_mut(&mut self, ts : TypeSymbol, t : &mut Type) -> bool {
-    let r = self.update_type(ts, t);
+  fn update_type_mut(&mut self, slot : TypeSlot, t : &mut Type) -> bool {
+    let r = self.update_type(slot, t);
     if r.immutable_type_changed && r.unify_success {
-      let r = incremental_unify(self.resolved.get(&ts).unwrap(), t);
+      let r = incremental_unify(self.resolved.get(&slot).unwrap(), t);
       if !r.unify_success { panic!("unification is not commutable!") }
       true
     }
@@ -172,8 +171,8 @@ impl <'a> Inference<'a> {
     }
   }
 
-  fn loc(&self, ts : TypeSymbol) -> TextLocation {
-    *self.c.symbols.get(&ts).unwrap()
+  fn loc(&self, slot : TypeSlot) -> TextLocation {
+    *self.c.slots.get(&slot).unwrap()
   }
 
   fn unresolved_constraint_error(&mut self, c : &Constraint) {
@@ -187,9 +186,9 @@ impl <'a> Inference<'a> {
       Branch{ output:_, cases:_ } => return,
       // this error should always be accompanied by other unresolved constraints
       Function{ function:_, args:_, return_type:_ } => return,
-      Constructor { def_ts:_ , fields:_ } => return,
-      Convert { val:_, into_type_ts:_ } => return,
-      SymbolDef { symbol_id, type_symbol:_ } => {
+      Constructor { def_slot:_ , fields:_ } => return,
+      Convert { val:_, into_type_slot:_ } => return,
+      SymbolDef { symbol_id, slot:_ } => {
         let def = self.t.get_symbol_mut(*symbol_id);
         let node_id = *self.mapping.symbol_def_nodes.get(symbol_id).unwrap();
         let loc = self.nodes.node(node_id).loc;
@@ -217,8 +216,8 @@ impl <'a> Inference<'a> {
         let b = self.resolved.get(parameter).unwrap_or(&any);
         error_raw(self.loc(*parent), format!("type parameter not resolved - {}, {}", a, b))
       }
-      SizeOf { node:_, ts } => {
-        error_raw(self.loc(*ts), "sizeof type not resolved")
+      SizeOf { node:_, slot } => {
+        error_raw(self.loc(*slot), "sizeof type not resolved")
       }
     };
     self.errors.push(e);
@@ -276,11 +275,11 @@ impl <'a> Inference<'a> {
       Type::any()
     }
     match a {
-      Assertion::Assert(ts, t) => {
-        let loc = self.loc(*ts);
+      Assertion::Assert(slot, t) => {
+        let loc = self.loc(*slot);
         match self.resolve_abstract_defs(loc, t) {
           Ok(t) => {
-            self.resolved.insert(*ts, t);
+            self.resolved.insert(*slot, t);
           }
           Err(e) => {
             self.errors.push(e);
@@ -300,7 +299,7 @@ impl <'a> Inference<'a> {
     }
   }
 
-  fn force_equivalence(&mut self, a : TypeSymbol, b : TypeSymbol) {
+  fn force_equivalence(&mut self, a : TypeSlot, b : TypeSlot) {
     if let Some(t) = self.get_type(a) {
       let t = t.clone();
       self.update_type(b, &t);
@@ -322,15 +321,15 @@ impl <'a> Inference<'a> {
             return;
           }
           if t.is_concrete() {
-            for ts in cases {
-              self.force_equivalence(*output, *ts);
+            for slot in cases {
+              self.force_equivalence(*output, *slot);
             }
             return;
           }
         }
         // Check if the branch types are all known, and none are void
-        for ts in cases {
-          if let Some(t) = self.get_type(*ts) {
+        for slot in cases {
+          if let Some(t) = self.get_type(*slot) {
             if t.content == TypeContent::Prim(PType::Void) {
               // One of the branches is void, so the output is void
               let t = t.clone();
@@ -345,8 +344,8 @@ impl <'a> Inference<'a> {
           return;
         }
         // The branch types are all known. Unify each one with the output.
-        for ts in cases {
-          self.force_equivalence(*output, *ts);
+        for slot in cases {
+          self.force_equivalence(*output, *slot);
         }
       }
       Function{ function, args, return_type } => {
@@ -363,8 +362,8 @@ impl <'a> Inference<'a> {
           }
         }
       }
-      Constructor { def_ts, fields } => {
-        if let Some(t) = self.resolved.get(def_ts) {
+      Constructor { def_slot, fields } => {
+        if let Some(t) = self.resolved.get(def_slot) {
           if let Def(name, unit_id) = &t.content {
             self.dependency_map.register_typedef(name, c);
             let def = self.t.get_type_def(name, *unit_id);
@@ -388,15 +387,15 @@ impl <'a> Inference<'a> {
                   }
                 }
                 else{
-                  let e = error_raw(self.loc(*def_ts), "incorrect number of field arguments for struct");
+                  let e = error_raw(self.loc(*def_slot), "incorrect number of field arguments for struct");
                   self.errors.push(e);
                 }
               }
               TypeKind::Union => {
-                if let [(Some(sym), ts)] = fields.as_slice() {
+                if let [(Some(sym), slot)] = fields.as_slice() {
                   if let Some((_, t)) = def.fields.iter().find(|(n, _)| n.name == sym.name) {
                     let t = t.clone();
-                    self.update_type(*ts, &t);
+                    self.update_type(*slot, &t);
                   }
                   else {
                     self.errors.push(error_raw(sym.loc, "field does not exist in this union"));
@@ -404,7 +403,7 @@ impl <'a> Inference<'a> {
                 }
                 else {
                   let s = format!("incorrect number of field arguments for union '{}'", def.name);
-                  let e = error_raw(self.loc(*def_ts), s);
+                  let e = error_raw(self.loc(*def_slot), s);
                   self.errors.push(e);
                 }
               }
@@ -412,9 +411,9 @@ impl <'a> Inference<'a> {
           }
         }
       }
-      Convert { val, into_type_ts } => {
+      Convert { val, into_type_slot } => {
         let t = self.get_type(*val);
-        let into = self.get_type(*into_type_ts);
+        let into = self.get_type(*into_type_slot);
         if let [Some(t), Some(into)] = &[t, into] {
           if t.is_concrete() && into.is_concrete() {
             fn abstract_contains(t : &Type, into_type : &Type) -> bool {
@@ -436,10 +435,10 @@ impl <'a> Inference<'a> {
           }
         }
       }
-      SymbolDef{ symbol_id, type_symbol } => {
+      SymbolDef{ symbol_id, slot } => {
         // Use symbol def to update the type symbol
         let mut t = self.t.get_symbol_mut(*symbol_id).type_tag.clone();
-        let def_type_changed = self.update_type_mut(*type_symbol, &mut t);
+        let def_type_changed = self.update_type_mut(*slot, &mut t);
         // Use the type symbol to update the symbol def
         if def_type_changed {
           let def = self.t.get_symbol_mut(*symbol_id);
@@ -514,8 +513,8 @@ impl <'a> Inference<'a> {
           }
         }
       }
-      SizeOf { node, ts } => {
-        if let Some(t) = self.get_type(*ts) {
+      SizeOf { node, slot } => {
+        if let Some(t) = self.get_type(*slot) {
           if t.is_concrete() {
             let t = t.clone().into();
             self.mapping.sizeof_info.insert(*node, t);
@@ -525,16 +524,16 @@ impl <'a> Inference<'a> {
     }
   }
 
-  /// Tries to harden a type symbol into a concrete type
-  fn try_harden_type_symbol(&mut self, ts : TypeSymbol) {
-    if let Some(default) = self.resolved.get(&ts).unwrap().try_harden_literal() {
-      self.update_type(ts, &default);
+  /// Tries to harden a type slot into a concrete type
+  fn try_harden_slot(&mut self, slot : TypeSlot) {
+    if let Some(default) = self.resolved.get(&slot).unwrap().try_harden_literal() {
+      self.update_type(slot, &default);
     }
   }
 
   fn infer(mut self) {
     if DEBUG {
-      println!("To resolve: {}", self.c.symbols.len());
+      println!("To resolve: {}", self.c.slots.len());
     }
     for a in self.c.assertions.iter() {
       self.process_assertion(a);
@@ -545,7 +544,7 @@ impl <'a> Inference<'a> {
     }
     let mut literals = VecDeque::with_capacity(self.c.literals.len());
     for lit in self.c.literals.iter() {
-      literals.push_back(*self.c.node_symbols.get(lit).unwrap());
+      literals.push_back(*self.c.node_slots.get(lit).unwrap());
     }
     let mut total_constraints_processed = 0;
     let mut active_edge_set = HashMap::new();
@@ -557,7 +556,7 @@ impl <'a> Inference<'a> {
       }
       // If nothing was resolved, try to harden a literal (in lexical order)
       if self.next_edge_set.is_empty() && literals.len() > 0 {
-        self.try_harden_type_symbol(literals.pop_front().unwrap());
+        self.try_harden_slot(literals.pop_front().unwrap());
       }
     }
     if DEBUG {
@@ -567,13 +566,13 @@ impl <'a> Inference<'a> {
 
     // Look for errors
     if self.errors.is_empty() {
-      // Generate errors if program has unresolved types
+      // Generate errors if program has unresolved type slots
       let mut unresolved = 0;
       active_edge_set.clear();
-      for (ts, _) in self.c.symbols.iter() {
-        if !self.resolved.get(ts).map(|t| t.is_concrete()).unwrap_or(false) {
+      for (slot, _) in self.c.slots.iter() {
+        if !self.resolved.get(slot).map(|t| t.is_concrete()).unwrap_or(false) {
           unresolved += 1;
-          if let Some(cs) = self.dependency_map.ts_map.get(ts) {
+          if let Some(cs) = self.dependency_map.ts_map.get(slot) {
             for c in cs { active_edge_set.insert(c.id, c); }
           }
           // Generate errors for unresolved constraints
@@ -582,7 +581,7 @@ impl <'a> Inference<'a> {
             self.unresolved_constraint_error(c);
           }
           if error_count == self.errors.concrete_errors.len() {
-            self.errors.push(error_raw(self.loc(*ts), "unresolved type"));
+            self.errors.push(error_raw(self.loc(*slot), "unresolved type"));
           }
         }
       }
@@ -602,8 +601,8 @@ impl <'a> Inference<'a> {
 
     // Assign types to all of the nodes
     if self.errors.is_empty() {
-      for (n, ts) in self.c.node_symbols.iter() {
-        let t = self.get_type(*ts).unwrap().clone();
+      for (n, slot) in self.c.node_slots.iter() {
+        let t = self.get_type(*slot).unwrap().clone();
         // Make sure the type isn't abstract
         if t.is_concrete() {
           self.mapping.node_type.insert(*n, t);
@@ -637,7 +636,7 @@ impl <'a> Inference<'a> {
 struct ConstraintDependencyMap<'a> {
   symbol_map : HashMap<RefStr, Vec<&'a Constraint>>,
   typedef_map : HashMap<RefStr, HashMap<Uid, &'a Constraint>>,
-  ts_map : HashMap<TypeSymbol, Vec<&'a Constraint>>,
+  ts_map : HashMap<TypeSlot, Vec<&'a Constraint>>,
 }
 
 impl <'a> ConstraintDependencyMap<'a> {
@@ -649,8 +648,8 @@ impl <'a> ConstraintDependencyMap<'a> {
       ts_map: HashMap::new() }
   }
 
-  fn ts(&mut self, ts : &TypeSymbol, c : &'a Constraint) {
-    self.ts_map.entry(*ts).or_insert(vec![]).push(c);
+  fn slot(&mut self, slot : &TypeSlot, c : &'a Constraint) {
+    self.ts_map.entry(*slot).or_insert(vec![]).push(c);
   }
 
   fn symbol(&mut self, name : &RefStr, c : &'a Constraint) {
@@ -673,43 +672,43 @@ impl <'a> ConstraintDependencyMap<'a> {
     use ConstraintContent::*;
     match &c.content {
       Equalivalent(a, b) => {
-        self.ts(a, c);
-        self.ts(b, c);
+        self.slot(a, c);
+        self.slot(b, c);
       }
       Branch{ output, cases } => {
-        self.ts(output, c);
-        for ts in cases {
-          self.ts(ts, c);
+        self.slot(output, c);
+        for slot in cases {
+          self.slot(slot, c);
         }
       }
       TypeParameter{ parent, parameter } => {
-        self.ts(parent, c);
-        self.ts(parameter, c);
+        self.slot(parent, c);
+        self.slot(parameter, c);
       },
-      Convert{ val, into_type_ts } => {
-        self.ts(val, c);
-        self.ts(into_type_ts, c);
+      Convert{ val, into_type_slot } => {
+        self.slot(val, c);
+        self.slot(into_type_slot, c);
       }
       FieldAccess { container, field:_, result } => {
-        self.ts(container, c);
-        self.ts(result, c);
+        self.slot(container, c);
+        self.slot(result, c);
       },
-      Constructor { def_ts, fields } => {
-        self.ts(def_ts, c);
-        for (_, ts) in fields { self.ts(ts, c) }
+      Constructor { def_slot, fields } => {
+        self.slot(def_slot, c);
+        for (_, slot) in fields { self.slot(slot, c) }
       },
       Function { function, args, return_type } => {
-        self.ts(function, c);
-        for ts in args { self.ts(ts, c) }
-        self.ts(return_type, c);
+        self.slot(function, c);
+        for slot in args { self.slot(slot, c) }
+        self.slot(return_type, c);
       },
-      SymbolDef { symbol_id:_, type_symbol } => self.ts(type_symbol, c),
+      SymbolDef { symbol_id:_, slot } => self.slot(slot, c),
       SymbolReference { node:_, name, result } => {
         self.symbol(name, c);
-        self.ts(result, c);
+        self.slot(result, c);
       }
-      SizeOf { node:_, ts } => {
-        self.ts(ts, c);
+      SizeOf { node:_, slot } => {
+        self.slot(slot, c);
       }
     }
   }
