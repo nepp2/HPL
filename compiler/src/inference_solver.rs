@@ -132,7 +132,7 @@ impl <'a> Inference<'a> {
   }
 
   fn type_updated(&mut self, slot : TypeSlot) {
-    if let Some(cs) = self.dependency_map.ts_map.get(&slot) {
+    if let Some(cs) = self.dependency_map.slot_map.get(&slot) {
       for &c in cs.iter() {
         self.next_edge_set.insert(c.id, c);
       }
@@ -140,15 +140,15 @@ impl <'a> Inference<'a> {
   }
 
   fn update_type(&mut self, slot : TypeSlot, t : &Type) -> UnifyResult {
-    let ts_type = if let Some(t) = self.resolved.get_mut(&slot) {
+    let slot_type = if let Some(t) = self.resolved.get_mut(&slot) {
       t
     }
     else {
       self.resolved.entry(slot).or_insert(Type::any())
     };
-    let r = incremental_unify(t, ts_type);
+    let r = incremental_unify(t, slot_type);
     if !r.unify_success {
-      let s = format!("conflicting types inferred; {} and {}.", t, ts_type);
+      let s = format!("conflicting types inferred; {} and {}.", t, slot_type);
       let e = error_raw(self.loc(slot), s);
       self.errors.push(e);
     }
@@ -546,12 +546,12 @@ impl <'a> Inference<'a> {
     for lit in self.c.literals.iter() {
       literals.push_back(*self.c.node_slots.get(lit).unwrap());
     }
-    let mut total_constraints_processed = 0;
+    let mut total_constrainslot_processed = 0;
     let mut active_edge_set = HashMap::new();
     while (self.next_edge_set.len() > 0 || literals.len() > 0) && self.errors.is_empty() {
       std::mem::swap(&mut self.next_edge_set, &mut active_edge_set);
       for (_, c) in active_edge_set.drain() {
-        total_constraints_processed += 1;
+        total_constrainslot_processed += 1;
         self.process_constraint(c);
       }
       // If nothing was resolved, try to harden a literal (in lexical order)
@@ -561,7 +561,7 @@ impl <'a> Inference<'a> {
     }
     if DEBUG {
       println!("Unique constraints: {}\n", self.c.constraints.len());
-      println!("Constraints processed (including duplicates): {}\n", total_constraints_processed);
+      println!("Constraints processed (including duplicates): {}\n", total_constrainslot_processed);
     }
 
     // Look for errors
@@ -572,7 +572,7 @@ impl <'a> Inference<'a> {
       for (slot, _) in self.c.slots.iter() {
         if !self.resolved.get(slot).map(|t| t.is_concrete()).unwrap_or(false) {
           unresolved += 1;
-          if let Some(cs) = self.dependency_map.ts_map.get(slot) {
+          if let Some(cs) = self.dependency_map.slot_map.get(slot) {
             for c in cs { active_edge_set.insert(c.id, c); }
           }
           // Generate errors for unresolved constraints
@@ -636,7 +636,7 @@ impl <'a> Inference<'a> {
 struct ConstraintDependencyMap<'a> {
   symbol_map : HashMap<RefStr, Vec<&'a Constraint>>,
   typedef_map : HashMap<RefStr, HashMap<Uid, &'a Constraint>>,
-  ts_map : HashMap<TypeSlot, Vec<&'a Constraint>>,
+  slot_map : HashMap<TypeSlot, Vec<&'a Constraint>>,
 }
 
 impl <'a> ConstraintDependencyMap<'a> {
@@ -645,11 +645,11 @@ impl <'a> ConstraintDependencyMap<'a> {
     ConstraintDependencyMap {
       symbol_map: HashMap::new(),
       typedef_map: HashMap::new(),
-      ts_map: HashMap::new() }
+      slot_map: HashMap::new() }
   }
 
   fn slot(&mut self, slot : &TypeSlot, c : &'a Constraint) {
-    self.ts_map.entry(*slot).or_insert(vec![]).push(c);
+    self.slot_map.entry(*slot).or_insert(vec![]).push(c);
   }
 
   fn symbol(&mut self, name : &RefStr, c : &'a Constraint) {

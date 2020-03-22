@@ -80,16 +80,6 @@ impl PType {
   }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub struct TypeId {
-  id : Uid,
-  unit : UnitId,
-}
-
-pub struct Types {
-  types : HashMap<TypeId, Type>,
-}
-
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Type {
   pub content : TypeContent,
