@@ -1,7 +1,7 @@
 
 use std::fmt;
 
-use crate::{common, compiler, error, expr, structure, types};
+use crate::{common, compiler, error, expr, structure};
 use common::*;
 use error::{Error, error, error_raw, TextLocation};
 use expr::{Expr, ExprContent};
@@ -9,7 +9,7 @@ use structure::{
   Node, NodeId, ReferenceId, Content, PrimitiveVal, LabelId,
   VarScope, GlobalType, Reference, Nodes,
 };
-use types::{
+use crate::types::types::{
   Type, PType, TypeDefinition, FunctionInit, SymbolDefinition,
   SymbolInit, SymbolId, AbstractType,
   SignatureBuilder, TypeMapping, TypeContent,

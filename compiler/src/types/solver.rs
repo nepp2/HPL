@@ -7,18 +7,20 @@
 
 use itertools::Itertools;
 
-use crate::{common, error, structure, types, inference_constraints, code_store, compiler};
+use crate::{common, error, structure, code_store, compiler};
+use crate::types::{types, constraints};
 
 use common::*;
 use error::{Error, error, error_raw, TextLocation, ErrorContent};
 use structure::{
   NodeId, TypeKind, Nodes,
 };
+
 use types::{
   Type, PType, TypeContent, TypeInfo, SymbolId, incremental_unify,
   TypeMapping, UnifyResult, AbstractType, SymbolInit,
 };
-use inference_constraints::{
+use constraints::{
   Constraint, ConstraintContent,
   Constraints, TypeSlot, Assertion,
   Errors, TypeDirectory,
@@ -30,7 +32,7 @@ use std::collections::{HashMap, VecDeque};
 
 use TypeContent::*;
 
-pub fn infer_types(
+pub fn typecheck_module(
   unit_id : UnitId,
   code_store : &mut CodeStore,
   cache : &StringCache,
@@ -46,7 +48,7 @@ pub fn infer_types(
     TypeDirectory::new(imports, unit_id, &mut code_store.types);
   let nodes = code_store.nodes.get(&unit_id).unwrap();
   let c =
-    inference_constraints::get_module_constraints(
+    constraints::get_module_constraints(
       &nodes, &mut type_directory, &mut mapping, cache, gen, &mut errors);
   let i = Inference::new(
     &nodes, &mut type_directory,
@@ -83,7 +85,7 @@ pub fn typecheck_polymorphic_function_instance(
     *code_store.type_mappings.get(&poly_function_id.uid).unwrap()
     .symbol_def_nodes.get(&poly_function_id).unwrap();
   let (c, symbol_id) =
-    inference_constraints::get_polymorphic_function_instance_constraints(
+    constraints::get_polymorphic_function_instance_constraints(
       &nodes, source_node, instance_type.clone(), instanced_type_vars.as_slice(),
       &mut type_directory, &mut mapping, cache, gen, &mut errors);
   let i = Inference::new(

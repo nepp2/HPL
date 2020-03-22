@@ -14,8 +14,6 @@ mod structure;
 mod types;
 mod intrinsics;
 mod code_store;
-mod inference_constraints;
-mod inference_solver;
 mod llvm_codegen;
 mod llvm_compile;
 mod compiler;

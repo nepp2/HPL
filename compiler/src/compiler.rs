@@ -1,7 +1,7 @@
 
 use crate::{
-  common, error, expr, c_interface, llvm_compile, types, code_store,
-  structure, lexer, parser, inference_solver, intrinsics, graph,
+  common, error, expr, c_interface, llvm_compile, code_store,
+  structure, lexer, parser, types, intrinsics, graph,
 };
 use common::*;
 use expr::Expr;
@@ -138,7 +138,7 @@ impl Compiler {
   }
 
   fn typecheck(&mut self, unit_id : UnitId, imports : Vec<UnitId>, new_units : &mut Vec<UnitId>) -> Result<(), Error> {
-    inference_solver::infer_types(
+    types::typecheck_module(
       unit_id, &mut self.code_store, &self.cache, &mut self.gen, imports)?;
     self.typecheck_new_polymorphic_instances(unit_id, new_units)?;
     Ok(())
@@ -181,7 +181,7 @@ impl Compiler {
           }
           // Typecheck the new instance
           let instance_symbol_id =
-            inference_solver::typecheck_polymorphic_function_instance(
+            types::typecheck_polymorphic_function_instance(
               instance_unit_id, poly_symbol_id, &instance_type, &mut self.code_store,
               &self.cache, &mut self.gen)?;
           // Register the instance with the code store
