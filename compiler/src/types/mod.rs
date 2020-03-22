@@ -2,6 +2,7 @@
 mod types;
 mod constraints;
 mod solver;
+mod slots;
 
 pub use types::*;
 pub use solver::{
