@@ -15,9 +15,10 @@ use crate::types::types::{
   SignatureBuilder, TypeMapping, TypeContent,
   ResolvedSymbol, TypeInfo,
 };
+use crate::types::type_errors::TypeErrors;
 use compiler::DEBUG_PRINTING_TYPE_INFERENCE as DEBUG;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 // A position in the program which requires a type
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
@@ -106,25 +107,9 @@ impl Constraints {
       assertions: vec![],
     }
   }
-}
 
-#[derive(Default)]
-pub struct Errors {
-  pub concrete_errors : Vec<Error>,
-
-  /// to avoid duplicate errors
-  pub failed_constraint_ids : HashSet<Uid>,
-}
-
-impl Errors {
-  pub fn new() -> Self { Default::default() }
-
-  pub fn push(&mut self, e : Error) {
-    self.concrete_errors.push(e);
-  }
-
-  pub fn is_empty(&self) -> bool {
-    self.concrete_errors.is_empty()
+  pub fn loc(&self, slot : TypeSlot) -> TextLocation {
+    *self.slots.get(&slot).unwrap()
   }
 }
 
@@ -134,7 +119,7 @@ pub fn get_module_constraints(
   mapping : &mut TypeMapping,
   cache : &StringCache,
   gen : &mut UIDGenerator,
-  errors : &mut Errors,
+  errors : &mut TypeErrors,
 ) -> Constraints
 {
   let mut c = Constraints::new();
@@ -153,7 +138,7 @@ pub fn get_polymorphic_function_instance_constraints(
   mapping : &mut TypeMapping,
   cache : &StringCache,
   gen : &mut UIDGenerator,
-  errors : &mut Errors,
+  errors : &mut TypeErrors,
 ) -> (Constraints, SymbolId)
 {
   let mut c = Constraints::new();
@@ -173,7 +158,7 @@ pub struct ConstraintGenerator<'l, 't> {
   cache : &'l StringCache,
   gen : &'l mut UIDGenerator,
   c : &'l mut Constraints,
-  errors : &'l mut Errors,
+  errors : &'l mut TypeErrors,
 }
 
 impl <'l, 't> ConstraintGenerator<'l, 't> {
@@ -185,7 +170,7 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
     cache : &'l StringCache,
     gen : &'l mut UIDGenerator,
     c : &'l mut Constraints,
-    errors : &'l mut Errors,
+    errors : &'l mut TypeErrors,
   ) -> Self
   {
     ConstraintGenerator {

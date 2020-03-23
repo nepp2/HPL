@@ -3,6 +3,8 @@ mod types;
 mod constraints;
 mod solver;
 mod slots;
+mod type_graph;
+mod type_errors;
 
 pub use types::*;
 pub use solver::{

@@ -8,7 +8,7 @@
 use itertools::Itertools;
 
 use crate::{common, error, structure, code_store, compiler};
-use crate::types::{types, constraints, slots};
+use crate::types::{types, constraints, slots, type_graph, type_errors};
 
 use common::*;
 use error::{Error, error, error_raw, TextLocation, ErrorContent};
@@ -17,15 +17,17 @@ use structure::{
 };
 
 use types::{
-  Type, PType, TypeContent, TypeInfo, SymbolId, incremental_unify,
-  TypeMapping, UnifyResult, AbstractType, SymbolInit,
+  Type, PType, TypeContent, TypeInfo, SymbolId,
+  TypeMapping, AbstractType, SymbolInit,
 };
 use constraints::{
   Constraint, ConstraintContent,
   Constraints, TypeSlot, Assertion,
-  Errors, TypeDirectory,
+  TypeDirectory,
 };
 use slots::Slots;
+use type_graph::TypeGraph;
+use type_errors::TypeErrors;
 use code_store::CodeStore;
 use compiler::DEBUG_PRINTING_TYPE_INFERENCE as DEBUG;
 
@@ -44,7 +46,7 @@ pub fn typecheck_module(
 {
   code_store.types.insert(unit_id, TypeInfo::new(unit_id));
   let mut mapping = TypeMapping::new();
-  let mut errors = Errors::new();
+  let mut errors = TypeErrors::new();
   let mut type_directory =
     TypeDirectory::new(imports, unit_id, &mut code_store.types);
   let nodes = code_store.nodes.get(&unit_id).unwrap();
@@ -53,8 +55,8 @@ pub fn typecheck_module(
       &nodes, &mut type_directory, &mut mapping, cache, gen, &mut errors);
   let i = Inference::new(
     &nodes, &mut type_directory,
-    &mut mapping, &c, &mut errors);
-  i.infer();
+    &mut mapping, &c);
+  i.infer(&mut errors);
   if !errors.is_empty() {    
     let c = ErrorContent::InnerErrors("type errors".into(), errors.concrete_errors);
     return error(nodes.root().loc, c);
@@ -75,7 +77,7 @@ pub fn typecheck_polymorphic_function_instance(
 {
   code_store.types.insert(instance_unit, TypeInfo::new(instance_unit));
   let mut mapping = TypeMapping::new();
-  let mut errors = Errors::new();
+  let mut errors = TypeErrors::new();
   let imports : Vec<_> = code_store.get_imports(instance_unit).cloned().collect();
   let instanced_type_vars =
     code_store.symbol_def(poly_function_id).instanced_type_vars(instance_type);
@@ -91,8 +93,8 @@ pub fn typecheck_polymorphic_function_instance(
       &mut type_directory, &mut mapping, cache, gen, &mut errors);
   let i = Inference::new(
     &nodes, &mut type_directory,
-    &mut mapping, &c, &mut errors);
-  i.infer();
+    &mut mapping, &c);
+  i.infer(&mut errors);
   if !errors.is_empty() {
     let c = ErrorContent::InnerErrors("type errors".into(), errors.concrete_errors);
     return error(nodes.root().loc, c);
@@ -106,8 +108,6 @@ struct Inference<'a> {
   t : &'a mut TypeDirectory<'a>,
   mapping : &'a mut TypeMapping,
   c : &'a Constraints,
-  errors : &'a mut Errors,
-  next_edge_set : HashMap<Uid, &'a Constraint>,
 }
 
 impl <'a> Inference<'a> {
@@ -116,25 +116,17 @@ impl <'a> Inference<'a> {
     nodes : &'a Nodes,
     t : &'a mut TypeDirectory<'a>,
     mapping : &'a mut TypeMapping,
-    c : &'a Constraints,
-    errors : &'a mut Errors)
+    c : &'a Constraints)
       -> Self
   {
-    Inference {
-      nodes, t, mapping, c, errors,
-      next_edge_set: HashMap::new(),
-    }
+    Inference { nodes, t, mapping, c }
   }
 
-  fn loc(&self, slot : TypeSlot) -> TextLocation {
-    *self.c.slots.get(&slot).unwrap()
-  }
-
-  fn unresolved_constraint_error(&mut self, slots : &mut Slots, c : &Constraint) {
-    if self.errors.failed_constraint_ids.contains(&c.id) {
+  fn unresolved_constraint_error(&mut self, errors : &mut TypeErrors, slots : &mut Slots, c : &Constraint) {
+    if errors.failed_constraint_ids.contains(&c.id) {
       return;
     }
-    self.errors.failed_constraint_ids.insert(c.id);
+    errors.failed_constraint_ids.insert(c.id);
     use ConstraintContent::*;
     let e = match &c.content  {
       Equalivalent(_a, _b) => return,
@@ -157,7 +149,7 @@ impl <'a> Inference<'a> {
           let def = self.t.get_symbol(rs.id);
           format!("      {} : {}", def.name, rs.resolved_type)
         }).join("\n");
-        error_raw(self.loc(*result),
+        error_raw(self.c.loc(*result),
           format!("Reference '{}' of type '{}' not resolved\n   Symbols available:\n{}", name, t, s))
       }
       FieldAccess{ container:_, field, result:_ } => {
@@ -167,13 +159,13 @@ impl <'a> Inference<'a> {
       TypeParameter{ parent, parameter } => {
         let a = slots.get_or_any(*parent);
         let b = slots.get_or_any(*parameter);
-        error_raw(self.loc(*parent), format!("type parameter not resolved - {}, {}", a, b))
+        error_raw(self.c.loc(*parent), format!("type parameter not resolved - {}, {}", a, b))
       }
       SizeOf { node:_, slot } => {
-        error_raw(self.loc(*slot), "sizeof type not resolved")
+        error_raw(self.c.loc(*slot), "sizeof type not resolved")
       }
     };
-    self.errors.push(e);
+    errors.push(e);
   }
 
   fn register_def(&mut self, node : NodeId, symbol_id : SymbolId) {
@@ -217,32 +209,38 @@ impl <'a> Inference<'a> {
     Ok(Type::new(content, children))
   }
 
-  fn process_assertion(&mut self, slots : &mut Slots, a : &'a Assertion) {
-    fn to_resolved(i : &mut Inference, t : &Option<(Type, TextLocation)>) -> Type {
+  fn process_assertion(
+    &mut self,
+    slots : &mut Slots,
+    g : &mut TypeGraph,
+    errors : &mut TypeErrors,
+    a : &'a Assertion
+  ) {
+    fn to_resolved(i : &mut Inference, errors : &mut TypeErrors, t : &Option<(Type, TextLocation)>) -> Type {
       if let Some((t, loc)) = t.as_ref() {
         match i.resolve_abstract_defs(*loc, t) {
           Ok(t) => return t,
-          Err(e) => i.errors.push(e),
+          Err(e) => errors.push(e),
         }
       }
       Type::any()
     }
     match a {
       Assertion::Assert(slot, t) => {
-        let loc = self.loc(*slot);
+        let loc = self.c.loc(*slot);
         match self.resolve_abstract_defs(loc, t) {
           Ok(t) => {
-            slots.update_type(*slot, &t);
+            slots.update_type(g, errors, *slot, &t);
           }
           Err(e) => {
-            self.errors.push(e);
+            errors.push(e);
           }
         }
       }
       Assertion::AssertTypeDef{ typename, fields } => {
         let mut fs = vec![];
         for f in fields {
-          fs.push(to_resolved(self, f));
+          fs.push(to_resolved(self, errors, f));
         }
         let def = self.t.get_type_def_mut(typename);
         for (i, t) in fs.into_iter().enumerate() {
@@ -252,11 +250,17 @@ impl <'a> Inference<'a> {
     }
   }
 
-  fn process_constraint(&mut self, slots : &mut Slots<'a>, c : &'a Constraint) {
+  fn process_constraint(
+    &mut self,
+    slots : &mut Slots<'a>,
+    g : &mut TypeGraph<'a>,
+    errors : &mut TypeErrors,
+    c : &'a Constraint)
+  {
     use ConstraintContent::*;
     match &c.content  {
       Equalivalent(a, b) =>
-        force_equivalence(slots, *a, *b),
+        force_equivalence(slots, g, errors, *a, *b),
       Branch{ output, cases } => {
         if let Some(t) = slots.get(*output) {
           if t.content == TypeContent::Prim(PType::Void) {
@@ -264,7 +268,7 @@ impl <'a> Inference<'a> {
           }
           if t.is_concrete() {
             for slot in cases {
-              force_equivalence(slots, *output, *slot);
+              force_equivalence(slots, g, errors, *output, *slot);
             }
             return;
           }
@@ -275,7 +279,7 @@ impl <'a> Inference<'a> {
             if t.content == TypeContent::Prim(PType::Void) {
               // One of the branches is void, so the output is void
               let t = t.clone();
-              slots.update_type(*output, &t);
+              slots.update_type(g, errors, *output, &t);
               return;
             }
             if t.is_concrete() {
@@ -287,7 +291,7 @@ impl <'a> Inference<'a> {
         }
         // The branch types are all known. Unify each one with the output.
         for slot in cases {
-          force_equivalence(slots, *output, *slot);
+          force_equivalence(slots, g, errors, *output, *slot);
         }
       }
       Function{ function, args, return_type } => {
@@ -295,11 +299,11 @@ impl <'a> Inference<'a> {
           if let Some(mut sig) = t.sig_builder() {
             if sig.args().len() == args.len() {
               for (i, t) in sig.args().iter_mut().enumerate() {
-                slots.update_type_mut(args[i], t);
+                slots.update_type_mut(g, errors, args[i], t);
               }
               let rt = sig.return_type();
-              slots.update_type_mut(*return_type, rt);
-              slots.update_type(*function, &sig.into());
+              slots.update_type_mut(g, errors, *return_type, rt);
+              slots.update_type(g, errors, *function, &sig.into());
             }
           }
         }
@@ -307,7 +311,7 @@ impl <'a> Inference<'a> {
       Constructor { def_slot, fields } => {
         if let Some(t) = slots.get(*def_slot) {
           if let Def(name, unit_id) = &t.content {
-            slots.register_typedef(name, c);
+            g.register_typedef(name, c);
             let def = self.t.get_type_def(name, *unit_id);
             match def.kind {
               TypeKind::Struct => {
@@ -320,33 +324,33 @@ impl <'a> Inference<'a> {
                     field_types.push(field_type.clone());
                     if let Some(arg_name) = arg_name {
                       if arg_name.name != field_name.name {
-                        self.errors.push(error_raw(arg_name.loc, "incorrect field name"));
+                        errors.push(error_raw(arg_name.loc, "incorrect field name"));
                       }
                     }
                   }
                   for(i, t) in field_types.into_iter().enumerate() {
-                    slots.update_type(fields[i].1, &t);
+                    slots.update_type(g, errors, fields[i].1, &t);
                   }
                 }
                 else{
-                  let e = error_raw(self.loc(*def_slot), "incorrect number of field arguments for struct");
-                  self.errors.push(e);
+                  let e = error_raw(self.c.loc(*def_slot), "incorrect number of field arguments for struct");
+                  errors.push(e);
                 }
               }
               TypeKind::Union => {
                 if let [(Some(sym), slot)] = fields.as_slice() {
                   if let Some((_, t)) = def.fields.iter().find(|(n, _)| n.name == sym.name) {
                     let t = t.clone();
-                    slots.update_type(*slot, &t);
+                    slots.update_type(g, errors, *slot, &t);
                   }
                   else {
-                    self.errors.push(error_raw(sym.loc, "field does not exist in this union"));
+                    errors.push(error_raw(sym.loc, "field does not exist in this union"));
                   }
                 }
                 else {
                   let s = format!("incorrect number of field arguments for union '{}'", def.name);
-                  let e = error_raw(self.loc(*def_slot), s);
-                  self.errors.push(e);
+                  let e = error_raw(self.c.loc(*def_slot), s);
+                  errors.push(e);
                 }
               }
             }
@@ -372,7 +376,7 @@ impl <'a> Inference<'a> {
               (t.unsigned_int() && into.pointer());
             if !valid {
               let s = format!("type conversion from {} into {} not supported", t, into);
-              self.errors.push(error_raw(self.loc(*val), s));
+              errors.push(error_raw(self.c.loc(*val), s));
             }
           }
         }
@@ -380,12 +384,12 @@ impl <'a> Inference<'a> {
       SymbolDef{ symbol_id, slot } => {
         // Use symbol def to update the type symbol
         let mut t = self.t.get_symbol_mut(*symbol_id).type_tag.clone();
-        let def_type_changed = slots.update_type_mut(*slot, &mut t);
+        let def_type_changed = slots.update_type_mut(g, errors, *slot, &mut t);
         // Use the type symbol to update the symbol def
         if def_type_changed {
           let def = self.t.get_symbol_mut(*symbol_id);
           def.type_tag = t;
-          slots.symbol_updated(def);
+          g.symbol_updated(def);
         }
       }
       SymbolReference { node, name, result } => {
@@ -395,13 +399,13 @@ impl <'a> Inference<'a> {
             let resolved_type = resolved_symbol.resolved_type.clone();
             let id = resolved_symbol.id;
             self.register_def(*node, id);
-            slots.update_type(*result, &resolved_type);
+            slots.update_type(g, errors, *result, &resolved_type);
           }
           [] => {
             // Symbol will never be resolved. Report error, because at the moment it's the only guaranteed
             // way to catch symbols that don't exist (their type might still be resolved).
             // TODO: This is a bit too subtle for comfort, and should possibly be made clearer later.
-            self.unresolved_constraint_error(slots, c);
+            self.unresolved_constraint_error(errors, slots, c);
           }
           syms => {
             // Multiple matches. Global can't be resolved yet, but it can be narrowed where all of the possibilities agree.
@@ -409,7 +413,7 @@ impl <'a> Inference<'a> {
             for sym in &syms[2..] {
               t = types::type_intersection(&t, &sym.resolved_type);
             }
-            slots.update_type(*result, &t);
+            slots.update_type(g, errors, *result, &t);
           }
         }
       }
@@ -422,15 +426,15 @@ impl <'a> Inference<'a> {
             t = inner;
           }
           if let Def(name, unit_id) = &t.content {
-            slots.register_typedef(name, c);
+            g.register_typedef(name, c);
             let def = self.t.get_type_def(&name, *unit_id);
             let field_type = def.instanced_field_type(&field.name, t.children.as_slice());
             if let Some(t) = field_type {
-              slots.update_type(*result, &t);
+              slots.update_type(g, errors, *result, &t);
             }
             else {
               let s = format!("type '{}' has no field '{}'", def.name, field.name);
-              self.errors.push(error_raw(field.loc, s));
+              errors.push(error_raw(field.loc, s));
             }
           }
         }
@@ -440,12 +444,12 @@ impl <'a> Inference<'a> {
           let mut new_parent_type = slots.get(*parent).cloned().unwrap_or(Type::any());
           new_parent_type.children.clear();
           new_parent_type.children.push(parameter_type.clone());
-          slots.update_type(*parent, &new_parent_type);
+          slots.update_type(g, errors, *parent, &new_parent_type);
         }
         if let Some(parent_type) = slots.get(*parent) {
           if let [param] = parent_type.children() {
             let new_param = param.clone();
-            slots.update_type(*parameter, &new_param);
+            slots.update_type(g, errors, *parameter, &new_param);
           }
         }
       }
@@ -461,42 +465,49 @@ impl <'a> Inference<'a> {
   }
 
   /// Tries to harden a type slot into a concrete type
-  fn try_harden_slot(&mut self, slots : &mut Slots, slot : TypeSlot) {
+  fn try_harden_slot(
+    &mut self,
+    slots : &mut Slots,
+    g : &mut TypeGraph,
+    errors : &mut TypeErrors,
+    slot : TypeSlot)
+  {
     if let Some(default) = slots.get(slot).unwrap().try_harden_literal() {
-      slots.update_type(slot, &default);
+      slots.update_type(g, errors, slot, &default);
     }
   }
 
-  fn infer(mut self) {
+  fn infer(mut self, errors : &mut TypeErrors) {
     if DEBUG {
       println!("To resolve: {}", self.c.slots.len());
     }
-    let mut slots = Slots::new();
-    for a in self.c.assertions.iter() {
-      self.process_assertion(&mut slots, a);
-    }
-    for c in self.c.constraints.iter() {
-      slots.populate_dependency_map(c);
-      self.next_edge_set.insert(c.id, c);
-    }
+    let mut slots = Slots::new(self.c);
+    let mut g = TypeGraph::new(self.c);
     let mut literals = VecDeque::with_capacity(self.c.literals.len());
     for lit in self.c.literals.iter() {
       literals.push_back(*self.c.node_slots.get(lit).unwrap());
     }
+    for a in self.c.assertions.iter() {
+      self.process_assertion(&mut slots, &mut g, errors, a);
+    }
     let mut total_constrainslot_processed = 0;
     let mut active_edge_set = HashMap::new();
-    while (self.next_edge_set.len() > 0 || literals.len() > 0) && self.errors.is_empty() {
-      std::mem::swap(&mut self.next_edge_set, &mut active_edge_set);
+    let mut next_edge_set = HashMap::new();
+    for c in self.c.constraints.iter() {
+      next_edge_set.insert(c.id, c);
+    }
+    while (next_edge_set.len() > 0 || literals.len() > 0) && errors.is_empty() {
+      std::mem::swap(&mut next_edge_set, &mut active_edge_set);
       for (_, c) in active_edge_set.drain() {
         total_constrainslot_processed += 1;
-        self.process_constraint(&mut slots, c);
+        self.process_constraint(&mut slots, &mut g, errors, c);
       }
-      slots.find_boundary_constraints(&mut self.next_edge_set);
+      g.find_boundary_constraints(&mut next_edge_set);
       // If nothing was resolved, try to harden a literal (in lexical order)
-      if self.next_edge_set.is_empty() && literals.len() > 0 {
-        self.try_harden_slot(&mut slots, literals.pop_front().unwrap());
+      if next_edge_set.is_empty() && literals.len() > 0 {
+        self.try_harden_slot(&mut slots, &mut g, errors, literals.pop_front().unwrap());
       }
-      slots.find_boundary_constraints(&mut self.next_edge_set);
+      g.find_boundary_constraints(&mut next_edge_set);
     }
     if DEBUG {
       println!("Unique constraints: {}\n", self.c.constraints.len());
@@ -504,42 +515,30 @@ impl <'a> Inference<'a> {
     }
 
     // Look for errors
-    if self.errors.is_empty() {
+    if errors.is_empty() {
       // Generate errors if program has unresolved type slots
-      let mut unresolved = 0;
       active_edge_set.clear();
-      for (slot, _) in self.c.slots.iter() {
-        if !slots.get(*slot).map(|t| t.is_concrete()).unwrap_or(false) {
-          unresolved += 1;
-          if let Some(cs) = self.slots.slot_map.get(slot) {
-            for c in cs { active_edge_set.insert(c.id, c); }
-          }
-          // Generate errors for unresolved constraints
-          let error_count = self.errors.concrete_errors.len();
-          for (_, c) in active_edge_set.drain() {
-            self.unresolved_constraint_error(c);
-          }
-          if error_count == self.errors.concrete_errors.len() {
-            self.errors.push(error_raw(self.loc(*slot), "unresolved type"));
-          }
-        }
+      slots.find_all_unresolved_constraints(&g, &mut active_edge_set);
+      // Generate errors for unresolved constraints
+      let unresolved_count = active_edge_set.len();
+      for (_, c) in active_edge_set.drain() {
+        self.unresolved_constraint_error(errors, &mut slots, c);
       }
-      if self.errors.is_empty() && unresolved > 0 {
-        panic!("Unresolved types found, but no errors generated!");
-      }
-  
       // Generate errors if program has unresolved symbols
       for c in self.c.constraints.iter() {
         if let ConstraintContent::SymbolReference{node, ..} = &c.content {
           if !self.mapping.symbol_references.contains_key(node) {
-            self.unresolved_constraint_error(c);
+            self.unresolved_constraint_error(errors, &mut slots, c);
           }
         }
+      }
+      if errors.is_empty() && unresolved_count > 0 {
+        panic!("Unresolved types found, but no errors generated!");
       }
     }
 
     // Assign types to all of the nodes
-    if self.errors.is_empty() {
+    if errors.is_empty() {
       for (n, slot) in self.c.node_slots.iter() {
         let t = slots.get(*slot).unwrap().clone();
         // Make sure the type isn't abstract
@@ -553,7 +552,7 @@ impl <'a> Inference<'a> {
     }
 
     // Find polymorphic definitions
-    if self.errors.is_empty() {
+    if errors.is_empty() {
       for (node_id, symbol_id) in self.mapping.symbol_references.iter() {
         let def = self.t.get_symbol(*symbol_id);
         if def.is_polymorphic() {
@@ -566,19 +565,24 @@ impl <'a> Inference<'a> {
     }
 
     // Sort any errors lexically
-    if !self.errors.is_empty() {
-      self.errors.concrete_errors.sort_unstable_by_key(|e| e.location);
+    if !errors.is_empty() {
+      errors.concrete_errors.sort_unstable_by_key(|e| e.location);
     }
   }
 }
 
-fn force_equivalence(slots : &mut Slots, a : TypeSlot, b : TypeSlot) {
+fn force_equivalence(
+  slots : &mut Slots,
+  g : &mut TypeGraph,
+  errors : &mut TypeErrors,
+  a : TypeSlot, b : TypeSlot)
+{
   if let Some(t) = slots.get(a) {
     let t = t.clone();
-    slots.update_type(b, &t);
+    slots.update_type(g, errors, b, &t);
   }
   if let Some(t) = slots.get(b) {
     let t = t.clone();
-    slots.update_type(a, &t);
+    slots.update_type(g, errors, a, &t);
   }
 }
