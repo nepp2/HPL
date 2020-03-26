@@ -1,4 +1,38 @@
 
+# LOG - 25/03/2020
+
+I have a problem with reference types. At the moment the language is value-oriented, like C. There is no implicit reference-casting. This makes it difficult to write methods that modify values:
+
+```rust
+  struct thing { tick : i64 }
+
+  fun update(t : thing) {
+    t.tick = t.tick + 1
+  }
+
+  let t = thing:new(0)
+  t.update() // t is copied into the function by value, so the local t is unmodified
+
+  println(t.tick) // prints 0
+
+  fun update2(t : ptr(thing)) {
+    t.tick = t.tick + 1
+  }
+
+  t.update2() // this does't resolve, because the type signature does match. Can't auto-cast t to a pointer.
+
+  update2(&t) // this works, but it's ugly and inconsistent with the rest of the language
+```
+
+Possible solutions:
+  - Get rid of method call syntax
+    - makes code a bit uglier
+    - behaviour is still a bit surprising
+  - Make values immutable by default. Use a keyword to indicate that they are mutable references.
+    - Compiler chooses whether they are references or values
+    - The `&` operator doesn't work on these values
+    - 
+
 # LOG - 20/03/2020
 
 The old hotloading, event-sourced tetris demo works again. It's not a very convincing demo though.
