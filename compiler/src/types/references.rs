@@ -1,55 +1,71 @@
 
-use std::fmt;
+// TODO: REMOVE THIS
+#![allow(dead_code)]
 
-use crate::{common, compiler, error, expr, structure};
+use crate::{common, structure};
 use common::*;
-use error::{Error, error, error_raw, TextLocation};
-use expr::{Expr, ExprContent};
-use structure::{
-  Node, NodeId, ReferenceId, Content, PrimitiveVal, LabelId,
-  VarScope, GlobalType, Reference, Nodes
-};
-use crate::types::types::{
-  Type, PType, TypeDefinition, FunctionInit, SymbolDefinition,
-  SymbolInit, SymbolId, AbstractType,
-  SignatureBuilder, TypeMapping, TypeContent,
-  ResolvedSymbol, TypeInfo,
-};
-use crate::types::type_errors::TypeErrors;
-use compiler::DEBUG_PRINTING_TYPE_INFERENCE as DEBUG;
+use structure::{Node, Content};
 
-use std::collections::HashMap;
+/*
+
+We have to know whether function types are being
+
+*/
 
 enum ReferenceType {
-  Ref,
-  Val,
-  Nil,
+  Ref, // indicates that the type can be treated as a reference
+  Val, // indicates that the type _must_ be treated as a value
+}
+
+use ReferenceType::*;
+
+fn merge(a : ReferenceType, b : ReferenceType) -> ReferenceType {
+  match (a, b) {
+    (Ref, Ref) => Ref,
+    _ => Val, // any combination of ref and val just becomes a val
+  }
 }
 
 fn reference_type(n : Node) -> ReferenceType {
   use Content::*;
-  use ReferenceType::*;
   match &n.content {
-    Literal(val) => Val,
-    VariableInitialise{ name, type_tag, value, var_scope  } => Nil,
-    TypeAlias{ alias, type_aliased } => Nil,
-    Assignment{ assignee , value } => Nil,
-    IfThen{ condition, then_branch } => Nil,
-    IfThenElse{ condition, then_branch, else_branch } => (),
-    Block(node) => (),
-    Quote(expr) => Val,
-    Reference { name, refers_to } => Ref,
-    FunctionDefinition{ name, args, return_tag, type_vars, body } => (),
-    CBind { name, type_tag } => Nil,
-    TypeDefinition{ name, kind, fields, type_vars } => Nil,
-    TypeConstructor{ name, field_values } => Val,
-    FieldAccess{ container, field } => Ref,
-    ArrayLiteral(elements) => Val,
-    FunctionCall{ function, args } => (),
-    While{ condition, body } => Nil,
-    Convert{ from_value, into_type } => Val,
-    SizeOf{ type_tag } => Val,
-    Label{ label, body } => (),
-    BreakToLabel{ label, return_value } => (),
+    Literal(_val) => Val,
+    VariableInitialise{ name:_, type_tag:_, value:_, var_scope:_ } => Val,
+    TypeAlias{ alias:_, type_aliased:_ } => Val,
+    Assignment{ assignee :_, value:_ } => {
+      // check that assignee is a ref
+      Val
+    },
+    IfThen{ condition:_, then_branch:_ } => Val,
+    IfThenElse{ condition:_, then_branch:_, else_branch:_ } => {
+      panic!()
+    }
+    Block(_node) => {
+      panic!()
+    }
+    Quote(_expr) => Val,
+    Reference { name:_, refers_to:_ } => Ref,
+    FunctionDefinition{ name:_, args:_, return_tag:_, type_vars:_, body:_ } => {
+      panic!()
+    }
+    CBind { name:_, type_tag:_ } => Val,
+    TypeDefinition{ name:_, kind:_, fields:_, type_vars:_ } => Val,
+    TypeConstructor{ name:_, field_values:_ } => Val,
+    FieldAccess{ container:_, field:_ } => Ref,
+    ArrayLiteral(_elements) => Val,
+    FunctionCall{ function:_, args:_ } => {
+      // get the function type
+      // check that any "ref" arguments are receiving a ref
+      panic!()
+    }
+    While{ condition:_, body:_ } => Val,
+    Convert{ from_value:_, into_type:_ } => Val,
+    SizeOf{ type_tag:_ } => Val,
+    Label{ label:_, body:_ } => {
+      panic!()
+    }
+    BreakToLabel{ label:_, return_value:_ } => {
+      panic!()
+    },
   }
 }

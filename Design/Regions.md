@@ -32,3 +32,13 @@ These could, in principle, provide a cheap bump allocator.
 
 How do regions interact with one-another? How is data copied between them? Can references from one region exist inside another? How would garbage collection work, in that case?
 
+Every module can declare some external regions. It doesn't know who is calling it, but it knows what regions exist and what their relationships are. For example:
+
+```rust
+  region ext;
+
+  fun write(ref(ext) f : file, data : array(u8)) {
+    
+  }
+```
+
