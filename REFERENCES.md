@@ -5,6 +5,10 @@
 - Elm
 - React and Redux
 - Mun (https://mun-lang.org/)
+- Clojure's tools.namespace (https://github.com/clojure/tools.namespace)
+  - Solves the problem of code reloading leaving old stuff littered around
+  - Similar to the loader scripts I'm working on
+  - As described here: https://www.youtube.com/watch?v=50vU6rp2jyA
 
 # Terra
 
