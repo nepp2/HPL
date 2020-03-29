@@ -1,0 +1,36 @@
+
+struct region(R) {
+  root : ptr(R)
+  pages : list(page)
+}
+
+static page_size : u64 = 1024
+
+struct page {
+  mem : ptr(u8)
+  next : u64
+}
+
+fun region(root_val : R) => region(R) with R {
+  let page = page.new(malloc(page_size), 0)
+  let root = alloc(&page, sizeof(R)) as ptr(R)
+  *root = root_val
+  region.new(root, list([page]))
+}
+
+fun alloc(page : ptr(page), bytes : u64) => ptr(u8) {
+  let p = ((page.mem as u64) + page.next) as ptr(u8)
+  page.next = page.next + bytes // TODO: the alignment should be fixed here?
+  p
+}
+
+fun alloc(r : region(R), t : T) => ptr(T) with R, T {
+  let index = r.list.len()-1
+  // TODO: this doesn't work, because you can't get an address out of a list.
+  // The line below would copy the page onto the stage, and then pass the local address of that.
+  // This means that the `next` counter wouldn't be bumped.
+  alloc(&r.list[index], t)
+  // TODO: even if this did work, it's still needs to allocate new a page when the current one runs out
+}
+
+let r = region(100)

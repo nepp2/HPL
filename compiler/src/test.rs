@@ -613,9 +613,22 @@ rusty_fork_test! {
       return i
     }
     ";
-    let aaa = (); // TODO: fix this issue. At the moment it's being left alone, because
+    // TODO: fix this issue. At the moment it's being left alone, because
     // the problem is easy to work around.
     // assert_result(code, Val::Void);
+    let aaa = ();
+  }
+
+  #[test]
+  fn test_unused_type_var_bug() {
+    let code = "
+      fun id(t : T) => T with R, T {
+        t
+      }
+      id(4)
+    ";
+    let aaa = (); // TODO: should fail with an error, not a panic
+    assert_error(code, "");
   }
 
   // #[test]
