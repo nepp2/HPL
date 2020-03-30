@@ -18,7 +18,7 @@ use crate::types::types::{
 use crate::types::type_errors::TypeErrors;
 use compiler::DEBUG_PRINTING_TYPE_INFERENCE as DEBUG;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 // A position in the program which requires a type
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
@@ -463,8 +463,21 @@ impl <'l, 't> ConstraintGenerator<'l, 't> {
               sig.append_arg(Type::any());
             }
           }
+          let sig : Type = sig.into();
+          if is_polymorphic_def {
+            let mut polytypes_used = HashSet::new();
+            sig.find_polytypes(&mut polytypes_used);
+            let unused_polytypes =
+              polytypes.iter()
+              .filter(|&v| !polytypes_used.contains(v.as_ref()))
+              .cloned().collect::<Vec<_>>();
+            if unused_polytypes.len() > 0 {
+              let m = format!("unused type vars {:?} in polymorphic function definition", unused_polytypes);
+              gc.errors.push(error_raw(node.loc, m));
+            }
+          }
           gc.process_function_def(
-            n, id, sig.into(), polytypes.as_slice(), arg_names, *body, name);
+            n, id, sig, polytypes.as_slice(), arg_names, *body, name);
         });
       }
       Content::CBind { name, type_tag } => {

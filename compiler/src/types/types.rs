@@ -404,7 +404,7 @@ impl SymbolDefinition {
   pub fn is_polymorphic(&self) -> bool {
     self.type_vars.len() > 0
   }
-
+  
   pub fn instanced_type_vars(&self, instanced_signature : &Type) -> Vec<Type> {
     let mut polytype_map = HashMap::new();
     let success = polytype_match(&mut polytype_map, instanced_signature, &self.type_tag);
@@ -487,6 +487,15 @@ impl  Type {
       t.to_concrete()?;
     }
     Ok(())
+  }
+
+  pub fn find_polytypes<'l>(&'l self, polytypes : &mut HashSet<&'l str>) {
+    if let TypeContent::Polytype(n) = &self.content {
+      polytypes.insert(n.as_ref());
+    }
+    for c in self.children.iter() {
+      c.find_polytypes(polytypes);
+    }
   }
 
   pub fn from_string(s : &str) -> Option<Type> {
