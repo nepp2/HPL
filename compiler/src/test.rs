@@ -627,8 +627,18 @@ rusty_fork_test! {
       }
       id(4)
     ";
-    let aaa = (); // TODO: should fail with an error, not a panic
     assert_error(code, "");
+  }
+
+  #[test]
+  fn test_duplicate_symbol_error() {
+    let code = "
+      static BLAH_BLAH : i64 = 5
+      static BLAH_BLAH = 10.0
+    ";
+    assert_error(code, "");
+    // TODO: the error message here is terrible, and the problem isn't spotted until codegen
+    let aaa = ();
   }
 
   // #[test]

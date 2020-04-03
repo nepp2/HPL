@@ -387,13 +387,6 @@ fun rotate(game : ptr(game), grid_width, grid_height) {
   }
 }
 
-static UP_KEY = 1073741906 as u32
-static DOWN_KEY = 1073741905 as u32
-static RIGHT_KEY = 1073741903 as u32
-static LEFT_KEY = 1073741904 as u32
-static SPACE_KEY = 32 as u32
-static ENTER_KEY = 13 as u32
-
 fun handle_game_event(game : ptr(game), e : ptr(game_event)) {
   let tet = game.tetronimos[game.tet_index]
   let shape = tet.tiles[game.orientation]
@@ -411,21 +404,21 @@ fun handle_game_event(game : ptr(game), e : ptr(game_event)) {
   let key = e.get_key_down()
   if key.is_some {
     let c = key.val
-    if c == UP_KEY {
+    if c == SDL_KEYCODE_UP {
       rotate(game, grid_width, grid_height)
     }
-    if c == LEFT_KEY {
+    if c == SDL_KEYCODE_LEFT {
       move_horizontal(
         game, grid_width, grid_height, shape, -1)
     }
-    if c == RIGHT_KEY {
+    if c == SDL_KEYCODE_RIGHT {
       move_horizontal(
         game, grid_width, grid_height, shape, 1)
     }
-    if c == DOWN_KEY {
+    if c == SDL_KEYCODE_DOWN {
       move_down(game, shape, tet.color, grid_width, grid_height)
     }
-    if c == SPACE_KEY {
+    if c == SDL_KEYCODE_SPACE {
       while true {
         if move_down(game, shape, tet.color, grid_width, grid_height) {
           break
@@ -526,7 +519,7 @@ fun update() {
     let key = get_key_down(&event)
     if key.is_some {
       let c = key.val
-      if c == ENTER_KEY {
+      if c == SDL_KEYCODE_ENTER {
         event_log.clear()
         state = init(get_view(), initial_width, initial_height)
         break
