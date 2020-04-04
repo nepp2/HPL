@@ -631,6 +631,16 @@ rusty_fork_test! {
   }
 
   #[test]
+  fn test_invalid_field_error() {
+    let code = "
+      let a = 5
+      let b = a.b
+    ";
+    assert_error(code, "");
+  }
+
+
+  #[test]
   fn test_duplicate_symbol_error() {
     let code = "
       static BLAH_BLAH : i64 = 5
