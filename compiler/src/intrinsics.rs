@@ -10,6 +10,8 @@ use crate::structure::{TypeKind, Reference};
 use PType::*;
 use TypeContent::Polytype;
 
+pub static UNSAFE_ZERO_INIT : &'static str = "UnsafeZeroInit";
+
 pub fn get_intrinsics(intrinsics_id : UnitId, gen : &mut UIDGenerator, cache : &StringCache) -> TypeInfo {
   let unit_id = intrinsics_id;
   let mut types = TypeInfo::new(unit_id);
@@ -77,7 +79,7 @@ pub fn get_intrinsics(intrinsics_id : UnitId, gen : &mut UIDGenerator, cache : &
   add_polymorphic_intrinsic(
     cache, gen, unit_id, &mut types, "&", &[&tv], &pointer_type, vec![tvar.clone()]);
   add_polymorphic_intrinsic(
-    cache, gen, unit_id, &mut types, "UnsafeZeroInit", &[], &tv, vec![tvar.clone()]);
+    cache, gen, unit_id, &mut types, UNSAFE_ZERO_INIT, &[], &tv, vec![tvar.clone()]);
 
   // Add array type
   add_type_def(

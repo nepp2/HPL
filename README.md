@@ -1,6 +1,8 @@
-# Reactive game development research prototype
+# Reactive game development prototype
 
-Project to create a live programming environment for game development, built on top of a custom programming language and reactive programming model.
+This is a research project aiming to create a live, reactive programming environment for writing games and game technology.
+
+This prototype includes a custom programming language. However, we also hope to provide insights that can be generalised for use in existing high-performance programming languages, such as C, C++ and Rust.
 
 ## Goals
 
@@ -58,3 +60,7 @@ From the llvm-sys documentation:
 > You must use a version of Rust that uses the same compiler as you build LLVM with, either MSVC or MinGW. Fortunately, a mismatch like this will cause errors at compile-time when llvm-config provides options which are supported by only one of them, so if you're using the other it will cause the build to fail.
 
 The prebuilt windows binaries on the LLVM website do not work, so I presume they are not built with the visual studio compiler (MSVC). I could use the MinGW Rust, but that's just a whole other hassle. It seems less well supported.
+
+### Isn't the LLVM JIT slow?
+
+In the long-term I would explore other options for fast JIT compilation. In the short-term I will rely on the incremental compilation model that this project is built around, and the fact that my test programs are unlikely to be very large.

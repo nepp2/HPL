@@ -1,10 +1,92 @@
 
-static blah = 0
-
-fun update() {
-  blah = blah + 1
-  if blah % 100 == 0 {
-    print("Hello ")
-    println(blah)
-  }
+struct unit_graph {
+  units : list(unit)
+  arcs_from_to : list(tup2(u64, u64))
 }
+
+fun unit_graph() {
+  unit_graph.new(list(), list())
+}
+
+fun print(u : unit) {
+  print(u.path)
+}
+
+struct unit {
+  path : string
+}
+
+fun print(g : unit_graph) {
+  println("unit_graph {")
+  println("  units: {")
+  for i in range(0, g.units.len() as i64) {
+    print("    "); print(i); print(" - ")
+    println(g.units[i].path)
+  }
+  println("  }")
+  print("  arcs_from_to: "); println(g.arcs_from_to)
+  println("}")
+}
+
+fun add_unit(g : unit_graph, path : string, dependencies : array(u64)) => u64 {
+  let id = g.units.len()
+  for h in dependencies {
+    g.arcs_from_to.add(tup(id, h.id))
+  }
+  g.units.add(unit.new(path))
+  id
+}
+
+struct vert_flag {
+  complete : bool
+  active : bool
+}
+
+fun visit_topological(g : unit_graph, ordering : list(u64), visited : list(bool), unit : u64) {
+  if visited[unit] {
+    return
+  }
+  visited[unit] = true
+  for arc in g.arcs_from_to {
+    if arc.v0 == unit {
+      visit_topological(g, ordering, visited, arc.v1)
+    }
+  }
+  ordering.add(unit)
+}
+
+fun topological_ordering(g : unit_graph) {
+  let visited = list()
+  let ordering = list()
+  for u in g.units { visited.add(false) }
+  for u in range(0, g.units.len()) {
+    visit_topological(g, ordering, visited, u)
+  }
+  ordering
+}
+
+fun rebuild(g : unit_graph, unit : u64) {
+  let visited = list()
+  let ordering = list()
+  for u in g.units { visited.add(false) }
+  visit_topological(g, ordering, visited, unit)
+  ordering
+}
+
+let g = unit_graph()
+
+let prelude = g.add_unit("code/core/prelude.code", [])
+let list = g.add_unit("code/core/list.code", [])
+let sdl2 = g.add_unit("code/sdl2.code", [prelude])
+let window = g.add_unit("code/tetris/window.code", [prelude, sdl2])
+let events = g.add_unit("code/tetris/events.code", [prelude, list, sdl2])
+let bloopy = g.add_unit("bloopy", [prelude, list, sdl2])
+
+print(g)
+
+let order = rebuild(g, window)
+for i in order {
+  print("Build ")
+  println(g.units[i].path)
+}
+

@@ -101,4 +101,24 @@ fun print(list : list(T)) with T {
   }
   print("]")
 }
+
+// ##### Iterator #####
+
+struct list_iter(T) {
+  l : list(T)
+  i : u64
+}
+
+fun iter(l : list(T)) => list_iter(T) with T {
+  list_iter.new(l, 0)
+}
+
+fun next(it : ptr(list_iter(T)), element : ptr(T)) => bool with T {
+  if it.i < it.l.len() {
+    *element = it.l[it.i]
+    it.i = it.i + 1
+    true
+  }
+  else { false }
+}
   

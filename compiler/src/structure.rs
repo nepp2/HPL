@@ -2,6 +2,7 @@
 use crate::common::*;
 use crate::error::{Error, error, TextLocation};
 use crate::expr::{Expr, ExprContent};
+use crate::intrinsics::UNSAFE_ZERO_INIT;
 
 use std::collections::HashMap;
 
@@ -707,7 +708,7 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
             fc.let_var(e, it_var.clone(), iter_ref)
           };
           let let_loop_node = {
-            let zero = fc.int_literal(e, 0); // this value will be overwritten
+            let zero = fc.function_call(e, UNSAFE_ZERO_INIT, vec![]); // this value will be overwritten
             fc.let_var(e, loop_var.clone(), zero)
           };
           fc.add_var_to_scope(loop_var.clone());

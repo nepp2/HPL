@@ -1,7 +1,5 @@
 
 
-// code/.code
-
 let prelude = get_module("code/core/prelude.code").unwrap()
 let list = get_module("code/core/list.code").unwrap()
 let sdl2 = load_module("code/sdl2.code", [prelude]).unwrap()
