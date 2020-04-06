@@ -431,11 +431,12 @@ impl <'a> Inference<'a> {
             let field_type = def.instanced_field_type(&field.name, t.children.as_slice());
             if let Some(t) = field_type {
               slots.update_type(g, errors, *result, &t);
+              return;
             }
-            else {
-              let s = format!("type '{}' has no field '{}'", def.name, field.name);
-              errors.push(error_raw(field.loc, s));
-            }
+          }
+          if t.is_concrete() {
+            let s = format!("type '{}' has no field '{}'", t, field.name);
+            errors.push(error_raw(field.loc, s));
           }
         }
       }

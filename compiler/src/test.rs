@@ -632,13 +632,17 @@ rusty_fork_test! {
 
   #[test]
   fn test_invalid_field_error() {
-    let code = "
+    let a = "
       let a = 5
       let b = a.b
     ";
-    assert_error(code, "");
+    let b = "
+      let a = 5
+      let b : f32 = a.b
+    ";
+    assert_error(a, "");
+    assert_error(b, "");
   }
-
 
   #[test]
   fn test_duplicate_symbol_error() {
