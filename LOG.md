@@ -1,4 +1,8 @@
 
+# LOG 07/04/2020
+
+Remove SetIndex. Index can provide a pointer instead, and the compiler automatically inserts a dereference. This will be turned back into an address in code generation, so that index expressions return values that are lvalues.
+
 # LOG - 25/03/2020
 
 I have a problem with reference types. At the moment the language is value-oriented, like C. There is no implicit reference-casting. This makes it difficult to write methods that modify values:
