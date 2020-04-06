@@ -59,7 +59,7 @@ fn load_and_run(path : &str) {
 fn main(){
   let args: Vec<String> = env::args().collect();
   let args: Vec<&str> = args.iter().map(|s| s.as_ref()).collect();
-  match args[1..] {
+  match &args[1..] {
     ["watch", path] => {
       watcher::watch(path.as_ref())
     }
@@ -68,9 +68,12 @@ fn main(){
     ["run", path] => {
       load_and_run(path)
     }
-    _ => {
+    [] => {
       //load_and_run("code/scratchpad.code")
       watcher::watch("code/tetris/loader.code");
     },
+    args => {
+      println!("unrecognised arguments {:?}", args);
+    }
   }
 }

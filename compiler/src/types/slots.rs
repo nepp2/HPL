@@ -85,7 +85,7 @@ impl <'a> Slots<'a> {
 
   /// Find the constraints associated with unresolved slots
   pub fn find_all_unresolved_constraints(&mut self, g : &TypeGraph<'a>, edge_set : &mut HashMap<Uid, &'a Constraint>) {
-    for (slot, _) in self.types.iter() {
+    for (slot, _) in self.c.slots.iter() {
       if !self.get(*slot).map(|t| t.is_concrete()).unwrap_or(false) {
         for c in g.slot_constraints(*slot) {
           edge_set.insert(c.id, c);
