@@ -788,7 +788,7 @@ fn codegen_index(
   let ptr = get_index_data_ptr(gf, container, index)?;
   let index = gf.codegen_int(index)?;
   let element_ptr = unsafe { gf.builder.build_gep(ptr, &[index], "element_ptr") };
-  return Ok(pointer(element_ptr).into());
+  return Ok(reg(element_ptr.into()));
 }
 
 fn codegen_binary_intrinsic_call(gf : &mut GenFunction, node : TypedNode, name : &str, a : NodeId, b : NodeId)

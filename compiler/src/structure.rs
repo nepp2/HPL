@@ -412,16 +412,6 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         self.quote_to_node(expr, quoted_expr)
       }
       ("=", [assign_expr, value_expr]) => {
-        // If assigning to an index expression, call "SetIndex"
-        if let Some(("index", exprs)) = assign_expr.try_construct() {
-          if let [container_expr, index_expr] = exprs {
-            let container = self.to_node(container_expr)?;
-            let index = self.to_node(index_expr)?;
-            let value = self.to_node(value_expr)?;
-            return Ok(self.function_call(expr, "SetIndex", vec![container, index, value]));
-          }
-        }
-        // Otherwise, generate a normal assignment
         let a = self.to_node(assign_expr)?;
         let b = self.to_node(value_expr)?;
         Ok(self.node(expr, Assignment{ assignee: a, value: b }))
@@ -552,9 +542,10 @@ impl <'l, 'lt> FunctionConverter<'l, 'lt> {
         if let [index_expr] = &exprs[1..] {
           let container = self.to_node(array_expr)?;
           let index = self.to_node(index_expr)?;
-          return Ok(self.function_call(expr, "Index", vec![container, index]));
+          let element_pointer = self.function_call(expr, "Index", vec![container, index]);
+          return Ok(self.function_call(expr, "*", vec![element_pointer]));
         }
-        error(expr, "malformed array index expression")
+        error(expr, "malformed index expression")
       }
       (construct, _) => {
         error(expr, format!("invalid '{}' expression", construct))

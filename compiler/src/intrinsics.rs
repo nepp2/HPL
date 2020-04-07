@@ -64,13 +64,7 @@ pub fn get_intrinsics(intrinsics_id : UnitId, gen : &mut UIDGenerator, cache : &
       // Index intrinsic
       add_polymorphic_intrinsic(
         cache, gen, unit_id, &mut types,
-        "Index", &[container, index_type], &tv,
-        vec![tvar.clone()]);
-      // SetIndex intrinsic
-      let void = PType::Void.into();
-      add_polymorphic_intrinsic(
-        cache, gen, unit_id, &mut types,
-        "SetIndex", &[container, index_type, &tv], &void,
+        "Index", &[container, index_type], &pointer_type,
         vec![tvar.clone()]);
     }
   }
