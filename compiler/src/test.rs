@@ -510,6 +510,25 @@ rusty_fork_test! {
   }
 
   #[test]
+  fn test_index_set() {
+    let a = r#"
+      let l = list()
+      l.add(5)
+      l[0] = 4
+      l[0]
+    "#;
+    let b = r#"
+      struct blah { x : i64; y : i64 }
+      let l = list()
+      l.add(blah.new(40, 100))
+      l[0].y = 4
+      l[0].x + l[0].y
+    "#;
+    assert_result(a, Val::I64(4));
+    assert_result(b, Val::I64(44));
+  }
+
+  #[test]
   fn test_nonexistent_types(){
     let code = "
       struct foo {
