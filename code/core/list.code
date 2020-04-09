@@ -21,6 +21,10 @@ fun list(a : array(T)) => list(T) with T {
   l
 }
 
+fun as_array(l : list(T)) => array(T) with T {
+  array.new(l.p.data, l.p.len)
+} 
+
 fun clear(l : list(T)) => () with T {
   l.p.len = 0
 }

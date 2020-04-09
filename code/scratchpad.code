@@ -113,9 +113,13 @@ fun load_unit(g : unit_graph, unit : u64) => option(module_handle) {
       deps.add(g.units[arc.v1].handle.unwrap())
     }
   }
-  //load_module(path, deps)
-  none()
+  let h = load_module(path, deps.as_array())
+  if !h.is_some { return none() }
+  g.units[unit].handle = h
+  h
 }
+
+
 
 // for u in g.units {
 //   print("Build ")
