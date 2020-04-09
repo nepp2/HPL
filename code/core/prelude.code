@@ -72,6 +72,27 @@ fun next(it : ptr(array_iter(T)), element : ptr(T)) => bool with T {
   else { false }
 }
 
+// ######## string functions ########
+
+fun ends_with(a : array(T), b : array(T)) => bool with T {
+  if a.length < b.length {
+    return false
+  }
+  let offset = a.length - b.length;
+  for i in range(0, b.length) {
+    if a[offset + i] != b[i] {
+      return false
+    }
+  }
+  true
+}
+
+// ######## string functions ########
+
+fun bytes(s : string) => array(u8) {
+  array.new(s.data, s.length)
+}
+
 // ######## Shared library stuff (dll/so files) ########
 
 struct lib_handle {

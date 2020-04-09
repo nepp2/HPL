@@ -303,8 +303,8 @@ pub extern "C" fn poll_watcher_event(w : WatcherHandle, path_out : &mut SOption<
     Ok(event) => {
       match event {
         DebouncedEvent::Write(path) => {
-          let module_name : String = path.file_stem().unwrap().to_str().unwrap().into();
-          Some(SStr::from_string(ManuallyDrop::new(module_name)))
+          let path : String = path.to_str().unwrap().replace("\\", "/");
+          Some(SStr::from_string(ManuallyDrop::new(path)))
         }
         _ => None,
       }

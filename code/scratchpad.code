@@ -95,29 +95,94 @@ let list = g.add_unit("code/core/list.code", [])
 let sdl2 = g.add_unit("code/sdl2.code", [prelude])
 let window = g.add_unit("code/tetris/window.code", [prelude, sdl2])
 let events = g.add_unit("code/tetris/events.code", [prelude, list, sdl2])
+let tetris = g.add_unit("code/tetris/tetris.code", [prelude, list, sdl2, window, events])
 
+let timer = start_timer()
 static watcher = create_watcher(100)
 
 print(g)
 
-fun load_unit(g : unit_graph, unit : u64) => option(module_handle) {
-  let path = g.units[unit].path
-  let h = get_module(path)
-  if h.is_some {
-    g.units[unit].handle = h
-    return h
-  }
-  let deps = list()
-  for arc in g.arcs_from_to {
-    if arc.v0 == unit {
-      deps.add(g.units[arc.v1].handle.unwrap())
+for u in g.units {
+  watcher.watch_file(u.path)
+}
+
+fun find_unit(g : unit_graph, absolute_path : string) {
+  let absolute_bytes = absolute_path.bytes()
+  for i in range(0, g.units.len()) {
+    let unit_path_bytes = g.units[i].path.bytes()
+    if absolute_bytes.ends_with(unit_path_bytes) {
+      return some(i)
     }
   }
-  let h = load_module(path, deps.as_array())
-  if !h.is_some { return none() }
-  g.units[unit].handle = h
-  h
+  none()
 }
+
+while true {
+  for u in g.units {
+    if u.dirty || !u.handle.is_some {
+      print("Loading "); println(u.path)
+    }
+  }
+  // let update = dummy_update
+  // if tetris.is_some {
+  //   let f = tetris.val.get_function("update")
+  //   if f.is_some {
+  //     update = f.val as fun()
+  //   }
+  // }
+  // else {
+  //   println("Failed to load tetris :(")
+  // }
+  while true {
+    // process any watcher events
+    let start_time = timer.millis_elapsed()
+    while true {
+      let path = watcher.poll_watcher_event()
+      if path.is_some {
+        let path = path.val
+        // handle event
+        let u = g.find_unit(path)
+        if u.is_some {
+          print(g.units[u.val].path); println(" changed!")
+        }
+      }
+      else { break }
+    }
+
+    // call the update function
+
+    // sleep for the rest of the frame
+    let end_time = timer.millis_elapsed()
+    let elapsed = (end_time - start_time) as i64
+    let sleep_time = max(16 - elapsed, 0)
+    thread_sleep(sleep_time as u64)
+  }
+}
+
+
+
+
+
+// fun load_unit(g : unit_graph, unit : u64) => option(module_handle) {
+//   let path = g.units[unit].path
+//   let h = get_module(path)
+//   if h.is_some {
+//     g.units[unit].handle = h
+//     return h
+//   }
+//   let deps = list()
+//   for arc in g.arcs_from_to {
+//     if arc.v0 == unit {
+//       deps.add(g.units[arc.v1].handle.unwrap())
+//     }
+//   }
+//   let h = load_module(path, deps.as_array())
+//   if !h.is_some { return none() }
+//   g.units[unit].handle = h
+//   h
+// }
+
+
 
 
 
