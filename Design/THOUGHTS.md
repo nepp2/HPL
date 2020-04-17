@@ -1,4 +1,28 @@
 
+# Design - April 2020
+
+Classes, at their most basic, are a pretty good way to represent a form of global state that can be instanced.
+
+Forcing them into a complex module system and giving them special syntax is what obscures this, and makes them confusing.
+
+I don't know how to manage the class/value problem, but it strikes me that I can work with slightly verbose syntax and then hide this behind type aliases. E.g.
+
+```rust
+  struct foo { x : f32; y : f32 }; // value type
+
+  type foo = struct { x : f32; y : f32 }; // value type
+
+  type bar = ref struct { x : f32; y : f32 }; // reference type
+
+  type bloop = ref foo; // reference type
+
+  type blop = ref bloop; // double reference??
+```
+
+How do we make the syntax for instanced state structs simpler?
+  - introduce a way to define a struct inside a function with ad hoc let-style field bindings
+  - turn global scope functions into this kind of function
+
 # Design - March 2020
 
 There are two language features I need to add at some point, and they should complement each other very neatly. These are:
