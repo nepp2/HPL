@@ -1,4 +1,20 @@
 
+# Design - Unified defs
+
+Instead of managing dependencies in terms of "units", they could be managed as symbols and defs. Types can be just another def.
+
+```rust
+  def blah = struct { x : f32; y : f32 } // `blah` has type `type`
+
+  def bloo = blah.new(30, 30) // `bloo` has type `blah`
+```
+
+Then a symbol resolution procedure has to figure out what the ordering of these expressions is.
+
+The payoff is that types are just constant values, and type definitions are just another kind of symbol. It also becomes easier to implement metaprogramming and templates.
+
+The cost is that we lose overloading. And this is mostly to recreate features that already exist, just more elegantly. It might have been a sensible way to start, but it's probably just a waste of time at this point. Or something to fix later.
+
 # Design - April 2020
 
 Classes, at their most basic, are a pretty good way to represent a form of global state that can be instanced.
@@ -22,6 +38,33 @@ I don't know how to manage the class/value problem, but it strikes me that I can
 How do we make the syntax for instanced state structs simpler?
   - introduce a way to define a struct inside a function with ad hoc let-style field bindings
   - turn global scope functions into this kind of function
+
+```rust
+  // current syntax
+  struct foo { x : f32; y : f32 }
+  fun create_foo(x) {
+    foo.new(x, 30)
+  }
+
+  // possible syntax
+  struct foo(field x : f32) {
+    field y : f32 = 30.0
+  }
+
+  // possible syntax
+  fun foo(x : f32) {
+    new foo {
+      field x = x
+      field y = 30.0
+    }
+  }
+
+  // possible syntax
+  fun foo(x : f32) {
+    new foo { x, y = 30.0 }
+    field y : f32 = 30.0
+  }
+```
 
 # Design - March 2020
 
