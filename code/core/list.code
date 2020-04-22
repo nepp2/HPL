@@ -62,6 +62,16 @@ fun pop(list : list(T)) => T with T {
   val
 }
 
+fun reverse(list : list(T)) with T {
+  let list = list.p;
+  for i in range(0, list.len / 2) {
+    let i2 = list.len - (i + 1)
+    let temp = list.data[i]
+    list.data[i] = list.data[i2]
+    list.data[i2] = temp
+  }
+}
+
 fun len(list : list(T)) => u64 with T {
   list.p.len
 }

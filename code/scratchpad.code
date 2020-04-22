@@ -57,17 +57,17 @@ fun find_ancestors_topological(g : unit_graph, ordering : list(u64), visited : l
   ordering.add(unit)
 }
 
-fun find_descendants_topological(g : unit_graph, ordering : list(u64), visited : list(bool), unit : u64) {
+fun find_descendants_reverse_topological(g : unit_graph, ordering : list(u64), visited : list(bool), unit : u64) {
   if visited[unit] {
     return
   }
   visited[unit] = true
-  ordering.add(unit)
   for arc in g.arcs_from_to {
     if arc.v1 == unit {
-      find_descendants_topological(g, ordering, visited, arc.v0)
+      find_descendants_reverse_topological(g, ordering, visited, arc.v0)
     }
   }
+  ordering.add(unit)
 }
 
 fun topological_ordering(g : unit_graph) {
@@ -80,11 +80,12 @@ fun topological_ordering(g : unit_graph) {
   ordering
 }
 
-fun reload(g : unit_graph, unit : u64) {
+fun find_descendants_topological(g : unit_graph, unit : u64) {
   let visited = list()
   let ordering = list()
   for u in g.units { visited.add(false) }
-  find_descendants_topological(g, ordering, visited, unit)
+  find_descendants_reverse_topological(g, ordering, visited, unit)
+  ordering.reverse()
   ordering
 }
 
@@ -143,7 +144,11 @@ while true {
         // handle event
         let u = g.find_unit(path)
         if u.is_some {
-          print(g.units[u.val].path); println(" changed!")
+          let units = g.find_descendants_topological(u.val)
+          for u in units {
+            print(g.units[u].path)
+            println(" is dirty!")
+          }
         }
       }
       else { break }
