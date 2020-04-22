@@ -146,8 +146,7 @@ while true {
         if u.is_some {
           let units = g.find_descendants_topological(u.val)
           for u in units {
-            print(g.units[u].path)
-            println(" is dirty!")
+            g.units[u].dirty = true
           }
         }
       }
