@@ -305,7 +305,7 @@ fun blit(game : ptr(game), shape, color : color, grid_width) {
   }
 }
 
-fun check_line(grid : grid, y, grid_width) {
+fun check_line(grid : grid, y : i64, grid_width) {
   let i = y * grid_width
   for i in range(i, i + grid_width) {
     if !grid.cells[i].is_some {
