@@ -137,6 +137,8 @@ while true {
   while true {
     // process any watcher events
     let start_time = timer.millis_elapsed()
+
+    let file_changed = false
     while true {
       let path = watcher.poll_watcher_event()
       if path.is_some {
@@ -147,10 +149,15 @@ while true {
           let units = g.find_descendants_topological(u.val)
           for u in units {
             g.units[u].dirty = true
+            file_changed = true
           }
         }
       }
       else { break }
+    }
+
+    if file_changed {
+      break
     }
 
     // call the update function
