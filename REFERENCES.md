@@ -67,9 +67,11 @@ A JIT designed to be a WASM back-end. Potentially the ideal JIT compiler for thi
 
 # Things I should look into
 
-## React hooks
+## Sema
 
-React hooks may be an interesting approach to state management in the reactive paradigm. 
+A paper titled "Designing for a pluralist and user-friendly live code language ecosystem with Sema".
+
+http://sro.sussex.ac.uk/id/eprint/87404/
 
 ## Nim destructors
 
